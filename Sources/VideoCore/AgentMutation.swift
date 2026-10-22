@@ -9,12 +9,17 @@ public enum AgentMutationExecutor {
         values["principal"] = .string(principal);values["request_id"] = .string(requestID)
         return try Codec.data(AgentValue.object(values))
     }
-    public static func authorize(command:String,values:[String:AgentValue],database:Database,principal:String)throws {
+    public static func authorize(command:String,values:[String:AgentValue],database:Database,principal:String,now:Date=Date())throws {
         if command=="workspaces create" {guard !principal.isEmpty else{throw VideoError.permission("创建空间需要执行身份")};return}
         let workspace=try database.workspace(values["workspace_id"]?.string ?? "")
         let projectID=values["project_id"]?.string
         let revision=values["base_revision"]?.string ?? database.projects.first{$0.id==projectID && $0.workspaceID==workspace.id}?.current.id
-        try AgentContract.authorize(command:command,workspace:workspace,principal:principal,projectID:projectID,revisionID:revision)
+        try AgentContract.authorize(command:command,workspace:workspace,principal:principal,projectID:projectID,revisionID:revision,now:now)
+        if command=="edit apply" {
+            guard let projectID,let revision,let edits=values["edits"] else{throw VideoError.invalid("编辑缺少项目、基准版本或操作")}
+            let operations=try Codec.decoder().decode([Edit].self,from:Codec.data(edits))
+            _=try WorkspaceAccessRules.editingProject(projectID:projectID,baseRevision:revision,operations:operations,access:WorkspaceAccessContext(workspaceID:workspace.id,principal:principal),in:database,now:now)
+        }
     }
     public static func envelope(requestID:String,state:String="succeeded",projectID:String?=nil,revisionID:String?=nil,result:AgentValue = .null)->AgentValue {
         .object(["schema_version":.string(AgentContract.version),"request_id":.string(requestID),"ok":.boolean(true),"state":.string(state),"project_id":projectID.map(AgentValue.string) ?? .null,"revision":revisionID.map(AgentValue.string) ?? .null,"job_id":.null,"artifacts":.array([]),"result":result,"error":.null,"cost":.object(["currency":.string("CNY"),"estimated":.null,"reserved":.null,"actual":.null,"unknown":.string("此操作不提交付费任务；经营费用另记")])])

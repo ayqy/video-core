@@ -2,24 +2,20 @@
 
 VideoCore reviewed source product · manifest version 2
 
-- 当前审定时间：2026-10-23 03:37:22 北京时间；免费上游已冻结提交`0c6b5ed0272d2979ff79a5b8d6b242c40ff452fe`。
-- 正式仓库实际文本：120项源码及必要元数据，另有本清单，共121项文件；不含本清单的内容共1156604字节。
-- 整体内容指纹：`7bd3532b42a911d9c2a38a5dadbee0ced6d3053a5db67369c2d792f6eaa7971d`。
-- 指纹算法：包内相对路径按Unicode码点排序，每项编码为UTF-8的“路径 + NUL + SHA-256十六进制 + NUL + 十进制字节数 + 换行”，对拼接内容计算SHA-256。本清单自身与Git元数据不参与摘要，无自引用。
-- 审定同源文件：112项，1118716字节，逐文件与当前免费白名单导出完全相同；同源集指纹`1eefc6b1de37508318efed227161e9406a411523fd0de0a75ab9877346dd92f5`。Package.swift来自免费模板，其余来自逐文件审定的免费来源。
-- 上游受控导出共114项文件，其非清单内容指纹`57a87c3eccc711879ce7fadcaec7ddb814755356831caa5a18b3c67f1464389f`；上游生成README与本仓库独立README分别保留。
-- 生产构建输入：63项，指纹`dbdec709150afe72ad2ae40d38af89b95b3c7f332e4af1cacb00089e5d203177`。本轮变更为恢复文件精确引用集合、协作者恢复历史版本的授权检查；相应规则同源更新。
-- 当前独立免费包首次完整host编译通过（SwiftPM88.08秒）；最终权限修复后增量独立编译通过。最终受影响规则实际Xcode XCTest Bundle：61/61通过，0失败；外层耗时5.962秒。范围为Domain、历史产物迁移、备份集合、安装恢复与工作区权限；未重新运行完整规则集。
-- 此前公开提交21d4a585f584fa43a67763aeb58c069ba1f43d50的265/265规则保留其原输入/调用条件证据；本轮新增与受影响规则以上述最新批次为准，不将旧计数冒称当前完整重验。
-- 最新macOS x86_64 CLI为11991232字节，SHA-256 `d68ba7d652ba151acc4001b77d7d1a21abec60b3afec10725d1b6811a8b4784a`。当前原生CLI实际17次调用通过：schema40命令、工作区dry-run/保存、文本素材导入/去重/列表、完整备份、新目录V2恢复、合法V1兼容、只读doctor及重开查询；已有目录拒绝覆盖，多余assets/exports两类备份均在创建目标目录前返回invalid_input，原工程与已恢复工程保持不变。
-- 当前恢复直接证据：88字节UTF-8课程讲稿，SHA-256`5d706266cd19533054124a452d80baa413903175264265ed5699b91236f6da88`；新目录SQLite业务snapshot除合法generation递增外与备份相同，源素材逐字节相同，doctor不改snapshot；未引用文件双负向目标始终不存在。不是人工看听、真实账户或付费权益证据。
-- 普通渲染源与调用条件未变，复用公开提交908a2e606b6eae2d38442017957c88a603bc794f的完整26秒成片及真实Codex制作/任务查询范围；备份恢复库存条件已改变，以本轮最新恢复批次为准。旧四产物移动/恢复结论保留其历史产物和旧调用条件范围，本轮未重新生成媒体、调用Codex或伪造审核。
-- Integrations、5份Skill与独立README均原字节保留；先前deepseek-qwen隔离安装/verify/check及实际Skill/schema激活结论保持原边界，不称完整商业业务链或五生态全验。
-- 独立产品README保留原字节，历史规则/媒体记载保留原范围；本次最新计数与调用边界以本清单为准，其SHA-256为`2d70cb97074384a7dee7ec07275f5c74c6cd89033ff7d801b24b11afa27ded82`。
-- 附加发行材料：7项，32329字节，整体指纹`5b04d27050981614b158e5e5391d5e56a5b50c53419bd74986700d6490c704a2`，全部原字节保留。仅包含.gitignore、四份静态HTML、共用CSS和允许为空的docs/.nojekyll。
-- 排除人工App、游戏/卡通高级实现、发布器、发行私钥、凭据、客户数据、模型权重、媒体素材、缓存、日志、任务文档与完整上游仓库；不复制上游Git元数据。
-- 文件集合、普通文件类型、符号/硬链接及UTF-8、敏感形态、私有仓库来源和闭源import均按精确白名单核对；仅docs/.nojekyll允许为空。模式检查不能证明任意自由文本绝无敏感信息。
-- 本清单不代表已签名安装、公证、应用商店发行、iOS真实用户链、真实购买、独立高级模块或五生态全验；合成离线检查不记录人工看听通过。
+- 当前审定时间：2026-10-23 04:20:04 北京时间；免费上游冻结正式提交`71f70fb1ec30a1f673dae193ed0aff361becb89a`。
+- 正式文本为120项源码及必要元数据，另有本清单，共121项文件；不含本清单共1163713字节。
+- 整体内容指纹：`fef2fd47ca5d239dc3efca116a7cba660d7d2e37d8c65660ee378c8b50274060`。算法：相对路径按Unicode码点排序，各项为UTF-8“路径 + NUL + SHA-256十六进制 + NUL + 十进制字节数 + 换行”，拼接后计算SHA-256；本清单与Git元数据不参与摘要。
+- 审定同源文件112项、1125825字节，逐文件与当前免费白名单导出完全相同，同源集指纹`3e17977e70426bcaa9695b1a07616e21f0f9f2dcf09ce44735cff26df223f568`。Package.swift来自免费模板；独立README与7项站点附加文件保留原字节。
+- 上游受控导出114项文件，其非清单内容指纹`66f57571fd4be3c2e02946c7f1a7a4dabcea9d10f973fd9596e3a78a1021d769`；上游生成README不覆盖本仓库独立README。
+- 生产构建输入63项，指纹`df6479415e60ec1508951f8f217c46a1ed7e2bf1f8fb3528f01c3fe1f0c921d0`。相对公开3fdb0ae114592ff02b389860bbdc5e7d0ff40e45，仅AgentMutation.swift、WorkspaceAccess.swift和同源AgentMutationTests.swift更新。
+- 本轮将指定版本恢复来源核权共用到Agent原子命令：同一工作区、主体和时间逐个核验基准写权与所有来源读权；首次执行、预演、幂等回执重放均重新授权。未共享、撤销、到期或错范围来源在修改工程与回执前拒绝；作者及来源只读加基准写权的合法协作者仍可恢复。
+- 当前免费包独立host SwiftPM编译通过，76.92秒；实际Xcode XCTest有限8类56/56通过，0失败，规则2.315秒。范围：工作区13、AgentContract6、AgentMutation8、AgentJobAccess3、AgentPreview3、AgentSchemas3、CloudReview8、CloudProposal12；未重跑完整规则或媒体长链。
+- 最新macOS x86_64 CLI为11992688字节，SHA-256`fb37c3a6d4d80ee501b8fd6cac91a89c9997e28db158e3ed0385473b95dd4aa1`。北京时间2026-10-23T04:19:05.412534+08:00完成15次真实原生CLI调用：40命令schema、capabilities、只读doctor、越权首次/预演、显式来源只读加基准写权的合法恢复及重放、来源撤销/到期后的预演与重放拒绝、作者恢复。负向逐次核对完整业务摘要与回执不变；成功重放不新增版本。
+- grant管理不属于CLI命令；仅由SDK建立隔离合成授权夹具并独立回读，编辑/预演/重放实际由CLI进程执行。未接入真实账户或把合成身份称认证用户。
+- 旧公开3fdb0ae的恢复集合修复、61项规则与17次备份正负调用保留原产物和条件身份；更早21d4a585的265项与908a的26秒媒体/Codex制作记录同样保持原边界。本轮只改编辑来源授权，媒体渲染和备份范围复用未变证据，不称重新生成媒体或完整Codex/iOS用户链重验。
+- Integrations与5份Skill均未变；此前逐宿主安装和发现证据按原边界复用，不称五生态完整验收。独立README SHA-256`2d70cb97074384a7dee7ec07275f5c74c6cd89033ff7d801b24b11afa27ded82`；7项站点附加文件32329字节，指纹`5b04d27050981614b158e5e5391d5e56a5b50c53419bd74986700d6490c704a2`。
+- 排除人工App、游戏/卡通高级实现、发布器、私钥、凭据、客户数据、模型权重、媒体、缓存、日志、任务文档及上游Git元数据。各文本仍按精确白名单、普通文件、UTF-8和敏感形态检查；模式检查不能证明任意自由文本绝无敏感信息。
+- 这些是独立源码发行与合成开发证据，不是App商店发行、物理安装、签名权益、真实购买、CloudKit双身份或人工看听验收。源码公开不代替59FR/76TC正式验收。
 
 ## 审定同源源码与元数据
 
@@ -47,7 +43,7 @@ VideoCore reviewed source product · manifest version 2
 | 22a648799001a9805ed1b07e204a59bae5ed64648cd77ba970f92b77389f80f3 | 26375 | Sources/VideoCLI/VideoCLI.swift | 逐字节一致 |
 | 5b689ccc73ed07010bc1427c2a6cd97fc456621222d4d1167004ed5cd9011a8f | 19933 | Sources/VideoCore/AgentContract.swift | 逐字节一致 |
 | bf2f7ad7ef600774a301f579dd95b966a0702127595ca53e0ae7f55b91a2ded3 | 2784 | Sources/VideoCore/AgentJobAccess.swift | 逐字节一致 |
-| acb499260f82072f56cf4fb3fa4bda60b53cd28f56d1187017d08ce59ee4da26 | 18507 | Sources/VideoCore/AgentMutation.swift | 逐字节一致 |
+| 2f81c81ca458c004242b0ae2a31324cb875200b354366f287d2f75f5d85e443f | 19029 | Sources/VideoCore/AgentMutation.swift | 逐字节一致 |
 | 0d3a975599e87b03984afc2b7489a027bf1d0ba1cffd4fb52c6b58e0a4473cd8 | 9547 | Sources/VideoCore/AgentPreview.swift | 逐字节一致 |
 | 01f3f2d57aeccb27ae3f27ed32a3c9e6426aac00372c94c69dd18a3bf56c8667 | 10859 | Sources/VideoCore/AgentSchemas.swift | 逐字节一致 |
 | 9abfcc0fb2fe524d09107761d1471684807e723a87184e2ad3cd1793b940c55f | 3611 | Sources/VideoCore/AgentWorker.swift | 逐字节一致 |
@@ -81,7 +77,7 @@ VideoCore reviewed source product · manifest version 2
 | e62621f018997d0e706facbd0a59224f61d70e4d8b56c84feb512c59695c09eb | 5921 | Sources/VideoCore/PublicationRules.swift | 逐字节一致 |
 | a81ccc15614d9f5d6f2445cfbf2365a738a7a527e01201bad8c3d70372c4ae97 | 18734 | Sources/VideoCore/Speech.swift | 逐字节一致 |
 | ae4d4e3f7b3b58a1aca1691127a4fecc9d594695df85b0d048902f995c272b9f | 26989 | Sources/VideoCore/Storage.swift | 逐字节一致 |
-| 26f6e62018aca2e7285ec15df607586d8f2fa51a50b63eef9470e4d6620d75ff | 20430 | Sources/VideoCore/WorkspaceAccess.swift | 逐字节一致 |
+| 0cfd24a48f1ac03f1b9a34f4b80cd4cd57fdf3ca10eee07183be496971ed16a1 | 20722 | Sources/VideoCore/WorkspaceAccess.swift | 逐字节一致 |
 | e7dd8743febbec2cfdc92e4656c3dcb1fbd54f8eb2a7b71e9863b371b0fcb6a3 | 11050 | Sources/VideoInstall/VideoInstall.swift | 逐字节一致 |
 | ea4dc3e512b818726ea6fd7d350e697ef234e337bafff6e34d8af40720d9cc54 | 14314 | Sources/VideoMedia/BaiduVideoProvider.swift | 逐字节一致 |
 | ec396089cb7046846c5bf86bd37f830869418de4445dec089466753f3c1e1329 | 4943 | Sources/VideoMedia/ClassicArtworkMedia.swift | 逐字节一致 |
@@ -106,7 +102,7 @@ VideoCore reviewed source product · manifest version 2
 | 09b3610b368060baad6f10bf2636233ff740e5bcffe06a4efb28e61feb743b84 | 7466 | Tests/VideoCLITests/worker_smoke.py | 逐字节一致 |
 | 2bfdd4935e5f4e53fb1934516db3c6d3acc1f19f346d021686a24cd9ed1e9895 | 5693 | Tests/VideoCoreTests/AgentContractTests.swift | 逐字节一致 |
 | 3f5d9b81a289338a77f797ece9dd2d0fcb77a916ab24a2304ba67263bcd5fab8 | 5797 | Tests/VideoCoreTests/AgentJobAccessTests.swift | 逐字节一致 |
-| f4f991c96df892fc47460d87237aedb322acf6b75d1da5e058a0a1b96b6d5ea7 | 6100 | Tests/VideoCoreTests/AgentMutationTests.swift | 逐字节一致 |
+| 07b0ec765ee07e2ad3462964180a017b3d7c03d1037590c875e1082b13de8b27 | 12395 | Tests/VideoCoreTests/AgentMutationTests.swift | 逐字节一致 |
 | ac2f463ab1d63294907721e001aa208851136547d1bff6a28e9d3efde2e6335a | 2864 | Tests/VideoCoreTests/AgentPreviewTests.swift | 逐字节一致 |
 | 8e49c786e7e74699b2a928dc5044d12abbd9b99365ccbedd680aa88267099c7e | 4852 | Tests/VideoCoreTests/AgentSchemasTests.swift | 逐字节一致 |
 | fad7f9ba02a4649d468bc0de5e3a5404015f89fcc2eb9c971542b055459f9bea | 3838 | Tests/VideoCoreTests/AgentWorkerTests.swift | 逐字节一致 |

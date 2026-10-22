@@ -64,6 +64,17 @@ public enum WorkspaceAccessRules {
         guard let project=database.projects.first(where:{$0.id==projectID && $0.workspaceID==workspace.id}),let revision=project.revisions.first(where:{$0.id==revisionID}) else {throw VideoError.notFound("授权项目或版本不存在")}
         return(project,revision)
     }
+    /// Authorization is separate from applying edits so an idempotent response also
+    /// requires current permission for every historical source it depended on.
+    public static func editingProject(projectID:String,baseRevision:String,operations:[Edit],access:WorkspaceAccessContext,in database:Database,now:Date=Date()) throws -> Project {
+        let(project,_)=try revision(projectID:projectID,revisionID:baseRevision,access:access,in:database,write:true,now:now)
+        for operation in operations {
+            if case .restore(let revisionID)=operation {
+                _=try revision(projectID:projectID,revisionID:revisionID,access:access,in:database,now:now)
+            }
+        }
+        return project
+    }
     public static func search(query:WorkspaceSearchQuery,access:WorkspaceAccessContext,in database:Database,now:Date=Date()) throws -> [WorkspaceSearchHit] {
         guard query.text.count<=1000,query.from == nil || query.through == nil || query.from!<=query.through!,query.revisionID == nil || query.projectID != nil else {throw VideoError.invalid("关键词过长、日期范围倒置，或指定版本时未指定项目")}
         let workspace=try validate(access,in:database,now:now),owner=workspace.owner==access.principal
@@ -190,14 +201,7 @@ public extension Repository {
     }
     @discardableResult func applyScopedEdits(projectID:String,baseRevision:String,operations:[Edit],message:String,access:WorkspaceAccessContext,now:Date=Date()) throws -> Revision {
         try transaction {database in
-            let(project,_)=try WorkspaceAccessRules.revision(projectID:projectID,revisionID:baseRevision,access:access,in:database,write:true,now:now)
-            // Write access to the current revision never grants the rest of its history.
-            // Check every restore source before Editor can copy or return its private facts.
-            for operation in operations {
-                if case .restore(let revisionID)=operation {
-                    _=try WorkspaceAccessRules.revision(projectID:projectID,revisionID:revisionID,access:access,in:database,now:now)
-                }
-            }
+            let project=try WorkspaceAccessRules.editingProject(projectID:projectID,baseRevision:baseRevision,operations:operations,access:access,in:database,now:now)
             var updated=try Editor.apply(operations,to:project,baseRevision:baseRevision,assets:database.assets.filter{$0.workspaceID==access.workspaceID},message:message)
             updated.revisions[updated.revisions.count-1].dependencies=try DependencyRules.freeze(revision:updated.current,assets:database.assets,evidence:database.evidence)
             guard let index=database.projects.firstIndex(where:{$0.id==project.id}) else{throw VideoError.notFound("项目不存在")}
