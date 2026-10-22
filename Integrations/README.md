@@ -6,15 +6,19 @@
 
 | 生态 | 本地宿主路由 | 安装目标（用户选定项目内） | 实测边界 |
 |---|---|---|---|
-| ChatGPT/Codex | Codex shell；聊天界面另需认证连接器 | `.agents/skills/video`或宿主已配置技能目录 | Codex 0.159.2已在临时项目离线发现同源video Skill；模型选择与真实工具调用仍待验收 |
-| Claude | Claude Code shell；其他界面按实际运行面 | `.claude/skills/video` | 独立Skill可安装；插件/市场审核未执行 |
-| Gemini | Gemini CLI shell | `.gemini/skills/video` | Gemini CLI 0.50.0在仅本进程明确工作区信任时，离线skills list返回video [Enabled]；未开始模型会话或工具调用 |
-| Grok | Grok Build shell | `.grok/skills/video` | Grok Build 1.0.67在仅本进程明确工作区信任时，离线inspect返回project来源的video；未开始模型会话或工具调用 |
+| ChatGPT/Codex | Codex shell；聊天界面另需认证连接器 | `.agents/skills/video`或宿主已配置技能目录 | Codex 0.159.2已离线发现Skill；复用ChatGPT登录的真实有限会话执行只读schema发现成功，完整业务链仍待验收 |
+| Claude | Claude Code shell；其他界面按实际运行面 | `.claude/skills/video` | 同源Skill安装通过；有界真实会话仅返回init后超时，没有模型响应或video工具调用证据；插件/市场审核未执行 |
+| Gemini | Gemini CLI shell | `.gemini/skills/video` | Gemini CLI 0.50.0离线发现video [Enabled]；0.50.0及隔离安装的官方0.65.0真实会话均被现有认证的IneligibleTierError拒绝，未执行video工具 |
+| Grok | Grok Build shell | `.grok/skills/video` | Grok Build 1.0.67离线发现video；真实有限会话返回Not signed in，未执行video工具 |
 | DeepSeek | 用户已配置DeepSeek provider的Codex等工具宿主 | 使用该宿主技能目录 | 模型API不是执行环境；不虚构独立DeepSeek Skill市场 |
 
 安装示例：`python3 Integrations/install.py --host codex --destination <项目>/.agents/skills/video`。目标不覆盖已有修改；重复安装同一内容会验证通过，内容不同则保留原文件并报错。`--dry-run`只校验，`--verify`核对现有安装。`--host deepseek-codex`不改provider或读取API Key。
 
-2026-10-22（北京时间）的本地离线发现范围：Codex 0.159.2的app-server `skills/list`返回`video`、启用状态与准确安装路径；Gemini CLI 0.50.0通过本进程`GEMINI_CLI_TRUST_WORKSPACE=true`的`skills list`返回`video [Enabled]`；Grok Build 1.0.67通过本进程`GROK_FOLDER_TRUST=0`的`inspect --json`返回`video`、`userInvocable=true`与项目内准确Skill路径。信任条件只用于各自包含审定Skill的隔离临时项目，不写全局可信目录或模型配置。三个宿主的安装文件均与同一份源Skill逐字节一致；Claude Code 2.1.3只核对帮助与版本，DeepSeek未核验实际provider。没有发起模型请求或执行video工具，不据此声明真实业务调用、市场发布或五生态验收通过。
+2026-10-22（北京时间）的离线发现结果保留在`artifacts/checks/host-discovery.md`。本次在受管临时工作树内，分别对Codex、Claude、Gemini和Grok安装同一份5文件Skill并逐字节复核；未改全局可信目录、模型或provider。真实执行结果保留在`artifacts/checks/host-live.md`：Codex复用已有ChatGPT登录，产生真实`command_execution`成功事件，`discover.py`调用原生`video schema`所得40命令摘要与直接调用一致。该验证只证明能力发现，不替代首次成片、安装更新、权限拒绝和完整五生态验收。
+
+Claude的3-turn/0.10美元上限会话与缩减后的1-turn/0.01美元上限探针均未收到模型响应；超时后只结束本任务子进程。Gemini现有认证被官方个人层兼容条件拒绝；在受管cache树禁用npm生命周期脚本安装官方0.65.0后仅复验一次，仍为同一认证错误，未修改全局CLI，当前没有已配置的API凭据替代；Grok当前未登录。DeepSeek尚未核验实际provider或模型调用。先尝试的Login受管认证工具未支持这些CLI渠道，本次没有新建登录、索要人工操作或读取凭据；保留实际失败而不把安装成功写成可调用。
+
+公开基础源码与共用Skill位于[video-core](https://github.com/ayqy/video-core)，可从该公开仓库的`Integrations/skills/video`安装；修改通过其[公开Pull Request入口](https://github.com/ayqy/video-core/pulls)贡献。生态官方目录/市场仍各自要求其实际包装和审核，不把本仓库公开等同五家市场上架。
 
 实际贡献时从经开闭源边界审查的免费公开发行源提交相同Skill及宿主必要元数据；不要把当前私有仓库地址当公开安装链接。Claude/Grok插件manifest与Gemini扩展manifest仅在正式打包阶段按当期规范生成，不能用一个未经验证的空manifest假装已支持市场。
 

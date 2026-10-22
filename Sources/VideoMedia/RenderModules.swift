@@ -159,7 +159,7 @@ public struct RenderCatalogSelection: Sendable {
 /// A stale imported catalog never masks a valid catalog delivered with an App update.
 /// Each candidate independently passes the same pinned-key, current-code and policy checks.
 public enum RenderCatalogResolver {
-    public static func verify(_ data: Data, publicKey: Data, implementationDigest: String, minimumPolicyVersions: [String: Int], supportedCapabilities: [String: String], now: Date = Date()) throws -> [VerifiedRenderCatalogEntry] {
+    public static func verify(_ data: Data, publicKey: Data, implementationDigest: String, minimumPolicyVersions: [String: Int], supportedCapabilities: [String: String], policyHistory: ModulePolicyHistory? = nil, now: Date = Date()) throws -> [VerifiedRenderCatalogEntry] {
         guard data.count <= 2 * 1024 * 1024, data.starts(with: Data("bplist00".utf8)) else { throw VideoError.invalid("目录须为不超过2MiB的二进制PropertyList封套") }
         let catalog: RenderModuleCatalog
         do { catalog = try PropertyListDecoder().decode(RenderModuleCatalog.self, from: data) }
@@ -167,7 +167,7 @@ public enum RenderCatalogResolver {
         guard catalog.format == 1, !supportedCapabilities.isEmpty,
               catalog.entries.count == supportedCapabilities.count, catalog.entries.count <= 16 else { throw VideoError.invalid("高级模块目录须完整包含本Host支持的模块集合") }
         var seen: Set<String> = []
-        return try catalog.entries.map { entry in
+        let verified = try catalog.entries.map { entry in
             let manifest = try entry.manifest.verified(as: PluginManifest.self, publicKey: publicKey)
             let policy = try entry.policy.verified(as: CommercialPolicy.self, publicKey: publicKey)
             guard let capability = supportedCapabilities[manifest.id], seen.insert(manifest.id).inserted,
@@ -181,13 +181,15 @@ public enum RenderCatalogResolver {
             guard manifest.implementationDigest == implementationDigest, !implementationDigest.isEmpty else { throw VideoError.conflict("目录不匹配当前构建或架构的代码身份") }
             return VerifiedRenderCatalogEntry(signed: entry, manifest: manifest, policy: policy)
         }
+        if let policyHistory { _ = try policyHistory.observing(verified.map(\.policy), now: now) }
+        return verified
     }
-    public static func select(imported: Data?, bundled: Data?, publicKey: Data, implementationDigest: String, minimumPolicyVersions: [String: Int], supportedCapabilities: [String: String], now: Date = Date()) throws -> RenderCatalogSelection {
+    public static func select(imported: Data?, bundled: Data?, publicKey: Data, implementationDigest: String, minimumPolicyVersions: [String: Int], supportedCapabilities: [String: String], policyHistory: ModulePolicyHistory? = nil, now: Date = Date()) throws -> RenderCatalogSelection {
         var diagnostics: [String] = []
         for (source, data) in [(RenderCatalogSelection.Source.imported, imported), (.bundled, bundled)] {
             guard let data else { continue }
             do {
-                let entries = try verify(data, publicKey: publicKey, implementationDigest: implementationDigest, minimumPolicyVersions: minimumPolicyVersions, supportedCapabilities: supportedCapabilities, now: now)
+                let entries = try verify(data, publicKey: publicKey, implementationDigest: implementationDigest, minimumPolicyVersions: minimumPolicyVersions, supportedCapabilities: supportedCapabilities, policyHistory: policyHistory, now: now)
                 return RenderCatalogSelection(source: source, entries: entries, diagnostics: diagnostics)
             } catch {
                 let reason = (error as? VideoError)?.localizedDescription ?? "签名或格式校验失败"

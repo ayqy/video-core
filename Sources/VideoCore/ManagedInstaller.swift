@@ -143,17 +143,13 @@ public final class ManagedReleaseInstaller {
         struct Fingerprint:Encodable{var snapshot:Database;var assets:[String:String];var exports:[String:String]}
         return try Codec.digest(Fingerprint(snapshot:snapshot,assets:value.assets.mapValues(Codec.hash),exports:(value.exports ?? [:]).mapValues(Codec.hash)))
     }
-    private func policies(_ root:URL?)throws->[String:Int] {
-        guard let root else{return[:]};let file=root.appendingPathComponent(".video-advanced-policy.plist")
-        guard fm.fileExists(atPath:file.path) else{return[:]}
-        try regular(file,limit:65536)
-        let value=try PropertyListDecoder().decode([String:Int].self,from:Data(contentsOf:file))
-        guard value.count<=128,value.allSatisfy({$0.key.range(of:"^[a-z0-9][a-z0-9.-]{1,95}$",options:.regularExpression) != nil && $0.value>0}) else{throw VideoError.permission("已有高级策略最高版本损坏，未清空防回退记录")};return value
+    private func policies(_ root:URL?)throws->ModulePolicyHistory {
+        guard let root else{return try ModulePolicyHistory()}
+        return try ModulePolicyHistoryFileStore(root:root).read()
     }
     private func mergePolicies(from source:URL?,additional:URL?,to target:URL)throws {
-        var value=try policies(source)
-        for (id,version) in try policies(additional){value[id]=max(value[id] ?? 0,version)}
-        if !value.isEmpty{try write(value,to:target.appendingPathComponent(".video-advanced-policy.plist"))}
+        let value=try policies(source).merging(policies(additional))
+        if !value.versions.isEmpty{try value.encoded().write(to:target.appendingPathComponent(ModulePolicyHistoryFileStore.fileName),options:.atomic)}
     }
     private struct PreservedLicense:Decodable {
         var id:String;var subject:String;var pluginIDs:Set<String>;var issuedAt:Date;var expiresAt:Date?;var revoked:Bool

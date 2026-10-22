@@ -84,9 +84,8 @@ private enum CandidateSelfTest {
         if manifest.product == .advancedCLI {
             let binary=program.appendingPathComponent(manifest.product.entrypoint)
             let digest=try MachOCodeIdentity.digest(Data(contentsOf:binary,options:.mappedIfSafe))
-            let policyURL=data.appendingPathComponent(".video-advanced-policy.plist")
-            let highest=FileManager.default.fileExists(atPath:policyURL.path) ? try PropertyListDecoder().decode([String:Int].self,from:Data(contentsOf:policyURL)):[:]
-            _=try RenderCatalogResolver.verify(Data(contentsOf:program.appendingPathComponent("render-catalog.videomodules")),publicKey:InstallerTrust.publicKey,implementationDigest:digest,minimumPolicyVersions:highest,supportedCapabilities:["video.game":"game.simulate","video.cartoon":"cartoon.animate"])
+            let history=try ModulePolicyHistoryFileStore(root:data).read()
+            _=try RenderCatalogResolver.verify(Data(contentsOf:program.appendingPathComponent("render-catalog.videomodules")),publicKey:InstallerTrust.publicKey,implementationDigest:digest,minimumPolicyVersions:history.versions,supportedCapabilities:["video.game":"game.simulate","video.cartoon":"cartoon.animate"],policyHistory:history)
             // A preserved licence is evidence, never an automatic grant. Actual jobs run the
             // same signature/expiry/revocation and module entitlement checks again.
             let licence=data.appendingPathComponent("independent.videolicense")

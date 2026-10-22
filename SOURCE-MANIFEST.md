@@ -2,23 +2,25 @@
 
 VideoCore reviewed source product · manifest version 2
 
-- 正式仓库实际文本：117 项源码及必要元数据，另有本清单，共 118 项文件；不含本清单的内容共 1100305 字节。
-- 整体内容指纹：`5c64319a76832f1aaccba0392764423fd7efb2d4604c93e3f5acbd0a036bcd6e`。
-- 指纹算法：包内相对路径按 Unicode 码点排序，每项编码为 UTF-8 的“路径 + NUL + SHA-256 十六进制 + NUL + 十进制字节数 + 换行”，对拼接内容计算 SHA-256。本清单自身与 Git 元数据不参与摘要，无自引用。
-- 审定同源文件：109 项，1062964 字节，逐文件与当前免费白名单导出完全相同；同源集指纹 `7233d030ffa79fddf5e89637eb495145a9ddc571b0615f94c0a511e70f69b039`。Package.swift 来自免费模板，其余来自逐文件审定的免费来源。
-- 上游受控导出共 111 项文件，其非清单内容指纹 `5b2ce885ac338a1c267cdb28021c94ce7dc9ef1ef3c7d4be09d4ee765c349308`；上游生成 README 与本仓库独立 README 分别保留，不混用两种产品说明。
-- 生产构建输入：62 项，指纹 `dba4741d352a89503ed89a328ffcf56789e748e7bea75810549c18b465349470`。当前仅更新 Integrations 的宿主离线发现说明；同源生产和测试输入没有变化。
-- 独立产品 README 保留 243 项 XCTest 全部通过、26 秒原生 CLI 四产物、物理移动工作区及完整备份恢复的实际验证范围，也保留尚未公开发布、未提供已签名或公证二进制、产物 needs_review 和五生态未全验的边界。
-- 附加发行材料：7 项，32329 字节，整体指纹 `5b04d27050981614b158e5e5391d5e56a5b50c53419bd74986700d6490c704a2`。仅包含 .gitignore、知幕静态支持站的四份 HTML 与共用 CSS，以及允许为空的 docs/.nojekyll；它们不是上游免费源码。
-- 排除人工 App、游戏/卡通高级实现、发布器、发行私钥、凭据、客户数据、模型权重、媒体素材、缓存、日志、任务文档与完整上游仓库；不复制上游 Git 元数据。
-- 每份实质文本均通过原 package_free.scan_payload 的 UTF-8、敏感形态、私有仓库来源及闭源 import 检查；仅 docs/.nojekyll 允许为空。固定合成凭据拒绝测试沿用精确摘要例外。文件集合、普通文件类型、符号链接及硬链接另行核对。
-- 本清单证明文件内容和来源核对范围，不构成任意自由文本绝无敏感信息、已签名安装、应用商店发行、完整 iOS 用户链、真实购买或五类宿主业务全验的证明。
+- 当前审定时间：2026-10-22 23:54:45 北京时间。
+- 正式仓库实际文本：117项源码及必要元数据，另有本清单，共118项文件；不含本清单的内容共1122739字节。
+- 整体内容指纹：`610e5e0495075366247ad757085fe641a9bec7241cbe6d481605938de0e8dadc`。
+- 指纹算法：包内相对路径按Unicode码点排序，每项编码为UTF-8的“路径 + NUL + SHA-256十六进制 + NUL + 十进制字节数 + 换行”，对拼接内容计算SHA-256。本清单自身与Git元数据不参与摘要，无自引用。
+- 审定同源文件：109项，1085148字节，逐文件与当前免费白名单导出完全相同；同源集指纹`a1d8a732dcdb05780a838249c36a925fbbe2f10ccae14d131e802ec51bcd8a72`。Package.swift来自免费模板，其余来自逐文件审定的免费来源。
+- 上游受控导出共111项文件，其非清单内容指纹`2dce05022e0c38283f01cd01e5c2fe73e392fab82812451fe79872b6d77a1333`；上游生成README与本仓库独立README分别保留，不混用两种产品说明。
+- 生产构建输入：62项，指纹`02f70b5958eae803be86b0513570c8aa7489ae933513f292dfd345ee78719daf`。本次包含策略历史持久语义、安装回滚合并及候选自检适配，已重新编译和运行当前免费包，没有把旧源测试当作最新证据。
+- 当前独立包实际XCTest为253/253通过；策略目录/历史15项与受管安装14项包含在同一完整测试Bundle中。当前原生CLI实际生成26秒H.264/AAC四产物，帧边界拒绝、实际移动工作区与完整备份恢复通过，产物保持needs_review，未伪造人工看听审核。
+- 独立产品README在保留产品、许可和未签名二进制边界的基础上，更新上述实际验证范围；其SHA-256为`c837df3a361e1888e1d8440baaee104b49d06977288c1c955b5f0c751d964116`。
+- 附加发行材料：7项，32329字节，整体指纹`5b04d27050981614b158e5e5391d5e56a5b50c53419bd74986700d6490c704a2`。仅包含.gitignore、知幕静态支持站四份HTML、共用CSS和允许为空的docs/.nojekyll；本次均逐字节保留，不是上游免费源码。
+- 排除人工App、游戏/卡通高级实现、发布器、发行私钥、凭据、客户数据、模型权重、媒体素材、缓存、日志、任务文档与完整上游仓库；不复制上游Git元数据。
+- 每份实质文本均通过原package_free.scan_payload的UTF-8、敏感形态、私有仓库来源及闭源import检查；仅docs/.nojekyll允许为空。固定合成凭据拒绝测试沿用精确摘要例外。文件集合、普通文件类型、符号链接及硬链接另行核对。
+- 本清单证明文件内容和来源核对范围，不构成任意自由文本绝无敏感信息、已签名安装、应用商店发行、完整iOS用户链、真实购买、独立高级模块或五生态全验的证明。
 
 ## 审定同源源码与元数据
 
-| SHA-256 | 字节数 | 包内路径 | 同源结果 |
+| SHA-256 | 字节数 | 包内路径 | 核对结果 |
 |---|---:|---|---|
-| 843cd1415b0b5b4e84c9f94bd61cd5e29b38675ccbbebdb4b4c2888860457b5f | 4146 | Integrations/README.md | 逐字节一致 |
+| 3bf8a0d90a14cb620743f175a4765e3528f5a85f7d8fb37845d8240fbce74ef7 | 5074 | Integrations/README.md | 逐字节一致 |
 | 4f646b85881f0ae26539807f0e26d5daad68c91e590989c4b251d9d0b10254f6 | 1859 | Integrations/check_install.py | 逐字节一致 |
 | abafee4069a7a58ae79d7e180340fce80d9d51bfcfe50a49847c25da16a266d2 | 2149 | Integrations/discover.py | 逐字节一致 |
 | 87a66a523e7d922c451115855e530a95a0fd7caec6f607785cef2d935bff470c | 3112 | Integrations/install.py | 逐字节一致 |
@@ -60,10 +62,10 @@ VideoCore reviewed source product · manifest version 2
 | c0cb25559cb31723ce791dd8bc15520a01a75c744dc9882288467729fa644f40 | 5823 | Sources/VideoCore/Layers.swift | 逐字节一致 |
 | 52a5b0418fef01b5dfd816a9a66793ae9c4fb2b22d585f300dc3007568c41184 | 1890 | Sources/VideoCore/LearningExample.swift | 逐字节一致 |
 | d6c06ae9b610d6b7f636e9ddc301e53445b8ac14e1ec76ff5d435d94a4aefdbe | 8706 | Sources/VideoCore/Loudness.swift | 逐字节一致 |
-| f4354a8803445b8e1ebf2203a6f598aa6daf995b9be3e274771b113a91ee8e5f | 23060 | Sources/VideoCore/ManagedInstaller.swift | 逐字节一致 |
+| cbfeb4947a14fbd668756bb7aadf9b7c233355e27248ca13f09965152320219f | 22611 | Sources/VideoCore/ManagedInstaller.swift | 逐字节一致 |
 | ba49aee5d81a6c534c8ccdaa33f817b0a501bc281f908857a570cbb156a9bb5e | 11604 | Sources/VideoCore/ManagedRelease.swift | 逐字节一致 |
 | c6950f5da04d4531602d738f2552d3a56aff377375d5c96990a27cd23a050a73 | 15431 | Sources/VideoCore/Models.swift | 逐字节一致 |
-| 046d51341314c70d76d0bce0ace8774549e5f8524ac50af6153b72ba3889183d | 4685 | Sources/VideoCore/ModuleCatalogPublication.swift | 逐字节一致 |
+| f4d5ffef84c3177d22f93b5f0b12400e9121fc6eb34703de1d735fa599cea8fe | 15222 | Sources/VideoCore/ModuleCatalogPublication.swift | 逐字节一致 |
 | 4a02f41deb1d630359922eebe8ffe3a436ceedf95ad9ca823a2eb532f74de145 | 28979 | Sources/VideoCore/Narratives.swift | 逐字节一致 |
 | dcbb916e15aa23f978884fb17c6a9696973b7021adbe5a2e1ace68653634fadb | 6458 | Sources/VideoCore/NativeAgent.swift | 逐字节一致 |
 | b0888e7851c11f828fc45640bc325815b3aa30526df1eaede5d84992fedb68a8 | 5324 | Sources/VideoCore/Primitives.swift | 逐字节一致 |
@@ -72,7 +74,7 @@ VideoCore reviewed source product · manifest version 2
 | a81ccc15614d9f5d6f2445cfbf2365a738a7a527e01201bad8c3d70372c4ae97 | 18734 | Sources/VideoCore/Speech.swift | 逐字节一致 |
 | e7a6f86f3916ec23a7506897e1f0a5fb7d7ce001077da7a7699cfb52befcc567 | 26368 | Sources/VideoCore/Storage.swift | 逐字节一致 |
 | dabc35c7b2d803ae0eea414efe2ed74dabd851a0ed416465631596d59ead57a0 | 19978 | Sources/VideoCore/WorkspaceAccess.swift | 逐字节一致 |
-| 7b207e7a25229c3af2a752aa2db8cf9f6968cdad62eb2da7987f02d0ce44aeb7 | 11198 | Sources/VideoInstall/VideoInstall.swift | 逐字节一致 |
+| e7dd8743febbec2cfdc92e4656c3dcb1fbd54f8eb2a7b71e9863b371b0fcb6a3 | 11050 | Sources/VideoInstall/VideoInstall.swift | 逐字节一致 |
 | ea4dc3e512b818726ea6fd7d350e697ef234e337bafff6e34d8af40720d9cc54 | 14314 | Sources/VideoMedia/BaiduVideoProvider.swift | 逐字节一致 |
 | ec396089cb7046846c5bf86bd37f830869418de4445dec089466753f3c1e1329 | 4943 | Sources/VideoMedia/ClassicArtworkMedia.swift | 逐字节一致 |
 | 6beff353416b9b4329e20ab3cbd84fcb19d34c8687427feb157b97d00ed63b4d | 10707 | Sources/VideoMedia/ClassicBuiltinAssets.swift | 逐字节一致 |
@@ -87,7 +89,7 @@ VideoCore reviewed source product · manifest version 2
 | 54f2c2e61cd64c9b3a668a903d13c5dc81287cb6c3221dc6d62396bf9a864141 | 2044 | Sources/VideoMedia/Preview.swift | 逐字节一致 |
 | b559534d57549106cce137f015699a82fda438fe7cb686affd8201b65e07caed | 5695 | Sources/VideoMedia/ProviderClient.swift | 逐字节一致 |
 | 4f19002514353501551d4b0930172d62e5d65803e953cd9db6005a9d704cc6e0 | 3782 | Sources/VideoMedia/RemoteJobs.swift | 逐字节一致 |
-| b0ed975a70ac6d1995aa3612d9b5c3e9f9deb95a313f57c43786dfd853d78219 | 24786 | Sources/VideoMedia/RenderModules.swift | 逐字节一致 |
+| 8060bc955211bc4a244cd53866566aa6eeabe5bc9212e46f93db34d4fa316798 | 25033 | Sources/VideoMedia/RenderModules.swift | 逐字节一致 |
 | 402b0323be6202700acdd55831a8ee4cb8c76f68ee52cde8f61edb302e64b106 | 26639 | Sources/VideoMedia/Renderer.swift | 逐字节一致 |
 | 9ec229f48547a7e2e0218d913dba2dfd38457f08ae55196979968dbbdee2d4e0 | 11971 | Sources/VideoMedia/SpeechService.swift | 逐字节一致 |
 | 924b79fb85d46d8f92c02e9347beabbd3c608929b0c5820d6b0ae597938bb941 | 12830 | Sources/VideoMedia/VisualCache.swift | 逐字节一致 |
@@ -114,8 +116,8 @@ VideoCore reviewed source product · manifest version 2
 | 34834eefae890a78408967bdb8cab12fe06ba9708ba127f2a1ed61520f9d3aea | 5221 | Tests/VideoCoreTests/JobOperationTests.swift | 逐字节一致 |
 | 1c7965c4e437acd65085788b53c88a94ce7aaa8c604e98daa53c1ddae76ff57f | 2546 | Tests/VideoCoreTests/LayerTests.swift | 逐字节一致 |
 | 082a8f3a9302736ee62ddc5eab2609dacac100a83145b24b55d5ed6b97ba1737 | 5928 | Tests/VideoCoreTests/LoudnessTests.swift | 逐字节一致 |
-| 1ae18d27b77a5fa7aa24d504cd39253c00cfb5e5fd4faf018899d6930cea3c3f | 13667 | Tests/VideoCoreTests/ManagedInstallTests.swift | 逐字节一致 |
-| c3efad9ae77f13cf7b422e21bea98662dc2706f997997bc4bf76f939cacca029 | 5616 | Tests/VideoCoreTests/ModuleCatalogPublicationTests.swift | 逐字节一致 |
+| 2565a7b424ab876dc9e013f811d81ce4300ef25a6da91da36295c72fd111fb1e | 17869 | Tests/VideoCoreTests/ManagedInstallTests.swift | 逐字节一致 |
+| 15accf442db3ce30dc6b0ce7c6e8f50d946594eaf1afd592b4af9ba5f0ff8cbf | 12483 | Tests/VideoCoreTests/ModuleCatalogPublicationTests.swift | 逐字节一致 |
 | 7ba1587dc551d09402b66e7ef663cc5b7478a55c52c1d6ef93dfe129020d2d7d | 17745 | Tests/VideoCoreTests/NarrativeTests.swift | 逐字节一致 |
 | c499c8ae6aca4855864eb5a5e2c5a55305643953a9c47073fc66b45c9bb41767 | 5752 | Tests/VideoCoreTests/NativeAgentTests.swift | 逐字节一致 |
 | 9f9e0b1055a1b9ca2dfb2c1a4f03681c0af63641bee85a33384100e0065f9e6c | 4615 | Tests/VideoCoreTests/ProviderRulesTests.swift | 逐字节一致 |
@@ -130,18 +132,18 @@ VideoCore reviewed source product · manifest version 2
 
 ## 独立产品说明
 
-| SHA-256 | 字节数 | 包内路径 | 状态 |
+| SHA-256 | 字节数 | 包内路径 | 核对结果 |
 |---|---:|---|---|
-| db4220b24521225e6d8aae5d77de248e975d1a80fbc264e1ff001704ca30d473 | 5012 | README.md | 保留独立产品说明 |
+| c837df3a361e1888e1d8440baaee104b49d06977288c1c955b5f0c751d964116 | 5262 | README.md | 独立产品说明 |
 
-## 附加发行材料
+## 保留的附加发行材料
 
-| SHA-256 | 字节数 | 包内路径 | 分组 |
+| SHA-256 | 字节数 | 包内路径 | 核对结果 |
 |---|---:|---|---|
-| c07cc6d537cb0e119e22a6184cb1423b3dee983074bcc4b81c17072ad9e616c5 | 93 | .gitignore | 仓库忽略规则 |
-| e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855 | 0 | docs/.nojekyll | 空白站点标记 |
-| 88c943e9363dfde53eec899b086d9a3f5c589837d37e081b14539d1dea25a2a8 | 4342 | docs/index.html | 静态产品支持文档 |
-| 461d5bf52e253071a3ea53eb0033f82f270381559f9182f6717c185dc4d63a43 | 8241 | docs/privacy.html | 静态产品支持文档 |
-| 5f1f0911ebcd0163bc0daa42147f4924cc1713a12b34e2ad8eb9e4b84d60a530 | 4718 | docs/site.css | 静态产品支持文档 |
-| 37ed49710d24edd4fd6cd46bc36744e2edc46dd12d205d2a4af2fdad6845f95b | 9481 | docs/support.html | 静态产品支持文档 |
-| a57baa454e02631f7a3c88b1e51dd3bc60d3e173084d391061eefc8b6d20a74f | 5454 | docs/terms.html | 静态产品支持文档 |
+| c07cc6d537cb0e119e22a6184cb1423b3dee983074bcc4b81c17072ad9e616c5 | 93 | .gitignore | 原字节保留 |
+| e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855 | 0 | docs/.nojekyll | 原字节保留 |
+| 88c943e9363dfde53eec899b086d9a3f5c589837d37e081b14539d1dea25a2a8 | 4342 | docs/index.html | 原字节保留 |
+| 461d5bf52e253071a3ea53eb0033f82f270381559f9182f6717c185dc4d63a43 | 8241 | docs/privacy.html | 原字节保留 |
+| 5f1f0911ebcd0163bc0daa42147f4924cc1713a12b34e2ad8eb9e4b84d60a530 | 4718 | docs/site.css | 原字节保留 |
+| 37ed49710d24edd4fd6cd46bc36744e2edc46dd12d205d2a4af2fdad6845f95b | 9481 | docs/support.html | 原字节保留 |
+| a57baa454e02631f7a3c88b1e51dd3bc60d3e173084d391061eefc8b6d20a74f | 5454 | docs/terms.html | 原字节保留 |

@@ -39,10 +39,15 @@ final class ManagedInstallTests:XCTestCase {
         let source=try source(),slot=directory(),engine=installer()
         let initial=try engine.install(package:package(build:1),slot:slot,data:source.root)
         let oldHandle=try Repository(root:root(initial));try oldHandle.transaction{$0.workspaces[0].name="更新前最后一次保存"}
+        let oldPolicyStore=ModulePolicyHistoryFileStore(root:root(initial)),policy=CommercialPolicy(pluginID:"video.game",version:1,access:"free")
+        try oldPolicyStore.observe([policy])
         let updated=try engine.update(package:package(build:2),slot:slot)
         XCTAssertNotEqual(updated.generation,initial.generation);XCTAssertEqual(updated.previousGeneration,initial.generation)
         XCTAssertEqual(try Repository(root:root(updated),readOnly:true).read().workspaces[0].name,"更新前最后一次保存")
         XCTAssertThrowsError(try oldHandle.transaction{$0.workspaces[0].name="旧进程不应覆盖"})
+        var stalePolicy=policy;stalePolicy.version=2
+        XCTAssertThrowsError(try oldPolicyStore.observe([stalePolicy]))
+        XCTAssertEqual(try ModulePolicyHistoryFileStore(root:root(updated)).read().versions[policy.pluginID],1)
         XCTAssertEqual(try oldHandle.read().workspaces[0].name,"更新前最后一次保存")
         let current=try Repository(root:root(updated));try current.transaction{$0.workspaces[0].name="新版本编辑"}
         let rolledBack=try engine.rollback(slot:slot)
@@ -90,8 +95,8 @@ final class ManagedInstallTests:XCTestCase {
         let expected=try Data(contentsOf:updatedRoot.appendingPathComponent("independent.videolicense"))
         let result=try engine.rollback(slot:slot),restoredRoot=root(result)
         XCTAssertEqual(try Data(contentsOf:restoredRoot.appendingPathComponent("independent.videolicense")),expected)
-        let highest=try PropertyListDecoder().decode([String:Int].self,from:Data(contentsOf:restoredRoot.appendingPathComponent(".video-advanced-policy.plist")))
-        XCTAssertEqual(highest,["video.game":5,"video.cartoon":3])
+        let highest=try ModulePolicyHistoryFileStore(root:restoredRoot).read()
+        XCTAssertEqual(highest.versions,["video.game":5,"video.cartoon":3])
     }
     func testRollbackDoesNotResurrectRemovedLicenceOrCopyOldCatalogIntoData()throws {
         let source=try source(),slot=directory(),engine=installer()
@@ -118,6 +123,58 @@ final class ManagedInstallTests:XCTestCase {
         let policyChanging=installer{_,data,_ in try self.write(["video.game":1],to:data.appendingPathComponent(".video-advanced-policy.plist"))}
         XCTAssertThrowsError(try policyChanging.update(package:package(build:2),slot:slot))
         XCTAssertEqual(try installer().status(slot:slot).generation,initial.generation)
+    }
+    func testRollbackPreservesLatestPolicySemanticsAndRejectsSameVersionConflict()throws {
+        let source=try source(),slot=directory(),engine=installer()
+        let original=CommercialPolicy(pluginID:"video.game",version:2,access:"free")
+        try ModulePolicyHistoryFileStore(root:source.root).observe([original])
+        _=try engine.install(package:package(build:1),slot:slot,data:source.root)
+        let updated=try engine.update(package:package(build:2),slot:slot),latestRoot=root(updated)
+        var disabled=original;disabled.version=3;disabled.access="disabled"
+        try ModulePolicyHistoryFileStore(root:latestRoot).observe([disabled])
+        let rolled=try engine.rollback(slot:slot),restored=try ModulePolicyHistoryFileStore(root:root(rolled)).read()
+        XCTAssertEqual(restored.versions[original.pluginID],3)
+        XCTAssertEqual(restored.declarations[original.pluginID]?.access,"disabled")
+        XCTAssertThrowsError(try ModulePolicyHistoryFileStore(root:root(rolled)).observe([original]))
+
+        // A conflicting history in an old generation cannot be silently chosen by rollback.
+        var conflicting=disabled;conflicting.access="paid"
+        let conflictingHistory=try ModulePolicyHistory().observing([conflicting])
+        // The next rollback targets the immediately prior build2 snapshot, so make that exact
+        // prior generation conflicting while retaining its unrelated business data.
+        let previousRoot=slot.appendingPathComponent("generations/"+updated.generation+"/data")
+        try conflictingHistory.encoded().write(to:previousRoot.appendingPathComponent(ModulePolicyHistoryFileStore.fileName),options:.atomic)
+        let before=try engine.status(slot:slot).generation
+        XCTAssertThrowsError(try engine.rollback(slot:slot))
+        XCTAssertEqual(try engine.status(slot:slot).generation,before)
+    }
+    func testCandidateCannotRewriteSameVersionPolicySemanticsDuringProbe()throws {
+        let source=try source(),slot=directory(),policy=CommercialPolicy(pluginID:"video.game",version:2,access:"free")
+        try ModulePolicyHistoryFileStore(root:source.root).observe([policy])
+        let initial=try installer().install(package:package(build:1),slot:slot,data:source.root)
+        let changed=installer{_,data,_ in
+            var other=policy;other.access="paid"
+            try ModulePolicyHistory().observing([other]).encoded().write(to:data.appendingPathComponent(ModulePolicyHistoryFileStore.fileName),options:.atomic)
+        }
+        XCTAssertThrowsError(try changed.update(package:package(build:2),slot:slot))
+        XCTAssertEqual(try installer().status(slot:slot).generation,initial.generation)
+        XCTAssertEqual(try ModulePolicyHistoryFileStore(root:root(initial)).read().declarations[policy.pluginID]?.access,"free")
+    }
+    func testInstallSnapshotExcludesConcurrentPolicyObservationOnOriginalGeneration()throws {
+        let source=try source(),slot=directory(),policy=CommercialPolicy(pluginID:"video.game",version:2,access:"paid")
+        try ModulePolicyHistoryFileStore(root:source.root).observe([policy])
+        let initial=try installer().install(package:package(build:1),slot:slot,data:source.root)
+        let oldStore=ModulePolicyHistoryFileStore(root:root(initial));var newer=policy;newer.version=3;newer.access="free"
+        var probes=0
+        let guarded=installer{_,data,_ in
+            probes+=1
+            XCTAssertThrowsError(try oldStore.observe([newer]))
+            try Repository(root:data,readOnly:true).read().validate()
+        }
+        let updated=try guarded.update(package:package(build:2),slot:slot)
+        XCTAssertEqual(probes,2)
+        XCTAssertEqual(try ModulePolicyHistoryFileStore(root:root(updated)).read().versions[policy.pluginID],2)
+        XCTAssertThrowsError(try oldStore.observe([newer]))
     }
     func testTamperedPackageOrWrongPublisherIsRejectedBeforeProbe()throws {
         let package=try package(build:1),slot=directory();var probed=false
