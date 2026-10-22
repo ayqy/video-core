@@ -53,7 +53,7 @@ def install(source: Path, destination: Path, *, verify=False, dry_run=False) -> 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--host", required=True, choices=["codex", "claude", "gemini", "grok", "deepseek-codex"])
+    parser.add_argument("--host", required=True, choices=["codex", "claude", "gemini", "grok", "deepseek-codex", "deepseek-qwen"])
     parser.add_argument("--destination", type=Path, required=True, help="用户选择的完整video技能目录；不隐式改全局环境")
     parser.add_argument("--verify", action="store_true")
     parser.add_argument("--dry-run", action="store_true")

@@ -2,15 +2,16 @@
 
 VideoCore reviewed source product · manifest version 2
 
-- 当前审定时间：2026-10-23 02:34:10 北京时间。
-- 正式仓库实际文本：120项源码及必要元数据，另有本清单，共121项文件；不含本清单的内容共1145252字节。
-- 整体内容指纹：`9f363efceab69da641eb71c67b617884daee87d6f2f1aff240f0ce77b7ee2f9c`。
+- 当前审定时间：2026-10-23 02:55:04 北京时间。
+- 正式仓库实际文本：120项源码及必要元数据，另有本清单，共121项文件；不含本清单的内容共1146853字节。
+- 整体内容指纹：`e23a8bee56c2905176c234c328325ad7d610a7bcdd11a00997d9ee03246095ad`。
 - 指纹算法：包内相对路径按Unicode码点排序，每项编码为UTF-8的“路径 + NUL + SHA-256十六进制 + NUL + 十进制字节数 + 换行”，对拼接内容计算SHA-256。本清单自身与Git元数据不参与摘要，无自引用。
-- 审定同源文件：112项，1107364字节，逐文件与当前免费白名单导出完全相同；同源集指纹`d7c9bc7b372ad7a15e3f0b1d158cb3c8e3d240bb0504e14db5ce22410ec6b9fa`。Package.swift来自免费模板，其余来自逐文件审定的免费来源。
-- 上游受控导出共114项文件，其非清单内容指纹`4894a9444c8eb9c5ce5630010bc7051b585751b4617951733fc263ca9e2f0985`；上游生成README与本仓库独立README分别保留。
+- 审定同源文件：112项，1108965字节，逐文件与当前免费白名单导出完全相同；同源集指纹`cf0ee07aea8974aeee75088324e6d3b707cac1d96cec0dc655032d35566e792b`。Package.swift来自免费模板，其余来自逐文件审定的免费来源。
+- 上游受控导出共114项文件，其非清单内容指纹`1e5b2178cd328a7e4947a69b6edcc7dbaf8dfe0d103db6094f844ab7eb6b1b1f`；上游生成README与本仓库独立README分别保留。
 - 生产构建输入：63项，指纹`2417b78bb7d1c48f789861c84f43b16d6d022bbc5da67aca2f161cdc9b3ee81c`。本次生产差异仅云审稿地址值与当前账户/容器分区保存，新增4条地址存储规则。
 - 当前独立免费包重新编译通过（SwiftPM85.04秒）；实际Xcode XCTest Bundle 265/265通过、0失败，规则64.944秒，于2026-10-23 02:33:05（北京时间）结束。新增4条验证A→B变更→A地址保留、仅删除当前分区、空分区和外来地址隔离。
 - 当前macOS x86_64 CLI实际schema40命令、doctor、capabilities、合成工作区dry-run/保存/重开查询及只读doctor均通过，数据库snapshot保持原字节；video-install帮助通过。CLI为11985616字节，SHA-256 `19c76b9a09a2138e9ca938a67b09ca7f3cc0310705b74199196d744ec871e816`。
+- 后续接入小同步仅改变Integrations/install.py的deepseek-qwen标签与Integrations/README.md说明。隔离项目内实际dry-run、安装、verify及安装器拒绝覆盖/符号链接检查通过；5份Skill原字节一致。63项生产输入及265项规则依赖未变，复用上述编译/规则与CLI身份，未重复模型调用或媒体长链。接入说明分别记录真实Skill/schema正向和空工程doctor负向，不把模型或工具外层成功当作完整业务验收。
 - 依赖影响判断：本次地址值/分区函数未进入普通CLI制作、备份恢复或Skill执行路径；这些源文件及调用条件未改变，因此复用公开提交908a2e606b6eae2d38442017957c88a603bc794f的完整26秒媒体/移动/两次恢复与真实Codex业务链原证据范围，本次没有再次渲染或再次运行该模型会话，不将旧二进制哈希写作当前结果。
 - 独立产品README保留原字节，历史规则/媒体记载保留原范围；本次最新计数与调用边界以本清单为准，其SHA-256为`2d70cb97074384a7dee7ec07275f5c74c6cd89033ff7d801b24b11afa27ded82`。
 - 附加发行材料：7项，32329字节，整体指纹`5b04d27050981614b158e5e5391d5e56a5b50c53419bd74986700d6490c704a2`，全部原字节保留。仅包含.gitignore、四份静态HTML、共用CSS和允许为空的docs/.nojekyll。
@@ -23,10 +24,10 @@ VideoCore reviewed source product · manifest version 2
 | SHA-256 | 字节数 | 包内路径 | 核对结果 |
 |---|---:|---|---|
 | c07cc6d537cb0e119e22a6184cb1423b3dee983074bcc4b81c17072ad9e616c5 | 93 | .gitignore | 独立原文保留 |
-| 3bf8a0d90a14cb620743f175a4765e3528f5a85f7d8fb37845d8240fbce74ef7 | 5074 | Integrations/README.md | 逐字节一致 |
+| 7b3e3b8f9abe2b00a2928c6ed8ac6e557c9afbf7b0d0416627e568cb122d0bb4 | 6658 | Integrations/README.md | 逐字节一致 |
 | 4f646b85881f0ae26539807f0e26d5daad68c91e590989c4b251d9d0b10254f6 | 1859 | Integrations/check_install.py | 逐字节一致 |
 | abafee4069a7a58ae79d7e180340fce80d9d51bfcfe50a49847c25da16a266d2 | 2149 | Integrations/discover.py | 逐字节一致 |
-| 87a66a523e7d922c451115855e530a95a0fd7caec6f607785cef2d935bff470c | 3112 | Integrations/install.py | 逐字节一致 |
+| f4ffa8e5e02d6afb0e8609383b04f8651a01e8c2b93f14b46bb4930f302bf614 | 3129 | Integrations/install.py | 逐字节一致 |
 | cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30 | 11358 | Integrations/skills/video/LICENSE | 逐字节一致 |
 | 1dbab07b005a071618dc75a2e3cd3b68fccfba4c235d4818238a18cdbfcdb052 | 358 | Integrations/skills/video/NOTICE | 逐字节一致 |
 | b4f2fbb6d085f9c48b9421a174a5ec3468753ebdad9e9e4aedb797ef3d9ff0f2 | 3404 | Integrations/skills/video/SKILL.md | 逐字节一致 |
