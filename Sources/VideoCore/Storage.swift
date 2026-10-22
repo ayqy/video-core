@@ -21,6 +21,7 @@ public struct Database: Codable, Sendable {
     public var intentReceipts: [IntentReceipt]?
     public var agentReplayRecords: [AgentReplayRecord]?
     public var topicBatches: [TopicBatch]?
+    public var courseCohortStatements: [CourseCohortStatement]?
     public func workspace(_ id: String) throws -> Workspace { guard let w = workspaces.first(where: { $0.id == id }) else { throw VideoError.notFound("工作区不存在") }; return w }
     public func project(_ id: String) throws -> Project { guard let p = projects.first(where: { $0.id == id }) else { throw VideoError.notFound("项目不存在") }; return p }
     public func validate() throws {
@@ -33,6 +34,7 @@ public struct Database: Codable, Sendable {
         for x in expenses { guard x.hours >= 0, x.money == nil || x.money!.amount >= 0, x.allocation.values.allSatisfy({ $0 >= 0 }), x.allocation.values.reduce(0,+) <= 1 else { throw VideoError.invalid("工时、成本与分摊比例不合法") } }
         for x in cash { guard x.refunded >= 0, x.refunded <= x.received.amount else { throw VideoError.invalid("现金退款超过实收") } }
         for x in toolSales { try x.validate() }; for x in brandDeals { try x.validate() }
+        try CohortFinance.validateStatements(self)
     }
     public mutating func importOrders(_ rows: [Order], batchID: String) throws {
         if imports.contains(where: { $0.id == batchID && !$0.rolledBack }) { return }
@@ -40,9 +42,12 @@ public struct Database: Codable, Sendable {
         for o in rows { try o.validate() }
         let keys = Set(rows.map(\.id)); let previous = orders.filter { keys.contains($0.id) }
         let incoming = rows.map { row -> Order in var updated=row; if updated.tags == nil { updated.tags=previous.first{$0.id==row.id}?.tags }; return updated }
-        orders.removeAll { keys.contains($0.id) }; orders += incoming
+        var updated = self
+        updated.orders.removeAll { keys.contains($0.id) }; updated.orders += incoming
         var receipt=ImportReceipt(id: batchID, kind: "orders", orderIDs: Array(keys), previousOrders: previous)
-        let scopes=Set(rows.map(\.workspaceID));if scopes.count==1 {receipt.workspaceID=scopes.first};imports.append(receipt)
+        let scopes=Set(rows.map(\.workspaceID));if scopes.count==1 {receipt.workspaceID=scopes.first};updated.imports.append(receipt)
+        try CohortFinance.refreshRecorded(database: &updated, affected: previous + incoming, receipt: receipt)
+        self = updated
     }
     public mutating func importMetrics(_ rows: [Metric], batchID: String) throws {
         if imports.contains(where: { $0.id == batchID && !$0.rolledBack }) { return }
@@ -56,8 +61,12 @@ public struct Database: Codable, Sendable {
         guard let i = imports.firstIndex(where: { $0.id == id && !$0.rolledBack }) else { throw VideoError.notFound("可回滚批次不存在") }
         let receipt = imports[i]
         guard !orders.contains(where: { receipt.orderIDs.contains($0.id) && $0.importID != id }), !metrics.contains(where: { receipt.metricIDs.contains($0.id) && $0.importID != id }) else { throw VideoError.conflict("后续批次已更新相同行，请先回滚后续批次") }
-        orders.removeAll { receipt.orderIDs.contains($0.id) }; orders += receipt.previousOrders
-        metrics.removeAll { receipt.metricIDs.contains($0.id) }; metrics += receipt.previousMetrics; imports[i].rolledBack = true
+        var updated = self
+        let affected = orders.filter { receipt.orderIDs.contains($0.id) } + receipt.previousOrders
+        updated.orders.removeAll { receipt.orderIDs.contains($0.id) }; updated.orders += receipt.previousOrders
+        updated.metrics.removeAll { receipt.metricIDs.contains($0.id) }; updated.metrics += receipt.previousMetrics; updated.imports[i].rolledBack = true
+        if receipt.kind == "orders" { try CohortFinance.refreshRecorded(database: &updated, affected: affected, receipt: receipt, rollback: true) }
+        self = updated
     }
 }
 
