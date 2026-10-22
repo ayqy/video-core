@@ -53,6 +53,7 @@ public enum ScenePainter {
         guard !revision.scenes.isEmpty else { throw VideoError.invalid("没有场景") }
         let w = CGFloat(revision.aspect.width), h = CGFloat(revision.aspect.height), portrait = h > w
         let (s, local, index) = scene(revision: revision, frame: frame)
+        let mapped = s.renderSourceFrame(atTimelineFrame: local)
         c.saveGState(); defer { c.restoreGState() }
         c.setFillColor(color("0B1020")); c.fill(CGRect(x: 0,y: 0,width: w,height: h))
         c.setFillColor(color(s.color, alpha: 0.12)); c.fillEllipse(in: CGRect(x: w*0.58,y: h*0.45,width: w*0.7,height: w*0.7))
@@ -62,20 +63,19 @@ public enum ScenePainter {
         let separateBody=s.kind == .simulation || s.kind == .cartoon || media != nil
         let overlay=OverlayLayout(width:w,height:h,showPrice:s.showPrice,separateBody:separateBody)
         let base=overlay.visual
-        let layout=s.layout(at:Int(Double(local)*s.speed))
+        let layout=s.layout(at:mapped)
         let visual=CGRect(x:base.midX+CGFloat(layout.x-0.5)*base.width-base.width*CGFloat(layout.scale)/2,y:base.midY+CGFloat(layout.y-0.5)*base.height-base.height*CGFloat(layout.scale)/2,width:base.width*CGFloat(layout.scale),height:base.height*CGFloat(layout.scale))
         if let media { c.saveGState(); c.addPath(CGPath(roundedRect: visual, cornerWidth: 28, cornerHeight: 28, transform: nil)); c.clip(); let ratio = min(visual.width/CGFloat(media.width),visual.height/CGFloat(media.height)); let rect = CGRect(x: visual.midX-CGFloat(media.width)*ratio/2,y: visual.midY-CGFloat(media.height)*ratio/2,width: CGFloat(media.width)*ratio,height: CGFloat(media.height)*ratio); c.draw(media,in: rect); c.restoreGState() }
         else if RenderModuleRegistry.capability(for:s.kind) != nil {
             guard let modules else { throw VideoError.unavailable("此镜头需要独立高级模块，请核对已安装模块与权益；免费图文、图片和录屏继续可用") }
-            try modules.draw(scene:s,localFrame:Int(Double(local)*s.speed),fps:revision.fps,rect:visual,context:c,resources:resources)
+            try modules.draw(scene:s,localFrame:mapped,fps:revision.fps,rect:visual,context:c,resources:resources)
         } else if media == nil {
             c.setFillColor(color(s.color,alpha:0.14)); c.addPath(CGPath(roundedRect:visual,cornerWidth:28,cornerHeight:28,transform:nil)); c.fillPath()
             try checkedText(s.body,in:visual.insetBy(dx:28,dy:26),size:portrait ? 32:34,color:"E2E8F0",context:c,fontName:s.fontName ?? "PingFangSC-Medium")
         }
         if separateBody { try checkedText(s.body,in:overlay.mediaBody,size:portrait ? 26:25,color:"E2E8F0",context:c,fontName:s.fontName ?? "PingFangSC-Medium") }
-        try LayerPainter.draw(scene:s,sourceFrame:Int(Double(local)*s.speed),aspect:revision.aspect,images:layerImages,context:c,fontName:s.fontName ?? "PingFangSC-Medium")
+        try LayerPainter.draw(scene:s,sourceFrame:mapped,aspect:revision.aspect,images:layerImages,context:c,fontName:s.fontName ?? "PingFangSC-Medium")
         if s.showPrice { let price = try revision.product.price(at:revision.createdAt); try checkedText(price.money.display,in:overlay.price,size:40,color:"A5F3FC",context:c,fontName:s.fontName ?? "PingFangSC-Medium") }
-        let mapped = Int(Double(local) * s.speed)
         if let caption = s.captions.first(where: { $0.startFrame <= mapped && $0.endFrame > mapped }) { c.setFillColor(color("000000",alpha:0.75)); c.fill(overlay.captionBackground); try checkedText(caption.text,in:overlay.captionText,size:28,color:"FFFFFF",context:c,fontName:s.fontName ?? "PingFangSC-Medium") }
         if index==revision.scenes.count-1 {
             try checkedText(revision.cta,in:overlay.cta,size:portrait ? 19:18,color:"A5F3FC",context:c,fontName:s.fontName ?? "PingFangSC-Medium")

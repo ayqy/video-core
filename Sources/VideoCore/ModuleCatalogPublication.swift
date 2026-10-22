@@ -11,9 +11,98 @@ public struct ModuleCatalogPublication: Sendable {
     }
 }
 
+/// Passive publisher review data. These declarations do not grant legal rights by themselves;
+/// the publisher separately supplies the exact written approvals and matching source files.
+public struct SourcePublicationFile: Codable, Equatable, Sendable {
+    public var path: String
+    public var bytes: Int
+    public var sha256: String
+    public init(path: String, bytes: Int, sha256: String) { self.path=path; self.bytes=bytes; self.sha256=sha256 }
+}
+public struct SourcePublicationApproval: Codable, Sendable {
+    public var document: SourcePublicationFile
+    public var approved: Bool
+    public var reference: String
+    public var reviewedBy: String
+    public var reviewedAt: Date
+    public init(document: SourcePublicationFile, approved: Bool, reference: String, reviewedBy: String, reviewedAt: Date) {
+        self.document=document; self.approved=approved; self.reference=reference; self.reviewedBy=reviewedBy; self.reviewedAt=reviewedAt
+    }
+}
+public struct ModuleSourcePublicationReview: Codable, Sendable {
+    public var pluginID: String
+    public var version: String
+    public var sourceFiles: [SourcePublicationFile]
+    public var inventoryDigest: String
+    public var sourceLicense: SourcePublicationApproval
+    public var upstreamRights: SourcePublicationApproval
+    public init(pluginID: String, version: String, sourceFiles: [SourcePublicationFile], inventoryDigest: String, sourceLicense: SourcePublicationApproval, upstreamRights: SourcePublicationApproval) {
+        self.pluginID=pluginID; self.version=version; self.sourceFiles=sourceFiles; self.inventoryDigest=inventoryDigest; self.sourceLicense=sourceLicense; self.upstreamRights=upstreamRights
+    }
+}
+public struct SourcePublicationReview: Codable, Sendable {
+    public var format = 1
+    public var modules: [ModuleSourcePublicationReview]
+    public init(modules: [ModuleSourcePublicationReview]) { self.modules=modules }
+}
+
 /// Deterministic publication checks shared by catalog generation and its read-only verifier.
 /// Signing, persistent state and executable inspection remain publisher adapters.
 public enum ModuleCatalogPublicationRules {
+    /// Deliberate per-module source boundary. New implementation files require a boundary review,
+    /// rather than silently widening an already approved source publication.
+    public static func sourcePaths(pluginID: String) throws -> Set<String> {
+        switch pluginID {
+        case "video.game": return ["Sources/VideoGame/GameModule.swift","Sources/VideoGame/LICENSE"]
+        case "video.cartoon": return ["Sources/VideoCartoon/CartoonModule.swift","Sources/VideoCartoon/LICENSE"]
+        default: throw VideoError.permission("源码审查引用了未支持的模块；未声明源码开放")
+        }
+    }
+    public static func isSourceApprovalPath(_ path: String) -> Bool {
+        let parts=path.split(separator:"/",omittingEmptySubsequences:false)
+        return parts.count>=3 && parts[0]=="release" && parts[1]=="source-reviews" && parts.allSatisfy {part in
+            !part.isEmpty && part != "." && part != ".." && part.range(of:"^[A-Za-z0-9][A-Za-z0-9._-]{0,119}$",options:.regularExpression) != nil
+        } && (path.hasSuffix(".md") || path.hasSuffix(".txt"))
+    }
+    public static func sourceInventoryDigest(_ files: [SourcePublicationFile]) throws -> String {
+        try Codec.digest(files.sorted{$0.path<$1.path})
+    }
+    /// Actual files come from the publisher's bounded read adapter, never from review claims.
+    /// Signature generation is a later step; missing rights must fail before opening the Issuer.
+    public static func approvedOpenSources(_ review: SourcePublicationReview, actualFiles: [SourcePublicationFile], version: String, now: Date = Date()) throws -> Set<String> {
+        guard review.format==1, (1...2).contains(review.modules.count), Set(review.modules.map(\.pluginID)).count==review.modules.count,
+              Set(actualFiles.map(\.path)).count==actualFiles.count, actualFiles.count<=8 else {
+            throw VideoError.permission("源码审查的格式、模块或文件库存不合法；未声明源码开放")
+        }
+        func valid(_ file: SourcePublicationFile) -> Bool {
+            (1...2*1024*1024).contains(file.bytes) && file.sha256.range(of:"^[a-f0-9]{64}$",options:.regularExpression) != nil
+        }
+        guard actualFiles.allSatisfy(valid) else {throw VideoError.permission("源码审查的实际文件摘要或大小不合法")}
+        let actual=Dictionary(uniqueKeysWithValues:actualFiles.map{($0.path,$0)})
+        var expected=Set<String>(), approved=Set<String>()
+        for module in review.modules {
+            let paths=try sourcePaths(pluginID:module.pluginID)
+            guard module.version==version, module.sourceFiles.count==paths.count, Set(module.sourceFiles.map(\.path))==paths,
+                  module.sourceFiles.allSatisfy({valid($0) && actual[$0.path]==$0}),
+                  module.inventoryDigest == (try sourceInventoryDigest(module.sourceFiles)),
+                  module.sourceLicense.document.path != module.upstreamRights.document.path else {
+                throw VideoError.permission("模块版本、源码库存或独立权利记录不匹配；未声明源码开放")
+            }
+            expected.formUnion(paths)
+            for approval in [module.sourceLicense,module.upstreamRights] {
+                guard approval.approved, isSourceApprovalPath(approval.document.path), valid(approval.document), actual[approval.document.path]==approval.document,
+                      !approval.reference.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty, approval.reference.utf8.count<=1000,
+                      !approval.reviewedBy.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty, approval.reviewedBy.utf8.count<=120,
+                      approval.reviewedAt<=now.addingTimeInterval(300) else {
+                    throw VideoError.permission("源码许可或上游权利尚无匹配的独立书面批准；未声明源码开放")
+                }
+                expected.insert(approval.document.path)
+            }
+            approved.insert(module.pluginID)
+        }
+        guard Set(actual.keys)==expected else {throw VideoError.permission("源码审查夹带、遗漏或重复实际文件；未声明源码开放")}
+        return approved
+    }
     public static func samePolicySemantics(_ lhs: CommercialPolicy, _ rhs: CommercialPolicy) -> Bool {
         lhs.pluginID == rhs.pluginID && lhs.version == rhs.version &&
             lhs.access == rhs.access && lhs.sourceVisibility == rhs.sourceVisibility

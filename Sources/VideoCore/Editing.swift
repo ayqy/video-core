@@ -13,6 +13,8 @@ public enum Edit: Codable, Sendable {
     case audioQuality(AudioQualityPolicy?)
     case restore(String)
     case lockLayer(String, String, Bool)
+    case recordSimulation(String)
+    case confirmSimulationRecording(String)
 }
 public enum Editor {
     public static func apply(_ operations: [Edit], to project: Project, baseRevision: String, assets: [Asset], message: String) throws -> Project {
@@ -26,6 +28,12 @@ public enum Editor {
             case .replaceScene(let id, var scene):
                 guard let i = revision.scenes.firstIndex(where: { $0.id == id }) else { throw VideoError.notFound("片段不存在") }; let old = revision.scenes[i]; guard !old.locked else { throw VideoError.permission("镜头已锁定，请先解锁再编辑") }; scene.id = id
                 try LayerRules.protectLocked(old:old,new:scene)
+                if (old.kind == .simulation || scene.kind == .simulation) && (old.simulation != scene.simulation || old.durationFrames != scene.durationFrames || old.kind != scene.kind || old.speed != scene.speed || old.pauseFrames != scene.pauseFrames) {
+                    if scene.simulationRecording == old.simulationRecording || (try? SimulationReplay.verify(scene:scene,fps:revision.fps,requireConfirmation:false)) == nil {
+                        scene.simulationRecordingConfirmed = false
+                    }
+                    revision.invalidated += ["规则录制与复核"]
+                }
                 if old.narration != scene.narration, scene.speechPlan?.source != scene.narration { scene.speechPlan=nil }
                 let oldSpeechDigest=try? old.speechDigest(), newSpeechDigest=try? scene.speechDigest()
                 if old.narration != scene.narration || oldSpeechDigest == nil || newSpeechDigest == nil || oldSpeechDigest != newSpeechDigest {
@@ -41,6 +49,7 @@ public enum Editor {
                 guard original.voice == nil else { throw VideoError.review("有配音的片段请先解除配音并重新录制两段，避免截断句子") }
                 guard !(original.layers ?? []).contains(where:{$0.locked}) else { throw VideoError.permission("请先解锁元素，再拆分场景") }
                 var a = original, b = original; a.durationFrames = frame; b.id = Codec.id(); b.durationFrames = original.durationFrames - frame; b.sourceStartFrame += frame; a.sourceEndFrame = original.sourceStartFrame + frame
+                if original.kind == .simulation { a.simulationRecordingConfirmed = false; b.simulationRecordingConfirmed = false; revision.invalidated += ["拆分后的规则录制与复核"] }
                 a.layers=(original.layers ?? []).filter{$0.startFrame<frame}.map { layer in var x=layer;x.endFrame=min(x.endFrame,frame);x.keyframes=x.keyframes.filter{$0.frame<x.endFrame};if !layer.keyframes.isEmpty{let point=layer.layout(at:x.endFrame-1);x.keyframes.removeAll{$0.frame==x.endFrame-1};x.keyframes.append(Keyframe(frame:x.endFrame-1,x:point.x,y:point.y,scale:point.scale))};return x }
                 b.layers=(original.layers ?? []).filter{$0.endFrame>frame}.map { layer in var x=layer;x.id=Codec.id();x.startFrame=max(0,x.startFrame-frame);x.endFrame-=frame;x.keyframes=x.keyframes.filter{$0.frame>=frame}.map{key in var k=key;k.id=Codec.id();k.frame-=frame;return k};let point=layer.layout(at:frame+x.startFrame);x.x=point.x;x.y=point.y;if !layer.keyframes.isEmpty && !x.keyframes.contains(where:{$0.frame==x.startFrame}){x.keyframes.append(Keyframe(frame:x.startFrame,x:point.x,y:point.y,scale:point.scale))};return x }
                 a.captions = original.captions.filter { $0.startFrame < frame }.map { c in var x = c; x.endFrame = min(frame, c.endFrame); x.confirmed = false; return x }
@@ -53,6 +62,15 @@ public enum Editor {
                 revision.scenes.replaceSubrange(i...i, with: [a,b])
             case .lockScene(let id, let locked): guard let i = revision.scenes.firstIndex(where: { $0.id == id }) else { throw VideoError.notFound("片段不存在") }; revision.scenes[i].locked = locked
             case .lockLayer(let id,let layerID,let locked): guard let i=revision.scenes.firstIndex(where:{$0.id==id}),!revision.scenes[i].locked,let j=revision.scenes[i].layers?.firstIndex(where:{$0.id==layerID}) else { throw VideoError.permission("镜头已锁定或元素不存在") };revision.scenes[i].layers?[j].locked=locked
+            case .recordSimulation(let id):
+                guard let i=revision.scenes.firstIndex(where:{$0.id==id}),!revision.scenes[i].locked else {throw VideoError.permission("规则镜头不存在或已锁定")}
+                revision.scenes[i].simulationRecording = try SimulationReplay.record(scene:revision.scenes[i],fps:revision.fps)
+                revision.scenes[i].simulationRecordingConfirmed = false
+                revision.invalidated += ["新规则录制待复核"]
+            case .confirmSimulationRecording(let id):
+                guard let i=revision.scenes.firstIndex(where:{$0.id==id}),!revision.scenes[i].locked else {throw VideoError.permission("规则镜头不存在或已锁定")}
+                try SimulationReplay.verify(scene:revision.scenes[i],fps:revision.fps,requireConfirmation:false)
+                revision.scenes[i].simulationRecordingConfirmed = true
             case .aspect(let aspect): revision.aspect = aspect
             case .cta(let text): guard !text.isEmpty else { throw VideoError.invalid("CTA不能为空") }; revision.cta = text
             case .music(let id): revision.musicAssetID = id; revision.invalidated += ["混音"]
@@ -129,6 +147,10 @@ public enum Quality {
             do {try FontRightsRules.validate(fontName:s.fontName ?? "PingFangSC-Medium",workspaceID:revision.product.workspaceID,evidenceIDs:s.evidenceIDs,evidence:database.evidence,commercial:commercial,now:now)}
             catch{issues.append(QualityIssue(s.id+"font_rights",(error as? VideoError)?.localizedDescription ?? "镜头字体授权尚未核对"))}
             if s.kind == .simulation || s.kind == .cartoon {
+                if s.kind == .simulation {
+                    do {try SimulationReplay.verify(scene:s,fps:revision.fps)}
+                    catch {issues.append(QualityIssue(s.id+"simulation_recording",(error as? VideoError)?.localizedDescription ?? "规则录制尚未核对"))}
+                }
                 if s.classicArtwork == nil {issues.append(QualityIssue(s.id+"classic_artwork","请绑定有来源的Q版角色与场景；旧几何预览不代表已满足当前素材要求"))}
                 else if s.classicArtwork?.derivation != .qStyle {issues.append(QualityIssue(s.id+"classic_qstyle","下载原件须绑定实际Q版处理产物及来源后再制作新成片"))}
                 else {do {try ClassicArtworkRules.validateRights(scene:s,workspaceID:revision.product.workspaceID,assets:database.assets,evidence:database.evidence,commercial:commercial,requireListening:requireReview,now:now)} catch {issues.append(QualityIssue(s.id+"classic_rights",(error as? VideoError)?.localizedDescription ?? "外部游戏素材、处理来源或音轨许可尚未核对"))}}

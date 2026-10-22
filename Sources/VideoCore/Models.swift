@@ -81,8 +81,15 @@ public struct Scene: Codable, Equatable, Identifiable, Sendable {
     public var classicArtwork: ClassicArtwork?
     public var classicArtworkRequired: Bool?
     public var fontName:String?
+    /// Optional for old projects. The full deterministic trace is kept even when stale,
+    /// so editing never mistakes a newly calculated result for an already reviewed recording.
+    public var simulationRecording: RuleTrace?
+    public var simulationRecordingConfirmed: Bool?
     public init(kind: SceneKind = .explanation, title: String, body: String, narration: String = "", durationFrames: Int = 180) { self.kind = kind; self.title = title; self.body = body; self.narration = narration; self.durationFrames = durationFrames; self.classicArtworkRequired = true }
     public var timelineFrames: Int { Int((Double(durationFrames) / speed).rounded()) + pauseFrames }
+    /// Shared by the painter and rule recording. This preserves the shipped timeline mapping,
+    /// including additional pause frames, rather than assuming all source frames are displayed.
+    public func renderSourceFrame(atTimelineFrame frame: Int) -> Int { Int(Double(max(0, frame)) * speed) }
     public func speechDigest() throws -> String { try SpeechRules.digest(self) }
     public func layout(at frame:Int)->(x:Double,y:Double,scale:Double){
         let keys=keyframes.sorted{$0.frame<$1.frame};guard let first=keys.first else{return(x,y,scale)};if frame<=first.frame{return(first.x,first.y,first.scale)};guard let next=keys.firstIndex(where:{$0.frame>=frame})else{let k=keys.last!;return(k.x,k.y,k.scale)};let a=keys[next-1],b=keys[next];let p=Double(frame-a.frame)/Double(b.frame-a.frame);return(a.x+(b.x-a.x)*p,a.y+(b.y-a.y)*p,a.scale+(b.scale-a.scale)*p)

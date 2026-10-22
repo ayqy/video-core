@@ -42,6 +42,32 @@ final class AgentMutationTests:XCTestCase {
         try repo.transaction{$0.workspaces[0].grants[0].revoked=true}
         XCTAssertThrowsError(try repo.performAgentMutation(command:"edit apply",data:input,principal:"editor",requestID:"edit"));XCTAssertEqual(try repo.read().projects[0].revisions.count,2)
     }
+    func testRuleRecordingWireOperationsPersistReviewAndInputChangeInvalidatesIt()throws {
+        let(repo,w,p)=try fixture();defer{try? FileManager.default.removeItem(at:repo.root)}
+        var scene=Scene(kind:.simulation,title:"规则",body:"按事件复现状态")
+        scene.simulation.events=[RuleEvent(tick:1,delta:4,label:"输入")]
+        let original=Project(workspaceID:w.id,name:"规则协议",revision:Revision(product:p,purpose:.education,aspect:.landscape,scenes:[scene],cta:"复现规则"))
+        try repo.transaction{$0.projects=[original]}
+        func input(_ project:Project,_ operations:[Edit])throws->Data {
+            let edits=try Codec.decoder().decode(AgentValue.self,from:Codec.data(operations))
+            return try Codec.data(AgentValue.object(["workspace_id":.string(w.id),"project_id":.string(project.id),"base_revision":.string(project.current.id),"edits":edits]))
+        }
+        let recordInput=try input(original,[.recordSimulation(scene.id),.confirmSimulationRecording(scene.id)])
+        let before=try Codec.data(repo.read())
+        _=try AgentPreview.evaluate(command:"edit apply",data:recordInput,database:repo.read(),principal:"owner")
+        XCTAssertEqual(try Codec.data(repo.read()),before,"预演不得留下录制确认或回执")
+        let first=try repo.performAgentMutation(command:"edit apply",data:recordInput,principal:"owner",requestID:"record-review")
+        XCTAssertEqual(first,try repo.performAgentMutation(command:"edit apply",data:recordInput,principal:"owner",requestID:"record-review"))
+        let reopened=try Repository(root:repo.root),recorded=try XCTUnwrap(reopened.read().projects.first)
+        XCTAssertEqual(recorded.revisions.count,2)
+        XCTAssertNoThrow(try SimulationReplay.verify(scene:recorded.current.scenes[0],fps:recorded.current.fps))
+        var changed=recorded.current.scenes[0];changed.simulation.events[0].delta=9
+        _=try reopened.performAgentMutation(command:"edit apply",data:input(recorded,[.replaceScene(changed.id,changed)]),principal:"owner",requestID:"change-rule")
+        let latest=try XCTUnwrap(Repository(root:repo.root).read().projects.first)
+        XCTAssertEqual(latest.current.scenes[0].simulationRecordingConfirmed,false)
+        XCTAssertThrowsError(try SimulationReplay.verify(scene:latest.current.scenes[0],fps:latest.current.fps))
+        XCTAssertEqual(latest.current.scenes[0].simulationRecording,recorded.current.scenes[0].simulationRecording)
+    }
     func testCrossCustomerEntityIDCannotOverwriteAndDryRunDoesNotWriteLedger()throws {
         let(repo,w,p)=try fixture();defer{try? FileManager.default.removeItem(at:repo.root)}
         let foreign=Workspace(name:"客户乙",owner:"owner");try repo.transaction{$0.workspaces.append(foreign)}

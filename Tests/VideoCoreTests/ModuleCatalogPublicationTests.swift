@@ -64,6 +64,77 @@ final class ModuleCatalogPublicationTests: XCTestCase {
         changed[0].policy.version += 1
         XCTAssertEqual(try plan(changed, previous: original)[0].policy.sourceVisibility, "open")
     }
+    private func sourceReview() throws -> (SourcePublicationReview,[SourcePublicationFile]) {
+        func file(_ path:String,_ content:String)->SourcePublicationFile {
+            let data=Data(content.utf8);return SourcePublicationFile(path:path,bytes:data.count,sha256:Codec.hash(data))
+        }
+        let sources=[file("Sources/VideoGame/GameModule.swift","isolated synthetic source"),file("Sources/VideoGame/LICENSE","isolated synthetic source-license grant")]
+        let license=file("release/source-reviews/game-license.md","isolated source redistribution approval")
+        let upstream=file("release/source-reviews/game-upstream.md","isolated upstream rights approval")
+        let codeApproval=SourcePublicationApproval(document:license,approved:true,reference:"isolated-fixture-license",reviewedBy:"test-reviewer",reviewedAt:now)
+        let rightsApproval=SourcePublicationApproval(document:upstream,approved:true,reference:"isolated-fixture-upstream",reviewedBy:"test-reviewer",reviewedAt:now)
+        let module=ModuleSourcePublicationReview(pluginID:"video.game",version:"1.0.0",sourceFiles:sources,inventoryDigest:try ModuleCatalogPublicationRules.sourceInventoryDigest(sources),sourceLicense:codeApproval,upstreamRights:rightsApproval)
+        return(SourcePublicationReview(modules:[module]),sources+[license,upstream])
+    }
+    func testApprovedSourcePublicationChangesVisibilitySeparatelyFromFreeAccess() throws {
+        let(review,files)=try sourceReview()
+        let decoded=try Codec.decoder().decode(SourcePublicationReview.self,from:Codec.data(review))
+        let approved=try ModuleCatalogPublicationRules.approvedOpenSources(decoded,actualFiles:files,version:"1.0.0",now:now)
+        XCTAssertEqual(approved,["video.game"])
+        let original=entries(access:"free");var proposed=original
+        proposed[0].manifest.sourceVisibility="open";proposed[0].policy.sourceVisibility="open"
+        XCTAssertThrowsError(try plan(proposed,previous:original),"书面批准不能绕过策略升版")
+        proposed[0].policy.version += 1
+        let next=try plan(proposed,previous:original)
+        XCTAssertEqual(next[0].manifest.id,original[0].manifest.id);XCTAssertEqual(next[0].manifest.abi,original[0].manifest.abi)
+        XCTAssertEqual(next[0].manifest.implementationDigest,original[0].manifest.implementationDigest)
+        XCTAssertEqual(next[0].policy.access,"free");XCTAssertEqual(next[0].policy.sourceVisibility,"open")
+        XCTAssertEqual(next[1].policy.sourceVisibility,"closed","另一模块未被顺带开放")
+    }
+    func testSourcePublicationRequiresBothIndependentCurrentWrittenApprovals() throws {
+        let(original,files)=try sourceReview()
+        for mutation in 0..<7 {
+            var review=original
+            switch mutation {
+            case 0:review.modules[0].sourceLicense.approved=false
+            case 1:review.modules[0].upstreamRights.approved=false
+            case 2:review.modules[0].sourceLicense.reference=" "
+            case 3:review.modules[0].upstreamRights.reviewedBy=""
+            case 4:review.modules[0].sourceLicense.reviewedAt=now.addingTimeInterval(301)
+            case 5:review.modules[0].upstreamRights.document=review.modules[0].sourceLicense.document
+            default:review.modules[0].upstreamRights.document.path="../unreviewed.md"
+            }
+            XCTAssertThrowsError(try ModuleCatalogPublicationRules.approvedOpenSources(review,actualFiles:files,version:"1.0.0",now:now))
+        }
+        XCTAssertThrowsError(try ModuleCatalogPublicationRules.approvedOpenSources(original,actualFiles:Array(files.dropLast()),version:"1.0.0",now:now))
+    }
+    func testSourcePublicationBindsExactActualInventoryDigestAndVersion() throws {
+        let(review,files)=try sourceReview()
+        XCTAssertThrowsError(try ModuleCatalogPublicationRules.approvedOpenSources(review,actualFiles:files,version:"1.0.1",now:now))
+        var changed=files;changed[0].sha256=String(repeating:"f",count:64)
+        XCTAssertThrowsError(try ModuleCatalogPublicationRules.approvedOpenSources(review,actualFiles:changed,version:"1.0.0",now:now))
+        var declaration=review;declaration.modules[0].inventoryDigest=String(repeating:"f",count:64)
+        XCTAssertThrowsError(try ModuleCatalogPublicationRules.approvedOpenSources(declaration,actualFiles:files,version:"1.0.0",now:now))
+        declaration=review;declaration.modules[0].sourceFiles.removeLast()
+        XCTAssertThrowsError(try ModuleCatalogPublicationRules.approvedOpenSources(declaration,actualFiles:files,version:"1.0.0",now:now))
+        XCTAssertEqual(try ModuleCatalogPublicationRules.sourceInventoryDigest(files),try ModuleCatalogPublicationRules.sourceInventoryDigest(files.reversed()))
+    }
+    func testSourcePublicationRejectsUnsupportedModulesDuplicateOrExtraFilesAndBrokenDigests() throws {
+        let(original,files)=try sourceReview()
+        for mutation in 0..<4 {
+            var review=original
+            switch mutation {
+            case 0:review.format=2
+            case 1:review.modules.append(review.modules[0])
+            case 2:review.modules[0].pluginID="video.private-other"
+            default:review.modules[0].sourceFiles[0].sha256="bad-digest"
+            }
+            XCTAssertThrowsError(try ModuleCatalogPublicationRules.approvedOpenSources(review,actualFiles:files,version:"1.0.0",now:now))
+        }
+        XCTAssertThrowsError(try ModuleCatalogPublicationRules.approvedOpenSources(original,actualFiles:files+[files[0]],version:"1.0.0",now:now))
+        let extra=SourcePublicationFile(path:"App/secret.swift",bytes:1,sha256:String(repeating:"a",count:64))
+        XCTAssertThrowsError(try ModuleCatalogPublicationRules.approvedOpenSources(original,actualFiles:files+[extra],version:"1.0.0",now:now))
+    }
     func testIncompleteDuplicateExtraAndMixedTargetCatalogsAreRejected() throws {
         let complete = entries()
         XCTAssertThrowsError(try plan([complete[0]]))

@@ -183,10 +183,46 @@ public struct RuleTransition: Codable, Equatable, Sendable {
 }
 public struct RuleTrace: Codable, Equatable, Sendable {
     public var ruleVersion: Int; public var inputDigest: String; public var seed: UInt64; public var unit: String; public var initial: Int; public var capacity: Int; public var throughTick: Int; public var frameStep: Int; public var transitions: [RuleTransition]; public var finalState: Int
+    public var recordedFPS: Int?
+    public var recordedDurationFrames: Int?
+    public var recordedSpeed: Double?
+    public var recordedPauseFrames: Int?
+    public var recordedLastSourceFrame: Int?
 }
 public struct RuleParticle: Codable, Equatable, Sendable { public var x: Double; public var y: Double; public var phase: Double }
 public struct RuleFrameState: Codable, Equatable, Sendable { public var value: Int; public var capacity: Int; public var unit: String; public var tick: Int; public var activeEvents: [String]; public var particles: [RuleParticle] }
 public enum SimulationReplay {
+    /// A scene recording includes every visible tick. Events after the last visible tick
+    /// must be moved or the scene extended; they are never silently dropped from a recording.
+    public static func record(scene: Scene, fps: Int = 30) throws -> RuleTrace {
+        guard scene.kind == .simulation, (1...120).contains(fps), (1...54000).contains(scene.durationFrames), (0.25...4).contains(scene.speed), (0...54000).contains(scene.pauseFrames), scene.timelineFrames > 0 else {
+            throw VideoError.invalid("请选择有效规则镜头、帧率与时长后录制")
+        }
+        let lastSourceFrame = scene.renderSourceFrame(atTimelineFrame: scene.timelineFrames - 1)
+        let lastTick = lastSourceFrame / fps
+        guard scene.simulation.events.allSatisfy({ $0.tick <= lastTick }) else {
+            throw VideoError.review("规则事件超出镜头可见时长；请延长镜头或调整事件，再重新录制和复核")
+        }
+        var trace = try record(simulation: scene.simulation, throughTick: lastTick)
+        trace.recordedFPS = fps; trace.recordedDurationFrames = scene.durationFrames
+        trace.recordedSpeed = scene.speed; trace.recordedPauseFrames = scene.pauseFrames; trace.recordedLastSourceFrame = lastSourceFrame
+        return trace
+    }
+    /// Called by production quality checks as well as explicit editor/SDK confirmation.
+    /// Generic whole-video approval never substitutes for this rule-specific review.
+    public static func verify(scene: Scene, fps: Int = 30, requireConfirmation: Bool = true) throws {
+        guard let recording = scene.simulationRecording else {
+            throw VideoError.review("此规则镜头尚未录制轨迹；请录制并逐项复核单位、种子与事件后制作")
+        }
+        let current = try record(scene: scene, fps: fps)
+        try verify(recording: recording, simulation: scene.simulation)
+        guard recording == current else {
+            throw VideoError.review("镜头时长、帧率、变速或停顿已变，旧规则录制不覆盖当前镜头；请重新录制和复核")
+        }
+        guard !requireConfirmation || scene.simulationRecordingConfirmed == true else {
+            throw VideoError.review("规则轨迹尚未明确复核；请核对初值、单位、种子、逐事件结果及截断量后确认")
+        }
+    }
     public static func record(simulation s: Simulation, throughTick: Int, frameStep: Int = 1) throws -> RuleTrace {
         guard throughTick >= 0, throughTick <= 1800, frameStep > 0, frameStep <= 60, s.capacity > 0, s.capacity <= 10000, s.initial >= 0, s.initial <= s.capacity, !s.unit.isEmpty, s.unit.count <= 40, s.events.count <= 2000, Set(s.events.map(\.id)).count == s.events.count, s.events.allSatisfy({ $0.tick >= 0 && $0.tick <= 1800 && (-10000...10000).contains($0.delta) && !$0.label.isEmpty }) else { throw VideoError.invalid("规则初值/容量/单位/事件/录制区间无效") }
         var value = s.initial; var trace: [RuleTransition] = []
@@ -197,7 +233,10 @@ public enum SimulationReplay {
         return RuleTrace(ruleVersion: 1, inputDigest: try Codec.digest(s), seed: s.seed, unit: s.unit, initial: s.initial, capacity: s.capacity, throughTick: throughTick, frameStep: frameStep, transitions: trace, finalState: value)
     }
     public static func verify(recording: RuleTrace, simulation: Simulation) throws {
-        guard recording.ruleVersion == 1, recording.inputDigest == (try Codec.digest(simulation)), recording == (try record(simulation: simulation, throughTick: recording.throughTick, frameStep: recording.frameStep)) else { throw VideoError.review("规则、单位、参数、种子或事件已变，旧录制失效，请重新录制和复核") }
+        var causalTrace = recording
+        causalTrace.recordedFPS = nil; causalTrace.recordedDurationFrames = nil
+        causalTrace.recordedSpeed = nil; causalTrace.recordedPauseFrames = nil; causalTrace.recordedLastSourceFrame = nil
+        guard causalTrace.ruleVersion == 1, causalTrace.inputDigest == (try Codec.digest(simulation)), causalTrace == (try record(simulation: simulation, throughTick: causalTrace.throughTick, frameStep: causalTrace.frameStep)) else { throw VideoError.review("规则、单位、参数、种子或事件已变，旧录制失效，请重新录制和复核") }
     }
     public static func frameState(simulation: Simulation, frame: Int, fps: Int = 30) throws -> RuleFrameState {
         guard frame >= 0, (1...120).contains(fps), frame / fps <= 1800 else { throw VideoError.invalid("模拟帧或帧率超界") }
