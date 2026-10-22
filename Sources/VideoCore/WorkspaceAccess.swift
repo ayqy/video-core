@@ -191,6 +191,13 @@ public extension Repository {
     @discardableResult func applyScopedEdits(projectID:String,baseRevision:String,operations:[Edit],message:String,access:WorkspaceAccessContext,now:Date=Date()) throws -> Revision {
         try transaction {database in
             let(project,_)=try WorkspaceAccessRules.revision(projectID:projectID,revisionID:baseRevision,access:access,in:database,write:true,now:now)
+            // Write access to the current revision never grants the rest of its history.
+            // Check every restore source before Editor can copy or return its private facts.
+            for operation in operations {
+                if case .restore(let revisionID)=operation {
+                    _=try WorkspaceAccessRules.revision(projectID:projectID,revisionID:revisionID,access:access,in:database,now:now)
+                }
+            }
             var updated=try Editor.apply(operations,to:project,baseRevision:baseRevision,assets:database.assets.filter{$0.workspaceID==access.workspaceID},message:message)
             updated.revisions[updated.revisions.count-1].dependencies=try DependencyRules.freeze(revision:updated.current,assets:database.assets,evidence:database.evidence)
             guard let index=database.projects.firstIndex(where:{$0.id==project.id}) else{throw VideoError.notFound("项目不存在")}

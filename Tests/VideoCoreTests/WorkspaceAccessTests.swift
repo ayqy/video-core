@@ -75,6 +75,61 @@ final class WorkspaceAccessTests:XCTestCase {
         XCTAssertThrowsError(try second.applyScopedEdits(projectID:project.id,baseRevision:project.current.id,operations:[.cta("第二客户端CTA")],message:"第二客户端",access:access)) {error in XCTAssertEqual((error as? VideoError)?.code,"revision_conflict")}
         XCTAssertEqual(try second.read().projects[0].current.id,created.id);XCTAssertEqual(try second.read().projects[0].current.cta,"第一客户端CTA")
     }
+    private func historyFixture() throws -> (Database,Workspace,Project,WorkspaceAccessContext) {
+        var(database,workspace,project,_)=try fixture()
+        project.revisions[0].scenes[0].body="PRIVATE_HISTORY_NOT_GRANTED"
+        project.revisions[0].product.name="PRIVATE_HISTORICAL_PRODUCT"
+        project.revisions[1].scenes[0].body="当前获准编辑的版本"
+        workspace.grants=[Grant(principal:"editor",role:.collaborator,projectIDs:[project.id],revisionIDs:[project.current.id],expiresAt:Date().addingTimeInterval(3600))]
+        database.workspaces[0]=workspace;database.projects[0]=project
+        return(database,workspace,project,WorkspaceAccessContext(workspaceID:workspace.id,principal:"editor"))
+    }
+    func testCollaboratorCannotRestoreUnsharedHistoryOrCommitEarlierOperations() throws {
+        let(database,_,project,access)=try historyFixture()
+        let root=FileManager.default.temporaryDirectory.appendingPathComponent("access-restore-denied-"+UUID().uuidString);defer{try? FileManager.default.removeItem(at:root)}
+        let repository=try Repository(root:root);try repository.transaction{$0=database}
+        let before=try Codec.digest(repository.read())
+        XCTAssertThrowsError(try repository.applyScopedEdits(projectID:project.id,baseRevision:project.current.id,operations:[.cta("不得提交的前序改动"),.restore(project.revisions[0].id)],message:"越权恢复",access:access)) {error in XCTAssertEqual((error as? VideoError)?.code,"permission_required")}
+        XCTAssertEqual(try Codec.digest(repository.read()),before)
+    }
+    func testRevokedExpiredOrWrongScopeHistoryGrantCannotAuthorizeRestore() throws {
+        let now=Date()
+        for kind in ["revoked","expired","other-project","other-principal","other-workspace"] {
+            var(database,workspace,project,access)=try historyFixture()
+            var grant=Grant(principal:"editor",role:.reviewer,projectIDs:[project.id],revisionIDs:[project.revisions[0].id],expiresAt:now.addingTimeInterval(3600))
+            if kind=="revoked"{grant.revoked=true}
+            if kind=="expired"{grant.expiresAt=now.addingTimeInterval(-1)}
+            if kind=="other-project"{grant.projectIDs=["unrelated-project"]}
+            if kind=="other-principal"{grant.principal="other-editor"}
+            if kind=="other-workspace"{database.workspaces[1].grants.append(grant)}else{workspace.grants.append(grant)}
+            database.workspaces[0]=workspace
+            let root=FileManager.default.temporaryDirectory.appendingPathComponent("access-restore-"+kind+"-"+UUID().uuidString);defer{try? FileManager.default.removeItem(at:root)}
+            let repository=try Repository(root:root);try repository.transaction{$0=database}
+            XCTAssertThrowsError(try repository.applyScopedEdits(projectID:project.id,baseRevision:project.current.id,operations:[.restore(project.revisions[0].id)],message:"无有效来源授权",access:access,now:now)) {error in XCTAssertEqual((error as? VideoError)?.code,"permission_required",kind)}
+            XCTAssertEqual(try repository.read().projects[0].revisions.count,2,kind)
+        }
+    }
+    func testCollaboratorCanRestoreHistoryWithExplicitValidReadGrant() throws {
+        var(database,workspace,project,access)=try historyFixture()
+        workspace.grants.append(Grant(principal:access.principal,role:.reviewer,projectIDs:[project.id],revisionIDs:[project.revisions[0].id],expiresAt:Date().addingTimeInterval(3600)))
+        database.workspaces[0]=workspace
+        let root=FileManager.default.temporaryDirectory.appendingPathComponent("access-restore-granted-"+UUID().uuidString);defer{try? FileManager.default.removeItem(at:root)}
+        let repository=try Repository(root:root);try repository.transaction{$0=database}
+        let restored=try repository.applyScopedEdits(projectID:project.id,baseRevision:project.current.id,operations:[.restore(project.revisions[0].id)],message:"恢复明确授权来源",access:access)
+        XCTAssertEqual(restored.scenes[0].body,"PRIVATE_HISTORY_NOT_GRANTED")
+        XCTAssertEqual(restored.product.name,"PRIVATE_HISTORICAL_PRODUCT")
+        XCTAssertEqual(restored.parentID,project.current.id);XCTAssertEqual(restored.number,3)
+        XCTAssertEqual(try repository.read().projects[0].revisions.count,3)
+    }
+    func testWorkspaceOwnerCanRestoreOwnHistoryWithoutCollaborationGrant() throws {
+        let(database,workspace,project,_)=try historyFixture()
+        let root=FileManager.default.temporaryDirectory.appendingPathComponent("access-restore-owner-"+UUID().uuidString);defer{try? FileManager.default.removeItem(at:root)}
+        let repository=try Repository(root:root);try repository.transaction{$0=database}
+        let restored=try repository.applyScopedEdits(projectID:project.id,baseRevision:project.current.id,operations:[.restore(project.revisions[0].id)],message:"作者恢复历史",access:WorkspaceAccessContext(workspaceID:workspace.id,principal:workspace.owner))
+        XCTAssertEqual(restored.scenes[0].body,project.revisions[0].scenes[0].body)
+        XCTAssertEqual(restored.product.name,project.revisions[0].product.name)
+        XCTAssertFalse(restored.review.complete)
+    }
     func testKeywordTagStatusAndImportedTimeFiltersUseActualRecordDates() throws {
         var(database,workspace,_,_)=try fixture()
         let now=Date()

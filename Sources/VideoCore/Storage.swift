@@ -243,6 +243,13 @@ public final class Repository: @unchecked Sendable {
         let b = try PropertyListDecoder().decode(Backup.self, from: data); guard [1,2].contains(b.version), b.digest == Codec.hash(b.snapshot) else { throw VideoError.invalid("备份版本或完整性校验失败") }
         var state = try Codec.decoder().decode(Database.self, from: b.snapshot); try state.validate()
         guard !FileManager.default.fileExists(atPath: root.path) else { throw VideoError.conflict("恢复目标必须是新目录，避免覆盖已有数据") }
+        // Every portable file must be referenced by the frozen business snapshot.
+        // Reject extras before Repository creates a directory or writes any bytes.
+        let expectedAssets=Set(state.assets.map(\.relativePath))
+        let expectedExports:Set<String> = b.version==2 ? Set(state.jobs.flatMap{$0.artifacts.map(\.path)}):[]
+        guard Set(b.assets.keys)==expectedAssets,Set((b.exports ?? [:]).keys)==expectedExports else {
+            throw VideoError.invalid("备份文件集合与源素材或历史产物引用不一致；请从原工程重新准备完整备份，未写入恢复目录")
+        }
         for a in state.assets { guard let d = b.assets[a.relativePath], Codec.hash(d) == a.hash, d.count == a.bytes, a.relativePath == "assets/\(Codec.hash(d)).\(a.ext)", a.ext.range(of: "^[a-z0-9]{1,12}$", options: .regularExpression) != nil else { throw VideoError.invalid("备份缺少源文件或摘要不符") } }
         for j in state.jobs.indices {
             if b.version==1 && !state.jobs[j].artifacts.isEmpty {state.jobs[j].artifacts=[];state.jobs[j].state = .interrupted;state.jobs[j].message="旧版备份没有历史成片，请沿原任务重做；源素材与版本保留";continue}

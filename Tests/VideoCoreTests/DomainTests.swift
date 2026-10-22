@@ -250,6 +250,50 @@ final class ArtifactRelocationTests:XCTestCase {
     }
 }
 
+final class BackupRestoreInventoryTests:XCTestCase {
+    private let fm=FileManager.default
+    private var temporary:[URL]=[]
+    override func tearDown(){for url in temporary{try? fm.removeItem(at:url)};temporary=[];super.tearDown()}
+    private func directory()->URL {let url=fm.temporaryDirectory.resolvingSymlinksInPath().appendingPathComponent("video-restore-inventory-"+Codec.id());temporary.append(url);return url}
+    private func fixture()throws->(Repository,Asset,Repository.Backup) {
+        let repository=try Repository(root:directory()),workspace=Workspace(name:"隔离恢复规则",owner:"isolated-owner")
+        let asset=try repository.ingest(Data("原讲稿保持不变".utf8),name:"notes.txt",workspaceID:workspace.id,mediaType:"text")
+        try repository.transaction{$0.workspaces=[workspace];$0.assets=[asset]}
+        return(repository,asset,try PropertyListDecoder().decode(Repository.Backup.self,from:repository.backup()))
+    }
+    func testUnreferencedExportIsRejectedBeforeAnyDestinationWrite()throws {
+        let(repository,asset,backup)=try fixture(),destination=directory(),before=try Codec.data(repository.read())
+        var changed=backup;changed.exports=["exports/orphan/unreferenced.txt":Data("not bound to any original task".utf8)]
+        XCTAssertThrowsError(try Repository.restore(PropertyListEncoder().encode(changed),to:destination))
+        XCTAssertFalse(fm.fileExists(atPath:destination.path),"An invalid inventory must be rejected before creating the recovery directory")
+        XCTAssertEqual(try Codec.data(repository.read()),before)
+        XCTAssertEqual(try Data(contentsOf:repository.assetURL(asset)),backup.assets[asset.relativePath])
+    }
+    func testUnreferencedSourceBlobIsRejectedBeforeAnyDestinationWrite()throws {
+        let(repository,asset,backup)=try fixture(),destination=directory(),before=try Codec.data(repository.read())
+        var changed=backup;let extra=Data("unreferenced source".utf8);changed.assets["assets/"+Codec.hash(extra)+".txt"]=extra
+        XCTAssertThrowsError(try Repository.restore(PropertyListEncoder().encode(changed),to:destination))
+        XCTAssertFalse(fm.fileExists(atPath:destination.path))
+        XCTAssertEqual(try Codec.data(repository.read()),before)
+        XCTAssertEqual(try Data(contentsOf:repository.assetURL(asset)),backup.assets[asset.relativePath])
+    }
+    func testSharedSourceReferencesRemainOneVerifiedBlobAndRestoreBothRecords()throws {
+        let(repository,asset,_)=try fixture(),destination=directory()
+        var second=asset;second.id=Codec.id();second.name="同源另一引用.txt"
+        try repository.transaction{$0.assets.append(second)}
+        let data=try repository.backup(),envelope=try PropertyListDecoder().decode(Repository.Backup.self,from:data)
+        XCTAssertEqual(envelope.assets.count,1)
+        let restored=try Repository.restore(data,to:destination),state=try restored.read()
+        XCTAssertEqual(state.assets.map(\.id),[asset.id,second.id]);try restored.verifyAssets(state)
+    }
+    func testLegacyV1SourceOnlyBackupStillRestoresWithoutExportInventory()throws {
+        let(_,asset,backup)=try fixture(),destination=directory()
+        var legacy=backup;legacy.version=1;legacy.exports=nil
+        let restored=try Repository.restore(PropertyListEncoder().encode(legacy),to:destination)
+        XCTAssertEqual(try restored.read().assets.first?.id,asset.id);try restored.verifyAssets(restored.read())
+    }
+}
+
 final class RenderedPriceFreshnessTests:XCTestCase {
     private let now=Date(timeIntervalSince1970:1_780_000_000)
     private func fixture(nextAmount:Decimal=200)throws->Revision {
