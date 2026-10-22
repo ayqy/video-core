@@ -92,6 +92,7 @@ public final class ManagedReleaseInstaller {
         if let sourceData {
             let source=try Repository(root:sourceData,readOnly:true);providers=try source.read().providers;before=try checkedBackup(sourceData)
         }else{providers=[];let empty=try Repository(root:dataRoot);before=try empty.backup();try fm.removeItem(at:dataRoot)}
+        let providerDigest=try providerConfigurationDigest(providers)
         try before.write(to:generation.appendingPathComponent("before.videobackup"),options:.atomic)
         let restored=try Repository.restore(before,to:dataRoot)
         if !providers.isEmpty{try restored.transaction{$0.providers=providers}}
@@ -104,9 +105,11 @@ public final class ManagedReleaseInstaller {
         let highestPolicies=try policies(dataRoot)
         let after=try restored.backup()
         guard try semanticDigest(before)==semanticDigest(after) else{throw VideoError.conflict("备份恢复后的工程/许可/版本/账本不一致，未切换安装")}
+        try verifyProviderConfiguration(providerDigest,candidate:dataRoot,source:sourceData)
         try probe(generation.appendingPathComponent("program"),dataRoot,manifest)
         // Candidate self-check must not silently edit the data it was asked to inspect.
         guard try semanticDigest(after)==semanticDigest(restored.backup()) else{throw VideoError.conflict("候选程序自检意外改写数据，未切换安装")}
+        try verifyProviderConfiguration(providerDigest,candidate:dataRoot,source:sourceData)
         guard try independentLicense(at:dataRoot)==licence else{throw VideoError.conflict("候选程序自检改写独立许可，未切换安装")}
         guard try policies(dataRoot)==highestPolicies else{throw VideoError.conflict("候选程序自检改写策略最高版本，未切换安装")}
         try ManagedReleaseRules.verifyFiles(manifest,root:generation.appendingPathComponent("program"))
@@ -118,6 +121,7 @@ public final class ManagedReleaseInstaller {
                 let checked=try active(slot);guard checked.state.id==id else{throw VideoError.conflict("切换后当前安装代不符")}
                 try probe(generation.appendingPathComponent("program"),dataRoot,manifest)
                 guard try semanticDigest(after)==semanticDigest(Repository(root:dataRoot,readOnly:true).backup()) else{throw VideoError.conflict("切换后自检改写数据，正在回退程序与数据")}
+                try verifyProviderConfiguration(providerDigest,candidate:dataRoot,source:sourceData)
                 guard try independentLicense(at:dataRoot)==licence else{throw VideoError.conflict("切换后独立许可不一致，正在回退程序与数据")}
                 guard try policies(dataRoot)==highestPolicies else{throw VideoError.conflict("切换后策略最高版本不一致，正在回退程序与数据")}
                 try ManagedReleaseRules.verifyFiles(manifest,root:generation.appendingPathComponent("program"))
@@ -142,6 +146,23 @@ public final class ManagedReleaseInstaller {
         var snapshot=try Codec.decoder().decode(Database.self,from:value.snapshot);snapshot.generation=0;snapshot.providers=[]
         struct Fingerprint:Encodable{var snapshot:Database;var assets:[String:String];var exports:[String:String]}
         return try Codec.digest(Fingerprint(snapshot:snapshot,assets:value.assets.mapValues(Codec.hash),exports:(value.exports ?? [:]).mapValues(Codec.hash)))
+    }
+    private func providerConfigurationDigest(_ profiles:[ProviderProfile])throws->String {
+        // Portable backups deliberately omit service configuration. Installation must preserve
+        // every profile field separately, without persisting configuration or credential references
+        // in the backup/marker/errors. Canonicalize the one Set while retaining all Codable fields.
+        let records=try profiles.map{profile->[String:Any] in
+            guard var record=try JSONSerialization.jsonObject(with:Codec.data(profile)) as? [String:Any] else{throw VideoError.invalid("服务配置无法进行安装完整性校验")}
+            record["supportedParameters"]=profile.supportedParameters.sorted()
+            return record
+        }
+        return Codec.hash(try JSONSerialization.data(withJSONObject:records,options:.sortedKeys))
+    }
+    private func verifyProviderConfiguration(_ expected:String,candidate:URL,source:URL?)throws {
+        guard try providerConfigurationDigest(Repository(root:candidate,readOnly:true).read().providers)==expected else{throw VideoError.conflict("候选安装的服务配置或凭据引用已改变，未保留候选安装")}
+        if let source {
+            guard try providerConfigurationDigest(Repository(root:source,readOnly:true).read().providers)==expected else{throw VideoError.conflict("原安装的服务配置或凭据引用已改变，未保留候选安装")}
+        }
     }
     private func policies(_ root:URL?)throws->ModulePolicyHistory {
         guard let root else{return try ModulePolicyHistory()}

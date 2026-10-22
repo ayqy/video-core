@@ -34,8 +34,96 @@ final class ManagedInstallTests:XCTestCase {
         })
     }
     private func root(_ result:ManagedInstallResult)->URL {URL(fileURLWithPath:result.data,isDirectory:true)}
+    private func provider()->ProviderProfile {
+        var value=ProviderProfile(name:"隔离的自带服务",endpoint:"https://example.com/chat/completions",model:"configured-model",supportedParameters:["max_tokens","temperature","response_format"],maxOutput:1234,allowsUpload:true,keyReference:"isolated-keychain-reference",kind:"chat",statusPath:"/status",cancelPath:"/cancel",idempotency:true)
+        value.capabilities=ProviderCapabilities(version:"document-v2",source:"隔离能力文档",maximumInputCharacters:15000,outputFormat:.teachingV1,repairLimit:1,checkedAt:Date(timeIntervalSince1970:1700000000))
+        return value
+    }
+    private func assertProviders(_ actual:[ProviderProfile],_ expected:[ProviderProfile],file:StaticString=#filePath,line:UInt=#line) {
+        XCTAssertEqual(actual.count,expected.count,file:file,line:line)
+        for (a,e) in zip(actual,expected) {
+            XCTAssertEqual(a.id,e.id,file:file,line:line);XCTAssertEqual(a.name,e.name,file:file,line:line)
+            XCTAssertEqual(a.endpoint,e.endpoint,file:file,line:line);XCTAssertEqual(a.model,e.model,file:file,line:line)
+            XCTAssertEqual(a.supportedParameters,e.supportedParameters,file:file,line:line);XCTAssertEqual(a.maxOutput,e.maxOutput,file:file,line:line)
+            XCTAssertEqual(a.allowsUpload,e.allowsUpload,file:file,line:line);XCTAssertEqual(a.keyReference,e.keyReference,file:file,line:line)
+            XCTAssertEqual(a.kind,e.kind,file:file,line:line);XCTAssertEqual(a.statusPath,e.statusPath,file:file,line:line)
+            XCTAssertEqual(a.cancelPath,e.cancelPath,file:file,line:line);XCTAssertEqual(a.idempotency,e.idempotency,file:file,line:line)
+            XCTAssertEqual(a.capabilities?.version,e.capabilities?.version,file:file,line:line);XCTAssertEqual(a.capabilities?.source,e.capabilities?.source,file:file,line:line)
+            XCTAssertEqual(a.capabilities?.checkedAt,e.capabilities?.checkedAt,file:file,line:line);XCTAssertEqual(a.capabilities?.maximumInputCharacters,e.capabilities?.maximumInputCharacters,file:file,line:line)
+            XCTAssertEqual(a.capabilities?.outputFormat,e.capabilities?.outputFormat,file:file,line:line);XCTAssertEqual(a.capabilities?.repairLimit,e.capabilities?.repairLimit,file:file,line:line)
+        }
+    }
     private struct Licence:Encodable {var id="license-test";var subject="isolated-test";var pluginIDs:Set<String>=["video.game"];var issuedAt=Date().addingTimeInterval(-1000);var expiresAt:Date?=Date().addingTimeInterval(1000);var revoked:Bool}
 
+    func testInstallAndUpdatePreserveAllBYOKConfigurationOutsidePortableBackups()throws {
+        let source=try source(),slot=directory(),profile=provider()
+        try source.transaction{$0.providers=[profile]}
+        let portable=try PropertyListDecoder().decode(Repository.Backup.self,from:source.backup())
+        XCTAssertTrue(try Codec.decoder().decode(Database.self,from:portable.snapshot).providers.isEmpty)
+        var probes=0
+        let preserving=installer{_,data,_ in
+            probes+=1
+            self.assertProviders(try Repository(root:data,readOnly:true).read().providers,[profile])
+        }
+        let initial=try preserving.install(package:package(build:1),slot:slot,data:source.root)
+        let oldHandle=try Repository(root:root(initial))
+        let sourceSnapshot=try source.read()
+        let updating=installer{_,data,_ in
+            probes+=1
+            self.assertProviders(try Repository(root:data,readOnly:true).read().providers,[profile])
+            // Normal writers cannot replace configuration in the source generation while it is migrated.
+            XCTAssertThrowsError(try oldHandle.transaction{$0.providers=[]})
+        }
+        let updated=try updating.update(package:package(build:2),slot:slot)
+        XCTAssertEqual(probes,4)
+        assertProviders(try Repository(root:root(updated),readOnly:true).read().providers,[profile])
+        assertProviders(try oldHandle.read().providers,[profile]);assertProviders(try source.read().providers,[profile])
+        XCTAssertEqual(try source.read().generation,sourceSnapshot.generation)
+        try source.verifyAssets(sourceSnapshot)
+    }
+    func testCandidateCannotDeleteOrRewriteBYOKConfigurationDuringReadOnlyProbe()throws {
+        let mutations:[(inout [ProviderProfile])->Void]=[
+            {$0=[]},
+            {$0[0].endpoint="https://changed.example.com/chat/completions";$0[0].model="different-model";$0[0].allowsUpload=false},
+            {$0[0].keyReference="different-isolated-reference"}
+        ]
+        for mutate in mutations {
+            let source=try source(),slot=directory(),profile=provider()
+            try source.transaction{$0.providers=[profile]}
+            let initial=try installer().install(package:package(build:1),slot:slot,data:source.root)
+            let original=try Repository(root:root(initial)),snapshot=try original.read()
+            var probes=0
+            let changed=installer{_,data,_ in probes+=1;if probes==1{try Repository(root:data).transaction{mutate(&$0.providers)}}}
+            XCTAssertThrowsError(try changed.update(package:package(build:2),slot:slot))
+            XCTAssertEqual(try installer().status(slot:slot).generation,initial.generation)
+            XCTAssertEqual(try fm.contentsOfDirectory(atPath:slot.appendingPathComponent("generations").path).count,1)
+            assertProviders(try original.read().providers,[profile]);assertProviders(try source.read().providers,[profile])
+            XCTAssertEqual(try original.read().generation,snapshot.generation)
+            XCTAssertEqual(try original.read().workspaces[0].name,snapshot.workspaces[0].name)
+            try original.verifyAssets(snapshot)
+        }
+    }
+    func testCandidateCannotAddBYOKConfigurationToAnEmptyProfileSet()throws {
+        let source=try source(),slot=directory(),profile=provider()
+        let initial=try installer().install(package:package(build:1),slot:slot,data:source.root)
+        var probes=0
+        let changed=installer{_,data,_ in probes+=1;if probes==1{try Repository(root:data).transaction{$0.providers=[profile]}}}
+        XCTAssertThrowsError(try changed.update(package:package(build:2),slot:slot))
+        XCTAssertEqual(try installer().status(slot:slot).generation,initial.generation)
+        XCTAssertTrue(try Repository(root:root(initial),readOnly:true).read().providers.isEmpty)
+        XCTAssertTrue(try source.read().providers.isEmpty)
+    }
+    func testInitialMigrationRejectsChangedBYOKReferencesBeforePublishing()throws {
+        let source=try source(),slot=directory(),profile=provider()
+        try source.transaction{$0.providers=[profile]}
+        let changed=installer{_,data,_ in try Repository(root:data).transaction{$0.providers[0].keyReference="different-isolated-reference"}}
+        XCTAssertThrowsError(try changed.install(package:package(build:1),slot:slot,data:source.root))
+        XCTAssertFalse(fm.fileExists(atPath:slot.appendingPathComponent("current").path))
+        XCTAssertEqual(try fm.contentsOfDirectory(atPath:slot.appendingPathComponent("generations").path),[])
+        assertProviders(try source.read().providers,[profile])
+        XCTAssertEqual(try source.read().workspaces[0].name,"更新前数据")
+        try source.verifyAssets(source.read())
+    }
     func testInstallUpdateAndRollbackMoveProgramAndDataTogetherAndOldHandleCannotWrite()throws {
         let source=try source(),slot=directory(),engine=installer()
         let initial=try engine.install(package:package(build:1),slot:slot,data:source.root)

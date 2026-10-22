@@ -33,3 +33,15 @@ Claude的3-turn/0.10美元上限会话与缩减后的1-turn/0.01美元上限探�
 2026-10-23（北京时间）DeepSeek执行面增量：Qwen Code官方支持用`modelProviders`声明`envKey`名称，由原生宿主读取现有环境变量；无需把凭据写入项目、参数或提示。任务验证仅使用隔离的`QWEN_HOME`与`QWEN_RUNTIME_DIR`及项目Skill，不迁移或覆盖全局设置。源码/工具权限和真实调用事件分别核对，模型返回成功本身不等于命令已运行。官方依据：[模型Provider与环境变量](https://qwenlm.github.io/qwen-code-docs/en/users/configuration/model-providers/)、[项目Agent Skills](https://qwenlm.github.io/qwen-code-docs/en/users/features/skills/)、[DeepSeek官方当前模型与工具调用](https://api-docs.deepseek.com/quick_start/pricing/)。
 
 该有限DeepSeek链使用官方stream-json输入、保持任务stdin至原生result，且仅为两条明确命令设置权限；未采用YOLO或全Shell通配放行。实际执行事件与产物身份已记录，未将工具外层`is_error=false`误当CLI命令成功：schema发现成功，空目录doctor真实返回数据库未初始化，后者不计通过。
+
+### Qwen原生许可交接
+
+`qwen_stream.py`提供有限的原生stream-json消费包装。Qwen Code 0.17.0按第一条消息选择模式：直接发送用户消息会关闭SDK控制服务；工具需要询问时，消费端便收不到`can_use_tool`。包装先发送`control_request/initialize`，确认回执声明`can_handle_can_use_tool=true`后才发用户任务，并保持stdin至原生result。未确认许可能力时不执行任务。
+
+调用方使用`create_isolated_settings`在当前工作区内创建新的独立`QWEN_HOME`和运行目录；只传已有环境变量的名称，由原生Qwen消费凭据，不迁移全局设置。`ExactPolicy`指定完整Shell命令和可写的JSON输入文件绝对路径；Bash和Edit统一强制询问，匹配后只放行本次调用。追加参数、目录变更、后台运行和其他文件路径均拒绝。原生`Bash(pattern)`包含前缀匹配，不能当成完整命令相等；PreToolUse异常时可能放行，也不作为独立强制门禁。
+
+消费方通过`run_qwen(..., seconds=45)`给出父进程硬预算，最多300秒。到期只终止本次创建的进程组，不依赖原生`max-wall-time`及时结束；同时保留30工具调用、36轮的原生有限上限。函数只返回内存事件、许可决定和安全状态，不保存原始流。`result/success`不是业务验收：还需逐项核验CLI结构化`ok/error`、实际工程版本、备份恢复和独立回读；超过轮数的会话保持其原退出状态，后续只读重开单独记账。
+
+调用CLI前使用现有`discover.py --binary <video>`取得40命令目录的实际摘要，避免将重复嵌套的完整schema塞进模型上下文。需要枚举值时以真实schema为准：例如非商业草稿的`purpose="非商业教学"`、`aspect="9:16"`、`kind="图文讲解"`，Swift case名称和近义词不是机器协议值。
+
+许可及超时规则可运行`python3 -m unittest discover -s Integrations -p test_qwen_stream.py`；这些本地协议规则不冒充真实模型、账户或用户链证据。

@@ -97,9 +97,12 @@ enum CloudReviewDeletionRules {
         return CKContainer(identifier:identifier)
     }
     @discardableResult public func connect() async throws -> CKContainer {
+        let epoch=invalidation
         do {
             let container=try configuredContainer()
-            switch try await container.accountStatus() {
+            let status=try await container.accountStatus()
+            guard epoch==invalidation else{throw VideoError.permission("账户核验期间状态已变化，旧结果不能恢复身份或入口")}
+            switch status {
             case .available:break
             case .noAccount:throw VideoError.permission("此设备尚未登录 iCloud，请在系统设置登录真实 Apple ID 后重试")
             case .restricted:throw VideoError.permission("此设备的 iCloud/CloudKit 访问受到系统或组织限制")
@@ -107,13 +110,19 @@ enum CloudReviewDeletionRules {
             @unknown default:throw VideoError.unavailable("当前 iCloud 账户状态不支持审稿")
             }
             let user=try await container.userRecordID()
+            guard epoch==invalidation else{throw VideoError.permission("账户核验期间状态已变化，旧结果不能恢复身份或入口")}
             if let previous=accountID,previous != user {invalidate()}
             accountID=user
             let key=Codec.hash(Data(user.recordName.utf8))
             locations=storedLocations().filter{$0.accountKey==key && $0.containerIdentifier==container.containerIdentifier}
             accountDescription="已由 iCloud 验证当前 Apple ID · "+String(key.prefix(10));lastError=nil
             return container
-        } catch {accountDescription="iCloud 尚不可用";lastError=message(error);invalidate();throw VideoError.unavailable(message(error))}
+        } catch {
+            // An older request must not clear a newly authenticated account's
+            // description, addresses or cache after CKAccountChanged.
+            guard epoch==invalidation else{throw VideoError.permission("账户核验已过期，当前账户状态与缓存保持不变")}
+            accountDescription="iCloud 尚不可用";lastError=message(error);invalidate();throw VideoError.unavailable(message(error))
+        }
     }
     public func create(envelope:CloudReviewEnvelope,previewURL:URL) async throws -> CloudReviewInvitation {
         let container=try await connect();try CloudReviewRules.validate(envelope)
