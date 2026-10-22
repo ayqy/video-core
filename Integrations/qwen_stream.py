@@ -205,7 +205,7 @@ def run_qwen(prompt: str, policy: ExactPolicy, home: Path, runtime: Path, *, sec
     root = policy.directory.resolve()
     if any(not path.resolve().is_relative_to(root) or path.resolve() == root for path in (home, runtime)):
         raise ValueError("宿主目录不属于本次工作区")
-    arguments = ["rtk", "proxy", "env", f"QWEN_HOME={home}", f"QWEN_RUNTIME_DIR={runtime}", "qwen",
+    arguments = ["env", f"QWEN_HOME={home}", f"QWEN_RUNTIME_DIR={runtime}", "qwen",
                  "--auth-type", "openai", "--model", model, "--input-format", "stream-json", "--output-format", "stream-json",
                  "--approval-mode", "default", "--no-chat-recording", "--max-tool-calls", "30", "--max-session-turns", "36",
                  "--core-tools", "run_shell_command", "write_file", "skill"]

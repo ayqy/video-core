@@ -41,7 +41,7 @@ class QwenStreamTests(unittest.TestCase):
     def peer(self, mode):
         script = self.root / "peer.py"
         script.write_text(PEER)
-        return ["rtk", "proxy", sys.executable, str(script), mode]
+        return [sys.executable, str(script), mode]
 
     def testFirstMessageInitializesSdkBeforeUserAndPermissionReply(self):
         result = consume(self.peer("allow"), "bounded input", self.policy, seconds=3)

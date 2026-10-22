@@ -36,7 +36,7 @@ Claude的3-turn/0.10美元上限会话与缩减后的1-turn/0.01美元上限探�
 
 ### Qwen原生许可交接
 
-`qwen_stream.py`提供有限的原生stream-json消费包装。Qwen Code 0.17.0按第一条消息选择模式：直接发送用户消息会关闭SDK控制服务；工具需要询问时，消费端便收不到`can_use_tool`。包装先发送`control_request/initialize`，确认回执声明`can_handle_can_use_tool=true`后才发用户任务，并保持stdin至原生result。未确认许可能力时不执行任务。
+`qwen_stream.py`提供有限的原生stream-json消费包装。运行依赖Python 3与PATH中的原生Qwen CLI，消费端直接启动Qwen。Qwen Code 0.17.0按第一条消息选择模式：直接发送用户消息会关闭SDK控制服务；工具需要询问时，消费端便收不到`can_use_tool`。包装先发送`control_request/initialize`，确认回执声明`can_handle_can_use_tool=true`后才发用户任务，并保持stdin至原生result。未确认许可能力时不执行任务。
 
 调用方使用`create_isolated_settings`在当前工作区内创建新的独立`QWEN_HOME`和运行目录；只传已有环境变量的名称，由原生Qwen消费凭据，不迁移全局设置。`ExactPolicy`指定完整Shell命令和可写的JSON输入文件绝对路径；Bash和Edit统一强制询问，匹配后只放行本次调用。追加参数、目录变更、后台运行和其他文件路径均拒绝。原生`Bash(pattern)`包含前缀匹配，不能当成完整命令相等；PreToolUse异常时可能放行，也不作为独立强制门禁。
 

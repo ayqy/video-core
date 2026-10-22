@@ -2,14 +2,14 @@
 
 VideoCore reviewed source product · manifest version 2
 
-- 当前审定时间：2026-10-23 05:20:27 北京时间；免费上游冻结正式提交`b5ef2fdbdbbb349946cbf4b1dac028f701a60725`。
-- 正式文本为122项源码及必要元数据，另有本清单，共123项文件；不含本清单共1191024字节。
-- 整体内容指纹：`17b83532542bb7016b7a9cbd3d811af0bd322cf62fd3f4b737530843a61ca160`。算法：相对路径按Unicode码点排序，各项为UTF-8“路径 + NUL + SHA-256十六进制 + NUL + 十进制字节数 + 换行”，拼接后计算SHA-256；本清单与Git元数据不参与摘要。
-- 审定同源文件114项、1153136字节，逐文件与免费白名单导出及冻结正式源码完全相同，同源集指纹`9d4518ea4f66378b202ccbb8c1e5819797edd01a4af6e21ce4fb022b221bd685`。Package.swift来自免费模板；独立README与7项站点附加文件保留原字节。
-- 上游受控导出116项文件、1169883字节，其非清单内容指纹`66cd93edf43b06b5b960f9fa6fbd217a7bfc3d7f9c54f111d96b16700f0378ef`；上游生成README不覆盖本仓库独立README。
+- 当前审定时间：2026-10-23 05:23:52 北京时间；免费上游冻结正式提交`109e4a2dc42433165ad9821ed495cec730376915`。
+- 正式文本为122项源码及必要元数据，另有本清单，共123项文件；不含本清单共1191070字节。
+- 整体内容指纹：`6d1c093a9e0e29e9b4a8e3bd0e7d9cbf68affec7ac0239cd57f8e2bc6060f7d2`。算法：相对路径按Unicode码点排序，各项为UTF-8“路径 + NUL + SHA-256十六进制 + NUL + 十进制字节数 + 换行”，拼接后计算SHA-256；本清单与Git元数据不参与摘要。
+- 审定同源文件114项、1153182字节，逐文件与免费白名单导出及冻结正式源码完全相同，同源集指纹`046a6c078b2ff10103b7a441ba7b7803527dac3f3f4651c18ea1363cb99390c7`。Package.swift来自免费模板；独立README与7项站点附加文件保留原字节。
+- 上游受控导出116项文件、1169929字节，其非清单内容指纹`964a23689a8bd76e31702ba84e733f8f5c1fba8331a447e43c8b2d309d9df286`；上游生成README不覆盖本仓库独立README。
 - 生产构建输入63项，指纹`baf57de52b5c527eb9424661026a6feabad2ee77cebc07ad066e5ad2844c9c06`。相对公开`04e429bac4264b7d88d9cf001f6d815ea250ef84`仅同步安装器、其18项规则、CloudReview的iOS连接生命周期和Qwen包装及文档，共6份文件差异。
 - 安装器在安装、更新、迁移和候选只读探测中保留所有BYOK配置；候选删除、改写或新增配置均拒绝。Qwen包装补齐握手、能力和命令权限、截止时间、工作区路径及显式写入许可约束。
-- 当前免费包独立host SwiftPM编译通过，77.74秒；同一公共源码实际host XCTest仅运行ManagedInstallTests，18/18通过、0失败、0跳过，24.443秒。Qwen本地协议7/7通过、0失败、0跳过，0.539秒；不调用模型或供应商账号。
+- 当前免费包独立host SwiftPM编译通过，77.74秒；同一公共源码实际host XCTest仅运行ManagedInstallTests，18/18通过、0失败、0跳过，24.443秒。Qwen包装只调用原生env/qwen，不将本机RTK规范引入产品依赖。最新同源包装本地协议7/7通过、0失败、0跳过，0.455秒；实际模型许可往返8.698秒通过，只获准调用该新CLI的capabilities，得到唯一许可和唯一工具结果，CLI ok=true、stderr为空；不新增业务写入或媒体。
 - 最新macOS x86_64 CLI为12001696字节，SHA-256`df981eca1fffff3d02e186427839e30c1a461a083338cb28e82ac92eaedc9469`；schema与capabilities两条只读调用成功并解析为对象。安装器规则使用隔离合成数据及临时签名材料，不证明生产签名安装或Gatekeeper验收。
 - CloudReview连接方法防止账号失效前挂起的旧成功或旧错误覆盖新会话；该路径仅在iOS条件编译。这里的host编译及规则不证明真实CloudKit SDK、账号、共享或双身份链。
 - 业务、媒体、备份和既有生态入口的未变源码证据保持原产物及调用条件边界，未重跑模型、媒体或完整规则。此前真实Qwen工程创建、编辑、备份、恢复和另一只读会话重开使用旧同源业务CLI，不将其称为新安装器的实机验收。
@@ -22,17 +22,17 @@ VideoCore reviewed source product · manifest version 2
 | SHA-256 | 字节数 | 包内路径 | 核对结果 |
 |---|---:|---|---|
 | c07cc6d537cb0e119e22a6184cb1423b3dee983074bcc4b81c17072ad9e616c5 | 93 | .gitignore | 独立原文保留 |
-| afbe286cff02467109c9d96c884634c1a54cbf274970f8e801a3f2f63f3eaba1 | 8712 | Integrations/README.md | 逐字节一致 |
+| c006e5a588982cee0be30f46a5e6497b7e9b1840a18a1083c69525be50d70c5c | 8790 | Integrations/README.md | 逐字节一致 |
 | 4f646b85881f0ae26539807f0e26d5daad68c91e590989c4b251d9d0b10254f6 | 1859 | Integrations/check_install.py | 逐字节一致 |
 | abafee4069a7a58ae79d7e180340fce80d9d51bfcfe50a49847c25da16a266d2 | 2149 | Integrations/discover.py | 逐字节一致 |
 | f4ffa8e5e02d6afb0e8609383b04f8651a01e8c2b93f14b46bb4930f302bf614 | 3129 | Integrations/install.py | 逐字节一致 |
-| 8a545adff5d3046462c6b8a9a3249b65a68f26e9d037d01db40211e48311949c | 10488 | Integrations/qwen_stream.py | 逐字节一致 |
+| 9f5fd384c9e1f1045d7e64869e9d1acd41184d90939add4b5fa90f0420bdf41a | 10472 | Integrations/qwen_stream.py | 逐字节一致 |
 | cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30 | 11358 | Integrations/skills/video/LICENSE | 逐字节一致 |
 | 1dbab07b005a071618dc75a2e3cd3b68fccfba4c235d4818238a18cdbfcdb052 | 358 | Integrations/skills/video/NOTICE | 逐字节一致 |
 | b4f2fbb6d085f9c48b9421a174a5ec3468753ebdad9e9e4aedb797ef3d9ff0f2 | 3404 | Integrations/skills/video/SKILL.md | 逐字节一致 |
 | 80f697b67421db6f559e8ba99e92a01734018dca974979cee5f169e0f6f871e4 | 308 | Integrations/skills/video/agents/openai.yaml | 逐字节一致 |
 | af117d681ee814036da2a294494d020b16173b46ff38c884a68c5ce89da9775e | 3274 | Integrations/skills/video/references/protocol.md | 逐字节一致 |
-| 02c6a1a0e1c92007cdd1fe57e465d5b8bafb1e5cae7ddad052019f4419c4a2a1 | 5252 | Integrations/test_qwen_stream.py | 逐字节一致 |
+| bf5529e22ddf0a9c4742b3a274d5398ac31114d587b0abe8a76850d5d45743b0 | 5236 | Integrations/test_qwen_stream.py | 逐字节一致 |
 | cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30 | 11358 | LICENSE | 逐字节一致 |
 | c369f09e50d62d1a1c8eff1500888667ff7a192d0fdc7b32d39c800dfa1e9721 | 1597 | NOTICE | 逐字节一致 |
 | 6a9dec4441a53577b8eb06a1031205221050239fd1b4419ec8eec6132280fe46 | 1034 | Package.swift | 逐字节一致 |
