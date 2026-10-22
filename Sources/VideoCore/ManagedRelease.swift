@@ -40,6 +40,7 @@ public enum ManagedReleaseRules {
         guard manifest.platform=="macOS",["arm64","x86_64"].contains(manifest.architecture),manifest.architecture==architecture,manifest.minimumOSMajor>=14,osMajor>=manifest.minimumOSMajor,manifest.coreABI==1,manifest.repositorySchema==1 else{throw VideoError.unavailable("发行系统/架构/ABI/数据库主版本不兼容；原安装和数据保留")}
         guard publicKey.count==32,manifest.publisherKeySHA256==Codec.hash(publicKey),manifest.appleTeamID==teamID,!teamID.isEmpty,manifest.createdAt<=now.addingTimeInterval(300) else{throw VideoError.permission("发行者身份、Team或签名时间不符")}
         guard !manifest.files.isEmpty,manifest.files.count<=1000,Set(manifest.files.map(\.path)).count==manifest.files.count else{throw VideoError.invalid("发行文件集合为空、重复或超限")}
+        try ManagedPayloadRules.validate(manifest.files,product:manifest.product)
         var total=0
         for file in manifest.files {
             try relativePath(file.path)

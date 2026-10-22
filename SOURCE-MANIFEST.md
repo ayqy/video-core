@@ -2,15 +2,15 @@
 
 VideoCore reviewed source product · manifest version 2
 
-- 当前审定时间：2026-10-22 23:54:45 北京时间。
-- 正式仓库实际文本：117项源码及必要元数据，另有本清单，共118项文件；不含本清单的内容共1122739字节。
-- 整体内容指纹：`610e5e0495075366247ad757085fe641a9bec7241cbe6d481605938de0e8dadc`。
+- 当前审定时间：2026-10-23 01:22:33 北京时间。
+- 正式仓库实际文本：119项源码及必要元数据，另有本清单，共120项文件；不含本清单的内容共1140342字节。
+- 整体内容指纹：`3b8960f0a8501b0fcec9b600c1c2417cf07379e310922d7d76d986beabc178d6`。
 - 指纹算法：包内相对路径按Unicode码点排序，每项编码为UTF-8的“路径 + NUL + SHA-256十六进制 + NUL + 十进制字节数 + 换行”，对拼接内容计算SHA-256。本清单自身与Git元数据不参与摘要，无自引用。
-- 审定同源文件：109项，1085148字节，逐文件与当前免费白名单导出完全相同；同源集指纹`a1d8a732dcdb05780a838249c36a925fbbe2f10ccae14d131e802ec51bcd8a72`。Package.swift来自免费模板，其余来自逐文件审定的免费来源。
-- 上游受控导出共111项文件，其非清单内容指纹`2dce05022e0c38283f01cd01e5c2fe73e392fab82812451fe79872b6d77a1333`；上游生成README与本仓库独立README分别保留，不混用两种产品说明。
-- 生产构建输入：62项，指纹`02f70b5958eae803be86b0513570c8aa7489ae933513f292dfd345ee78719daf`。本次包含策略历史持久语义、安装回滚合并及候选自检适配，已重新编译和运行当前免费包，没有把旧源测试当作最新证据。
-- 当前独立包实际XCTest为253/253通过；策略目录/历史15项与受管安装14项包含在同一完整测试Bundle中。当前原生CLI实际生成26秒H.264/AAC四产物，帧边界拒绝、实际移动工作区与完整备份恢复通过，产物保持needs_review，未伪造人工看听审核。
-- 独立产品README在保留产品、许可和未签名二进制边界的基础上，更新上述实际验证范围；其SHA-256为`c837df3a361e1888e1d8440baaee104b49d06977288c1c955b5f0c751d964116`。
+- 审定同源文件：111项，1102454字节，逐文件与当前免费白名单导出完全相同；同源集指纹`e522c027b24a148dd9f09022641999a17d0f71782caefe47702f2321cc3eeebd`。Package.swift来自免费模板，其余来自逐文件审定的免费来源。
+- 上游受控导出共113项文件，其非清单内容指纹`4ecbaf8b020630969fa7f8309f46c7a06ef3eb0e535fd9735cfab02d7d15bf93`；上游生成README与本仓库独立README分别保留，不混用两种产品说明。
+- 生产构建输入：63项，指纹`2711a603ce7d3c3df951d0a820bd66c65badb94a7a2b1f5ca6286808098e9f27`。本次包含签名目录包准备和付款前策略核验的公共接口，已重新编译和运行当前免费包，不把旧源测试当作最新证据。
+- 当前独立包实际XCTest为261/261通过、0失败；签名目录包准备8项与受管安装14项包含在同一完整测试Bundle中。当前冻结源码CLI完整回归待精确公开提交后执行；此前26秒H.264/AAC四产物、帧边界、移动和备份恢复证据保留原源码身份，不能代替本次实际回归。
+- 独立产品README保留产品、许可和未签名二进制边界，更新本轮实际规则验证并将旧CLI记录标明历史；其SHA-256为`2d70cb97074384a7dee7ec07275f5c74c6cd89033ff7d801b24b11afa27ded82`。
 - 附加发行材料：7项，32329字节，整体指纹`5b04d27050981614b158e5e5391d5e56a5b50c53419bd74986700d6490c704a2`。仅包含.gitignore、知幕静态支持站四份HTML、共用CSS和允许为空的docs/.nojekyll；本次均逐字节保留，不是上游免费源码。
 - 排除人工App、游戏/卡通高级实现、发布器、发行私钥、凭据、客户数据、模型权重、媒体素材、缓存、日志、任务文档与完整上游仓库；不复制上游Git元数据。
 - 每份实质文本均通过原package_free.scan_payload的UTF-8、敏感形态、私有仓库来源及闭源import检查；仅docs/.nojekyll允许为空。固定合成凭据拒绝测试沿用精确摘要例外。文件集合、普通文件类型、符号链接及硬链接另行核对。
@@ -63,7 +63,8 @@ VideoCore reviewed source product · manifest version 2
 | 52a5b0418fef01b5dfd816a9a66793ae9c4fb2b22d585f300dc3007568c41184 | 1890 | Sources/VideoCore/LearningExample.swift | 逐字节一致 |
 | d6c06ae9b610d6b7f636e9ddc301e53445b8ac14e1ec76ff5d435d94a4aefdbe | 8706 | Sources/VideoCore/Loudness.swift | 逐字节一致 |
 | cbfeb4947a14fbd668756bb7aadf9b7c233355e27248ca13f09965152320219f | 22611 | Sources/VideoCore/ManagedInstaller.swift | 逐字节一致 |
-| ba49aee5d81a6c534c8ccdaa33f817b0a501bc281f908857a570cbb156a9bb5e | 11604 | Sources/VideoCore/ManagedRelease.swift | 逐字节一致 |
+| c5f7880b28d3447646ea9e8b51e540d171d17455ccf182941e0646fd206c0d98 | 7620 | Sources/VideoCore/ManagedPayload.swift | 逐字节一致 |
+| c7c418a77444319e56b71a73ca27a9a9c26fc306ae1e4897ae57705d738fd5f9 | 11686 | Sources/VideoCore/ManagedRelease.swift | 逐字节一致 |
 | c6950f5da04d4531602d738f2552d3a56aff377375d5c96990a27cd23a050a73 | 15431 | Sources/VideoCore/Models.swift | 逐字节一致 |
 | f4d5ffef84c3177d22f93b5f0b12400e9121fc6eb34703de1d735fa599cea8fe | 15222 | Sources/VideoCore/ModuleCatalogPublication.swift | 逐字节一致 |
 | 4a02f41deb1d630359922eebe8ffe3a436ceedf95ad9ca823a2eb532f74de145 | 28979 | Sources/VideoCore/Narratives.swift | 逐字节一致 |
@@ -89,7 +90,7 @@ VideoCore reviewed source product · manifest version 2
 | 54f2c2e61cd64c9b3a668a903d13c5dc81287cb6c3221dc6d62396bf9a864141 | 2044 | Sources/VideoMedia/Preview.swift | 逐字节一致 |
 | b559534d57549106cce137f015699a82fda438fe7cb686affd8201b65e07caed | 5695 | Sources/VideoMedia/ProviderClient.swift | 逐字节一致 |
 | 4f19002514353501551d4b0930172d62e5d65803e953cd9db6005a9d704cc6e0 | 3782 | Sources/VideoMedia/RemoteJobs.swift | 逐字节一致 |
-| 8060bc955211bc4a244cd53866566aa6eeabe5bc9212e46f93db34d4fa316798 | 25033 | Sources/VideoMedia/RenderModules.swift | 逐字节一致 |
+| 5d6e1eed0aaa7ccf3c784077300e1b9a4ae6332e6cb5e5fb926bbd3437dbedf4 | 26808 | Sources/VideoMedia/RenderModules.swift | 逐字节一致 |
 | 402b0323be6202700acdd55831a8ee4cb8c76f68ee52cde8f61edb302e64b106 | 26639 | Sources/VideoMedia/Renderer.swift | 逐字节一致 |
 | 9ec229f48547a7e2e0218d913dba2dfd38457f08ae55196979968dbbdee2d4e0 | 11971 | Sources/VideoMedia/SpeechService.swift | 逐字节一致 |
 | 924b79fb85d46d8f92c02e9347beabbd3c608929b0c5820d6b0ae597938bb941 | 12830 | Sources/VideoMedia/VisualCache.swift | 逐字节一致 |
@@ -116,7 +117,8 @@ VideoCore reviewed source product · manifest version 2
 | 34834eefae890a78408967bdb8cab12fe06ba9708ba127f2a1ed61520f9d3aea | 5221 | Tests/VideoCoreTests/JobOperationTests.swift | 逐字节一致 |
 | 1c7965c4e437acd65085788b53c88a94ce7aaa8c604e98daa53c1ddae76ff57f | 2546 | Tests/VideoCoreTests/LayerTests.swift | 逐字节一致 |
 | 082a8f3a9302736ee62ddc5eab2609dacac100a83145b24b55d5ed6b97ba1737 | 5928 | Tests/VideoCoreTests/LoudnessTests.swift | 逐字节一致 |
-| 2565a7b424ab876dc9e013f811d81ce4300ef25a6da91da36295c72fd111fb1e | 17869 | Tests/VideoCoreTests/ManagedInstallTests.swift | 逐字节一致 |
+| 523cf3a6ce22dd944e0ec7ea3e1a23c41d461627b37572e7762f7a232807ec0c | 18023 | Tests/VideoCoreTests/ManagedInstallTests.swift | 逐字节一致 |
+| 492ed82d5e1d5d7fb2d20071dda1c8dc22a0fcd33b4baf82fed247110d871474 | 7675 | Tests/VideoCoreTests/ManagedPayloadTests.swift | 逐字节一致 |
 | 15accf442db3ce30dc6b0ce7c6e8f50d946594eaf1afd592b4af9ba5f0ff8cbf | 12483 | Tests/VideoCoreTests/ModuleCatalogPublicationTests.swift | 逐字节一致 |
 | 7ba1587dc551d09402b66e7ef663cc5b7478a55c52c1d6ef93dfe129020d2d7d | 17745 | Tests/VideoCoreTests/NarrativeTests.swift | 逐字节一致 |
 | c499c8ae6aca4855864eb5a5e2c5a55305643953a9c47073fc66b45c9bb41767 | 5752 | Tests/VideoCoreTests/NativeAgentTests.swift | 逐字节一致 |
@@ -134,7 +136,7 @@ VideoCore reviewed source product · manifest version 2
 
 | SHA-256 | 字节数 | 包内路径 | 核对结果 |
 |---|---:|---|---|
-| c837df3a361e1888e1d8440baaee104b49d06977288c1c955b5f0c751d964116 | 5262 | README.md | 独立产品说明 |
+| 2d70cb97074384a7dee7ec07275f5c74c6cd89033ff7d801b24b11afa27ded82 | 5559 | README.md | 独立产品说明 |
 
 ## 保留的附加发行材料
 

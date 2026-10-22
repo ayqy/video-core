@@ -156,9 +156,33 @@ public struct RenderCatalogSelection: Sendable {
     public var entries: [VerifiedRenderCatalogEntry]
     public var diagnostics: [String]
 }
+
+public enum ModulePurchaseAvailability: String, Equatable, Sendable {
+    case paid, included, disabled
+}
 /// A stale imported catalog never masks a valid catalog delivered with an App update.
 /// Each candidate independently passes the same pinned-key, current-code and policy checks.
 public enum RenderCatalogResolver {
+    /// Call again immediately before starting payment, using a newly verified current-code
+    /// selection and the latest durable history. This never grants a StoreKit entitlement.
+    public static func purchaseAvailability(productID: String, selection: RenderCatalogSelection, policyHistory: ModulePolicyHistory, now: Date = Date()) throws -> ModulePurchaseAvailability {
+        _ = try policyHistory.observing(selection.entries.map(\.policy), now: now)
+        let matches = selection.entries.filter { RenderModuleRegistry.storeProduct(for: $0.manifest.id) == productID }
+        guard matches.count == 1, let entry = matches.first else { throw VideoError.permission("当前签名目录没有此商品的独立模块，未发起付款") }
+        switch entry.policy.access {
+        case "paid": return .paid
+        case "free": return .included
+        case "disabled": return .disabled
+        default: throw VideoError.permission("此模块的签名销售策略不合法，未发起付款")
+        }
+    }
+    public static func authorizePurchase(productID: String, selection: RenderCatalogSelection, policyHistory: ModulePolicyHistory, now: Date = Date()) throws {
+        switch try purchaseAvailability(productID: productID, selection: selection, policyHistory: policyHistory, now: now) {
+        case .paid: return
+        case .included: throw VideoError.permission("此模块当前签名策略为免费，无需购买；请返回模块页使用")
+        case .disabled: throw VideoError.unavailable("此模块当前签名策略已停用，暂不发起付款；恢复、退款和原资料取回仍可用")
+        }
+    }
     public static func verify(_ data: Data, publicKey: Data, implementationDigest: String, minimumPolicyVersions: [String: Int], supportedCapabilities: [String: String], policyHistory: ModulePolicyHistory? = nil, now: Date = Date()) throws -> [VerifiedRenderCatalogEntry] {
         guard data.count <= 2 * 1024 * 1024, data.starts(with: Data("bplist00".utf8)) else { throw VideoError.invalid("目录须为不超过2MiB的二进制PropertyList封套") }
         let catalog: RenderModuleCatalog
@@ -170,7 +194,7 @@ public enum RenderCatalogResolver {
         let verified = try catalog.entries.map { entry in
             let manifest = try entry.manifest.verified(as: PluginManifest.self, publicKey: publicKey)
             let policy = try entry.policy.verified(as: CommercialPolicy.self, publicKey: publicKey)
-            guard let capability = supportedCapabilities[manifest.id], seen.insert(manifest.id).inserted,
+            guard let capability = supportedCapabilities[manifest.id], seen.insert(manifest.id).inserted, !manifest.version.isEmpty,
                   manifest.abi == 1, manifest.minimumCore <= 1, manifest.inputSchema == 1, manifest.outputSchema == 1,
                   manifest.permissions.isEmpty, manifest.capabilities == [capability], ["open", "closed"].contains(manifest.sourceVisibility),
                   policy.pluginID == manifest.id, ["free", "paid", "disabled"].contains(policy.access),

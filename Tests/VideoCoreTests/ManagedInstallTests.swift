@@ -18,6 +18,7 @@ final class ManagedInstallTests:XCTestCase {
         try fm.createDirectory(at:binary.deletingLastPathComponent(),withIntermediateDirectories:true)
         try Data("isolated fixture build \(build), never execute".utf8).write(to:binary)
         try fm.setAttributes([.posixPermissions:0o700],ofItemAtPath:binary.path)
+        for name in ["LICENSE","NOTICE"]{try Data("isolated fixture \(name), no distribution grant".utf8).write(to:payload.appendingPathComponent(name))}
         let manifest=ManagedReleaseManifest(product:.coreCLI,version:"1.0.\(build)",build:build,architecture:"x86_64",minimumRollbackBuild:floor,publisherKeySHA256:Codec.hash(key.publicKey.rawRepresentation),appleTeamID:"TESTTEAM",files:try ManagedReleaseRules.inventory(payload))
         try write(signed(manifest),to:root.appendingPathComponent(ManagedReleaseRules.documentName));return root
     }
