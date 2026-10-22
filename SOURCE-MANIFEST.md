@@ -2,24 +2,27 @@
 
 VideoCore reviewed source product · manifest version 2
 
-- 当前审定时间：2026-10-23 01:22:33 北京时间。
-- 正式仓库实际文本：119项源码及必要元数据，另有本清单，共120项文件；不含本清单的内容共1140342字节。
-- 整体内容指纹：`3b8960f0a8501b0fcec9b600c1c2417cf07379e310922d7d76d986beabc178d6`。
+- 当前审定时间：2026-10-23 02:34:10 北京时间。
+- 正式仓库实际文本：120项源码及必要元数据，另有本清单，共121项文件；不含本清单的内容共1145252字节。
+- 整体内容指纹：`9f363efceab69da641eb71c67b617884daee87d6f2f1aff240f0ce77b7ee2f9c`。
 - 指纹算法：包内相对路径按Unicode码点排序，每项编码为UTF-8的“路径 + NUL + SHA-256十六进制 + NUL + 十进制字节数 + 换行”，对拼接内容计算SHA-256。本清单自身与Git元数据不参与摘要，无自引用。
-- 审定同源文件：111项，1102454字节，逐文件与当前免费白名单导出完全相同；同源集指纹`e522c027b24a148dd9f09022641999a17d0f71782caefe47702f2321cc3eeebd`。Package.swift来自免费模板，其余来自逐文件审定的免费来源。
-- 上游受控导出共113项文件，其非清单内容指纹`4ecbaf8b020630969fa7f8309f46c7a06ef3eb0e535fd9735cfab02d7d15bf93`；上游生成README与本仓库独立README分别保留，不混用两种产品说明。
-- 生产构建输入：63项，指纹`2711a603ce7d3c3df951d0a820bd66c65badb94a7a2b1f5ca6286808098e9f27`。本次包含签名目录包准备和付款前策略核验的公共接口，已重新编译和运行当前免费包，不把旧源测试当作最新证据。
-- 当前独立包实际XCTest为261/261通过、0失败；签名目录包准备8项与受管安装14项包含在同一完整测试Bundle中。当前冻结源码CLI完整回归待精确公开提交后执行；此前26秒H.264/AAC四产物、帧边界、移动和备份恢复证据保留原源码身份，不能代替本次实际回归。
-- 独立产品README保留产品、许可和未签名二进制边界，更新本轮实际规则验证并将旧CLI记录标明历史；其SHA-256为`2d70cb97074384a7dee7ec07275f5c74c6cd89033ff7d801b24b11afa27ded82`。
-- 附加发行材料：7项，32329字节，整体指纹`5b04d27050981614b158e5e5391d5e56a5b50c53419bd74986700d6490c704a2`。仅包含.gitignore、知幕静态支持站四份HTML、共用CSS和允许为空的docs/.nojekyll；本次均逐字节保留，不是上游免费源码。
+- 审定同源文件：112项，1107364字节，逐文件与当前免费白名单导出完全相同；同源集指纹`d7c9bc7b372ad7a15e3f0b1d158cb3c8e3d240bb0504e14db5ce22410ec6b9fa`。Package.swift来自免费模板，其余来自逐文件审定的免费来源。
+- 上游受控导出共114项文件，其非清单内容指纹`4894a9444c8eb9c5ce5630010bc7051b585751b4617951733fc263ca9e2f0985`；上游生成README与本仓库独立README分别保留。
+- 生产构建输入：63项，指纹`2417b78bb7d1c48f789861c84f43b16d6d022bbc5da67aca2f161cdc9b3ee81c`。本次生产差异仅云审稿地址值与当前账户/容器分区保存，新增4条地址存储规则。
+- 当前独立免费包重新编译通过（SwiftPM85.04秒）；实际Xcode XCTest Bundle 265/265通过、0失败，规则64.944秒，于2026-10-23 02:33:05（北京时间）结束。新增4条验证A→B变更→A地址保留、仅删除当前分区、空分区和外来地址隔离。
+- 当前macOS x86_64 CLI实际schema40命令、doctor、capabilities、合成工作区dry-run/保存/重开查询及只读doctor均通过，数据库snapshot保持原字节；video-install帮助通过。CLI为11985616字节，SHA-256 `19c76b9a09a2138e9ca938a67b09ca7f3cc0310705b74199196d744ec871e816`。
+- 依赖影响判断：本次地址值/分区函数未进入普通CLI制作、备份恢复或Skill执行路径；这些源文件及调用条件未改变，因此复用公开提交908a2e606b6eae2d38442017957c88a603bc794f的完整26秒媒体/移动/两次恢复与真实Codex业务链原证据范围，本次没有再次渲染或再次运行该模型会话，不将旧二进制哈希写作当前结果。
+- 独立产品README保留原字节，历史规则/媒体记载保留原范围；本次最新计数与调用边界以本清单为准，其SHA-256为`2d70cb97074384a7dee7ec07275f5c74c6cd89033ff7d801b24b11afa27ded82`。
+- 附加发行材料：7项，32329字节，整体指纹`5b04d27050981614b158e5e5391d5e56a5b50c53419bd74986700d6490c704a2`，全部原字节保留。仅包含.gitignore、四份静态HTML、共用CSS和允许为空的docs/.nojekyll。
 - 排除人工App、游戏/卡通高级实现、发布器、发行私钥、凭据、客户数据、模型权重、媒体素材、缓存、日志、任务文档与完整上游仓库；不复制上游Git元数据。
-- 每份实质文本均通过原package_free.scan_payload的UTF-8、敏感形态、私有仓库来源及闭源import检查；仅docs/.nojekyll允许为空。固定合成凭据拒绝测试沿用精确摘要例外。文件集合、普通文件类型、符号链接及硬链接另行核对。
-- 本清单证明文件内容和来源核对范围，不构成任意自由文本绝无敏感信息、已签名安装、应用商店发行、完整iOS用户链、真实购买、独立高级模块或五生态全验的证明。
+- 文件集合、普通文件类型、符号/硬链接及UTF-8、敏感形态、私有仓库来源和闭源import均按精确白名单核对；仅docs/.nojekyll允许为空。模式检查不能证明任意自由文本绝无敏感信息。
+- 本清单不代表已签名安装、公证、应用商店发行、iOS真实用户链、真实购买、独立高级模块或五生态全验；合成离线检查不记录人工看听通过。
 
 ## 审定同源源码与元数据
 
 | SHA-256 | 字节数 | 包内路径 | 核对结果 |
 |---|---:|---|---|
+| c07cc6d537cb0e119e22a6184cb1423b3dee983074bcc4b81c17072ad9e616c5 | 93 | .gitignore | 独立原文保留 |
 | 3bf8a0d90a14cb620743f175a4765e3528f5a85f7d8fb37845d8240fbce74ef7 | 5074 | Integrations/README.md | 逐字节一致 |
 | 4f646b85881f0ae26539807f0e26d5daad68c91e590989c4b251d9d0b10254f6 | 1859 | Integrations/check_install.py | 逐字节一致 |
 | abafee4069a7a58ae79d7e180340fce80d9d51bfcfe50a49847c25da16a266d2 | 2149 | Integrations/discover.py | 逐字节一致 |
@@ -32,6 +35,7 @@ VideoCore reviewed source product · manifest version 2
 | cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30 | 11358 | LICENSE | 逐字节一致 |
 | c369f09e50d62d1a1c8eff1500888667ff7a192d0fdc7b32d39c800dfa1e9721 | 1597 | NOTICE | 逐字节一致 |
 | 6a9dec4441a53577b8eb06a1031205221050239fd1b4419ec8eec6132280fe46 | 1034 | Package.swift | 逐字节一致 |
+| 2d70cb97074384a7dee7ec07275f5c74c6cd89033ff7d801b24b11afa27ded82 | 5559 | README.md | 独立原文保留 |
 | bbfe59a972a3e8e09e347c04bc22c0eacd2544881af8a4b6068bfc30b38466e8 | 80 | Sources/CSQLite/module.modulemap | 逐字节一致 |
 | b052d8e561e942f97b503033ecd2eaa2b35213bdbf374983efe9e68eabdfc024 | 21 | Sources/CSQLite/shim.h | 逐字节一致 |
 | 347257a3cd5bcb0e501506a29ab4dc2892a46d2560a111a8d779b124e594ebb9 | 60 | Sources/CZlib/module.modulemap | 逐字节一致 |
@@ -79,7 +83,7 @@ VideoCore reviewed source product · manifest version 2
 | ea4dc3e512b818726ea6fd7d350e697ef234e337bafff6e34d8af40720d9cc54 | 14314 | Sources/VideoMedia/BaiduVideoProvider.swift | 逐字节一致 |
 | ec396089cb7046846c5bf86bd37f830869418de4445dec089466753f3c1e1329 | 4943 | Sources/VideoMedia/ClassicArtworkMedia.swift | 逐字节一致 |
 | 6beff353416b9b4329e20ab3cbd84fcb19d34c8687427feb157b97d00ed63b4d | 10707 | Sources/VideoMedia/ClassicBuiltinAssets.swift | 逐字节一致 |
-| 760e1e7302bd746cece9379fcd6c1af568f09e665560fee5c52ad2f5820b24e6 | 47647 | Sources/VideoMedia/CloudReview.swift | 逐字节一致 |
+| b17bf8c13dfae0ac60763191799190b18a1f824c68b5e6f28f841f115337f7a9 | 48741 | Sources/VideoMedia/CloudReview.swift | 逐字节一致 |
 | 451de62ae66ce51bc390deb9d210ca46de5ca66e5bb52b4572a6e5e792e141a2 | 4904 | Sources/VideoMedia/CoursePreview.swift | 逐字节一致 |
 | a3c1ff6981dd81b2a97fee7cff2489fc9edb2381904ee46ebad18e9b6562dc91 | 4662 | Sources/VideoMedia/Diagnostics.swift | 逐字节一致 |
 | 2eafa759e4f2e1a94a5ecb866f39784b13363f7a5cfcacb60b125cf5e2fa12bd | 13316 | Sources/VideoMedia/FamiliarBuiltinAssets.swift | 逐字节一致 |
@@ -127,25 +131,14 @@ VideoCore reviewed source product · manifest version 2
 | c927d9faea68877b494d6fbac3aa5f76001c427ff5de168208d5e049036ec918 | 7072 | Tests/VideoCoreTests/SpeechTests.swift | 逐字节一致 |
 | dbbb099ca6d86c12efe3e2c42323182223710000ce0c96bf58ed36632d1f117d | 12457 | Tests/VideoCoreTests/WorkspaceAccessTests.swift | 逐字节一致 |
 | 0207a9002bb7aef610449bd354ee6c50034a84f81d1a261ea8846a9bb864aada | 1906 | Tests/VideoMediaTests/BaiduVideoProviderTests.swift | 逐字节一致 |
+| 88150479390d0501342c4c5789864dec9fc2a74522e0806dabeec9d269e143c7 | 3816 | Tests/VideoMediaTests/CloudReviewLocationTests.swift | 逐字节一致 |
 | c7b7bf2aa6091f105373becd60c2dc830ed5167fc85db480b9193d60543e1db4 | 3999 | Tests/VideoMediaTests/CoursePreviewTests.swift | 逐字节一致 |
 | c7e58b70577f1181d014ba4a7e15bdd276a97129afc9fb2fb7086da9ad1f86b8 | 11493 | Tests/VideoMediaTests/LoudnessMediaTests.swift | 逐字节一致 |
 | 9aea48b1ac047193b29e9b16b856fdbce5db432335c4449fa2ffe26c9dad0bae | 16513 | Tests/VideoMediaTests/MediaTests.swift | 逐字节一致 |
 | 8700e3940f97c103e7561d937aecd7ec4cdc73a997ca53ba82e380968be1624d | 5269 | Tests/VideoMediaTests/SpeechMediaTests.swift | 逐字节一致 |
-
-## 独立产品说明
-
-| SHA-256 | 字节数 | 包内路径 | 核对结果 |
-|---|---:|---|---|
-| 2d70cb97074384a7dee7ec07275f5c74c6cd89033ff7d801b24b11afa27ded82 | 5559 | README.md | 独立产品说明 |
-
-## 保留的附加发行材料
-
-| SHA-256 | 字节数 | 包内路径 | 核对结果 |
-|---|---:|---|---|
-| c07cc6d537cb0e119e22a6184cb1423b3dee983074bcc4b81c17072ad9e616c5 | 93 | .gitignore | 原字节保留 |
-| e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855 | 0 | docs/.nojekyll | 原字节保留 |
-| 88c943e9363dfde53eec899b086d9a3f5c589837d37e081b14539d1dea25a2a8 | 4342 | docs/index.html | 原字节保留 |
-| 461d5bf52e253071a3ea53eb0033f82f270381559f9182f6717c185dc4d63a43 | 8241 | docs/privacy.html | 原字节保留 |
-| 5f1f0911ebcd0163bc0daa42147f4924cc1713a12b34e2ad8eb9e4b84d60a530 | 4718 | docs/site.css | 原字节保留 |
-| 37ed49710d24edd4fd6cd46bc36744e2edc46dd12d205d2a4af2fdad6845f95b | 9481 | docs/support.html | 原字节保留 |
-| a57baa454e02631f7a3c88b1e51dd3bc60d3e173084d391061eefc8b6d20a74f | 5454 | docs/terms.html | 原字节保留 |
+| e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855 | 0 | docs/.nojekyll | 独立原文保留 |
+| 88c943e9363dfde53eec899b086d9a3f5c589837d37e081b14539d1dea25a2a8 | 4342 | docs/index.html | 独立原文保留 |
+| 461d5bf52e253071a3ea53eb0033f82f270381559f9182f6717c185dc4d63a43 | 8241 | docs/privacy.html | 独立原文保留 |
+| 5f1f0911ebcd0163bc0daa42147f4924cc1713a12b34e2ad8eb9e4b84d60a530 | 4718 | docs/site.css | 独立原文保留 |
+| 37ed49710d24edd4fd6cd46bc36744e2edc46dd12d205d2a4af2fdad6845f95b | 9481 | docs/support.html | 独立原文保留 |
+| a57baa454e02631f7a3c88b1e51dd3bc60d3e173084d391061eefc8b6d20a74f | 5454 | docs/terms.html | 独立原文保留 |

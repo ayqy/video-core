@@ -1,8 +1,9 @@
-#if os(iOS) && canImport(CloudKit)
 import Foundation
+#if os(iOS) && canImport(CloudKit)
 import CloudKit
 import Combine
 import VideoCore
+#endif
 
 /// Addresses only: no preview, payload, token, contact handle or user-entered identity is persisted.
 public struct CloudReviewLocation: Codable, Identifiable, Sendable {
@@ -18,10 +19,22 @@ public struct CloudReviewLocation: Codable, Identifiable, Sendable {
     public var revisionID:String?
     public var revisionDigest:String?
     public var payloadDigest:String?
+    #if os(iOS) && canImport(CloudKit)
     public var recordID:CKRecord.ID {CKRecord.ID(recordName:rootName,zoneID:CKRecordZone.ID(zoneName:zoneName,ownerName:zoneOwner))}
     public var shareID:CKRecord.ID {CKRecord.ID(recordName:shareName,zoneID:recordID.zoneID)}
+    #endif
 }
 
+/// Replacing the active view must not erase another iCloud account's private addresses.
+/// This contains only local address values; it never grants server access or changes a share.
+enum CloudReviewLocationPersistence {
+    static func replacingPartition(stored:[CloudReviewLocation],current:[CloudReviewLocation],accountKey:String,containerIdentifier:String)->[CloudReviewLocation] {
+        func active(_ value:CloudReviewLocation)->Bool {value.accountKey==accountKey && value.containerIdentifier==containerIdentifier}
+        return stored.filter{!active($0)}+current.filter(active)
+    }
+}
+
+#if os(iOS) && canImport(CloudKit)
 public struct CloudReviewSession {
     public var envelope:CloudReviewEnvelope
     public var annotations:[CloudReviewAnnotation]
@@ -458,7 +471,12 @@ enum CloudReviewDeletionRules {
     private func checkAddress(_ location:CloudReviewLocation,container:CKContainer) throws {guard let accountID,location.accountKey==opaque(accountID),location.containerIdentifier==container.containerIdentifier,location.zoneName==zoneName,!location.rootName.isEmpty,!location.shareName.isEmpty,location.shareName != CKRecordNameZoneWideShare else{throw VideoError.permission("该审稿入口不属于当前 iCloud 账户或指定版本分区")}}
     private func storedLocations()->[CloudReviewLocation] {guard let data=UserDefaults.standard.data(forKey:defaultsKey) else{return []};return (try? Codec.decoder().decode([CloudReviewLocation].self,from:data)) ?? []}
     private func save(_ location:CloudReviewLocation){locations.removeAll{$0.id==location.id};locations.append(location);persist()}
-    private func persist(){if let data=try? Codec.data(locations){UserDefaults.standard.set(data,forKey:defaultsKey)}}
+    private func persist(){
+        // CKAccountChanged clears the active identity and view, never the stored partitions.
+        guard let accountID,let container=try? configuredContainer(),let identifier=container.containerIdentifier else{return}
+        let merged=CloudReviewLocationPersistence.replacingPartition(stored:storedLocations(),current:locations,accountKey:opaque(accountID),containerIdentifier:identifier)
+        if let data=try? Codec.data(merged){UserDefaults.standard.set(data,forKey:defaultsKey)}
+    }
     private func message(_ error:Error)->String {
         if let error=error as? VideoError{return error.localizedDescription}
         if let error=error as? CKError {switch error.code {case .notAuthenticated:return "iCloud 身份已失效，请在系统设置核验账户";case .permissionFailure,.unknownItem,.zoneNotFound,.userDeletedZone:return "共享已撤销、账号无权访问或云记录已删除；预览已停止";case .badContainer,.missingEntitlement:return "此签名尚未配置对应 CloudKit 容器或权限，不能进行真实云端审稿";case .networkFailure,.networkUnavailable,.serviceUnavailable,.requestRateLimited:return "暂时不能从 CloudKit 重新核验权限；缓存已关闭，请联网后重试";case .invalidArguments,.serverRejectedRequest:return "CloudKit 容器记录类型/索引或分享配置尚未就绪，请联系应用维护者完成云端配置";default:return "CloudKit 审稿未完成（错误类别 \(error.code.rawValue)），不提供离线权限替代"}}
