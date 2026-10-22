@@ -1,0 +1,4 @@
+interface:
+  display_name: "知幕视频制作"
+  short_description: "把真实课程与素材做成可追溯视频，管理字幕、预算、审核与业务回收"
+  default_prompt: "使用 $video 依据我的现有产品和授权素材制作教学视频，并保留版本、费用和人工听审交接。"

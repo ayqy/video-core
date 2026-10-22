@@ -1,0 +1,27 @@
+Video / 知幕
+Copyright 2026 Video contributors
+
+The project's own source in Sources/VideoCore, Sources/VideoMedia,
+Sources/VideoCLI, Sources/VideoInstall, Tests, and Integrations is licensed under Apache-2.0
+(see LICENSE). This source-license grant does not make the current private
+repository publicly accessible or claim that an open-source release exists.
+
+App, Sources/VideoGame, Sources/VideoCartoon, Sources/VideoAdvanced, Sources/VideoPublisher, Premium, signing material,
+trademarks, non-code creative assets, customer
+content and any future private module are NOT included in this grant unless
+an explicit license in their own directory says otherwise. All rights in
+these excluded materials are reserved by their respective rights holders.
+The public SDK may describe IR/capabilities used by premium implementations;
+that does not grant rights in those separate implementations.
+
+SQLite, zlib and Apple platform frameworks are used through system interfaces.
+Their respective upstream terms remain applicable. No third-party framework
+binary, font, stock image, character likeness, voice dataset or model weight
+is relicensed by this notice. Apple system voices and user-imported assets
+require their own applicable authorization; synthesis/import success is not
+evidence of commercial permission.
+
+The source grant is separate from installed capability availability,
+commercial access policy, App Store transactions, support obligations and
+remote-provider charges. A paid-to-free policy change does not by itself
+open a private implementation's source or waive upstream usage costs.
