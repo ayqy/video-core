@@ -77,6 +77,24 @@ final class ModuleCatalogPublicationTests: XCTestCase {
         var free = result; free[0].policy.version += 1; free[0].policy.access = "free"
         XCTAssertEqual(try plan(free, previous: result)[0].manifest, result[0].manifest, "paid/free切换仍不要求重写调用或模块实现")
     }
+    func testMatrixAndPerformanceSchemasRequireRealModuleUpgradeAndRetainOriginalPolicy() throws {
+        var original = entries(); original[0].manifest.inputSchema = 2
+        var upgraded = original
+        upgraded[0].manifest.inputSchema = try PluginInputCompatibility.publicationSchema(pluginID: "video.game", requested: "3")
+        upgraded[1].manifest.inputSchema = try PluginInputCompatibility.publicationSchema(pluginID: "video.cartoon", requested: "4")
+        XCTAssertThrowsError(try plan(upgraded, previous: original), "新协议不能覆盖同id/version")
+        for index in upgraded.indices { upgraded[index].policy.version += 1 }
+        XCTAssertThrowsError(try plan(upgraded, previous: original), "策略升版不能替代模块升版")
+        for index in upgraded.indices {
+            upgraded[index].manifest.version = "1.2.0"
+            upgraded[index].policy = original[index].policy
+        }
+        let result = try plan(upgraded, previous: original)
+        XCTAssertEqual(result.map { $0.manifest.inputSchema }, [3, 4])
+        for index in result.indices {
+            XCTAssertEqual(try Codec.data(result[index].policy), try Codec.data(original[index].policy))
+        }
+    }
     private func sourceReview() throws -> (SourcePublicationReview,[SourcePublicationFile]) {
         func file(_ path:String,_ content:String)->SourcePublicationFile {
             let data=Data(content.utf8);return SourcePublicationFile(path:path,bytes:data.count,sha256:Codec.hash(data))

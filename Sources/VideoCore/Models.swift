@@ -80,6 +80,7 @@ public struct Scene: Codable, Equatable, Identifiable, Sendable {
     public var speechPlan: SpeechPlan?
     public var layers: [SceneLayer]?
     public var characterProfile: CharacterProfile?
+    public var cartoonPerformance: CartoonPerformance?
     public var narrativeSources: [NarrativeSource]?
     public var classicArtwork: ClassicArtwork?
     public var classicArtworkRequired: Bool?
@@ -100,6 +101,10 @@ public struct Scene: Codable, Equatable, Identifiable, Sendable {
     public func validate(assets: [Asset]) throws {
         try LayerRules.validate(scene:self,assets:assets)
         try ClassicArtworkRules.validate(scene:self,assets:assets)
+        if let performance=cartoonPerformance {
+            guard kind == .cartoon, let artwork=classicArtwork else { throw VideoError.invalid("多角色表演只能绑定实际角色图集的卡通镜头") }
+            try performance.validate(durationFrames:durationFrames, sprites:artwork.sprites)
+        }
         guard durationFrames > 0 && durationFrames <= 54000, (0.25...4).contains(speed), (0...54000).contains(pauseFrames), x.isFinite, y.isFinite, (0...1).contains(x), (0...1).contains(y), (0.1...4).contains(scale), (0...2).contains(voiceGain), (0...2).contains(sourceGain), (0...2).contains(musicGain) else { throw VideoError.invalid("片段时长、速度、位置或音量超出范围；单镜头停顿最多30分钟") }
         if let aid = assetID { guard let a = assets.first(where: { $0.id == aid }) else { throw VideoError.notFound("片段源素材缺失") }; if let n = a.durationFrames { guard sourceStartFrame >= 0, sourceStartFrame <= n, durationFrames <= n - sourceStartFrame else { throw VideoError.invalid("裁切超出源媒体实际时长") } } }
         for c in captions { guard c.startFrame >= 0, c.endFrame > c.startFrame, c.endFrame <= durationFrames else { throw VideoError.invalid("字幕超出片段或时长为零") } }

@@ -106,6 +106,8 @@ class PinnedPolicy:
     fixed input used by the commands. They are verified before permission and
     at completion; this does not eliminate the native host's check/start race.
     File-tool writes are always denied, including writes to a pinned input.
+    Optional shell timeout is a positive integer capped at the native 120000ms
+    foreground default; it never extends consume's separate whole-run deadline.
     Completion describes authorization/lifecycle only, never business success.
     """
     def __init__(self, directory: Path, commands: tuple[str, ...], pins: tuple[FilePin, ...], *, allow_skill: bool = False):
@@ -151,7 +153,9 @@ class PinnedPolicy:
             return (self.allow_skill and not self._skill_used and self._position == 0 and
                     values == {"skill": "video"})
         return (tool == "run_shell_command" and self._position < len(self.commands) and
-                set(values) <= {"command", "directory", "description", "is_background"} and
+                set(values) <= {"command", "directory", "description", "is_background", "timeout"} and
+                ("timeout" not in values or
+                 (type(values["timeout"]) is int and 0 < values["timeout"] <= 120000)) and
                 values.get("directory") in (None, ".", str(self.directory)) and
                 ("is_background" not in values or values["is_background"] is False) and
                 ("description" not in values or isinstance(values["description"], str)) and

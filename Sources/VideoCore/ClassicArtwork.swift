@@ -65,7 +65,8 @@ public enum ClassicArtworkRules {
         }
         if artwork.derivation == .qStyle {
             let originalHashes=Set(assets.filter{artwork.originalAssetIDs.contains($0.id)}.map(\.hash))
-        let primaryRoles:Set<String> = scene.kind == .simulation && scene.simulation.knowledge == nil ? ["hero","crate"]:["hero"]
+        var primaryRoles:Set<String> = scene.kind == .simulation && scene.simulation.knowledge == nil ? ["hero","crate"]:["hero"]
+            if let acting=scene.cartoonPerformance {primaryRoles.formUnion(acting.actors.flatMap{Array($0.poseRoles.values)})}
             let primarySprites=artwork.sprites.filter{primaryRoles.contains($0.role)}
             guard !artwork.originalAssetIDs.isEmpty,!artwork.transformation.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty,
                   primarySprites.allSatisfy({ sprite in assets.first(where:{$0.id==sprite.assetID}).map{!originalHashes.contains($0.hash)} == true }) else { throw VideoError.review("Q版角色与主要游戏元素须绑定实际派生产物、原件及转换过程；不能仅更换背景或把原件改标签充当派生") }

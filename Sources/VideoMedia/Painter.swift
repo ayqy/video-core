@@ -59,11 +59,12 @@ public enum ScenePainter {
         c.setFillColor(color("0B1020")); c.fill(CGRect(x: 0,y: 0,width: w,height: h))
         c.setFillColor(color(s.color, alpha: 0.12)); c.fillEllipse(in: CGRect(x: w*0.58,y: h*0.45,width: w*0.7,height: w*0.7))
         let margin: CGFloat = portrait ? 64 : 80
-        let knowledge = s.kind == .simulation && s.simulation.knowledge != nil, wideKnowledge = knowledge && !portrait
+        let knowledge = s.kind == .simulation && s.simulation.knowledge != nil
+        let detailedStage = knowledge || (s.kind == .cartoon && s.cartoonPerformance != nil), wideKnowledge = detailedStage && !portrait
         text("VIDEO  /  \(revision.purpose.rawValue)", in: CGRect(x: margin,y: wideKnowledge ? 680:h-84,width: w-margin*2,height: wideKnowledge ? 20:30), size: wideKnowledge ? 16:21, color: "A5B4FC", context: c,fontName:s.fontName ?? "PingFangSC-Medium")
         try checkedText(s.title, in: CGRect(x: margin,y: wideKnowledge ? 628:h-(portrait ? 240:200),width: w-margin*2,height: wideKnowledge ? 48:(portrait ? 125:100)), size: wideKnowledge ? 36:(portrait ? 45:48), color: "FFFFFF", context: c,fontName:s.fontName ?? "PingFangSC-Medium")
         let separateBody=s.kind == .simulation || s.kind == .cartoon || media != nil
-        let overlay=OverlayLayout(width:w,height:h,showPrice:s.showPrice,separateBody:separateBody,knowledge:knowledge)
+        let overlay=OverlayLayout(width:w,height:h,showPrice:s.showPrice,separateBody:separateBody,knowledge:detailedStage)
         let base=overlay.visual
         let layout=s.layout(at:mapped)
         let visual=CGRect(x:base.midX+CGFloat(layout.x-0.5)*base.width-base.width*CGFloat(layout.scale)/2,y:base.midY+CGFloat(layout.y-0.5)*base.height-base.height*CGFloat(layout.scale)/2,width:base.width*CGFloat(layout.scale),height:base.height*CGFloat(layout.scale))

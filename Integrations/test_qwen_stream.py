@@ -115,13 +115,24 @@ if mode=='repeat':commands[1]=commands[0]
 for i,command in enumerate(commands):
  identifier='call-'+str(i)
  values={'command':command}
- use={'type':'assistant','message':{'role':'assistant','content':[{'type':'tool_use','id':identifier,'name':'run_shell_command','input':values}]}}
- if mode!='permission-first':print(json.dumps(use),flush=True)
- print(json.dumps({'type':'control_request','request_id':'permission-'+str(i),'request':{'subtype':'can_use_tool','tool_name':'run_shell_command','tool_use_id':identifier,'input':values}}),flush=True)
+ if mode.startswith('timeout-'):
+  values.update(timeout=json.loads(sys.argv[3]),directory='.',is_background=False)
+ if mode=='timeout-shell-wrapper':values['command']='/bin/sh -c '+repr(command)
+ if mode=='timeout-unknown':values['unreviewed']=False
+ observed_values,permission_values=dict(values),dict(values)
+ if mode=='timeout-change-after-use':permission_values['timeout']=119999
+ if mode=='timeout-change-after-permission':observed_values['timeout']=119999
+ use={'type':'assistant','message':{'role':'assistant','content':[{'type':'tool_use','id':identifier,'name':'run_shell_command','input':observed_values}]}}
+ permission_first=mode in ('permission-first','timeout-permission-first','timeout-change-after-permission')
+ if not permission_first:print(json.dumps(use),flush=True)
+ print(json.dumps({'type':'control_request','request_id':'permission-'+str(i),'request':{'subtype':'can_use_tool','tool_name':'run_shell_command','tool_use_id':identifier,'input':permission_values}}),flush=True)
  reply=json.loads(sys.stdin.readline())
  if reply['response']['response']['behavior']!='allow':sys.exit(0)
- if mode=='permission-first':print(json.dumps(use),flush=True)
- if mode=='mutated':
+ if permission_first:print(json.dumps(use),flush=True)
+ if mode=='timeout-stall':
+  import time
+  time.sleep(20)
+ if mode in ('mutated','timeout-mutated'):
   from pathlib import Path
   Path(sys.argv[2]).write_text('changed after permission')
  result={'type':'tool_result','tool_use_id':identifier if mode!='unknown-result' else 'unknown','is_error':mode=='error'}
@@ -166,10 +177,10 @@ class PinnedQwenPolicyTests(unittest.TestCase):
         self.assertTrue(policy.allows(request))
         policy.observe(self.result(request["tool_use_id"]))
 
-    def peer(self, mode):
+    def peer(self, mode, timeout=None):
         script = self.root / "peer.py"
         script.write_text(PINNED_PEER)
-        return [sys.executable, str(script), mode, str(self.fixed)]
+        return [sys.executable, str(script), mode, str(self.fixed), json.dumps(timeout)]
 
     def testPinnedSequenceHasNativeLifecycleWithoutCallerCallback(self):
         for mode in ("ordered", "permission-first"):
@@ -257,6 +268,87 @@ class PinnedQwenPolicyTests(unittest.TestCase):
         for path in (self.fixed, self.root / "other.json"):
             self.assertFalse(self.policy().allows({"subtype": "can_use_tool", "tool_use_id": "edit", "tool_name": "write_file",
                                                    "input": {"file_path": str(path), "content": "{}"}}))
+
+    def testTimeoutOnlyAcceptsExactPositiveIntegersWithinNativeDefault(self):
+        for timeout in (1, 120000):
+            with self.subTest(timeout=timeout):
+                policy = self.policy()
+                self.complete_one(policy, self.request(timeout=timeout, directory=".", is_background=False))
+                self.complete_one(policy, self.request(self.commands[1], "two", timeout=timeout))
+                self.assertTrue(policy.complete)
+        for timeout in (None, True, False, 0, -1, 120001, 600000, 2**100,
+                        1.0, 1.5, float("inf"), float("nan"), "120000", [], {}):
+            with self.subTest(timeout=timeout):
+                policy = self.policy()
+                self.assertFalse(policy.allows(self.request(timeout=timeout)))
+                self.assertTrue(policy.failed)
+
+    def testValidTimeoutCannotAuthorizeUnknownFieldsCommandDirectoryOrBackground(self):
+        variants = ({"env": {}}, {"async": False}, {"unreviewed": 1},
+                    {"command": self.commands[0] + " --extra"},
+                    {"directory": str(self.root.parent)}, {"is_background": True},
+                    {"is_background": 0})
+        for values in variants:
+            with self.subTest(values=values):
+                self.assertFalse(self.policy().allows(self.request(timeout=120000, **values)))
+
+    def testTimeoutMustStayIdenticalBetweenObservedUseAndPermission(self):
+        for permission_first in (False, True):
+            for changed in (self.request(timeout=119999), self.request()):
+                with self.subTest(permission_first=permission_first, changed=changed):
+                    policy = self.policy()
+                    original = self.request(timeout=120000)
+                    if permission_first:
+                        self.assertTrue(policy.allows(original))
+                        with self.assertRaises(ValueError):
+                            policy.observe(self.use(changed))
+                    else:
+                        policy.observe(self.use(original))
+                        self.assertFalse(policy.allows(changed))
+                    self.assertTrue(policy.failed)
+                    self.assertFalse(policy.complete)
+
+    def testConsumeAcceptsBoundedTimeoutLifecycleInBothNativeEventOrders(self):
+        for mode, timeout in (("timeout-ordered", 1), ("timeout-ordered", 120000),
+                              ("timeout-permission-first", 120000)):
+            with self.subTest(mode=mode, timeout=timeout):
+                result = consume(self.peer(mode, timeout), "test protocol only", self.policy(), seconds=3)
+                self.assertEqual(result["status"], "native_result")
+                self.assertEqual(result["exit_code"], 0)
+                self.assertTrue(result["policy_complete"])
+                self.assertEqual([d["allowed"] for d in result["decisions"]], [True, True])
+
+    def testConsumeRefusesInvalidTimeoutBeforeAuthorizingAnyTool(self):
+        for timeout in (None, True, 0, -1, 120001, 1.5, "120000"):
+            with self.subTest(timeout=timeout):
+                result = consume(self.peer("timeout-ordered", timeout), "test protocol only", self.policy(), seconds=3)
+                self.assertEqual(result["status"], "policy_refused")
+                self.assertFalse(result["policy_complete"])
+                self.assertFalse(any(d["allowed"] for d in result["decisions"]))
+
+    def testConsumeTimeoutStillRejectsChangedInputShellWrapperAndUnknownFields(self):
+        expected = (("timeout-change-after-use", [False]), ("timeout-change-after-permission", [True]),
+                    ("timeout-shell-wrapper", []), ("timeout-unknown", []))
+        for mode, decisions in expected:
+            with self.subTest(mode=mode):
+                result = consume(self.peer(mode, 120000), "test protocol only", self.policy(), seconds=3)
+                self.assertEqual(result["status"], "policy_refused")
+                self.assertFalse(result["policy_complete"])
+                self.assertEqual([d["allowed"] for d in result["decisions"]], decisions)
+
+    def testTimeoutDoesNotExtendParentHardDeadline(self):
+        result = consume(self.peer("timeout-stall", 120000), "test protocol only", self.policy(), seconds=0.3)
+        self.assertEqual(result["status"], "hard_deadline")
+        self.assertLess(result["seconds"], 1.5)
+        self.assertNotEqual(result["exit_code"], 0)
+        self.assertIsNone(result["result"])
+        self.assertFalse(result["policy_complete"])
+        self.assertEqual(result["decisions"], [{"tool_use_id": "call-0", "allowed": True}])
+
+    def testTimeoutLifecycleStillRechecksPinnedBytesAfterPermission(self):
+        result = consume(self.peer("timeout-mutated", 120000), "test protocol only", self.policy(), seconds=3)
+        self.assertEqual(result["status"], "policy_refused")
+        self.assertFalse(result["policy_complete"])
 
     def testUnknownDuplicateChangedAndUninitializedUsesAreRefused(self):
         for scenario in ("duplicate", "changed", "uninitialized", "unknown-result", "result-without-use"):

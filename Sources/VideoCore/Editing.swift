@@ -45,6 +45,16 @@ public enum Editor {
                         revision.invalidated += ["知识因果、结论、声音与字幕重新复核"]
                     }
                 }
+                if old.cartoonPerformance != scene.cartoonPerformance ||
+                    ((old.cartoonPerformance != nil || scene.cartoonPerformance != nil) && (old.durationFrames != scene.durationFrames || old.speed != scene.speed || old.kind != scene.kind)) {
+                    if scene.voice?.assetID == old.voice?.assetID { scene.voice?.listened = false }
+                    for index in scene.captions.indices { scene.captions[index].confirmed=false }
+                    if var artwork=scene.classicArtwork {
+                        for index in artwork.audioCues.indices { artwork.audioCues[index].listened=false }
+                        scene.classicArtwork=artwork
+                    }
+                    revision.invalidated += ["多角色表演、发言时点、镜头与声音字幕重新复核"]
+                }
                 if old.narration != scene.narration, scene.speechPlan?.source != scene.narration { scene.speechPlan=nil }
                 let oldSpeechDigest=try? old.speechDigest(), newSpeechDigest=try? scene.speechDigest()
                 if old.narration != scene.narration || oldSpeechDigest == nil || newSpeechDigest == nil || oldSpeechDigest != newSpeechDigest {
@@ -65,6 +75,11 @@ public enum Editor {
                 var a = original, b = original; a.durationFrames = frame; b.id = Codec.id(); b.durationFrames = original.durationFrames - frame; b.sourceStartFrame += frame; a.sourceEndFrame = original.sourceStartFrame + frame
                 a.classicArtwork?.audioCues=audioCues.filter{$0.startFrame<frame}.map { cue in var copy=cue;copy.listened=false;return copy }
                 b.classicArtwork?.audioCues=audioCues.filter{$0.startFrame>=frame}.map { cue in var copy=cue;copy.startFrame-=frame;copy.listened=false;return copy }
+                if let acting=original.cartoonPerformance {
+                    a.cartoonPerformance=try acting.trimmed(from:0,to:frame,durationFrames:original.durationFrames)
+                    b.cartoonPerformance=try acting.trimmed(from:frame,to:original.durationFrames,durationFrames:original.durationFrames)
+                    revision.invalidated += ["拆分后的多角色表演与声音字幕复核"]
+                }
                 if original.kind == .simulation { a.simulationRecordingConfirmed = false; b.simulationRecordingConfirmed = false; revision.invalidated += ["拆分后的规则录制与复核"] }
                 a.layers=(original.layers ?? []).filter{$0.startFrame<frame}.map { layer in var x=layer;x.endFrame=min(x.endFrame,frame);x.keyframes=x.keyframes.filter{$0.frame<x.endFrame};if !layer.keyframes.isEmpty{let point=layer.layout(at:x.endFrame-1);x.keyframes.removeAll{$0.frame==x.endFrame-1};x.keyframes.append(Keyframe(frame:x.endFrame-1,x:point.x,y:point.y,scale:point.scale))};return x }
                 b.layers=(original.layers ?? []).filter{$0.endFrame>frame}.map { layer in var x=layer;x.id=Codec.id();x.startFrame=max(0,x.startFrame-frame);x.endFrame-=frame;x.keyframes=x.keyframes.filter{$0.frame>=frame}.map{key in var k=key;k.id=Codec.id();k.frame-=frame;return k};let point=layer.layout(at:frame+x.startFrame);x.x=point.x;x.y=point.y;if !layer.keyframes.isEmpty && !x.keyframes.contains(where:{$0.frame==x.startFrame}){x.keyframes.append(Keyframe(frame:x.startFrame,x:point.x,y:point.y,scale:point.scale))};return x }

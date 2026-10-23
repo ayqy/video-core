@@ -66,4 +66,66 @@ final class PluginProtocolTests:XCTestCase {
         let cost=PluginCost(currency:"USD",budgetReference:"original-external-budget")
         XCTAssertEqual(cost.actual,Money(0,"USD"));XCTAssertEqual(cost.budgetReference,"original-external-budget");XCTAssertFalse(cost.exclusions.isEmpty)
     }
+    func testMatrixNegotiationRequiresSchemaThreeWhileLegacyKnowledgeKeepsSchemaTwo() throws {
+        var simulation = Simulation()
+        let people = [KnowledgeParticipant(id: "a", name: "甲", strategy: .contribute, initialResources: 20),
+                      KnowledgeParticipant(id: "b", name: "乙", strategy: .contribute, initialResources: 20)]
+        simulation.knowledge = KnowledgeSimulation(knowledgeLabel: "公共品", participants: people, rounds: 1)
+        XCTAssertThrowsError(try PluginInputCompatibility.requireKnowledgeSupport(simulation, pluginID: "video.game", inputSchema: 1))
+        XCTAssertNoThrow(try PluginInputCompatibility.requireKnowledgeSupport(simulation, pluginID: "video.game", inputSchema: 2))
+        XCTAssertNoThrow(try PluginInputCompatibility.requireKnowledgeSupport(simulation, pluginID: "video.game", inputSchema: 3))
+        simulation.knowledge?.version = 2; simulation.knowledge?.payoffMatrix = .prisonersDilemma()
+        for index in 0..<2 { simulation.knowledge?.participants[index].matrixStrategy = .alwaysFirst }
+        for version in [1, 2, 4] {
+            XCTAssertThrowsError(try PluginInputCompatibility.requireKnowledgeSupport(simulation, pluginID: "video.game", inputSchema: version))
+        }
+        XCTAssertNoThrow(try PluginInputCompatibility.requireKnowledgeSupport(simulation, pluginID: "video.game", inputSchema: 3))
+        XCTAssertThrowsError(try PluginInputCompatibility.requireKnowledgeSupport(simulation, pluginID: "video.cartoon", inputSchema: 3))
+        simulation.knowledge?.payoffMatrix = nil
+        XCTAssertThrowsError(try PluginInputCompatibility.requireKnowledgeSupport(simulation, pluginID: "video.game", inputSchema: 3), "schema升级不能授权不完整规则")
+    }
+    func testSchemaTwoKnowledgeShapeStaysFrozenAndMatrixThreeDiscoveryHasResolvableRules() throws {
+        let old = PluginRPCSchemas.definitions(inputSchemaVersion: 2), current = PluginRPCSchemas.definitions(inputSchemaVersion: 3)
+        XCTAssertNil(PluginRPCSchemas.definitions(inputSchemaVersion: 1)["KnowledgeSimulation"])
+        for key in ["payoffMatrix", "matrixStrategy", "matrixPool"] {
+            let record = key == "payoffMatrix" ? "KnowledgeSimulation" : key == "matrixStrategy" ? "KnowledgeParticipant" : "KnowledgeEvent"
+            XCTAssertNil(old[record]?.object?["properties"]?.object?[key])
+            XCTAssertNotNil(current[record]?.object?["properties"]?.object?[key])
+        }
+        XCTAssertNil(old["KnowledgePayoffMatrix"]); XCTAssertNotNil(current["KnowledgePayoffMatrix"])
+        XCTAssertEqual(old["KnowledgeChoice"]?.object?["enum"], .array([.string("出力"), .string("等待"), .string("资源不足，无法出力")]))
+        let discoverable = AgentSchemas.definitions()
+        XCTAssertNotNil(discoverable["KnowledgeMatrixStrategy"])
+        XCTAssertNotNil(discoverable["KnowledgePayoffCell"]?.object?["properties"]?.object?["columnPayout"])
+        func refs(_ node: AgentValue) throws {
+            switch node {
+            case .object(let values):
+                if let ref = values["$ref"]?.string { XCTAssertNotNil(current[String(ref.dropFirst("#/$defs/".count))], ref) }
+                for value in values.values { try refs(value) }
+            case .array(let values): for value in values { try refs(value) }
+            default: break
+            }
+        }
+        for value in current.values { try refs(value) }
+        let descriptor = PluginDescription(pluginID: "video.game", capabilityID: "game.simulate", version: "1.2.0", inputSchemaVersion: 3)
+        XCTAssertEqual(descriptor.inputSchemaVersion, 3)
+        XCTAssertEqual(descriptor.inputSchema.object?["$defs"]?.object?["KnowledgePayoffMatrix"], current["KnowledgePayoffMatrix"])
+    }
+    func testPublicationSchemaSelectionRetainsLegacyDefaultsAndRejectsCrossModuleOrNoncanonicalRequests() throws {
+        XCTAssertEqual(try PluginInputCompatibility.publicationSchema(pluginID: "video.game"), 2)
+        XCTAssertEqual(try PluginInputCompatibility.publicationSchema(pluginID: "video.cartoon"), 1)
+        for version in [1, 2, 3] {
+            XCTAssertEqual(try PluginInputCompatibility.publicationSchema(pluginID: "video.game", requested: String(version)), version)
+        }
+        for version in [1, 4] {
+            XCTAssertEqual(try PluginInputCompatibility.publicationSchema(pluginID: "video.cartoon", requested: String(version)), version)
+        }
+        for value in ["", "0", "-1", "03", "+3", "3.0", " 3", "3 ", "1e0", "true", "999999999999999999999", "3\n"] {
+            XCTAssertThrowsError(try PluginInputCompatibility.publicationSchema(pluginID: "video.game", requested: value), value)
+        }
+        XCTAssertThrowsError(try PluginInputCompatibility.publicationSchema(pluginID: "unknown"))
+        XCTAssertThrowsError(try PluginInputCompatibility.publicationSchema(pluginID: "video.game", requested: "4"))
+        XCTAssertThrowsError(try PluginInputCompatibility.publicationSchema(pluginID: "video.cartoon", requested: "2"))
+        XCTAssertThrowsError(try PluginInputCompatibility.publicationSchema(pluginID: "video.cartoon", requested: "3"))
+    }
 }

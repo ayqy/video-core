@@ -271,9 +271,11 @@ public enum SimulationReplay {
             let transitions = trace.events.map { event -> RuleTransition in
                 let after = event.actors.reduce(0) { $0 + $1.resources }, delta = after - before
                 defer { before = after }
-                return RuleTransition(tick: event.tick, eventID: "knowledge-" + event.id, label: "第\(event.round)轮·\(event.phase.rawValue)", requestedDelta: delta, before: before, after: after, appliedDelta: delta, clippedDelta: 0)
+                return RuleTransition(tick: event.tick, eventID: "knowledge-" + event.id, label: "第\(event.round)轮·\(knowledge.phaseTitle(event.phase))", requestedDelta: delta, before: before, after: after, appliedDelta: delta, clippedDelta: 0)
             }
-            let maximum = max(1, initial + knowledge.participants.count * knowledge.rounds * knowledge.benefit)
+            let maximum: Int
+            if knowledge.isPayoffMatrix { maximum = max(1, try knowledge.maximumTotalResources()) }
+            else { maximum = max(1, initial + knowledge.participants.count * knowledge.rounds * knowledge.benefit) }
             var value = RuleTrace(ruleVersion: 2, inputDigest: try Codec.digest(s), seed: s.seed, unit: knowledge.resourceLabel, initial: initial, capacity: maximum, throughTick: throughTick, frameStep: frameStep, transitions: transitions, finalState: trace.finalResources.reduce(0) { $0 + $1.resources })
             value.knowledgeTrace = trace
             return value
