@@ -59,7 +59,17 @@ struct CommandSchema: Encodable {
             else {
                 guard let root,!root.isEmpty else { throw VideoError.invalid("请通过--workspace指定工程数据目录") }; let rootURL=URL(fileURLWithPath:root)
                 if command=="backup restore" { guard let path=input.path else { throw VideoError.invalid("需备份文件path") }; if dry { response.state="dry_run" } else { _=try Repository.restore(Data(contentsOf:URL(fileURLWithPath:path)),to:rootURL); response.result="已校验并恢复到新目录；供应商凭据需重新绑定" } }
-                else if dry { let snapshot:Database;if command=="workspaces create" {snapshot=Database()}else{snapshot=try Repository(root:rootURL,readOnly:true).read()};if command=="backup create" {try snapshot.validate();response.result="完整备份需在实际执行时逐文件核对；本次未写文件"}else{response.result=try json(AgentPreview.evaluate(command:command,data:inputData,database:snapshot,principal:input.principal ?? LocalWorkspaceIdentity.principal(workspaceID:input.workspace_id,in:snapshot.workspaces,creatingWorkspace:command=="workspaces create")))};response.state="dry_run" }
+                else if dry {
+                    let snapshot:Database
+                    if command=="workspaces create" {snapshot=Database()}else{snapshot=try Repository(root:rootURL,readOnly:true).read()}
+                    if command=="backup create" {
+                        let principal=input.principal ?? LocalWorkspaceIdentity.principal(workspaceID:input.workspace_id,in:snapshot.workspaces)
+                        guard LocalWorkspaceIdentity.canBackUp(workspaces:snapshot.workspaces,principal:principal,usingDefaultIdentity:input.principal==nil) else {throw VideoError.permission("仅本地所有者可以导出完整工作区")}
+                        try snapshot.validate()
+                        response.result="完整备份需在实际执行时逐文件核对；本次未写文件"
+                    }else{response.result=try json(AgentPreview.evaluate(command:command,data:inputData,database:snapshot,principal:input.principal ?? LocalWorkspaceIdentity.principal(workspaceID:input.workspace_id,in:snapshot.workspaces,creatingWorkspace:command=="workspaces create")))}
+                    response.state="dry_run"
+                }
                 else {
                     let repo=try Repository(root:rootURL,readOnly:command=="jobs status"); let db=try repo.read(); let principal=input.principal ?? LocalWorkspaceIdentity.principal(workspaceID:input.workspace_id,in:db.workspaces,creatingWorkspace:command=="workspaces create")
                     if command.hasPrefix("worker ") {let result=try await FiniteWorker.handle(command:command,data:inputData,repository:repo,principal:principal,requestID:request);FileHandle.standardOutput.write(try Codec.data(result));FileHandle.standardOutput.write(Data("\n".utf8));return}
