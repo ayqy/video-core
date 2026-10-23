@@ -2,10 +2,10 @@
 
 VideoFree source export · package_free.py · version 1
 
-生成时间：2026-10-23 07:42:00 北京时间
+生成时间：2026-10-23 08:23:03 北京时间
 
-- 源码与必要元数据：120个文件；1232980字节（不含本清单）。
-- 整体内容指纹：`1a2ae5787b30103748ad8a664df284a18d0cd502c24c77b12ebdfde6242e1e9f`。
+- 源码与必要元数据：122个文件；1254923字节（不含本清单）。
+- 整体内容指纹：`9f3378a6ae3fd78b1aa10c210a3ca4ba6fddb6625facb5a93c2806a6affed2a9`。
 - 来源：受控原始工程中的逐文件白名单；Package.swift来自Distribution/Free/Package.swift模板，README由发行脚本生成。
 - 本包不含.git，不可作为新业务checkout；本清单生成过程不执行构建、设备验收、签名安装或公共上传，各阶段以独立证据为准。
 - 排除：App、VideoGame、VideoCartoon、Premium、高级实现运行时测试、私有仓库地址、凭据、客户数据、缓存、日志及媒体过程产物。
@@ -71,6 +71,7 @@ VideoFree source export · package_free.py · version 1
 | b0888e7851c11f828fc45640bc325815b3aa30526df1eaede5d84992fedb68a8 | 5324 | Sources/VideoCore/Primitives.swift |
 | 6440b894201e6e3188bc62c1a2ec1ed1dc50e6f4b17db287fac7fa9f85f1ae01 | 7546 | Sources/VideoCore/ProviderRules.swift |
 | e62621f018997d0e706facbd0a59224f61d70e4d8b56c84feb512c59695c09eb | 5921 | Sources/VideoCore/PublicationRules.swift |
+| 458006105dd003a1a5920cd3abede5b5770307979325df6fafbf28f1bd40791a | 13402 | Sources/VideoCore/ScenarioPlanning.swift |
 | a81ccc15614d9f5d6f2445cfbf2365a738a7a527e01201bad8c3d70372c4ae97 | 18734 | Sources/VideoCore/Speech.swift |
 | 92ac3f8a14e69fab1e2e312d1d85ffe4eec6b8a33c40727cee98bd110441e976 | 27626 | Sources/VideoCore/Storage.swift |
 | 0cfd24a48f1ac03f1b9a34f4b80cd4cd57fdf3ca10eee07183be496971ed16a1 | 20722 | Sources/VideoCore/WorkspaceAccess.swift |
@@ -125,6 +126,7 @@ VideoFree source export · package_free.py · version 1
 | c499c8ae6aca4855864eb5a5e2c5a55305643953a9c47073fc66b45c9bb41767 | 5752 | Tests/VideoCoreTests/NativeAgentTests.swift |
 | 9f9e0b1055a1b9ca2dfb2c1a4f03681c0af63641bee85a33384100e0065f9e6c | 4615 | Tests/VideoCoreTests/ProviderRulesTests.swift |
 | 2757b45f6d8989066c3a2a4b52177d047b805052386ebf0eb2f5ad81d46ade46 | 10276 | Tests/VideoCoreTests/PublicationTests.swift |
+| 55b0219870d78b1fa59579e3c29894c1d5042936eebe189b2b1cc97491701273 | 8541 | Tests/VideoCoreTests/ScenarioPlanningTests.swift |
 | 49d626f0c4257ca85042f970b03c87d9fd4f79111b140164a59beb649e62e48a | 11536 | Tests/VideoCoreTests/SimulationRecordingTests.swift |
 | c927d9faea68877b494d6fbac3aa5f76001c427ff5de168208d5e049036ec918 | 7072 | Tests/VideoCoreTests/SpeechTests.swift |
 | 849d8301671e8780cb4ccd90d761af1e50fbc12938ae1eb458151ec1c91ba4f1 | 17669 | Tests/VideoCoreTests/WorkspaceAccessTests.swift |
