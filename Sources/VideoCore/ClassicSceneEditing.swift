@@ -85,14 +85,15 @@ public enum ClassicSceneEditing {
         return .quadrants(assetID:assetID,gameplay:gameplay,sources:sources,derivation:.qStyle,transformation:transformation,originalAssetIDs:originalAssetIDs)
     }
     public static func addingCue(assetID:String,startFrame:Int,gain:Double,use:ClassicAudioCue.Use,extendScene:Bool,to original:Scene,assets:[Asset],evidence:[Evidence],workspaceID:String)throws->Scene {
-        guard !original.locked,var artwork=original.classicArtwork,
+        guard !original.locked,original.classicArtwork != nil,
               let asset=assets.first(where:{$0.id==assetID && $0.workspaceID==workspaceID && $0.mediaType=="audio"}),
               let frames=asset.durationFrames,frames>0,startFrame>=0,startFrame<=54000-frames else{throw VideoError.invalid("请选择真实录音、非负起点和有效时长")}
         let record=try source(assetID:assetID,assets:assets,evidence:evidence,workspaceID:workspaceID)
         let end=startFrame+frames
         guard end<=original.durationFrames || extendScene else{throw VideoError.review("下载录音超出镜头，请明确延长后再绑定；不会截断原音句尾")}
         var scene=original
-        if end>scene.durationFrames {scene.durationFrames=end;scene.simulationRecordingConfirmed=false}
+        if end>scene.durationFrames {scene=try StoryboardTiming.extending(scene:scene,to:end);scene.simulationRecordingConfirmed=false}
+        guard var artwork=scene.classicArtwork else {throw VideoError.invalid("延长后的镜头缺少原素材绑定")}
         artwork.sources.removeAll{$0.assetID==assetID};artwork.sources.append(record)
         artwork.audioCues.append(ClassicAudioCue(assetID:assetID,startFrame:startFrame,durationFrames:frames,gain:gain,use:use,listened:false))
         scene.classicArtwork=artwork

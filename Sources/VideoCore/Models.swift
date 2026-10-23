@@ -89,6 +89,8 @@ public struct Scene: Codable, Equatable, Identifiable, Sendable {
     /// so editing never mistakes a newly calculated result for an already reviewed recording.
     public var simulationRecording: RuleTrace?
     public var simulationRecordingConfirmed: Bool?
+    /// Optional Host-only source window; old scenes keep their original mapping.
+    public var simulationPresentation: SimulationPresentation?
     public init(kind: SceneKind = .explanation, title: String, body: String, narration: String = "", durationFrames: Int = 180) { self.kind = kind; self.title = title; self.body = body; self.narration = narration; self.durationFrames = durationFrames; self.classicArtworkRequired = true }
     public var timelineFrames: Int { max(1, Int((Double(durationFrames) / speed).rounded())) + pauseFrames }
     /// Shared by the painter and rule recording. This preserves the shipped timeline mapping,
@@ -101,6 +103,10 @@ public struct Scene: Codable, Equatable, Identifiable, Sendable {
     public func validate(assets: [Asset]) throws {
         try LayerRules.validate(scene:self,assets:assets)
         try ClassicArtworkRules.validate(scene:self,assets:assets)
+        if let presentation=simulationPresentation {
+            guard kind == .simulation else { throw VideoError.invalid("只有仿真镜头可绑定规则展示窗口") }
+            try presentation.validate(durationFrames:durationFrames)
+        }
         if let performance=cartoonPerformance {
             guard kind == .cartoon, let artwork=classicArtwork else { throw VideoError.invalid("多角色表演只能绑定实际角色图集的卡通镜头") }
             try performance.validate(durationFrames:durationFrames, sprites:artwork.sprites)

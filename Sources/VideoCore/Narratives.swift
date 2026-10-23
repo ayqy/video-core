@@ -194,6 +194,7 @@ public struct RuleTrace: Codable, Equatable, Sendable {
     public var recordedSpeed: Double?
     public var recordedPauseFrames: Int?
     public var recordedLastSourceFrame: Int?
+    public var recordedPresentation: SimulationPresentation?
     public var knowledgeTrace: KnowledgeTrace?
 }
 public struct RuleParticle: Codable, Equatable, Sendable { public var x: Double; public var y: Double; public var phase: Double }
@@ -208,7 +209,7 @@ public enum SimulationReplay {
     public static func replay(scene: Scene, timelineFrame: Int, fps: Int = 30) throws -> RuleReplaySample {
         try verify(scene: scene, fps: fps, requireConfirmation: false)
         guard timelineFrame >= 0, timelineFrame < scene.timelineFrames else { throw VideoError.invalid("重放帧超出当前镜头时轴") }
-        let sourceFrame = scene.renderSourceFrame(atTimelineFrame: timelineFrame)
+        let sourceFrame = try scene.renderSimulationSourceFrame(atTimelineFrame: timelineFrame)
         let state = try frameState(simulation: scene.simulation, frame: sourceFrame, fps: fps)
         let transitions = scene.simulationRecording?.transitions.filter { $0.tick == state.tick } ?? []
         return RuleReplaySample(timelineFrame: timelineFrame, sourceFrame: sourceFrame, state: state, transitions: transitions)
@@ -221,9 +222,9 @@ public enum SimulationReplay {
         var lower = 0, upper = scene.timelineFrames - 1
         while lower < upper {
             let middle = lower + (upper - lower) / 2
-            if scene.renderSourceFrame(atTimelineFrame: middle) < target { lower = middle + 1 } else { upper = middle }
+            if try scene.renderSimulationSourceFrame(atTimelineFrame: middle) < target { lower = middle + 1 } else { upper = middle }
         }
-        guard scene.renderSourceFrame(atTimelineFrame: lower) / fps == tick else { throw VideoError.review("此刻度未出现在实际输出帧中") }
+        guard try scene.renderSimulationSourceFrame(atTimelineFrame: lower) / fps == tick else { throw VideoError.review("此刻度未出现在实际输出帧中") }
         return lower
     }
     /// A scene recording includes every visible tick. Events after the last visible tick
@@ -232,19 +233,21 @@ public enum SimulationReplay {
         guard scene.kind == .simulation, (1...120).contains(fps), (1...54000).contains(scene.durationFrames), (0.25...4).contains(scene.speed), (0...54000).contains(scene.pauseFrames), scene.timelineFrames > 0 else {
             throw VideoError.invalid("请选择有效规则镜头、帧率与时长后录制")
         }
-        let lastSourceFrame = scene.renderSourceFrame(atTimelineFrame: scene.timelineFrames - 1)
+        if let presentation=scene.simulationPresentation { try presentation.validate(durationFrames:scene.durationFrames) }
+        let lastSourceFrame = try scene.renderSimulationSourceFrame(atTimelineFrame: scene.timelineFrames - 1)
         let lastTick = lastSourceFrame / fps
-        if let knowledge = scene.simulation.knowledge {
+        if let knowledge = scene.simulation.knowledge, scene.simulationPresentation == nil {
             guard try knowledge.lastSettlementTick() <= lastTick else {
                 throw VideoError.review("知识模型尚未在镜头内完成全部轮次结算；请延长镜头或减少轮次后重新运行")
             }
         }
-        guard scene.simulation.events.allSatisfy({ $0.tick <= lastTick }) else {
+        guard scene.simulationPresentation != nil || scene.simulation.events.allSatisfy({ $0.tick <= lastTick }) else {
             throw VideoError.review("规则事件超出镜头可见时长；请延长镜头或调整事件，再重新录制和复核")
         }
         var trace = try record(simulation: scene.simulation, throughTick: lastTick)
         trace.recordedFPS = fps; trace.recordedDurationFrames = scene.durationFrames
         trace.recordedSpeed = scene.speed; trace.recordedPauseFrames = scene.pauseFrames; trace.recordedLastSourceFrame = lastSourceFrame
+        trace.recordedPresentation=scene.simulationPresentation
         return trace
     }
     /// Called by production quality checks as well as explicit editor/SDK confirmation.
@@ -274,7 +277,7 @@ public enum SimulationReplay {
                 return RuleTransition(tick: event.tick, eventID: "knowledge-" + event.id, label: "第\(event.round)轮·\(knowledge.phaseTitle(event.phase))", requestedDelta: delta, before: before, after: after, appliedDelta: delta, clippedDelta: 0)
             }
             let maximum: Int
-            if knowledge.isPayoffMatrix { maximum = max(1, try knowledge.maximumTotalResources()) }
+            if knowledge.isPayoffMatrix || knowledge.isRuleTable { maximum = max(1, try knowledge.maximumTotalResources()) }
             else { maximum = max(1, initial + knowledge.participants.count * knowledge.rounds * knowledge.benefit) }
             var value = RuleTrace(ruleVersion: 2, inputDigest: try Codec.digest(s), seed: s.seed, unit: knowledge.resourceLabel, initial: initial, capacity: maximum, throughTick: throughTick, frameStep: frameStep, transitions: transitions, finalState: trace.finalResources.reduce(0) { $0 + $1.resources })
             value.knowledgeTrace = trace
@@ -292,6 +295,7 @@ public enum SimulationReplay {
         var causalTrace = recording
         causalTrace.recordedFPS = nil; causalTrace.recordedDurationFrames = nil
         causalTrace.recordedSpeed = nil; causalTrace.recordedPauseFrames = nil; causalTrace.recordedLastSourceFrame = nil
+        causalTrace.recordedPresentation = nil
         guard causalTrace.ruleVersion == (simulation.knowledge == nil ? 1 : 2), causalTrace.inputDigest == (try Codec.digest(simulation)), causalTrace == (try record(simulation: simulation, throughTick: causalTrace.throughTick, frameStep: causalTrace.frameStep)) else { throw VideoError.review("规则、单位、参数、种子或事件已变，旧录制失效，请重新录制和复核") }
     }
     public static func frameState(simulation: Simulation, frame: Int, fps: Int = 30) throws -> RuleFrameState {

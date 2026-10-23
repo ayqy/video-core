@@ -78,6 +78,8 @@ public struct TeachingInput: Codable, Sendable {
     public var comparisonBasis = ""
     public var costItems: [NarrativeCostItem] = []
     public var simulation: Simulation?
+    public var knowledgeStoryboard: KnowledgeStoryboardPlan?
+    public var cartoonStoryboard: CartoonTeachingPlan?
     public init(topic:TeachingTopic,contentContext:ContentContext,grammar:NarrativeGrammar,sources:[NarrativeSource],purpose:Purpose = .education,aspect:Aspect) {
         self.topic=topic; self.contentContext=contentContext; self.grammar=grammar; self.sources=sources; self.purpose=purpose; self.aspect=aspect
     }
@@ -112,8 +114,9 @@ public struct TeachingDocument: Codable, Identifiable, Sendable {
               let index=revision.scenes.firstIndex(where:{$0.id==sceneID}), let beat=beats.firstIndex(where:{$0.sceneID==sceneID}) else {
             throw VideoError.invalid("改写须有场景、1至180字文案、真实作者和理由")
         }
-        let old=revision.scenes[index].body
-        var scene=revision.scenes[index];scene.body=text;scene.narration=text
+        let structured=revision.scenes[index].simulationPresentation != nil || revision.scenes[index].cartoonPerformance != nil
+        let old=structured ? revision.scenes[index].narration:revision.scenes[index].body
+        var scene=revision.scenes[index];if !structured{scene.body=text};scene.narration=text
         let project=Project(workspaceID:workspaceID,name:input.topic.name,revision:revision)
         revision=try Editor.apply([.replaceScene(sceneID,scene)],to:project,baseRevision:revision.id,assets:assets,message:"人工改写："+reason).current
         beats[beat].text=text;rewrites.append(ScriptRewrite(sceneID:sceneID,before:old,after:text,author:author,reason:reason,at:now))
@@ -137,6 +140,11 @@ public enum TeachingPlanner {
         guard Set(topic.mappingIDs).isSubset(of:Set((input.contentContext.courseMappings ?? []).map(\.id))) else {throw VideoError.notFound("选题课程片段映射缺失")}
         try style.validate(assets:assets,evidence:evidence,commercial:input.purpose != .education,now:now)
         if let s=series {guard s.workspaceID==workspace,s.styleID==style.id,s.styleVersion==style.version,s.templateID==t.id,s.templateVersion==t.version,s.episodeNumber>0,nonblank(s.name),nonblank(s.recurringQuestion) else{throw VideoError.conflict("栏目绑定的模板或风格版本已变，请明确迁移后重用")}}
+        if let plan=input.knowledgeStoryboard {
+            guard input.grammar == .simulation,input.simulation==nil,input.cartoonStoryboard==nil else { throw VideoError.invalid("知识分镜须明确选择规则模拟，不能同时提交旧数值规则或角色争论") }
+            return try composeKnowledge(input:input,plan:plan,product:product,assets:assets,evidence:evidence,template:t,style:style,series:series,vertical:vertical,now:now)
+        }
+        guard input.cartoonStoryboard==nil || input.grammar == .debate else { throw VideoError.invalid("角色表演计划只可用于明确的角色争论语法") }
         var content:[(NarrativeBeatRole,String,String)]=[(.hook,"本次要解决的问题",topic.hook),(.knowledge,"完整知识点",topic.knowledge)]
         func require(_ texts:String...)throws{guard texts.allSatisfy(nonblank) else{throw VideoError.invalid("请补齐"+input.grammar.rawValue+"所需真实输入")}}
         switch input.grammar{
@@ -170,12 +178,20 @@ public enum TeachingPlanner {
             }
             for (chunkIndex,chunk) in chunks.enumerated(){
                 let parameter=t.beats.first{$0.role==role}
-                let kind:SceneKind=(input.grammar == .simulation && role == .example) ? .simulation:(parameter?.kind ?? .explanation)
-                guard kind != .cartoon || !style.characters.isEmpty else{throw VideoError.review("卡通模板必须选择明确角色及来源；普通教学使用讲解镜头")}
+                let isDialogue=input.grammar == .debate && input.cartoonStoryboard != nil && (role == .example || role == .claim)
+                let kind:SceneKind=isDialogue ? .cartoon:(input.grammar == .simulation && role == .example) ? .simulation:(parameter?.kind ?? .explanation)
+                guard kind != .cartoon || isDialogue || !style.characters.isEmpty else{throw VideoError.review("卡通模板必须选择明确角色及来源；普通教学使用讲解镜头")}
                 var scene=Scene(kind:kind,title:String((chunks.count>1 ? title+"（"+String(chunkIndex+1)+"）":title).prefix(80)),body:chunk,narration:chunk,durationFrames:parameter?.frames ?? (role == .hook ? 120:240))
                 scene.color=style.palette[scenes.count % style.palette.count];scene.fontName=style.fontName
                 scene.evidenceIDs=Array(selectedEvidence.union(style.evidenceIDs)).sorted();scene.narrativeSources=input.sources;scene.courseMappingIDs=topic.mappingIDs
-                if kind == .cartoon,let character=style.characters.first{guard !character.original else{throw VideoError.review("经典卡通制作须使用下载并Q版化的熟悉角色，不以陌生原创几何角色代替")};scene.character=character.name;scene.characterProfile=character}
+                if isDialogue,let plan=input.cartoonStoryboard {
+                    let speaker=role == .example ? 0:1
+                    scene.classicArtwork=plan.artwork
+                    scene.cartoonPerformance=try plan.performance(speakerIndex:speaker,durationFrames:scene.durationFrames)
+                    scene.character=plan.actors[speaker].name
+                    scene.body=scene.character+"："+(role == .example ? "提出问题":"依据材料回应")
+                    scene.evidenceIDs=Array(Set(scene.evidenceIDs).union(plan.artwork.evidenceIDs)).sorted()
+                } else if kind == .cartoon,let character=style.characters.first{guard !character.original else{throw VideoError.review("经典卡通制作须使用下载并Q版化的熟悉角色，不以陌生原创几何角色代替")};scene.character=character.name;scene.characterProfile=character}
                 if let simulation=input.simulation,kind == .simulation{scene.simulation=simulation}
                 if parameter?.motion==true{scene.keyframes=[Keyframe(frame:0,x:0.46,y:0.5,scale:0.95),Keyframe(frame:scene.durationFrames-1,x:0.54,y:0.5,scale:1.05)]}
                 // A real demonstration uses the explicitly selected recording, with exact source range.
@@ -194,6 +210,53 @@ public enum TeachingPlanner {
         revision.musicAssetID=style.musicAssetID
         revision.dependencies=try DependencyRules.freeze(revision:revision,assets:assets,evidence:evidence,now:now)
         return TeachingDocument(workspaceID:workspace,input:input,revision:revision,beats:beats,template:t,style:style,series:series,vertical:vertical)
+    }
+    private static func composeKnowledge(input:TeachingInput,plan:KnowledgeStoryboardPlan,product:Product?,assets:[Asset],evidence:[Evidence],template:NarrativeTemplate,style:StyleKit,series:SeriesProfile?,vertical:WorkspaceVerticalChecklist?,now:Date)throws->TeachingDocument {
+        try plan.validate()
+        let topic=input.topic,workspace=topic.workspaceID
+        let selected=Set(topic.evidenceIDs+style.evidenceIDs+(vertical?.evidence.values.flatMap{$0} ?? []))
+        var scenes:[Scene]=[],beats:[NarrativeBeat]=[]
+        func append(_ sceneValue:Scene,role:NarrativeBeatRole)throws {
+            var scene=sceneValue
+            scene.fontName=style.fontName;scene.color=style.palette[scenes.count % style.palette.count]
+            scene.evidenceIDs=Array(Set(scene.evidenceIDs).union(selected)).sorted()
+            scene.narrativeSources=input.sources;scene.courseMappingIDs=topic.mappingIDs
+            try scene.validate(assets:assets.filter{$0.workspaceID==workspace})
+            scenes.append(scene);beats.append(NarrativeBeat(role:role,sceneID:scene.id,text:scene.narration,sourceIDs:input.sources.map(\.id),evidenceIDs:scene.evidenceIDs,characterID:nil))
+        }
+        func explain(_ title:String,_ text:String,role:NarrativeBeatRole)throws {
+            for start in stride(from:0,to:text.count,by:160) {
+                let a=text.index(text.startIndex,offsetBy:start),b=text.index(a,offsetBy:min(160,text.count-start)),chunk=String(text[a..<b])
+                try append(Scene(title:title,body:chunk,narration:chunk,durationFrames:template.beats.first{$0.role==role}?.frames ?? 240),role:role)
+            }
+        }
+        func demonstrate(_ model:KnowledgeSimulation,_ shots:[KnowledgeStoryboardShot])throws {
+            for shot in shots {
+                var scene=Scene(kind:.simulation,title:shot.title,body:shot.visualSummary ?? shot.title,narration:shot.narration,durationFrames:shot.durationFrames)
+                scene.simulation.knowledge=model;scene.simulation.seed=plan.seed;scene.simulation.unit=model.resourceLabel
+                scene.classicArtwork=plan.artwork;scene.evidenceIDs=Array(plan.artwork.evidenceIDs).sorted()
+                scene.simulationPresentation=SimulationPresentation(sourceStartFrame:shot.startTick*30,sourceEndFrame:shot.endTickExclusive*30,presentationFrames:shot.durationFrames)
+                try append(scene,role:.demonstration)
+            }
+        }
+        try explain("本次要解决的问题",topic.hook,role:.hook)
+        try explain("知识与前置条件",topic.knowledge,role:.knowledge)
+        try explain("模型规则与适用假设",plan.ruleExplanation,role:.example)
+        try explain("观察什么、怎样核对",topic.proof,role:.demonstration)
+        try demonstrate(plan.baseline,plan.baselineShots)
+        try explain("同种子反事实：改变什么",plan.alternativeExplanation,role:.example)
+        try demonstrate(plan.alternative,plan.alternativeShots)
+        if nonblank(input.humour){try explain("娱乐桥段，不作为事实证明",input.humour,role:.entertainment)}
+        try explain("根据这两次实际演示得出的结论",plan.conclusion,role:.claim)
+        try explain("适用范围与前置条件",topic.prerequisite+"\n"+topic.boundary,role:.boundary)
+        if nonblank(topic.cta){try explain("可选的下一步",topic.cta,role:.action)}
+        var context=input.contentContext;context.assetIDs=Array(Set(context.assetIDs+input.sources.map(\.assetID))).sorted()
+        var revision:Revision
+        if let product {revision=Revision(product:product,purpose:input.purpose,aspect:input.aspect,scenes:scenes,cta:topic.cta,change:"知识因果分镜与同种子反事实（待录制、配音及核验）")}
+        else {revision=Revision(contentContext:context,purpose:input.purpose,aspect:input.aspect,scenes:scenes,cta:topic.cta,change:"知识因果分镜与同种子反事实（待录制、配音及核验）")}
+        revision.musicAssetID=style.musicAssetID
+        revision.dependencies=try DependencyRules.freeze(revision:revision,assets:assets,evidence:evidence,now:now)
+        return TeachingDocument(workspaceID:workspace,input:input,revision:revision,beats:beats,template:template,style:style,series:series,vertical:vertical)
     }
     public static func confirmationIssues(document:TeachingDocument,assets:[Asset],evidence:[Evidence],currentProduct:Product?=nil,now:Date=Date())->[String]{
         var issues=DependencyRules.reviewIssues(revision:document.revision,assets:assets,evidence:evidence,currentProduct:currentProduct,now:now)

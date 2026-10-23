@@ -1,8 +1,8 @@
 import Foundation
 
-/// Two bounded teaching mechanisms, not Chrome's rules or predictions of people.
+/// Bounded teaching mechanisms, not Chrome's rules or predictions of people.
 /// Version 1 is the original threshold public good. Version 2 is a two-person,
-/// two-action payoff matrix whose settlement is funded by a finite pool.
+/// two-action payoff matrix. Version 3 is an editable finite rule table.
 public struct KnowledgeSimulation: Codable, Equatable, Sendable {
     public var version: Int = 1
     public var knowledgeLabel: String
@@ -16,27 +16,41 @@ public struct KnowledgeSimulation: Codable, Equatable, Sendable {
     public var threshold: Int
     public var benefit: Int
     public var payoffMatrix: KnowledgePayoffMatrix?
+    public var ruleTable: KnowledgeRuleTable?
 
     public init(knowledgeLabel: String, resourceLabel: String = "资源",
                 participants: [KnowledgeParticipant], rounds: Int = 3,
                 roundTicks: Int = 6, startTick: Int = 0,
                 contributionCost: Int = 1, contributionUnits: Int = 1,
                 threshold: Int = 1, benefit: Int = 3,
-                payoffMatrix: KnowledgePayoffMatrix? = nil) {
+                payoffMatrix: KnowledgePayoffMatrix? = nil, ruleTable: KnowledgeRuleTable? = nil) {
         self.knowledgeLabel = knowledgeLabel; self.resourceLabel = resourceLabel
         self.participants = participants; self.rounds = rounds
         self.roundTicks = roundTicks; self.startTick = startTick
         self.contributionCost = contributionCost; self.contributionUnits = contributionUnits
         self.threshold = threshold; self.benefit = benefit
         self.payoffMatrix = payoffMatrix
+        self.ruleTable = ruleTable
         if payoffMatrix != nil { version = 2 }
+        if ruleTable != nil { version = 3 }
     }
 
-    public static let teachingNotice = "公共品或双人双行动收益矩阵教学模型；规则和收益由当前输入决定，不是原作游戏规则或现实预测。"
+    public static let teachingNotice = "有界教学模型；实体、行动、状态、资金和规则由当前输入决定，不是原作游戏规则、现实预测或自动事实结论。"
 
     public var isPayoffMatrix: Bool { version == 2 }
+    public var isRuleTable: Bool { version == 3 }
 
     public func phaseTitle(_ phase: KnowledgePhase) -> String {
+        if isRuleTable {
+            switch phase {
+            case .preparation: return "本轮开始"
+            case .decision: return "同时选择"
+            case .contribution: return "实际行动与自费"
+            case .resolution: return "匹配因果规则"
+            case .passage: return "规则演绎"
+            case .settlement: return "原子结算与状态转换"
+            }
+        }
         guard isPayoffMatrix else { return phase.rawValue }
         switch phase {
         case .preparation: return "本轮开始"
@@ -58,7 +72,7 @@ public struct KnowledgeSimulation: Codable, Equatable, Sendable {
     }
 
     public func validate() throws {
-        guard (1...2).contains(version), KnowledgeSimulationEngine.validText(knowledgeLabel, maximum: 240),
+        guard (1...3).contains(version), KnowledgeSimulationEngine.validText(knowledgeLabel, maximum: 240),
               KnowledgeSimulationEngine.validText(resourceLabel, maximum: 60),
               (2...8).contains(participants.count), Set(participants.map(\.id)).count == participants.count,
               (1...64).contains(rounds), (6...30).contains(roundTicks),
@@ -68,15 +82,21 @@ public struct KnowledgeSimulation: Codable, Equatable, Sendable {
             throw VideoError.invalid("知识模型版本、标签、参与者数量、轮次或成本/门槛/收益超出有限范围")
         }
         if version == 1 {
-            guard payoffMatrix == nil, participants.allSatisfy({ $0.matrixStrategy == nil }) else {
+            guard payoffMatrix == nil, ruleTable == nil, participants.allSatisfy({ $0.matrixStrategy == nil }) else {
                 throw VideoError.invalid("公共品版本不能混入收益矩阵或矩阵策略")
             }
-        } else {
-            guard let payoffMatrix, participants.count == 2,
+        } else if version == 2 {
+            guard let payoffMatrix, ruleTable == nil, participants.count == 2,
                   participants.allSatisfy({ $0.matrixStrategy != nil && $0.strategy == .contribute }) else {
                 throw VideoError.invalid("收益矩阵必须完整指定两名参与者及各自矩阵策略；旧出力策略不能混用")
             }
             try payoffMatrix.validate()
+        } else {
+            guard let ruleTable, payoffMatrix == nil,
+                  participants.allSatisfy({ $0.matrixStrategy == nil && $0.strategy == .contribute }) else {
+                throw VideoError.invalid("有限规则表须使用完整版本3规则，不混入旧出力或矩阵策略")
+            }
+            try ruleTable.validate(participants: participants, rounds: rounds)
         }
         let people = participants.sorted { $0.id < $1.id }
         for participant in participants {
@@ -86,7 +106,8 @@ public struct KnowledgeSimulation: Codable, Equatable, Sendable {
                 throw VideoError.invalid("知识参与者标识、名称或可能获得的资源超过有限预算")
             }
             let maximumGain: Int
-            if let matrix = payoffMatrix {
+            if isRuleTable { maximumGain = 0 }
+            else if let matrix = payoffMatrix {
                 let requiredStake = try KnowledgeSimulationEngine.multiply(rounds, matrix.stake)
                 guard participant.initialResources >= requiredStake else {
                     throw VideoError.invalid("收益矩阵初始资源须覆盖全部轮次的最坏押金，不能透支或中途虚构行动")
@@ -114,6 +135,7 @@ public struct KnowledgeSimulation: Codable, Equatable, Sendable {
 
     public func maximumTotalResources() throws -> Int {
         try validate()
+        if let ruleTable { return try ruleTable.maximumTotalResources(participants: participants, rounds: rounds) }
         return try participants.sorted { $0.id < $1.id }.enumerated().reduce(0) { total, entry in
             let maximumPayout = payoffMatrix.map { matrix in
                 matrix.cells.map { entry.offset == 0 ? $0.rowPayout : $0.columnPayout }.max() ?? 0
@@ -282,6 +304,9 @@ public struct KnowledgeActorState: Codable, Equatable, Identifiable, Sendable {
     public var cost: Int
     public var benefit: Int
     public var passed: Bool
+    public var ruleStateID: String? = nil
+    public var requestedActionID: String? = nil
+    public var executedActionID: String? = nil
 }
 
 /// Every stored event is already visible at throughTick; no future choices or
@@ -295,6 +320,7 @@ public struct KnowledgeEvent: Codable, Equatable, Identifiable, Sendable {
     public var threshold: Int
     public var obstacleCleared: Bool
     public var matrixPool: KnowledgeMatrixPool? = nil
+    public var ruleExecution: KnowledgeRuleExecution? = nil
     public var id: String { "\(round)-\(phase.rawValue)" }
 }
 
@@ -305,6 +331,7 @@ public struct KnowledgeRoundResult: Codable, Equatable, Sendable {
     public var obstacleCleared: Bool
     public var actors: [KnowledgeActorState]
     public var matrixPool: KnowledgeMatrixPool? = nil
+    public var ruleExecution: KnowledgeRuleExecution? = nil
 }
 
 public struct KnowledgeBalance: Codable, Equatable, Identifiable, Sendable {
@@ -332,6 +359,7 @@ public struct KnowledgeFrameState: Equatable, Sendable {
     public var threshold: Int
     public var obstacleCleared: Bool
     public var matrixPool: KnowledgeMatrixPool? = nil
+    public var ruleExecution: KnowledgeRuleExecution? = nil
 }
 
 public struct KnowledgeBalanceDelta: Codable, Equatable, Identifiable, Sendable {
@@ -366,7 +394,8 @@ public enum KnowledgeSimulationEngine {
         return result.partialValue
     }
     private static func initialActors(_ model: KnowledgeSimulation) -> [KnowledgeActorState] {
-        model.participants.sorted { $0.id < $1.id }.map {
+        if model.isRuleTable { return KnowledgeRuleTableEngine.initialActors(model) }
+        return model.participants.sorted { $0.id < $1.id }.map {
             KnowledgeActorState(id: $0.id, resources: $0.initialResources, choice: nil,
                                 contribution: 0, cost: 0, benefit: 0, passed: false)
         }
@@ -375,6 +404,7 @@ public enum KnowledgeSimulationEngine {
     public static func record(model: KnowledgeSimulation, seed: UInt64, throughTick: Int) throws -> KnowledgeTrace {
         try model.validate()
         guard (0...1800).contains(throughTick) else { throw VideoError.invalid("知识重放刻度超出有限范围") }
+        if model.isRuleTable { return try KnowledgeRuleTableEngine.record(model: model, seed: seed, throughTick: throughTick) }
         if model.isPayoffMatrix { return try recordMatrix(model: model, seed: seed, throughTick: throughTick) }
         let people = model.participants.sorted { $0.id < $1.id }
         var actors = initialActors(model), events: [KnowledgeEvent] = [], completed: [KnowledgeRoundResult] = []
@@ -533,7 +563,7 @@ public enum KnowledgeSimulationEngine {
         let elapsed = Double(frame - event.tick * fps) / Double(fps)
         return KnowledgeFrameState(tick: tick, round: event.round, phase: event.phase, phaseProgress: min(1, max(0, elapsed)),
                                    actors: event.actors, totalContribution: event.totalContribution,
-                                   threshold: event.threshold, obstacleCleared: event.obstacleCleared, matrixPool: event.matrixPool)
+                                   threshold: event.threshold, obstacleCleared: event.obstacleCleared, matrixPool: event.matrixPool, ruleExecution: event.ruleExecution)
     }
 
     /// A causal comparison keeps the participant identities, round count and seed
@@ -573,8 +603,8 @@ public enum KnowledgeSimulationSchema {
         "KnowledgeChoice": [KnowledgeChoice.contribute.rawValue, KnowledgeChoice.wait.rawValue, KnowledgeChoice.constrained.rawValue],
         "KnowledgePhase": KnowledgePhase.allCases.map(\.rawValue)
     ]
-    public static var records: [String: String] { records(forInputSchemaVersion: 3) }
-    public static var enums: [String: [String]] { enums(forInputSchemaVersion: 3) }
+    public static var records: [String: String] { records(forInputSchemaVersion: 5) }
+    public static var enums: [String: [String]] { enums(forInputSchemaVersion: 5) }
     public static func records(forInputSchemaVersion version: Int) -> [String: String] {
         guard version >= 3 else { return publicGoodRecords }
         var result = publicGoodRecords
@@ -585,6 +615,25 @@ public enum KnowledgeSimulationSchema {
         result["KnowledgePayoffMatrix"] = "firstActionLabel:s secondActionLabel:s stake:i externalBudget:i cells:[KnowledgePayoffCell]"
         result["KnowledgePayoffCell"] = "rowAction:KnowledgeMatrixAction columnAction:KnowledgeMatrixAction rowPayout:i columnPayout:i"
         result["KnowledgeMatrixPool"] = "available:i distributed:i remainder:i"
+        if version >= 5 {
+            result["KnowledgeSimulation"]! += " ruleTable?:KnowledgeRuleTable"
+            result["KnowledgeActorState"]! += " ruleStateID?:s requestedActionID?:s executedActionID?:s"
+            result["KnowledgeEvent"]! += " ruleExecution?:KnowledgeRuleExecution"
+            result["KnowledgeRoundResult"]! += " ruleExecution?:KnowledgeRuleExecution"
+            result["KnowledgeRuleTable"] = "version:i actions:[KnowledgeRuleAction] states:[KnowledgeRuleState] plans:[KnowledgeRuleActorPlan] rules:[KnowledgeRule] initialPool:i externalBudgetPerRound:i"
+            result["KnowledgeRuleAction"] = "id:s label:s cost:i pose:KnowledgeRulePose"
+            result["KnowledgeRuleState"] = "id:s label:s pose:KnowledgeRulePose"
+            result["KnowledgeRuleActorPlan"] = "actorID:s initialStateID:s defaultActionID:s cycleActionIDs:[s] decisions:[KnowledgeRuleDecision]"
+            result["KnowledgeRuleDecision"] = "id:s priority:i conditions:[KnowledgeRuleCondition] actionID:s"
+            result["KnowledgeRuleCondition"] = "kind:KnowledgeRuleConditionKind actorID?:s actionID?:s stateID?:s minimum?:i maximum?:i"
+            result["KnowledgeRuleEffect"] = "kind:KnowledgeRuleEffectKind sourceActorID?:s destinationActorID?:s amount?:i actorID?:s stateID?:s"
+            result["KnowledgeRule"] = "id:s label:s conditions:[KnowledgeRuleCondition] effects:[KnowledgeRuleEffect]"
+            result["KnowledgeRuleFact"] = "conditionIndex:i actualNumber?:i actualID?:s"
+            result["KnowledgeRuleMatch"] = "ruleID:s facts:[KnowledgeRuleFact]"
+            result["KnowledgeRuleTransfer"] = "ruleID:s sourceActorID?:s destinationActorID?:s amount:i"
+            result["KnowledgeRuleStateChange"] = "ruleID:s actorID:s beforeStateID:s afterStateID:s"
+            result["KnowledgeRuleExecution"] = "poolBefore:i poolAfter:i externalFunding:i deposits:i matches:[KnowledgeRuleMatch] transfers:[KnowledgeRuleTransfer] stateChanges:[KnowledgeRuleStateChange]"
+        }
         return result
     }
     public static func enums(forInputSchemaVersion version: Int) -> [String: [String]] {
@@ -593,6 +642,11 @@ public enum KnowledgeSimulationSchema {
         result["KnowledgeChoice"]! += [KnowledgeChoice.actionFirst.rawValue, KnowledgeChoice.actionSecond.rawValue]
         result["KnowledgeMatrixAction"] = KnowledgeMatrixAction.allCases.map(\.rawValue)
         result["KnowledgeMatrixStrategy"] = KnowledgeMatrixStrategy.allCases.map(\.rawValue)
+        if version >= 5 {
+            result["KnowledgeRulePose"] = KnowledgeRulePose.allCases.map(\.rawValue)
+            result["KnowledgeRuleConditionKind"] = KnowledgeRuleConditionKind.allCases.map(\.rawValue)
+            result["KnowledgeRuleEffectKind"] = KnowledgeRuleEffectKind.allCases.map(\.rawValue)
+        }
         return result
     }
 }

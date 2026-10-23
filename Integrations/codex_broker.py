@@ -2,8 +2,9 @@
 """Finite Codex 0.159.2 app-server client with client-owned dynamic-tool execution.
 
 The model has no registered environment. Native command/file/network approvals
-are always denied. Only this client's exact, hash-bound discovery or dry-run
-argv can spawn; this is not an item.started observer pretending to be approval.
+are always denied. Only this client's exact, hash-bound operations can spawn;
+LocalProductionPolicy adds an explicit fresh-workspace local-only plan. This is
+not an item.started observer pretending to be approval.
 No function is called on import. run_codex explicitly starts a model session.
 """
 from __future__ import annotations
@@ -231,14 +232,15 @@ def _stop(process):
     return result
 
 
-def execute(command: Command, *, deadline: float) -> dict:
-    """Client-owned bounded argv execution. Raw stdout/stderr never leave here."""
-    command.verify()
-    remaining = min(20., deadline - time.monotonic())
+def _execute_argv(argv: tuple[str, ...], cwd: Path, *, deadline: float, seconds: float = 20.) -> tuple[dict, bytes]:
+    """Shared bounded process owner; output stays in the client, never the model."""
+    if not 0 < seconds <= 63:
+        raise ValueError("bounded_local_command_seconds_required")
+    remaining = min(seconds, deadline - time.monotonic())
     if remaining <= 0:
         raise ProtocolError("command_deadline")
     # Do not forward inherited API keys, proxy secrets, shell startup settings or HOME.
-    process = subprocess.Popen(command.argv, cwd=command.cwd, shell=False, stdin=subprocess.DEVNULL,
+    process = subprocess.Popen(argv, cwd=cwd, shell=False, stdin=subprocess.DEVNULL,
                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True,
                                env={"PATH": "/usr/bin:/bin:/usr/sbin:/sbin", "LANG": "en_US.UTF-8"})
     selector = selectors.DefaultSelector()
@@ -277,12 +279,27 @@ def execute(command: Command, *, deadline: float) -> dict:
             process.stderr.close()
         if failure is not None:
             failure.cleanup = cleanup
-    summary = {"operation": command.name, "exit_code": process.returncode, "stdout_bytes": len(output),
+    summary = {"exit_code": process.returncode, "stdout_bytes": len(output),
                "stdout_sha256": hashlib.sha256(output).hexdigest(), "stderr_bytes": stderr_bytes,
                "stderr_sha256": stderr_hash.hexdigest(),
                "cleanup": cleanup,
-               "argv_sha256": hashlib.sha256(json.dumps(command.argv, separators=(",", ":")).encode()).hexdigest()}
-    ok = process.returncode == 0 and stderr_bytes == 0 and cleanup["passed"]
+               "argv_sha256": hashlib.sha256(json.dumps(argv, separators=(",", ":")).encode()).hexdigest()}
+    summary["passed"] = process.returncode == 0 and stderr_bytes == 0 and cleanup["passed"]
+    return summary, bytes(output)
+
+
+def execute(command: Command, *, deadline: float) -> dict:
+    """Client-owned bounded argv execution. Raw stdout/stderr never leave here."""
+    if getattr(command, "kind", None) == "local_production":
+        # The separately reviewed policy materializes argv and bound inputs itself.
+        from codex_production import LocalInvocation
+        if not isinstance(command, LocalInvocation):
+            raise ValueError("local_invocation_required")
+        return command.execute(deadline=deadline)
+    command.verify()
+    summary, output = _execute_argv(command.argv, command.cwd, deadline=deadline)
+    summary["operation"] = command.name
+    ok = summary["passed"]
     if command.kind == "discovery":
         text = output.decode("utf-8", errors="strict").strip()
         match = re.fullmatch(r"video schema_version=1\.0 commands=([1-9][0-9]{0,3}) schema_sha256=([a-f0-9]{64})", text)

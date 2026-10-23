@@ -2,7 +2,7 @@ import Foundation
 
 public enum PluginInputCompatibility {
     public static func supports(pluginID: String, version: Int) -> Bool {
-        version == 1 || (pluginID == "video.game" && (2...3).contains(version)) || (pluginID == "video.cartoon" && version == 4)
+        version == 1 || (pluginID == "video.game" && [2,3,5].contains(version)) || (pluginID == "video.cartoon" && version == 4)
     }
     /// Publisher defaults stay compatible with prior manifests. New endpoints must
     /// be selected explicitly, before any signing identity or output transaction.
@@ -23,7 +23,8 @@ public enum PluginInputCompatibility {
         }
         guard let knowledge = simulation.knowledge else { return }
         try knowledge.validate()
-        guard pluginID == "video.game", inputSchema >= (knowledge.version == 2 ? 3 : 2) else {
+        let minimumSchema = knowledge.version == 3 ? 5 : knowledge.version == 2 ? 3 : 2
+        guard pluginID == "video.game", inputSchema >= minimumSchema else {
             throw VideoError.unavailable("此已安装模块不支持当前知识模型输入；请安装相容且受信的高级模块，未退回旧计数器画面")
         }
     }

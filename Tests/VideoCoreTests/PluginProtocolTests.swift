@@ -114,7 +114,7 @@ final class PluginProtocolTests:XCTestCase {
     func testPublicationSchemaSelectionRetainsLegacyDefaultsAndRejectsCrossModuleOrNoncanonicalRequests() throws {
         XCTAssertEqual(try PluginInputCompatibility.publicationSchema(pluginID: "video.game"), 2)
         XCTAssertEqual(try PluginInputCompatibility.publicationSchema(pluginID: "video.cartoon"), 1)
-        for version in [1, 2, 3] {
+        for version in [1, 2, 3, 5] {
             XCTAssertEqual(try PluginInputCompatibility.publicationSchema(pluginID: "video.game", requested: String(version)), version)
         }
         for version in [1, 4] {
@@ -127,5 +127,47 @@ final class PluginProtocolTests:XCTestCase {
         XCTAssertThrowsError(try PluginInputCompatibility.publicationSchema(pluginID: "video.game", requested: "4"))
         XCTAssertThrowsError(try PluginInputCompatibility.publicationSchema(pluginID: "video.cartoon", requested: "2"))
         XCTAssertThrowsError(try PluginInputCompatibility.publicationSchema(pluginID: "video.cartoon", requested: "3"))
+        XCTAssertThrowsError(try PluginInputCompatibility.publicationSchema(pluginID: "video.cartoon", requested: "5"))
+    }
+    func testRuleTableRequiresExplicitSchemaFiveWithoutChangingEarlierShapes() throws {
+        var simulation=Simulation()
+        simulation.knowledge=KnowledgeSimulation(knowledgeLabel:"可编辑机制",participants:[
+            .init(id:"a",name:"甲",strategy:.contribute),.init(id:"b",name:"乙",strategy:.contribute)
+        ],rounds:1,ruleTable:KnowledgeRuleTable(actions:[.init(id:"wait",label:"等待",pose:.idle)],states:[.init(id:"open",label:"待处理")],plans:[
+            .init(actorID:"a",initialStateID:"open",defaultActionID:"wait"),
+            .init(actorID:"b",initialStateID:"open",defaultActionID:"wait")
+        ],rules:[.init(id:"remain",label:"保持",conditions:[.init(kind:.round,minimum:1,maximum:1)],effects:[.setState(actorID:"a",stateID:"open")])]))
+        try XCTUnwrap(simulation.knowledge).validate()
+        for version in [1,2,3,4] {XCTAssertThrowsError(try PluginInputCompatibility.requireKnowledgeSupport(simulation,pluginID:"video.game",inputSchema:version))}
+        XCTAssertNoThrow(try PluginInputCompatibility.requireKnowledgeSupport(simulation,pluginID:"video.game",inputSchema:5))
+        let current=PluginRPCSchemas.definitions(inputSchemaVersion:5)
+        for version in [2,3,4] {
+            let previous=PluginRPCSchemas.definitions(inputSchemaVersion:version)
+            XCTAssertNil(previous["KnowledgeRuleTable"])
+            XCTAssertNil(previous["KnowledgeSimulation"]?.object?["properties"]?.object?["ruleTable"])
+            XCTAssertNil(previous["KnowledgeActorState"]?.object?["properties"]?.object?["executedActionID"])
+        }
+        XCTAssertNotNil(current["KnowledgeRuleTable"])
+        XCTAssertNotNil(current["KnowledgeSimulation"]?.object?["properties"]?.object?["ruleTable"])
+        XCTAssertNotNil(current["KnowledgeActorState"]?.object?["properties"]?.object?["executedActionID"])
+        func check(_ node:AgentValue) {
+            switch node {
+            case .object(let values):
+                if let ref=values["$ref"]?.string {XCTAssertNotNil(current[String(ref.dropFirst("#/$defs/".count))],ref)}
+                for value in values.values {check(value)}
+            case .array(let values):for value in values {check(value)}
+            default:break
+            }
+        }
+        for value in current.values {check(value)}
+        // The Host maps a shot to an absolute source frame. The plugin sees no
+        // shot window, narration, source annotations, audio or human approvals.
+        var scene=fixture().props.drawingScene()
+        scene.simulation=simulation
+        scene.simulationPresentation=SimulationPresentation(sourceStartFrame:30,sourceEndFrame:61,presentationFrames:90)
+        let visual=PluginVisualProps(scene:scene)
+        let bytes=String(decoding:try Codec.data(visual),as:UTF8.self)
+        XCTAssertFalse(bytes.contains("simulationPresentation"))
+        XCTAssertNil(visual.drawingScene().simulationPresentation)
     }
 }

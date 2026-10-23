@@ -51,6 +51,24 @@ final class ClassicSceneEditingTests:XCTestCase {
         XCTAssertFalse(extended.classicArtwork?.audioCues.first?.listened ?? true)
         XCTAssertEqual(extended.simulationRecordingConfirmed,false)
     }
+    func testAudioExtensionRetainsSourceWindowAndPreviouslyRetimedWholeCues()throws {
+        let (assets,evidence)=fixture()
+        let art=try ClassicSceneEditing.derivedAtlas(assetID:assets[1].id,originalAssetIDs:[assets[0].id],gameplay:.sokoban,transformation:"实际派生",assets:assets,evidence:evidence,workspaceID:"w")
+        var scene=Scene(kind:.simulation,title:"知识",body:"示例",durationFrames:240);scene.classicArtwork=art
+        scene.simulationPresentation=SimulationPresentation(sourceStartFrame:60,sourceEndFrame:180,presentationFrames:240)
+        scene=try ClassicSceneEditing.addingCue(assetID:assets[2].id,startFrame:30,gain:0.3,use:.effect,extendScene:false,to:scene,assets:assets,evidence:evidence,workspaceID:"w")
+        scene.classicArtwork?.audioCues[0].listened=true
+        let originalID=try XCTUnwrap(scene.classicArtwork?.audioCues.first?.id)
+        let changed=try ClassicSceneEditing.addingCue(assetID:assets[2].id,startFrame:240,gain:0.4,use:.prompt,extendScene:true,to:scene,assets:assets,evidence:evidence,workspaceID:"w")
+        XCTAssertEqual(changed.durationFrames,360)
+        XCTAssertEqual(try changed.renderSimulationSourceFrame(atTimelineFrame:0),60)
+        XCTAssertEqual(try changed.renderSimulationSourceFrame(atTimelineFrame:359),179)
+        let cues=try XCTUnwrap(changed.classicArtwork?.audioCues)
+        XCTAssertEqual(cues.count,2);XCTAssertEqual(cues[0].id,originalID)
+        XCTAssertEqual(cues.map(\.startFrame),[45,240]);XCTAssertEqual(cues.map(\.durationFrames),[120,120])
+        XCTAssertTrue(cues.allSatisfy{!$0.listened})
+        XCTAssertEqual(changed.simulationRecordingConfirmed,false)
+    }
     func testSplitKeepsWholeAudioCuesOnTheirOwnSideAndRetimesTheRight()throws {
         var (assets,evidence)=fixture();assets[2].durationFrames=30
         var scene=try characterScene(assets:assets,evidence:evidence);scene.durationFrames=240

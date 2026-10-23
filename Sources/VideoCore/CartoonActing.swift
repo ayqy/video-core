@@ -140,6 +140,40 @@ public struct CartoonPerformance: Codable, Equatable, Sendable {
         try result.validate(durationFrames:end-start)
         return result
     }
+    /// An explicit editorial retime, used only after the caller has chosen to
+    /// extend a shot for its actual voice. Poses, speakers and trajectories are
+    /// retained; every beat keeps at least one frame and the final beat ends at
+    /// the new source duration. This is not an audio or phoneme alignment claim.
+    public func retimed(from durationFrames: Int, to newDurationFrames: Int) throws -> CartoonPerformance {
+        try validate(durationFrames: durationFrames)
+        guard (beats.count...54000).contains(newDurationFrames) else { throw VideoError.invalid("重定时后每个角色节拍至少保留一帧，镜头最多54000帧") }
+        guard durationFrames != newDurationFrames else { return self }
+        var result=self, boundary=0
+        for index in result.beats.indices {
+            let remaining=beats.count-index-1
+            let proposed=Int((Double(beats[index].endFrame)*Double(newDurationFrames)/Double(durationFrames)).rounded())
+            let end=index==beats.count-1 ? newDurationFrames : min(newDurationFrames-remaining,max(boundary+1,proposed))
+            result.beats[index].startFrame=boundary
+            result.beats[index].endFrame=end
+            // Preserve the original source animation phase at the beat start.
+            // The new beat length changes cadence, not the identity of a pose.
+            boundary=end
+        }
+        try result.validate(durationFrames:newDurationFrames)
+        return result
+    }
+    /// A single explicitly speaking actor and the actual selected cast. Each
+    /// companion listens and looks toward that actor; no dialogue is generated.
+    public static func dialogue(actors: [CartoonActor], speakerID: String, durationFrames: Int) throws -> CartoonPerformance {
+        guard (2...4).contains(actors.count),Set(actors.map(\.id)).count==actors.count,actors.contains(where:{$0.id==speakerID}) else { throw VideoError.invalid("争论镜头须有2—4名不同角色及实际发言者") }
+        let positions=Dictionary(uniqueKeysWithValues:actors.enumerated().map{($0.element.id,0.18+Double($0.offset)*0.64/Double(max(1,actors.count-1)))})
+        let cues=actors.map { actor in
+            CartoonActorCue(actorID:actor.id,pose:actor.id==speakerID ? .speak:.listen,fromX:positions[actor.id]!,toX:positions[actor.id]!,lookAtID:actor.id==speakerID ? actors.first(where:{$0.id != speakerID})?.id:speakerID)
+        }
+        let result=CartoonPerformance(actors:actors,beats:[CartoonBeat(startFrame:0,endFrame:durationFrames,speakerID:speakerID,camera:.speaker,cues:cues)])
+        try result.validate(durationFrames:durationFrames)
+        return result
+    }
     public static func conversation(durationFrames: Int) throws -> CartoonPerformance {
         guard (6...54000).contains(durationFrames) else { throw VideoError.invalid("完整角色表演须为6—54000源帧") }
         let actors=[CartoonActor(id:"actor-a",name:"甲",poseRoles:CartoonActor.dinoRoles),CartoonActor(id:"actor-b",name:"乙",poseRoles:CartoonActor.dinoRoles)]
