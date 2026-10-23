@@ -66,11 +66,19 @@ public final class MediaRenderer: @unchecked Sendable {
                     let parameter=try await addAudio(repository.assetURL(asset),to:composition,at:CMTimeAdd(at,offset),sourceStart:.zero,sourceFrames:cue.durationFrames,targetDuration:length,fps:r.fps,gain:Float(cue.gain),preservePitch:s.preservePitch)
                     parameters.append(parameter)
                 }
-                if let take=s.voice,let a=database.assets.first(where:{$0.id==take.assetID}) { let p=try await addAudio(repository.assetURL(a),to:composition,at:at,sourceStart:.zero,sourceFrames:take.durationFrames,targetDuration:CMTime(value:Int64(Double(take.durationFrames)/s.speed),timescale:Int32(r.fps)),fps:r.fps,gain:Float(s.voiceGain),preservePitch:s.preservePitch); parameters.append(p) }
+                if let take=s.voice,let a=database.assets.first(where:{$0.id==take.assetID}) { let p=try await addAudio(repository.assetURL(a),to:composition,at:at,sourceStart:.zero,sourceFrames:take.durationFrames,targetDuration:try Self.sceneAudioTime(frames:take.durationFrames,fps:r.fps,speed:s.speed),fps:r.fps,gain:Float(s.voiceGain),preservePitch:s.preservePitch); parameters.append(p) }
                 if let aid=s.assetID,let a=database.assets.first(where:{$0.id==aid}),s.kind == .video,s.sourceGain>0 { if !(try await AVURLAsset(url:repository.assetURL(a)).loadTracks(withMediaType:.audio)).isEmpty { let p=try await addAudio(repository.assetURL(a),to:composition,at:at,sourceStart:CMTime(value:Int64(s.sourceStartFrame),timescale:Int32(r.fps)),sourceFrames:s.durationFrames,targetDuration:span,fps:r.fps,gain:Float(s.sourceGain),preservePitch:s.preservePitch); parameters.append(p) } }
             }; cursor += s.timelineFrames
         }
-        if let aid=r.musicAssetID,let a=database.assets.first(where:{$0.id==aid}),let track=composition.addMutableTrack(withMediaType:.audio,preferredTrackID:kCMPersistentTrackID_Invalid) { let music=AVURLAsset(url:repository.assetURL(a)); guard let src=try await music.loadTracks(withMediaType:.audio).first else { throw VideoError.invalid("配乐没有音轨") }; let duration=try await music.load(.duration); guard duration.seconds>0 else { throw VideoError.invalid("配乐时长无效") }; var t=CMTime.zero; while t<total { let length=CMTimeMinimum(duration,CMTimeSubtract(total,t)); try track.insertTimeRange(CMTimeRange(start:.zero,duration:length),of:src,at:t); t=CMTimeAdd(t,length) }; let p=AVMutableAudioMixInputParameters(track:track); var f=0; for s in r.scenes { p.setVolume(Float(s.voice == nil ? s.musicGain : s.musicGain*0.3),at:CMTime(value:Int64(f),timescale:Int32(r.fps))); f += s.timelineFrames }; parameters.append(p) }
+        if let aid=r.musicAssetID,let a=database.assets.first(where:{$0.id==aid}),let track=composition.addMutableTrack(withMediaType:.audio,preferredTrackID:kCMPersistentTrackID_Invalid) { let music=AVURLAsset(url:repository.assetURL(a)); guard let src=try await music.loadTracks(withMediaType:.audio).first else { throw VideoError.invalid("配乐没有音轨") }; let duration=try await music.load(.duration); guard duration.seconds>0 else { throw VideoError.invalid("配乐时长无效") }; var t=CMTime.zero; while t<total { let length=CMTimeMinimum(duration,CMTimeSubtract(total,t)); try track.insertTimeRange(CMTimeRange(start:.zero,duration:length),of:src,at:t); t=CMTimeAdd(t,length) }; let p=AVMutableAudioMixInputParameters(track:track)
+            for segment in try AudioMixRules.musicEnvelope(scenes:r.scenes,fps:r.fps) {
+                let start=CMTime(seconds:segment.startSeconds,preferredTimescale:60000)
+                let end=CMTime(seconds:segment.endSeconds,preferredTimescale:60000)
+                // Constant intervals must be explicit too: isolated setVolume points can
+                // interpolate toward a later mute and lower earlier, still-audible music.
+                p.setVolumeRamp(fromStartVolume:Float(segment.startGain),toEndVolume:Float(segment.endGain),timeRange:CMTimeRange(start:start,end:end))
+            }
+            parameters.append(p) }
         // An explicit silent AAC floor ensures a standard audio stream even for a user-authored silent lesson.
         let silence=repository.root.appendingPathComponent("cache/silence.caf"); try FileManager.default.createDirectory(at:silence.deletingLastPathComponent(),withIntermediateDirectories:true); try Self.silence(to:silence,seconds:Double(r.frames)/Double(r.fps)); defer { try? FileManager.default.removeItem(at:silence) }
         parameters.append(try await addAudio(silence,to:composition,at:.zero,sourceStart:.zero,sourceFrames:r.frames,targetDuration:total,fps:r.fps,gain:0,preservePitch:true))
@@ -112,7 +120,10 @@ public final class MediaRenderer: @unchecked Sendable {
     }
     private static func silence(to url:URL,seconds:Double) throws { let format=AVAudioFormat(standardFormatWithSampleRate:48000,channels:1)!; let file=try AVAudioFile(forWriting:url,settings:format.settings); let buffer=AVAudioPCMBuffer(pcmFormat:format,frameCapacity:48000)!; buffer.frameLength=48000; memset(buffer.floatChannelData![0],0,48000*MemoryLayout<Float>.size); var remaining=Int(ceil(seconds*48000)); while remaining>0 { buffer.frameLength=AVAudioFrameCount(min(remaining,48000)); try file.write(from:buffer); remaining -= Int(buffer.frameLength) } }
     public static func publicationNotes(_ r:Revision,audio:AudioDiagnostics) throws -> String {
-        var lines=[r.contentName,r.cta,"","用途："+r.purpose.rawValue,"AI辅助制作，发布前核对平台AI/商业标签、版权、CTA和账号权限。","版本："+r.id,"IR/schema：\(r.schemaVersion)；工具链：\(r.toolchain)","摘要："+(try r.contentDigest()),"混音实测：峰值 \(audio.peakDBFS) dBFS；未加权RMS \(audio.rmsDBFS) dBFS（不是LUFS）","当前文件为待看听预览；人工审核与真实发布状态在工程中另记。","此包未自动发布。"]
+        var lines=[r.contentName,r.cta,"","用途："+r.purpose.rawValue,"AI辅助制作；请按实际用途核对AI/商业标识、版权和文字。通用文件导出不要求运营账号或平台挂载资格。","版本："+r.id,"IR/schema：\(r.schemaVersion)；工具链：\(r.toolchain)","摘要："+(try r.contentDigest()),"混音实测：峰值 \(audio.peakDBFS) dBFS；未加权RMS \(audio.rmsDBFS) dBFS（不是LUFS）","当前文件为待看听预览；人工审核与真实发布状态在工程中另记。","此包未自动发布。"]
+        if let brief=r.productionBrief {
+            lines += ["制作目标："+brief.objective,"约定用途："+brief.intendedUse,"修改要求："+brief.modifications,"AI标识声明："+brief.aiDisclosure,"商业标识声明："+brief.commercialDisclosure,"使用限制："+brief.restrictions,"用途截止："+(brief.permittedUntil.map(BeijingTime.string) ?? "未另设；不扩张原授权"),"Brief证据："+brief.evidenceIDs.joined(separator:",")]
+        }
         if let product=r.product {lines += ["SKU："+product.sku,"已有承接页："+product.checkout,"受众："+product.audience,"学习任务："+product.task,"内容范围："+product.scope]}
         if let loudness=audio.loudness {
             lines.append("响度算法："+loudness.method)

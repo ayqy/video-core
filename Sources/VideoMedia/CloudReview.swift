@@ -1,5 +1,5 @@
 import Foundation
-#if os(iOS) && canImport(CloudKit)
+#if (os(iOS) || os(macOS)) && canImport(CloudKit)
 import CloudKit
 import Combine
 import VideoCore
@@ -19,7 +19,7 @@ public struct CloudReviewLocation: Codable, Identifiable, Sendable {
     public var revisionID:String?
     public var revisionDigest:String?
     public var payloadDigest:String?
-    #if os(iOS) && canImport(CloudKit)
+    #if (os(iOS) || os(macOS)) && canImport(CloudKit)
     public var recordID:CKRecord.ID {CKRecord.ID(recordName:rootName,zoneID:CKRecordZone.ID(zoneName:zoneName,ownerName:zoneOwner))}
     public var shareID:CKRecord.ID {CKRecord.ID(recordName:shareName,zoneID:recordID.zoneID)}
     #endif
@@ -34,7 +34,7 @@ enum CloudReviewLocationPersistence {
     }
 }
 
-#if os(iOS) && canImport(CloudKit)
+#if (os(iOS) || os(macOS)) && canImport(CloudKit)
 public struct CloudReviewSession {
     public var envelope:CloudReviewEnvelope
     public var annotations:[CloudReviewAnnotation]
@@ -146,11 +146,10 @@ enum CloudReviewDeletionRules {
             // A new root and share for every request/version; there is intentionally no payload-update API.
             let record=CKRecord(recordType:rootType,recordID:CKRecord.ID(recordName:envelope.id,zoneID:zone.zoneID))
             let staging=cacheRoot.appendingPathComponent("upload-"+Codec.id(),isDirectory:true)
-            try FileManager.default.createDirectory(at:staging,withIntermediateDirectories:true)
+            try createPrivateDirectory(staging)
             defer{try? FileManager.default.removeItem(at:staging)}
             let payload=try Codec.data(envelope),payloadURL=staging.appendingPathComponent("version.reviewpayload"),videoURL=staging.appendingPathComponent("preview.mp4")
-            try payload.write(to:payloadURL,options:[.atomic,.completeFileProtection]);try preview.write(to:videoURL,options:[.atomic,.completeFileProtection])
-            try FileManager.default.setAttributes([.protectionKey:FileProtectionType.complete],ofItemAtPath:videoURL.path)
+            try writePrivate(payload,to:payloadURL);try writePrivate(preview,to:videoURL)
             record["payload"]=CKAsset(fileURL:payloadURL);record["preview"]=CKAsset(fileURL:videoURL)
             record["payloadDigest"]=Codec.hash(payload) as CKRecordValue
             record["expiresAt"]=envelope.expiresAt as CKRecordValue
@@ -220,9 +219,9 @@ enum CloudReviewDeletionRules {
                 let video=try Data(contentsOf:remoteURL,options:.mappedIfSafe)
                 guard video.count==envelope.preview.bytes,Codec.hash(video)==envelope.preview.sha256 else{throw VideoError.conflict("云端预览不属于所审版本，停止播放")}
                 let directory=cacheRoot.appendingPathComponent(location.id,isDirectory:true)
-                try FileManager.default.createDirectory(at:directory,withIntermediateDirectories:true)
+                try createPrivateDirectory(directory)
                 local=directory.appendingPathComponent(envelope.preview.sha256+".mp4")
-                try video.write(to:local,options:[.atomic,.completeFileProtection])
+                try writePrivate(video,to:local)
             }
             try CloudReviewRules.validate(envelope)
             guard location.revisionID.map({$0==envelope.scope.revision.id}) ?? true,location.revisionDigest.map({$0==envelope.revisionDigest}) ?? true,location.payloadDigest.map({$0==payloadDigest}) ?? true else{throw VideoError.conflict("作者送审内容或授权已变化，旧邀请不能替换已接收版本；请要求新版本邀请")}
@@ -505,6 +504,21 @@ enum CloudReviewDeletionRules {
         guard let accountID,let container=try? configuredContainer(),let identifier=container.containerIdentifier else{return}
         let merged=CloudReviewLocationPersistence.replacingPartition(stored:storedLocations(),current:locations,accountKey:opaque(accountID),containerIdentifier:identifier)
         if let data=try? Codec.data(merged){UserDefaults.standard.set(data,forKey:defaultsKey)}
+    }
+    private func createPrivateDirectory(_ url:URL) throws {
+        try FileManager.default.createDirectory(at:cacheRoot,withIntermediateDirectories:true,attributes:[.posixPermissions:0o700])
+        try FileManager.default.setAttributes([.posixPermissions:0o700],ofItemAtPath:cacheRoot.path)
+        try FileManager.default.createDirectory(at:url,withIntermediateDirectories:true,attributes:[.posixPermissions:0o700])
+        try FileManager.default.setAttributes([.posixPermissions:0o700],ofItemAtPath:url.path)
+    }
+    private func writePrivate(_ data:Data,to url:URL) throws {
+        #if os(iOS)
+        try data.write(to:url,options:[.atomic,.completeFileProtection])
+        try FileManager.default.setAttributes([.protectionKey:FileProtectionType.complete],ofItemAtPath:url.path)
+        #else
+        try data.write(to:url,options:.atomic)
+        try FileManager.default.setAttributes([.posixPermissions:0o600],ofItemAtPath:url.path)
+        #endif
     }
     private func message(_ error:Error)->String {
         if let error=error as? VideoError{return error.localizedDescription}

@@ -165,9 +165,9 @@ public enum ModulePurchaseAvailability: String, Equatable, Sendable {
 public enum RenderCatalogResolver {
     /// Call again immediately before starting payment, using a newly verified current-code
     /// selection and the latest durable history. This never grants a StoreKit entitlement.
-    public static func purchaseAvailability(productID: String, selection: RenderCatalogSelection, policyHistory: ModulePolicyHistory, now: Date = Date()) throws -> ModulePurchaseAvailability {
+    public static func purchaseAvailability(productID: String, selection: RenderCatalogSelection, policyHistory: ModulePolicyHistory, applicationBundleID:String = "com.ayqy.video", now: Date = Date()) throws -> ModulePurchaseAvailability {
         _ = try policyHistory.observing(selection.entries.map(\.policy), now: now)
-        let matches = selection.entries.filter { RenderModuleRegistry.storeProduct(for: $0.manifest.id) == productID }
+        let matches = selection.entries.filter { RenderModuleRegistry.storeProduct(for: $0.manifest.id,applicationBundleID:applicationBundleID) == productID }
         guard matches.count == 1, let entry = matches.first else { throw VideoError.permission("当前签名目录没有此商品的独立模块，未发起付款") }
         switch entry.policy.access {
         case "paid": return .paid
@@ -176,8 +176,8 @@ public enum RenderCatalogResolver {
         default: throw VideoError.permission("此模块的签名销售策略不合法，未发起付款")
         }
     }
-    public static func authorizePurchase(productID: String, selection: RenderCatalogSelection, policyHistory: ModulePolicyHistory, now: Date = Date()) throws {
-        switch try purchaseAvailability(productID: productID, selection: selection, policyHistory: policyHistory, now: now) {
+    public static func authorizePurchase(productID: String, selection: RenderCatalogSelection, policyHistory: ModulePolicyHistory, applicationBundleID:String = "com.ayqy.video", now: Date = Date()) throws {
+        switch try purchaseAvailability(productID: productID, selection: selection, policyHistory: policyHistory, applicationBundleID:applicationBundleID, now: now) {
         case .paid: return
         case .included: throw VideoError.permission("此模块当前签名策略为免费，无需购买；请返回模块页使用")
         case .disabled: throw VideoError.unavailable("此模块当前签名策略已停用，暂不发起付款；恢复、退款和原资料取回仍可用")
@@ -210,16 +210,39 @@ public enum RenderCatalogResolver {
     }
     public static func select(imported: Data?, bundled: Data?, publicKey: Data, implementationDigest: String, minimumPolicyVersions: [String: Int], supportedCapabilities: [String: String], policyHistory: ModulePolicyHistory? = nil, now: Date = Date()) throws -> RenderCatalogSelection {
         var diagnostics: [String] = []
+        let known = try (policyHistory ?? ModulePolicyHistory()).merging(ModulePolicyHistory(legacyVersions: minimumPolicyVersions))
+        var candidates: [RenderCatalogSelection] = []
         for (source, data) in [(RenderCatalogSelection.Source.imported, imported), (.bundled, bundled)] {
             guard let data else { continue }
             do {
-                let entries = try verify(data, publicKey: publicKey, implementationDigest: implementationDigest, minimumPolicyVersions: minimumPolicyVersions, supportedCapabilities: supportedCapabilities, policyHistory: policyHistory, now: now)
-                return RenderCatalogSelection(source: source, entries: entries, diagnostics: diagnostics)
+                let entries = try verify(data, publicKey: publicKey, implementationDigest: implementationDigest, minimumPolicyVersions: known.versions, supportedCapabilities: supportedCapabilities, policyHistory: known, now: now)
+                candidates.append(RenderCatalogSelection(source: source, entries: entries, diagnostics: []))
             } catch {
                 let reason = (error as? VideoError)?.localizedDescription ?? "签名或格式校验失败"
                 diagnostics.append((source == .imported ? "导入目录" : "包内目录") + "未启用：" + reason)
             }
         }
+        // A resource-only App update can carry a newer policy for the very same code.
+        // Observe all independently verified candidates before giving imported data priority.
+        // Bad signatures, wrong code and declarations conflicting with durable history above
+        // contribute nothing. Two newly trusted same-version semantic claims must agree.
+        var latest = known
+        for candidate in candidates {
+            let observed = try known.observing(candidate.entries.map(\.policy), now: now)
+            latest = try latest.merging(observed)
+        }
+        for var candidate in candidates {
+            do {
+                _ = try latest.observing(candidate.entries.map(\.policy), now: now)
+                candidate.diagnostics = diagnostics
+                return candidate
+            } catch {
+                let reason = (error as? VideoError)?.localizedDescription ?? "未满足已验证的最新策略"
+                diagnostics.append((candidate.source == .imported ? "导入目录" : "包内目录") + "未启用：" + reason)
+            }
+        }
+        // Never splice independently signed entries into a catalog the publisher did not
+        // deliver. Crossed module versions require a new complete compatible catalog.
         throw VideoError.unavailable(diagnostics.isEmpty ? "尚未安装与本构建匹配的签名高级目录；免费基础继续可用" : diagnostics.joined(separator: "；"))
     }
 }
@@ -255,13 +278,15 @@ public final class RenderModuleRegistry: @unchecked Sendable {
     public func register(_ module: any SceneRenderModule, signedManifest: SignedDocument, signedPolicy: SignedDocument, signedLicense: SignedDocument? = nil, publicKey: Data, grantedPermissions: Set<String> = [], minimumPolicyVersion: Int = 1, now: Date = Date()) throws {
         try registerVerified(module, signedManifest: signedManifest, signedPolicy: signedPolicy, signedLicense: signedLicense, storeAccess: nil, publicKey: publicKey, grantedPermissions: grantedPermissions, minimumPolicyVersion: minimumPolicyVersion, now: now)
     }
-    public static func storeProduct(for pluginID: String) -> String? {
-        switch pluginID { case "video.game": return "com.ayqy.video.game"; case "video.cartoon": return "com.ayqy.video.cartoon"; default: return nil }
+    public static func storeProduct(for pluginID:String,applicationBundleID:String = "com.ayqy.video")->String? {
+        guard ["com.ayqy.video","com.ayqy.video.mac"].contains(applicationBundleID) else{return nil}
+        switch pluginID {case "video.game":return applicationBundleID+".game";case "video.cartoon":return applicationBundleID+".cartoon";default:return nil}
     }
     /// No string/Bool entitlement constructor exists. StoreKit must supply a verified Transaction.
     public func registerStoreKit(_ module: any SceneRenderModule, signedManifest: SignedDocument, signedPolicy: SignedDocument, transaction: VerificationResult<StoreKit.Transaction>, publicKey: Data, grantedPermissions: Set<String> = [], minimumPolicyVersion: Int = 1, now: Date = Date()) throws {
         guard case .verified(let verified) = transaction,
-              let expected = Self.storeProduct(for: module.manifest.id), verified.productID == expected,
+              verified.environment != .xcode,
+              let expected = Self.storeProduct(for: module.manifest.id,applicationBundleID:Bundle.main.bundleIdentifier ?? ""), verified.productID == expected,
               verified.appBundleID == Bundle.main.bundleIdentifier,
               verified.productType == .nonConsumable || verified.productType == .autoRenewable else {
             throw VideoError.permission("商店交易未验证、商品/应用不匹配；编辑器权益不替代独立高级模块")

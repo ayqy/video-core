@@ -41,6 +41,8 @@ public struct RevisionDifference: Identifiable, Sendable {
         var rows:[RevisionDifference]=[]
         func add(_ id:String,_ label:String,_ a:String,_ b:String) { if a != b { rows.append(.init(id:id,scope:label,before:a,after:b)) } }
         add("product","产品事实",old.product.map{$0.name+" · "+$0.prices.map{$0.money.display}.joined(separator:",")} ?? old.contentName,new.product.map{$0.name+" · "+$0.prices.map{$0.money.display}.joined(separator:",")} ?? new.contentName)
+        func briefText(_ value:ProductionBrief?)->String {guard let value else{return "未设置"};return [value.objective,value.intendedUse,value.modifications,value.aiDisclosure,value.commercialDisclosure,value.restrictions,value.permittedUntil.map(BeijingTime.string) ?? "按原授权期限",value.approvalRequired ? "需指定版审稿":"作者审核"].joined(separator:" · ")}
+        add("purpose","用途",old.purpose.rawValue,new.purpose.rawValue);add("brief","制作Brief",briefText(old.productionBrief),briefText(new.productionBrief))
         add("aspect","画幅",old.aspect.rawValue,new.aspect.rawValue);add("cta","CTA",old.cta,new.cta);add("music","配乐",old.musicAssetID ?? "无",new.musicAssetID ?? "无")
         for id in Set(old.scenes.map(\.id)+new.scenes.map(\.id)).sorted() {
             let a=old.scenes.first{$0.id==id},b=new.scenes.first{$0.id==id}

@@ -7,8 +7,9 @@ public struct WorkspaceAccessContext: Codable, Sendable {
     public var principal: String
     public init(workspaceID: String, principal: String) { self.workspaceID=workspaceID;self.principal=principal }
 }
-public enum WorkspaceSearchKind: String, Codable, CaseIterable, Sendable { case product="产品", project="项目", asset="素材", evidence="证据", order="订单", batch="批次" }
+public enum WorkspaceSearchKind: String, Codable, CaseIterable, Sendable { case product="产品", project="项目", asset="素材", evidence="证据", order="订单", batch="批次", template="模板", style="风格", series="栏目", version="版本" }
 public struct WorkspaceSearchQuery: Sendable {
+    public var productionOnly=false
     public var text=""
     public var tags:Set<String>=[]
     public var statuses:Set<String>=[]
@@ -78,6 +79,7 @@ public enum WorkspaceAccessRules {
     public static func search(query:WorkspaceSearchQuery,access:WorkspaceAccessContext,in database:Database,now:Date=Date()) throws -> [WorkspaceSearchHit] {
         guard query.text.count<=1000,query.from == nil || query.through == nil || query.from!<=query.through!,query.revisionID == nil || query.projectID != nil else {throw VideoError.invalid("关键词过长、日期范围倒置，或指定版本时未指定项目")}
         let workspace=try validate(access,in:database,now:now),owner=workspace.owner==access.principal
+        if query.productionOnly && query.kinds.contains(.order) {throw VideoError.invalid("视频制作搜索不包含经营订单")}
         if !owner && query.kinds.contains(.order) {throw VideoError.permission("协作者及品牌审核视角不能查询订单或其他财务数据")}
         var permitted:[(Project,Revision)]=[]
         for project in database.projects where project.workspaceID==workspace.id && (query.projectID == nil || project.id==query.projectID) {
@@ -89,8 +91,8 @@ public enum WorkspaceAccessRules {
             else if !owner {guard !permitted.isEmpty else{throw VideoError.permission("该项目不在有效授权范围内")}}
         }
         var rows:[WorkspaceSearchHit]=[]
-        func add(_ kind:WorkspaceSearchKind,_ objectID:String,_ title:String,_ detail:String,_ tags:[String],_ status:String,_ date:Date?=nil,_ basis:String?=nil,projectID:String?=nil,revisionID:String?=nil) {
-            guard query.kinds.isEmpty || query.kinds.contains(kind),query.tags.isSubset(of:Set(tags)),query.statuses.isEmpty || query.statuses.contains(status) else{return}
+        func add(_ kind:WorkspaceSearchKind,_ objectID:String,_ title:String,_ detail:String,_ tags:[String],_ status:String,_ date:Date?=nil,_ basis:String?=nil,projectID:String?=nil,revisionID:String?=nil,additionalStatuses:Set<String>=[]) {
+            guard (!query.productionOnly || kind != .order),query.kinds.isEmpty || query.kinds.contains(kind),query.tags.isSubset(of:Set(tags)),query.statuses.isEmpty || query.statuses.contains(status) || !query.statuses.isDisjoint(with:additionalStatuses) else{return}
             if let start=query.from {guard let date,date>=start else{return}}
             if let end=query.through {guard let date,date<=end else{return}}
             let words=query.text.split(whereSeparator:{$0.isWhitespace}).map(String.init)
@@ -98,12 +100,35 @@ public enum WorkspaceAccessRules {
             guard words.allSatisfy({haystack.localizedCaseInsensitiveContains($0)}) else{return}
             rows.append(WorkspaceSearchHit(id:kind.rawValue+":"+objectID+(revisionID.map{":"+$0} ?? ""),kind:kind,objectID:objectID,projectID:projectID,revisionID:revisionID,title:title,detail:detail,tags:tags,status:status,at:date,dateBasis:basis))
         }
+        func batchStatus(_ states:[TopicBatchState])->String {
+            for candidate:TopicBatchState in [.failed,.invalidated,.waiting,.running,.needsReview,.ready,.planned,.cancelled,.approved] {
+                if states.contains(candidate){return candidate.searchKey}
+            }
+            return "planned"
+        }
+        func batchStates(_ states:[TopicBatchState])->Set<String>{Set(states.map(\.rawValue)+states.map(\.searchKey)+["creative_batch"])}
         // Owners see current projects by default. Scoped reviewers may inspect only their explicitly allowed versions.
         for (project,revision) in permitted where !owner || query.revisionID != nil || revision.id==project.current.id {
             let sourceChanged = !DependencyRules.diff(revision:revision,assets:database.assets,evidence:database.evidence,now:now).isEmpty
             let approved=revision.review.complete && revision.review.digest == (try? revision.contentDigest())
             let status=project.archived ? "archived":sourceChanged ? "sources_changed":approved ? "approved":"needs_review"
             add(.project,project.id,project.name,"v\(revision.number) · "+project.series+" · "+revision.change+" · "+revision.scenes.map{$0.title+" "+$0.body+" "+$0.narration}.joined(separator:" "),project.tags,status,revision.createdAt,"版本创建时间",projectID:project.id,revisionID:revision.id)
+        }
+        for (project,revision) in permitted {
+            let changed = !DependencyRules.diff(revision:revision,assets:database.assets,evidence:database.evidence,now:now).isEmpty
+            let approved=revision.review.complete && revision.review.digest == (try? revision.contentDigest())
+            add(.version,revision.id,project.name+" · v\(revision.number)",revision.change+" · "+revision.scenes.map{$0.title+" "+$0.body+" "+$0.narration}.joined(separator:" "),project.tags,changed ? "sources_changed":approved ? "approved":"needs_review",revision.createdAt,"版本创建时间",projectID:project.id,revisionID:revision.id)
+        }
+        if owner && query.projectID == nil {
+            for value in database.narrativeTemplates ?? [] where value.workspaceID==workspace.id {
+                add(.template,value.id,value.name+" · v\(value.version)",value.grammars.map(\.rawValue).joined(separator:" · "),value.tags ?? [],"template",value.createdAt,"模板创建时间（旧记录可能未知）")
+            }
+            for value in database.styleKits ?? [] where value.workspaceID==workspace.id {
+                add(.style,value.id,value.name+" · v\(value.version)",value.fontName+" · "+value.negativeConstraints.joined(separator:" · "),value.tags ?? [],"style",value.createdAt,"风格创建时间（旧记录可能未知）")
+            }
+            for value in database.seriesProfiles ?? [] where value.workspaceID==workspace.id {
+                add(.series,value.id,value.name,value.episodePrefix+" · "+value.recurringQuestion+" · 第\(value.episodeNumber)集",value.tags ?? [],"series",value.createdAt,"栏目创建时间（旧记录可能未知）")
+            }
         }
         let scoped=(!owner || query.projectID != nil)
         var products:[Product],assets:[Asset],evidence:[Evidence]
@@ -122,9 +147,13 @@ public enum WorkspaceAccessRules {
         for value in assets {let rights=evidence.first{$0.id==value.evidenceID};let status=value.pages.contains{!$0.confirmed} || !value.warnings.isEmpty || rights?.usable(commercial:true,now:now) != true ? "needs_review":"ready";add(.asset,value.id,value.name,value.mediaType+" · "+value.pages.map{$0.text+" "+$0.notes}.joined(separator:" "),value.tags,status,value.importedAt,value.importedAt == nil ? "导入时间未知（旧记录）":"素材导入时间")}
         for value in evidence {let status=(value.expiresAt.map{$0<=now} ?? false) ? "expired":value.usable(commercial:true,now:now) ? "verified":"needs_review";add(.evidence,value.id,value.title,value.claim+" · "+value.source,value.tags ?? [],status,value.checkedAt,"证据核实时间")}
         if owner && query.projectID == nil {
-            for value in database.orders where value.workspaceID==workspace.id {let status=value.refunded==value.paid.amount ? "refunded":value.refunded>0 ? "partial_refund":value.mature(at:now) ? "mature":"provisional";add(.order,value.id,value.sku,value.platform+" · "+value.paid.display+" · "+(value.sourceCode ?? "未知来源"),value.tags ?? [],status,value.paidAt,"订单付款时间")}
-            for value in database.imports where TagRules.importBelongs(value,to:workspace.id,in:database) {add(.batch,value.id,value.kind=="orders" ? "订单导入批次":"指标导入批次",value.kind+" · \(value.orderIDs.count+value.metricIDs.count)条记录",value.tags ?? [],value.rolledBack ? "rolled_back":"imported",value.at,"批次导入时间")}
-            for value in database.topicBatches ?? [] where value.workspaceID==workspace.id {let refreshed=BatchRules.refreshed(value,database:database,now:now);add(.batch,value.id,value.title,refreshed.items.map{$0.topic.hook+" · "+$0.state.rawValue}.joined(separator:" · "),value.tags ?? [],"creative_batch",value.createdAt,"批次创建时间")}
+            for value in database.orders where !query.productionOnly && value.workspaceID==workspace.id {let status=value.refunded==value.paid.amount ? "refunded":value.refunded>0 ? "partial_refund":value.mature(at:now) ? "mature":"provisional";add(.order,value.id,value.sku,value.platform+" · "+value.paid.display+" · "+(value.sourceCode ?? "未知来源"),value.tags ?? [],status,value.paidAt,"订单付款时间")}
+            for value in database.imports where !query.productionOnly && TagRules.importBelongs(value,to:workspace.id,in:database) {add(.batch,value.id,value.kind=="orders" ? "订单导入批次":"指标导入批次",value.kind+" · \(value.orderIDs.count+value.metricIDs.count)条记录",value.tags ?? [],value.rolledBack ? "rolled_back":"imported",value.at,"批次导入时间")}
+            for value in database.teachingBatches ?? [] where value.workspaceID==workspace.id {
+                let refreshed=TeachingBatchRules.refreshed(value,database:database,now:now),states=refreshed.items.map(\.state)
+                add(.batch,value.id,value.title,refreshed.items.map{$0.variant.hook+" · "+$0.state.rawValue}.joined(separator:" · "),value.tags ?? [],batchStatus(states),value.createdAt,"批次创建时间",additionalStatuses:batchStates(states))
+            }
+            for value in database.topicBatches ?? [] where value.workspaceID==workspace.id {let refreshed=BatchRules.refreshed(value,database:database,now:now);add(.batch,value.id,value.title,refreshed.items.map{$0.topic.hook+" · "+$0.state.rawValue}.joined(separator:" · "),value.tags ?? [],batchStatus(refreshed.items.map(\.state)),value.createdAt,"批次创建时间",additionalStatuses:batchStates(refreshed.items.map(\.state)))}
         }
         let grouped=Dictionary(grouping:permitted,by:{$0.0.batchID ?? ""})
         for (id,values) in grouped where !id.isEmpty && !rows.contains(where:{$0.kind == .batch && $0.objectID==id}) {
@@ -181,8 +210,13 @@ public enum TagRules {
         case .asset:guard let i=database.assets.firstIndex(where:{$0.id==objectID && $0.workspaceID==workspace.id}) else{throw VideoError.notFound("素材不存在")};database.assets[i].tags=values
         case .evidence:guard let i=database.evidence.firstIndex(where:{$0.id==objectID && $0.workspaceID==workspace.id}) else{throw VideoError.notFound("证据不存在")};database.evidence[i].tags=values
         case .order:guard let i=database.orders.firstIndex(where:{$0.id==objectID && $0.workspaceID==workspace.id}) else{throw VideoError.notFound("订单不存在")};database.orders[i].tags=values
+        case .version:throw VideoError.invalid("版本标签继承所属项目，请修改项目标签，冻结内容不会改写")
+        case .template:guard let i=database.narrativeTemplates?.firstIndex(where:{$0.id==objectID && $0.workspaceID==workspace.id}) else{throw VideoError.notFound("模板不存在")};database.narrativeTemplates?[i].tags=values
+        case .style:guard let i=database.styleKits?.firstIndex(where:{$0.id==objectID && $0.workspaceID==workspace.id}) else{throw VideoError.notFound("风格不存在")};database.styleKits?[i].tags=values
+        case .series:guard let i=database.seriesProfiles?.firstIndex(where:{$0.id==objectID && $0.workspaceID==workspace.id}) else{throw VideoError.notFound("栏目不存在")};database.seriesProfiles?[i].tags=values
         case .batch:
-            if let i=database.topicBatches?.firstIndex(where:{$0.id==objectID && $0.workspaceID==workspace.id}) {database.topicBatches?[i].tags=values}
+            if let i=database.teachingBatches?.firstIndex(where:{$0.id==objectID && $0.workspaceID==workspace.id}) {database.teachingBatches?[i].tags=values}
+            else if let i=database.topicBatches?.firstIndex(where:{$0.id==objectID && $0.workspaceID==workspace.id}) {database.topicBatches?[i].tags=values}
             else if let i=database.imports.firstIndex(where:{$0.id==objectID && importBelongs($0,to:workspace.id,in:database)}) {database.imports[i].tags=values}
             else {let indices=database.projects.indices.filter{database.projects[$0].batchID==objectID && database.projects[$0].workspaceID==workspace.id};guard !indices.isEmpty else{throw VideoError.notFound("批次不存在")};for i in indices {database.projects[i].tags=values}}
         }

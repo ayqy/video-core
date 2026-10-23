@@ -123,6 +123,7 @@ public enum BaiduVideoRules {
         guard !database.jobs.contains(where:{$0.workspaceID==workspaceID && $0.projectID==projectID && $0.quote.provider==profile.id && $0.remoteID==nil && $0.videoGeneration?.inputDigest==digest && [.submissionStarted,.unknown].contains($0.videoGeneration!.phase)}) else{throw VideoError.conflict("相同输入已有结果未知的原创建；新报价或新request_id也不能绕过，须先在官方账号核对原任务/账单")}
         guard profile.allowsUpload,let details=quote.breakdown,details.version==version,details.specification==(try specification(input:input)),quote.provider==profile.id,quote.attempts==1,details.lines.allSatisfy({$0.attempts==1}),!database.jobs.contains(where:{$0.quote.id==quote.id && $0.quote.provider==profile.id}) else{throw VideoError.review("需已确认上传、当前输入摘要与一次尝试的独立官方报价；已提交报价不可重用")}
         let project=try database.project(projectID);try BatchRules.validateSubmission(project:project,quote:quote,batches:database.topicBatches ?? [],existingJobs:database.jobs,requestKey:requestID)
+        try TeachingBatchRules.validateSubmission(project:project,quote:quote,batches:database.teachingBatches ?? [],existingJobs:database.jobs,requestKey:requestID)
         var job=try JobRules.submit(workspaceID:workspaceID,project:project,quote:quote,requestKey:requestID,existing:database.jobs,budget:database.budget,now:now)
         job.videoGeneration=VideoGenerationReceipt(inputDigest:digest,now:now);job.state = .unknownRemote;job.attempt=1;job.message="百度创建调用已登记，结果可能未知；没有幂等/取消合同，不自动重交";database.jobs.append(job);return(job,true)
     }

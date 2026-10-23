@@ -28,12 +28,12 @@ public struct CourseMapping: Codable, Identifiable, Equatable, Sendable {
         switch rangeKind {
         case .pages:
             guard start >= 1, end >= start, end-start < 200, (start...end).allSatisfy({ n in asset.pages.contains(where: { $0.number == n }) }) else { throw VideoError.invalid("课程页范围超出已导入页面") }
-            if confirmed { guard asset.pages.filter({ (start...end).contains($0.number) }).allSatisfy({ $0.confirmed && !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) else { throw VideoError.review("请先对照原件校对所选页面，再确认课程映射") } }
+            if confirmed { guard asset.pages.filter({ (start...end).contains($0.number) }).allSatisfy({ $0.confirmed && !$0.requiresOCR && !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) else { throw VideoError.review("请先对照原件校对所选页面，再确认课程映射") } }
         case .time:
             guard let frames = asset.durationFrames, start >= 0, end > start, end <= frames else { throw VideoError.invalid("课程时间片段超出源媒体实际时长") }
         case .whole:
             guard start == 0, end == 0 else { throw VideoError.invalid("完整素材不应携带隐藏的裁切范围") }
-            if confirmed && !asset.pages.isEmpty { guard asset.pages.allSatisfy({ $0.confirmed && !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) else { throw VideoError.review("完整文档仍有未校对页，请缩小页范围或先完成校对") } }
+            if confirmed && !asset.pages.isEmpty { guard asset.pages.allSatisfy({ $0.confirmed && !$0.requiresOCR && !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) else { throw VideoError.review("完整文档仍有未校对页，请缩小页范围或先完成校对") } }
         }
         guard Set(evidenceIDs).count == evidenceIDs.count else { throw VideoError.invalid("课程映射证据重复") }
         for id in evidenceIDs { guard evidence.contains(where: { $0.id == id && $0.workspaceID == workspaceID }) else { throw VideoError.permission("课程映射证据不属于当前工作区或已缺失") } }
@@ -50,7 +50,7 @@ public struct CourseMapping: Codable, Identifiable, Equatable, Sendable {
         var result = scene; result.courseMappingIDs = [id]; result.evidenceIDs = Array(Set(scene.evidenceIDs + evidenceIDs)).sorted()
         if asset.mediaType.hasPrefix("video") { result.kind = .video; result.assetID = asset.id; result.sourceStartFrame = rangeKind == .time ? start : 0; result.sourceEndFrame = rangeKind == .time ? end : asset.durationFrames; result.durationFrames = min(result.durationFrames, (rangeKind == .time ? end-start : asset.durationFrames) ?? result.durationFrames) }
         else if asset.mediaType.hasPrefix("image") { result.kind = .image; result.assetID = asset.id }
-        else { result.assetID = nil; result.kind = .explanation; if rangeKind == .pages { result.body = asset.pages.filter { (start...end).contains($0.number) }.sorted { $0.number < $1.number }.map(\.text).joined(separator: "\n") } }
+        else { result.assetID = nil; result.kind = .explanation; if rangeKind == .pages { result.body = asset.pages.filter { (start...end).contains($0.number) }.sorted { $0.number < $1.number }.map(\.text).joined(separator: "\n");result.narration=result.body } }
         return result
     }
 }
@@ -86,10 +86,16 @@ public struct DependencyChange: Codable, Identifiable, Sendable {
 }
 
 public enum DependencyRules {
-    public static func validateMappings(product: Product, assets: [Asset], evidence: [Evidence]) throws {
+    public static func validateMappings(product: Product, assets: [Asset], evidence: [Evidence], requireCurrentConfirmation:Bool = true) throws {
         let mappings = product.courseMappings ?? []
         guard Set(mappings.map(\.id)).count == mappings.count else { throw VideoError.invalid("课程映射ID重复") }
-        for mapping in mappings { try mapping.validate(workspaceID: product.workspaceID, assets: assets, evidence: evidence) }
+        for mapping in mappings { var selected=mapping;if !requireCurrentConfirmation{selected.confirmed=false};try selected.validate(workspaceID: product.workspaceID, assets: assets, evidence: evidence) }
+    }
+    public static func validateMappings(context: ContentContext, assets: [Asset], evidence: [Evidence], requireCurrentConfirmation:Bool = true) throws {
+        try context.validate()
+        let mappings=context.courseMappings ?? []
+        guard Set(mappings.map(\.id)).count==mappings.count else{throw VideoError.invalid("课程映射ID重复")}
+        for mapping in mappings{var selected=mapping;if !requireCurrentConfirmation{selected.confirmed=false};try selected.validate(workspaceID:context.workspaceID,assets:assets,evidence:evidence)}
     }
     public static func freeze(revision: Revision, assets: [Asset], evidence: [Evidence], now: Date = Date()) throws -> DependencySnapshot {
         try revision.validateContext()
@@ -126,6 +132,9 @@ public enum DependencyRules {
                 else if mapping.rangeKind == .whole, let a = assets.first(where: { $0.id == mapping.assetID }), !a.pages.isEmpty { selectedPages[mapping.assetID, default: []].formUnion(a.pages.map(\.number)) }
                 for eid in mapping.evidenceIDs { evidenceScenes[eid, default: []].formUnion(ids) }
             }
+        }
+        for id in revision.productionBrief?.evidenceIDs ?? [] {
+            evidenceScenes[id,default:[]].formUnion(Set(revision.scenes.map(\.id)))
         }
         try addAsset(revision.musicAssetID, Set(revision.scenes.map(\.id)))
         // Evidence may itself cite a document with its own rights; walk that graph once per edge.

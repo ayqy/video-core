@@ -16,14 +16,21 @@ public enum SecureCredentials {
         let query:[String:Any]=[kSecClass as String:kSecClassGenericPassword,kSecAttrService as String:service,kSecAttrAccount as String:reference,kSecReturnData as String:true,kSecMatchLimit as String:kSecMatchLimitOne]
         var value:CFTypeRef?;guard SecItemCopyMatching(query as CFDictionary,&value)==errSecSuccess,let data=value as? Data,let secret=String(data:data,encoding:.utf8)else{throw VideoError.permission("模型凭据不可用，请在本机安全配置中重新绑定")};return secret
     }
-    public static func remove(_ reference:String){let query:[String:Any]=[kSecClass as String:kSecClassGenericPassword,kSecAttrService as String:service,kSecAttrAccount as String:reference];SecItemDelete(query as CFDictionary)}
+    public static func revoke(_ reference:String)throws {let query:[String:Any]=[kSecClass as String:kSecClassGenericPassword,kSecAttrService as String:service,kSecAttrAccount as String:reference];let status=SecItemDelete(query as CFDictionary);guard status==errSecSuccess || status==errSecItemNotFound else{throw VideoError.permission("系统凭据未能撤销，请检查本机钥匙串权限；不会标记清除成功")}}
+    public static func remove(_ reference:String){try? revoke(reference)}
     public static func contains(_ reference:String)->Bool { let query:[String:Any]=[kSecClass as String:kSecClassGenericPassword,kSecAttrService as String:service,kSecAttrAccount as String:reference,kSecReturnAttributes as String:true,kSecMatchLimit as String:kSecMatchLimitOne];return SecItemCopyMatching(query as CFDictionary,nil)==errSecSuccess }
 }
 public enum ProviderClient {
     /// Only a returned but malformed response may be repaired, and only within an explicitly frozen two-attempt quote.
     /// Transport uncertainty and HTTP failures never cause another paid POST.
     public static func script(profile:ProviderProfile,product:VideoCore.Product,evidence:[Evidence],brief:String,requestKey:String?=nil,quote:Quote?=nil,onAttempt:(@Sendable (ProviderAttempt) async throws -> Void)?=nil) async throws -> String {
-        let initial=try ProviderRules.body(profile:profile,product:product,evidence:evidence,brief:brief)
+        try await execute(profile:profile,requestKey:requestKey,quote:quote,onAttempt:onAttempt){previous in try ProviderRules.body(profile:profile,product:product,evidence:evidence,brief:brief,previous:previous)}
+    }
+    public static func script(profile:ProviderProfile,revision:Revision,evidence:[Evidence],brief:String,requestKey:String?=nil,quote:Quote?=nil,onAttempt:(@Sendable (ProviderAttempt) async throws -> Void)?=nil) async throws -> String {
+        try await execute(profile:profile,requestKey:requestKey,quote:quote,onAttempt:onAttempt){previous in try ProviderRules.body(profile:profile,revision:revision,evidence:evidence,brief:brief,previous:previous)}
+    }
+    private static func execute(profile:ProviderProfile,requestKey:String?,quote:Quote?,onAttempt:(@Sendable (ProviderAttempt) async throws -> Void)?,makeBody:(String?)throws->Data) async throws -> String {
+        let initial=try makeBody(nil)
         let url=URL(string:profile.endpoint)!,credential=try SecureCredentials.read(profile.keyReference)
         let originalKey=requestKey ?? Codec.id()
         let allowed=ProviderRules.mayRepair(profile:profile,quote:quote) ? 2:1
@@ -31,7 +38,7 @@ public enum ProviderClient {
         let session=URLSession(configuration:config,delegate:SameOriginGuard(origin:url),delegateQueue:nil);defer{session.invalidateAndCancel()}
         var previous:String?
         for number in 1...allowed {
-            let body=number==1 ? initial:try ProviderRules.body(profile:profile,product:product,evidence:evidence,brief:brief,previous:previous)
+            let body=number==1 ? initial:try makeBody(previous)
             if number>1 {guard ProviderRules.mayRepair(profile:profile,quote:quote) else{throw VideoError.review("修复前报价已失效；已收到的结果与费用保留待核")}}
             var receipt=ProviderAttempt(id:originalKey+"-attempt-\(number)",number:number,inputDigest:Codec.hash(body),capabilityVersion:profile.capabilities?.version)
             try await onAttempt?(receipt)

@@ -20,7 +20,17 @@ public struct Job: Codable, Identifiable, Sendable {
     public var videoGeneration:VideoGenerationReceipt?
     public var outputAssetIDs:[String]?
     public init(workspaceID: String, projectID: String, revisionID: String, digest: String, requestKey: String, quote: Quote) { self.workspaceID = workspaceID; self.projectID = projectID; self.revisionID = revisionID; self.digest = digest; self.requestKey = requestKey; self.quote = quote; self.billingUnknown = quote.provider != "native" }
-    public var exposure: Money { actual ?? quote.upper }
+    public var exposure: Money {
+        guard quote.provider != "native" else { return actual ?? quote.upper }
+        // A running supplier can report money already spent without confirming
+        // the final bill. Keep its remaining commitment reserved independently
+        // of the actual/refund figures shown to the user.
+        let unsettled = [.queued, .running, .interrupted, .unknownRemote, .cancelRequested].contains(state)
+        if unsettled || billingUnknown {
+            return Money(max(quote.upper.amount, actual?.amount ?? quote.upper.amount), quote.upper.currency)
+        }
+        return actual ?? quote.upper
+    }
 }
 public struct BudgetPolicy: Codable, Sendable {
     public var project: Money; public var month: Money
@@ -31,9 +41,15 @@ public enum JobRules {
         guard project.workspaceID==workspaceID,project.current.workspaceID==workspaceID else{throw VideoError.permission("任务、工程和产品必须属于同一工作区")}
         let digest = try project.current.contentDigest()
         if let old = existing.first(where: { $0.workspaceID == workspaceID && $0.requestKey == requestKey }) { guard old.projectID == project.id, old.digest == digest, old.quote.id == quote.id else { throw VideoError.conflict("同幂等键已绑定不同输入或报价") }; return old }
-        guard !requestKey.isEmpty, quote.confirmed, quote.expiresAt > now, quote.projectID == project.id, quote.revisionID == project.current.id, quote.digest == digest, quote.attempts > 0, quote.upper.amount >= 0 else { throw VideoError.review("报价过期、未确认或与当前版本不一致，请重新核对") }
+        guard !requestKey.isEmpty, quote.confirmed, quote.expiresAt > now, quote.projectID == project.id, quote.revisionID == project.current.id, quote.digest == digest, (1...100).contains(quote.attempts), !quote.upper.amount.isNaN, quote.upper.amount >= 0, quote.unit == quote.upper.currency, quote.upper.currency.range(of:"^[A-Z]{3}$",options:.regularExpression) != nil else { throw VideoError.review("报价过期、未确认或与当前版本不一致，请重新核对") }
         if let details = quote.breakdown { try details.validate(now: now); guard try details.total() == quote.upper, details.maximumAttempts == quote.attempts else { throw VideoError.review("费用明细、尝试次数与确认上界不一致") } }
-        guard quote.upper.currency == budget.project.currency, quote.upper.currency == budget.month.currency, quote.unit == quote.upper.currency else { throw VideoError.budget("预算币种/计费单位不一致；不自动换算") }
+        // Local free rendering incurs no supplier cash exposure. Its exact
+        // revision/quote still must be valid, but a full or differently
+        // denominated external-service budget cannot lock the user's media.
+        if quote.provider == "native", quote.upper.amount == 0 {
+            return Job(workspaceID: workspaceID, projectID: project.id, revisionID: project.current.id, digest: digest, requestKey: requestKey, quote: quote)
+        }
+        guard quote.upper.currency == budget.project.currency, quote.upper.currency == budget.month.currency, quote.unit == quote.upper.currency, !budget.project.amount.isNaN, !budget.month.amount.isNaN, budget.project.amount>=0, budget.month.amount>=0 else { throw VideoError.budget("预算币种/计费单位或上限无效；不自动换算") }
         var cal = Calendar(identifier: .gregorian); cal.timeZone = TimeZone(identifier:"Asia/Shanghai")!; let monthStart = cal.date(from: cal.dateComponents([.year, .month], from: now))!
         let active = existing.filter { $0.workspaceID == workspaceID && $0.quote.upper.currency == quote.upper.currency }
         let p = active.filter { $0.projectID == project.id }.map { $0.exposure.amount }.reduce(0,+)
@@ -41,12 +57,12 @@ public enum JobRules {
         guard p + quote.upper.amount <= budget.project.amount, m + quote.upper.amount <= budget.month.amount else { throw VideoError.budget("项目或月现金上界已超限；取消不抹掉已发生费用") }
         return Job(workspaceID: workspaceID, projectID: project.id, revisionID: project.current.id, digest: digest, requestKey: requestKey, quote: quote)
     }
-    public static func cancel(_ job: Job) -> Job { var j = job; j.updatedAt = Date(); if j.videoGeneration != nil { j.message = "百度合同无取消接口，尚未发送远端取消；原任务继续查询，预算和实耗待核对"; return j }; if j.remoteID != nil || j.state == .unknownRemote { j.state = .cancelRequested; j.message = "须查询远端取消结果；已花费不自动归零" } else { j.state = .cancelled; if j.quote.provider == "native" { j.actual = Money(0, j.quote.upper.currency); j.billingUnknown = false } }; return j }
+    public static func cancel(_ job: Job) -> Job { var j = job; j.updatedAt = Date(); if j.videoGeneration != nil { j.message = "百度合同无取消接口，尚未发送远端取消；原任务继续查询，预算和实耗待核对"; return j }; if j.remoteID != nil || j.state == .unknownRemote || (j.quote.provider != "native" && (j.attempt>0 || j.providerAttempts?.isEmpty==false)) { j.state = .cancelRequested; j.message = "须由已核实的取消接口确认远端结果；已花费和未知占用不自动归零" } else { j.state = .cancelled; if j.quote.provider == "native" { j.actual = Money(0, j.quote.upper.currency); j.billingUnknown = false } }; return j }
     public static func recover(_ job: Job) throws -> Job { var j = job; guard [.interrupted, .failed, .unknownRemote].contains(j.state) else { throw VideoError.invalid("此作业无需恢复") }; if j.quote.provider != "native" { j.state = .unknownRemote; j.message = "先查询原remote_task_id，禁止重新付费提交" } else { j.state = .queued; j.message = "沿用原任务ID恢复" }; j.lease=nil; j.updatedAt = Date(); return j }
 }
 public struct ProviderProfile: Codable, Identifiable, Sendable {
     public var capabilities: ProviderCapabilities?
     public var id = Codec.id(); public var name: String; public var endpoint: String; public var model: String; public var supportedParameters: Set<String>; public var maxOutput: Int; public var allowsUpload: Bool; public var keyReference: String; public var kind: String; public var statusPath: String?; public var cancelPath: String?; public var idempotency: Bool
     public init(name: String, endpoint: String, model: String, supportedParameters: Set<String>, maxOutput: Int = 4096, allowsUpload: Bool = false, keyReference: String, kind: String = "chat", statusPath: String? = nil, cancelPath: String? = nil, idempotency: Bool = false) { self.name = name; self.endpoint = endpoint; self.model = model; self.supportedParameters = supportedParameters; self.maxOutput = maxOutput; self.allowsUpload = allowsUpload; self.keyReference = keyReference; self.kind = kind; self.statusPath = statusPath; self.cancelPath = cancelPath; self.idempotency = idempotency }
-    public func validate() throws { guard let u = URL(string: endpoint), u.scheme == "https", u.host != nil, u.user == nil, u.password == nil, u.query == nil, u.fragment == nil, !model.isEmpty, (1...1000000).contains(maxOutput), !keyReference.isEmpty else { throw VideoError.invalid("服务仅接受不含凭据的HTTPS端点、模型名和Keychain引用") } }
+    public func validate() throws { guard !id.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty, !["native", "unbound"].contains(id.lowercased()), let u = URL(string: endpoint), u.scheme == "https", u.host != nil, u.user == nil, u.password == nil, u.query == nil, u.fragment == nil, !model.isEmpty, (1...1000000).contains(maxOutput), !keyReference.isEmpty else { throw VideoError.invalid("服务须使用独立账户标识及不含凭据的HTTPS端点、模型名和Keychain引用；不能占用本机保留标识") } }
 }

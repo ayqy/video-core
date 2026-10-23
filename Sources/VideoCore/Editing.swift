@@ -11,6 +11,8 @@ public enum Edit: Codable, Sendable {
     case cta(String)
     case music(String?)
     case audioQuality(AudioQualityPolicy?)
+    case productionBrief(ProductionBrief?)
+    case purpose(Purpose)
     case restore(String)
     case lockLayer(String, String, Bool)
     case recordSimulation(String)
@@ -75,7 +77,9 @@ public enum Editor {
             case .cta(let text): revision.cta = text
             case .music(let id): revision.musicAssetID = id; revision.invalidated += ["混音"]
             case .audioQuality(let policy): try policy?.validate();revision.audioQuality=policy;revision.invalidated += ["混音测量策略","声音审核"]
-            case .restore(let id): guard let r = p.revisions.first(where: { $0.id == id }) else { throw VideoError.notFound("历史版本不存在") }; revision.schemaVersion=r.schemaVersion; revision.scenes = r.scenes; revision.product = r.product; revision.contentContext=r.contentContext; revision.cta = r.cta; revision.aspect = r.aspect; revision.musicAssetID = r.musicAssetID; revision.dependencies=r.dependencies;revision.audioQuality=r.audioQuality
+            case .productionBrief(let brief): try brief?.validate();revision.productionBrief=brief;revision.invalidated += ["制作Brief与指定版本审稿","用途/权利交付核对"]
+            case .purpose(let purpose): revision.purpose=purpose;revision.invalidated += ["交付用途与权利审核"]
+            case .restore(let id): guard let r = p.revisions.first(where: { $0.id == id }) else { throw VideoError.notFound("历史版本不存在") }; revision.schemaVersion=r.schemaVersion; revision.scenes = r.scenes; revision.product = r.product; revision.contentContext=r.contentContext; revision.cta = r.cta; revision.aspect = r.aspect; revision.musicAssetID = r.musicAssetID; revision.dependencies=r.dependencies;revision.audioQuality=r.audioQuality;revision.productionBrief=r.productionBrief;revision.purpose=r.purpose
             }
         }
         for s in revision.scenes { try s.validate(assets: assets) }; p.revisions.append(revision); return p
@@ -123,7 +127,9 @@ public enum Quality {
         try revision.audioQuality?.validate()
         var issues: [QualityIssue] = []
         let commercial = revision.purpose != .education
-        if requireReview && enforceBrandDelivery {issues += BrandDeliveryRules.inspect(revision:revision,database:database,now:now)}
+        if requireReview && enforceBrandDelivery {
+            issues += revision.contentContext != nil ? ProductionDeliveryRules.inspect(revision:revision,database:database,now:now):BrandDeliveryRules.inspect(revision:revision,database:database,now:now)
+        }
         if let product=revision.product {
             if commercial && product.isExample==true {issues.append(QualityIssue("example","练习示例不是实际商品，不能用于商业发布；请在真实工作区选择已有产品与资料"))}
             try product.validate()
@@ -178,6 +184,7 @@ public enum Quality {
                 if let voice = s.voice { if voice.textDigest != (try s.speechDigest()) { issues.append(QualityIssue(s.id+"voice", "旁白已修改，旧声音失效")) }; if voice.durationFrames > s.durationFrames { issues.append(QualityIssue(s.id+"voice_length", "配音超出镜头，请延长时长；禁止自动截断")) }; if requireReview && !voice.listened { issues.append(QualityIssue(s.id+"listened", "请试听真实配音后确认")) } }
                 else { issues.append(QualityIssue(s.id+"voice_missing", "尚无真实配音；请录入/生成声音或明确改为无旁白镜头")) }
             }
+            do {try SpeechRules.validateCaptions(s.captions,durationFrames:s.durationFrames)} catch {issues.append(QualityIssue(s.id+"caption_ranges",(error as? VideoError)?.localizedDescription ?? "字幕区间无效"))}
             if requireReview && s.captions.contains(where: { !$0.confirmed }) { issues.append(QualityIssue(s.id+"captions", "字幕时间尚未人工或可靠时间戳确认")) }
             if requireReview && !s.narration.isEmpty {
                 if s.captions.isEmpty { issues.append(QualityIssue(s.id+"captions_missing","有旁白但尚无字幕，请按真实音轨校正")) }

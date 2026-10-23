@@ -4,7 +4,7 @@ import VideoCore
 import AVFoundation
 import CoreMedia
 import CoreGraphics
-#if os(iOS) && canImport(CloudKit)
+#if (os(iOS) || os(macOS)) && canImport(CloudKit)
 import CloudKit
 #endif
 
@@ -125,7 +125,7 @@ final class MediaTests:XCTestCase {
     }
 }
 
-#if os(iOS) && canImport(CloudKit)
+#if (os(iOS) || os(macOS)) && canImport(CloudKit)
 final class CloudReviewDeletionTests:XCTestCase {
     private let types:Set<String>=["VideoReviewComment","VideoStoryboardProposal","VideoProposalReceipt"]
     private func record(_ name:String,root:CKRecord.ID,type:String="VideoReviewComment")->CKRecord {

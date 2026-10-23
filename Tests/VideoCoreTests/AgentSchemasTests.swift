@@ -9,8 +9,8 @@ final class AgentSchemasTests:XCTestCase {
         for key in ["id","workspaceID","sku","audience","task","outcome","prerequisite","scope","prices","assetIDs","tags","archived"] {XCTAssertTrue(fields.contains(.string(key)),key)}
         XCTAssertEqual(defs["Price"]?.object?["properties"]?.object?["money"]?.object?["$ref"],.string("#/$defs/Money"))
         guard case .array(let alternatives)=defs["Edit"]?.object?["oneOf"] else{return XCTFail("edit variants missing")}
-        XCTAssertEqual(alternatives.count,14);XCTAssertTrue(alternatives.contains{$0.object?["properties"]?.object?["lockLayer"] != nil})
-        for edit in ["recordSimulation","confirmSimulationRecording"] {XCTAssertTrue(alternatives.contains{$0.object?["properties"]?.object?[edit] != nil})}
+        XCTAssertEqual(alternatives.count,16);XCTAssertTrue(alternatives.contains{$0.object?["properties"]?.object?["lockLayer"] != nil})
+        for edit in ["recordSimulation","confirmSimulationRecording","productionBrief","purpose"] {XCTAssertTrue(alternatives.contains{$0.object?["properties"]?.object?[edit] != nil})}
     }
     func testEncodedRepresentativeEntitiesHaveEveryRequiredNestedFieldAndResolvableRefs()throws {
         let defs=AgentSchemas.definitions(),p=Product(workspaceID:"w",sku:"one",name:"课程",checkout:"https://example.com",audience:"新人",task:"复现",outcome:"理解",prerequisite:"",scope:"知识",prices:[Price(money:Money(1),source:"产品页")])
@@ -20,7 +20,7 @@ final class AgentSchemasTests:XCTestCase {
         scene.kind = .simulation;scene.simulationRecording = try SimulationReplay.record(scene:scene);scene.simulationRecordingConfirmed = false
         try verify(try value(scene),schema:AgentSchemas.shape("Scene"),defs:defs)
         XCTAssertNotNil(defs["RuleTrace"]);XCTAssertNotNil(defs["RuleTransition"])
-        try verify(try value([Edit.recordSimulation(scene.id),Edit.confirmSimulationRecording(scene.id)]),schema:AgentSchemas.shape("[Edit]"),defs:defs)
+        try verify(try value([Edit.productionBrief(ProductionBrief(objective:"教学",intendedUse:"解释")),Edit.purpose(.education),Edit.recordSimulation(scene.id),Edit.confirmSimulationRecording(scene.id)]),schema:AgentSchemas.shape("[Edit]"),defs:defs)
         try verify(try value([Edit.replaceScene("scene",scene),Edit.music(nil),Edit.audioQuality(AudioQualityPolicy.example),Edit.lockLayer("scene","layer",true)]),schema:AgentSchemas.shape("[Edit]"),defs:defs)
         // No generated dangling reference can hide an undiscoverable mandatory DTO.
         func refs(_ node:AgentValue)throws {switch node{case .object(let o):if let ref=o["$ref"]?.string{XCTAssertNotNil(defs[String(ref.dropFirst("#/$defs/".count))],ref)};for v in o.values{try refs(v)};case .array(let a):for v in a{try refs(v)};default:break}}

@@ -59,8 +59,9 @@ public struct Simulation: Codable, Equatable, Sendable {
     public var seed: UInt64 = 42; public var initial: Int = 100; public var capacity: Int = 200; public var unit: String = "上下文单位"; public var events: [RuleEvent] = []
     public init() {}
     public func state(at tick: Int) throws -> Int {
-        guard capacity > 0, capacity <= 10000, initial >= 0, initial <= capacity, !unit.isEmpty, events.allSatisfy({ $0.tick >= 0 && (-10000...10000).contains($0.delta) }) else { throw VideoError.invalid("模拟容量、初值、单位或事件不合法") }
-        return events.filter { $0.tick <= tick }.sorted { $0.tick == $1.tick ? $0.id < $1.id : $0.tick < $1.tick }.reduce(initial) { max(0, min(capacity, $0 + $1.delta)) }
+        // Input order is causal for events at the same tick (clamping is not commutative).
+        // Recording, labels, SDK queries and rendered frames must use one rule implementation.
+        return try SimulationReplay.record(simulation:self,throughTick:tick).finalState
     }
 }
 public struct Keyframe: Codable, Equatable, Identifiable, Sendable {
@@ -86,7 +87,7 @@ public struct Scene: Codable, Equatable, Identifiable, Sendable {
     public var simulationRecording: RuleTrace?
     public var simulationRecordingConfirmed: Bool?
     public init(kind: SceneKind = .explanation, title: String, body: String, narration: String = "", durationFrames: Int = 180) { self.kind = kind; self.title = title; self.body = body; self.narration = narration; self.durationFrames = durationFrames; self.classicArtworkRequired = true }
-    public var timelineFrames: Int { Int((Double(durationFrames) / speed).rounded()) + pauseFrames }
+    public var timelineFrames: Int { max(1, Int((Double(durationFrames) / speed).rounded())) + pauseFrames }
     /// Shared by the painter and rule recording. This preserves the shipped timeline mapping,
     /// including additional pause frames, rather than assuming all source frames are displayed.
     public func renderSourceFrame(atTimelineFrame frame: Int) -> Int { Int(Double(max(0, frame)) * speed) }
@@ -133,6 +134,7 @@ public struct ContentContext: Codable, Identifiable, Equatable, Sendable {
 public struct Revision: Codable, Identifiable, Sendable {
     public var dependencies: DependencySnapshot?
     public var audioQuality:AudioQualityPolicy?
+    public var productionBrief:ProductionBrief?
     public var id = Codec.id(); public var parentID: String?; public var number: Int; public var schemaVersion = 1; public var toolchain = "video-native-1"; public var product: Product?; public var contentContext: ContentContext?; public var purpose: Purpose; public var aspect: Aspect; public var fps = 30; public var scenes: [Scene]; public var cta: String; public var musicAssetID: String?; public var review = Review(); public var createdAt = Date(); public var change: String; public var invalidated: [String] = []
     public init(number: Int = 1, product: Product, purpose: Purpose, aspect: Aspect, scenes: [Scene], cta: String, change: String = "创建") { self.number = number; self.product = product; self.purpose = purpose; self.aspect = aspect; self.scenes = scenes; self.cta = cta; self.change = change }
     public init(number:Int = 1,contentContext:ContentContext,purpose:Purpose = .education,aspect:Aspect,scenes:[Scene],cta:String = "",change:String = "创建") {self.number=number;self.schemaVersion=2;self.contentContext=contentContext;self.purpose=purpose;self.aspect=aspect;self.scenes=scenes;self.cta=cta;self.change=change}
@@ -146,10 +148,10 @@ public struct Revision: Codable, Identifiable, Sendable {
         if let context=contentContext {try context.validate()}
         if let product {try product.validate()}
     }
-    private enum CodingKeys:String,CodingKey {case dependencies,audioQuality,id,parentID,number,schemaVersion,toolchain,product,contentContext,purpose,aspect,fps,scenes,cta,musicAssetID,review,createdAt,change,invalidated}
+    private enum CodingKeys:String,CodingKey {case dependencies,audioQuality,productionBrief,id,parentID,number,schemaVersion,toolchain,product,contentContext,purpose,aspect,fps,scenes,cta,musicAssetID,review,createdAt,change,invalidated}
     public init(from decoder:Decoder)throws {
         let c=try decoder.container(keyedBy:CodingKeys.self)
-        dependencies=try c.decodeIfPresent(DependencySnapshot.self,forKey:.dependencies);audioQuality=try c.decodeIfPresent(AudioQualityPolicy.self,forKey:.audioQuality)
+        dependencies=try c.decodeIfPresent(DependencySnapshot.self,forKey:.dependencies);audioQuality=try c.decodeIfPresent(AudioQualityPolicy.self,forKey:.audioQuality);productionBrief=try c.decodeIfPresent(ProductionBrief.self,forKey:.productionBrief)
         id=try c.decode(String.self,forKey:.id);parentID=try c.decodeIfPresent(String.self,forKey:.parentID);number=try c.decode(Int.self,forKey:.number);schemaVersion=try c.decode(Int.self,forKey:.schemaVersion);toolchain=try c.decode(String.self,forKey:.toolchain)
         product=try c.decodeIfPresent(Product.self,forKey:.product);contentContext=try c.decodeIfPresent(ContentContext.self,forKey:.contentContext);purpose=try c.decode(Purpose.self,forKey:.purpose);aspect=try c.decode(Aspect.self,forKey:.aspect);fps=try c.decode(Int.self,forKey:.fps);scenes=try c.decode([Scene].self,forKey:.scenes);cta=try c.decode(String.self,forKey:.cta);musicAssetID=try c.decodeIfPresent(String.self,forKey:.musicAssetID);review=try c.decode(Review.self,forKey:.review);createdAt=try c.decode(Date.self,forKey:.createdAt);change=try c.decode(String.self,forKey:.change);invalidated=try c.decode([String].self,forKey:.invalidated)
         try validateContext()
@@ -160,11 +162,13 @@ public struct Revision: Codable, Identifiable, Sendable {
 public struct Project: Codable, Identifiable, Sendable {
     public var id = Codec.id(); public var workspaceID: String; public var name: String; public var revisions: [Revision]; public var comments: [Comment] = []; public var tags: [String] = []; public var series = ""; public var batchID: String?; public var archived = false
     public init(workspaceID: String, name: String, revision: Revision) { self.workspaceID = workspaceID; self.name = name; self.revisions = [revision] }
+    public var productionApprovals:[ProductionApproval]?
+    public var deliveryRecords:[ProductionDeliveryRecord]?
     public var current: Revision { revisions[revisions.count - 1] }
-    private enum CodingKeys:String,CodingKey {case id,workspaceID,name,revisions,comments,tags,series,batchID,archived}
+    private enum CodingKeys:String,CodingKey {case id,workspaceID,name,revisions,comments,tags,series,batchID,archived,productionApprovals,deliveryRecords}
     public init(from decoder:Decoder)throws {
         let c=try decoder.container(keyedBy:CodingKeys.self)
-        id=try c.decode(String.self,forKey:.id);workspaceID=try c.decode(String.self,forKey:.workspaceID);name=try c.decode(String.self,forKey:.name);revisions=try c.decode([Revision].self,forKey:.revisions);comments=try c.decode([Comment].self,forKey:.comments);tags=try c.decode([String].self,forKey:.tags);series=try c.decode(String.self,forKey:.series);batchID=try c.decodeIfPresent(String.self,forKey:.batchID);archived=try c.decode(Bool.self,forKey:.archived)
+        id=try c.decode(String.self,forKey:.id);workspaceID=try c.decode(String.self,forKey:.workspaceID);name=try c.decode(String.self,forKey:.name);revisions=try c.decode([Revision].self,forKey:.revisions);comments=try c.decode([Comment].self,forKey:.comments);tags=try c.decode([String].self,forKey:.tags);series=try c.decode(String.self,forKey:.series);batchID=try c.decodeIfPresent(String.self,forKey:.batchID);archived=try c.decode(Bool.self,forKey:.archived);productionApprovals=try c.decodeIfPresent([ProductionApproval].self,forKey:.productionApprovals);deliveryRecords=try c.decodeIfPresent([ProductionDeliveryRecord].self,forKey:.deliveryRecords)
         guard !workspaceID.isEmpty,!revisions.isEmpty,revisions.allSatisfy({$0.workspaceID==workspaceID}) else{throw VideoError.permission("工程版本不属于同一真实工作区")}
     }
 }

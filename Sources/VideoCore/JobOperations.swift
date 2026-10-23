@@ -78,6 +78,7 @@ public enum JobOperations {
         var j=job; j.remoteID=snapshot.remoteID; j.remoteCheckedAt=snapshot.checkedAt; j.updatedAt=now; j.progress=snapshot.progress
         switch snapshot.state { case .queued:j.state = job.state == .cancelRequested ? .cancelRequested:.queued; case .running:j.state = job.state == .cancelRequested ? .cancelRequested:.running; case .succeeded:j.state = .billingPending; j.message="远端制作完成，需核对产物/实际账单，尚未通过看听审核"; case .failed:j.state = .failed; case .cancelled:j.state = .cancelled; case .unknown:j.state = .unknownRemote }
         if let actual=snapshot.actual { guard actual.currency==j.quote.upper.currency,actual.amount>=0,!actual.amount.isNaN else { throw VideoError.invalid("远端账单币种/金额不符") }; j.actual=actual; j.billingUnknown=false }
+        if [.queued, .running, .unknown].contains(snapshot.state) { j.billingUnknown=true }
         return j
     }
 }

@@ -55,7 +55,9 @@ public enum BatchRules {
     public static func validateSubmission(project: Project, quote: Quote, batches: [TopicBatch], existingJobs: [Job] = [], requestKey: String? = nil) throws {
         guard let batchID = project.batchID else { return }
         guard let batch = batches.first(where: { $0.id == batchID && $0.workspaceID == project.workspaceID }), let item = batch.items.first(where: { $0.projectID == project.id }), let product = item.productSnapshot, let actualProduct=project.current.product, product.hasSameFacts(as:actualProduct), item.revisionID == project.current.id, item.topic.audience == project.current.product?.audience || item.topic.audience == product.audience else { throw VideoError.review("批次产品/受众或绑定版本已变，需在本项重新确认，不能沿用旧预算提交") }
-        guard quote.projectID == project.id, quote.revisionID == project.current.id, quote.digest == (try project.current.contentDigest()), quote.upper.currency == item.budget.currency else { throw VideoError.review("报价与本项冻结版本或币种不一致") }
+        guard quote.projectID == project.id, quote.revisionID == project.current.id, quote.digest == (try project.current.contentDigest()) else { throw VideoError.review("报价与本项冻结版本或币种不一致") }
+        if quote.provider=="native" && quote.upper.amount==0{return}
+        guard quote.upper.currency==item.budget.currency else{throw VideoError.review("付费报价与本项冻结预算币种不一致；不自动换汇")}
         if let requestKey, existingJobs.contains(where: { $0.projectID == project.id && $0.requestKey == requestKey && $0.quote.id == quote.id && $0.digest == quote.digest }) { return }
         let exposure = existingJobs.filter { $0.projectID == project.id && $0.quote.upper.currency == item.budget.currency }.reduce(Decimal(0)) { $0 + $1.exposure.amount }
         guard quote.upper.amount >= 0, exposure + quote.upper.amount <= item.budget.amount else { throw VideoError.budget("本项累计已花费/占用加本次上界超过冻结预算；失败/取消不抹掉已花费") }
@@ -89,5 +91,11 @@ public extension Database {
         guard batches[batch].items[index].topic.audience == project.current.product?.audience else { throw VideoError.review("受众变化须建立新的对照条件，不能混进原批次") }
         let old = batches[batch].items[index]; var history = old.history ?? []; history.append(TopicBatchHistory(product: old.productSnapshot, revisionID: old.revisionID, quote: old.quote, at: now, reason: "用户明确接收当前项目版本；原预算保持")); batches[batch].items[index].history = history
         batches[batch].items[index].productSnapshot = project.current.product; batches[batch].items[index].revisionID = project.current.id; batches[batch].items[index].quote = nil; batches[batch].items[index].state = .ready; batches[batch].items[index].updatedAt = now; batches[batch].items[index].error = "已接收新版本，原预算不增加，须重新报价和看听审核"; topicBatches = batches
+    }
+}
+
+public extension TopicBatchState {
+    var searchKey:String {
+        switch self {case .planned:return "planned";case .ready:return "ready";case .running:return "running";case .needsReview:return "needs_review";case .approved:return "approved";case .failed:return "failed";case .invalidated:return "invalidated";case .waiting:return "waiting";case .cancelled:return "cancelled"}
     }
 }

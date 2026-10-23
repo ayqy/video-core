@@ -51,9 +51,11 @@ public enum FontRightsRules {
     }
 }
 public struct StyleKit: Codable, Identifiable, Sendable {
+    public var tags:[String]?
+    public var createdAt:Date?
     public var id = Codec.id(); public var workspaceID: String; public var name: String; public var version: Int = 1; public var palette: [String]; public var fontName: String; public var musicAssetID: String?; public var evidenceIDs: [String]; public var characters: [CharacterProfile]; public var negativeConstraints: [String]
     public init(workspaceID: String, name: String, palette: [String] = ["6366F1", "0EA5E9"], fontName: String = "PingFangSC-Regular", musicAssetID: String? = nil, evidenceIDs: [String] = [], characters: [CharacterProfile] = [], negativeConstraints: [String] = ["不虚构成果", "不重画真实价格和UI", "类比和模拟不冒充现实规律"]) {
-        self.workspaceID = workspaceID; self.name = name; self.palette = palette; self.fontName = fontName; self.musicAssetID = musicAssetID; self.evidenceIDs = evidenceIDs; self.characters = characters; self.negativeConstraints = negativeConstraints
+        self.createdAt=Date(); self.workspaceID = workspaceID; self.name = name; self.palette = palette; self.fontName = fontName; self.musicAssetID = musicAssetID; self.evidenceIDs = evidenceIDs; self.characters = characters; self.negativeConstraints = negativeConstraints
     }
     public func validate(assets: [Asset], evidence: [Evidence], commercial: Bool, now: Date) throws {
         guard version > 0, !name.isEmpty, !palette.isEmpty, palette.allSatisfy({ $0.range(of: "^[0-9A-Fa-f]{6}$", options: .regularExpression) != nil }), !fontName.isEmpty else { throw VideoError.invalid("风格版本、名称、字体或配色无效") }
@@ -73,7 +75,7 @@ public struct StyleKit: Codable, Identifiable, Sendable {
     public func derived(name:String,palette:[String],fontName:String,fontEvidenceIDs:[String],characters:[CharacterProfile])throws->StyleKit {
         guard version>0,version<Int.max,!name.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty,!palette.isEmpty,palette.allSatisfy({$0.range(of:"^[0-9A-Fa-f]{6}$",options:.regularExpression) != nil}),!fontName.isEmpty,fontName==fontName.trimmingCharacters(in:.whitespacesAndNewlines),fontName.utf8.count<=256 else{throw VideoError.invalid("新风格名称、配色或字体无效，或旧版本已不能继续递增")}
         guard characters.allSatisfy({!$0.name.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty && !$0.actions.isEmpty && !$0.expressions.isEmpty && ($0.actions+$0.expressions).allSatisfy{!$0.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty} && $0.color.range(of:"^[0-9A-Fa-f]{6}$",options:.regularExpression) != nil}) else{throw VideoError.invalid("角色名称、配色、表情与有序动作列表须完整填写")}
-        var next=self;next.id=Codec.id();next.version=version+1;next.name=name;next.palette=palette;next.fontName=fontName;next.evidenceIDs=fontEvidenceIDs;next.characters=characters;return next
+        var next=self;next.id=Codec.id();next.createdAt=Date();next.version=version+1;next.name=name;next.palette=palette;next.fontName=fontName;next.evidenceIDs=fontEvidenceIDs;next.characters=characters;return next
     }
 }
 public struct TemplateBeat: Codable, Equatable, Sendable {
@@ -81,8 +83,10 @@ public struct TemplateBeat: Codable, Equatable, Sendable {
     public init(role: NarrativeBeatRole, frames: Int, kind: SceneKind = .explanation, motion: Bool = false) { self.role = role; self.frames = frames; self.kind = kind; self.motion = motion }
 }
 public struct NarrativeTemplate: Codable, Identifiable, Sendable {
+    public var tags:[String]?
+    public var createdAt:Date?
     public var id = Codec.id(); public var workspaceID: String; public var name: String; public var version = 2; public var compatibleIR = 1; public var grammars: [NarrativeGrammar]; public var beats: [TemplateBeat]; public var parentVersion: Int?; public var migrationNotes: [String] = []
-    public init(workspaceID: String, name: String, grammars: [NarrativeGrammar] = NarrativeGrammar.allCases, beats: [TemplateBeat] = []) { self.workspaceID = workspaceID; self.name = name; self.grammars = grammars; self.beats = beats }
+    public init(workspaceID: String, name: String, grammars: [NarrativeGrammar] = NarrativeGrammar.allCases, beats: [TemplateBeat] = []) { self.createdAt=Date(); self.workspaceID = workspaceID; self.name = name; self.grammars = grammars; self.beats = beats }
     public func validate() throws {
         guard (1...2).contains(version), compatibleIR == 1, !name.isEmpty, !grammars.isEmpty, Set(grammars).count == grammars.count, Set(beats.map(\.role)).count == beats.count, beats.allSatisfy({ (30...1800).contains($0.frames) && [.explanation, .cartoon, .simulation].contains($0.kind) }) else { throw VideoError.invalid("模板版本不兼容、节拍重复、时长越界或引用未支持的原语") }
     }
@@ -93,9 +97,11 @@ public struct NarrativeTemplate: Codable, Identifiable, Sendable {
     }
 }
 public struct SeriesProfile: Codable, Identifiable, Sendable {
+    public var tags:[String]?
+    public var createdAt:Date?
     public var id = Codec.id(); public var workspaceID: String; public var name: String; public var styleID: String; public var styleVersion: Int; public var templateID: String; public var templateVersion: Int; public var episodePrefix: String; public var recurringQuestion: String; public var episodeNumber: Int
     public init(workspaceID: String, name: String, style: StyleKit, template: NarrativeTemplate, episodePrefix: String, recurringQuestion: String, episodeNumber: Int = 1) {
-        self.workspaceID = workspaceID; self.name = name; self.styleID = style.id; self.styleVersion = style.version; self.templateID = template.id; self.templateVersion = template.version; self.episodePrefix = episodePrefix; self.recurringQuestion = recurringQuestion; self.episodeNumber = episodeNumber
+        self.createdAt=Date(); self.workspaceID = workspaceID; self.name = name; self.styleID = style.id; self.styleVersion = style.version; self.templateID = template.id; self.templateVersion = template.version; self.episodePrefix = episodePrefix; self.recurringQuestion = recurringQuestion; self.episodeNumber = episodeNumber
     }
 }
 public struct NarrativeBeat: Codable, Equatable, Identifiable, Sendable {

@@ -13,6 +13,9 @@ public struct Database: Codable, Sendable {
     public var schema = 1; public var generation = 0; public var workspaces: [Workspace] = []; public var products: [Product] = []; public var evidence: [Evidence] = []; public var assets: [Asset] = []; public var projects: [Project] = []; public var topics: [Topic] = []; public var jobs: [Job] = []; public var publications: [Publication] = []; public var metrics: [Metric] = []; public var orders: [Order] = []; public var imports: [ImportReceipt] = []; public var attributions: [Attribution] = []; public var cash: [CashEntry] = []; public var expenses: [Expense] = []; public var toolSales: [ToolSale] = []; public var brandDeals: [BrandDeal] = []; public var providers: [ProviderProfile] = []; public var funnel: [FunnelEvent] = []; public var budget = BudgetPolicy(); public var baseline: Baseline?; public var terminology: [String: String] = [:]
     public init() {}
     public var baselines: [String: Baseline] = [:]
+    public var teachingTopics: [TeachingTopic]?
+    public var teachingDocuments: [TeachingDocument]?
+    public var verticalChecklists: [WorkspaceVerticalChecklist]?
     public var narrativeDocuments: [NarrativeDocument]?
     public var styleKits: [StyleKit]?
     public var narrativeTemplates: [NarrativeTemplate]?
@@ -21,20 +24,23 @@ public struct Database: Codable, Sendable {
     public var intentReceipts: [IntentReceipt]?
     public var agentReplayRecords: [AgentReplayRecord]?
     public var topicBatches: [TopicBatch]?
+    public var teachingBatches: [TeachingBatch]?
     public var courseCohortStatements: [CourseCohortStatement]?
     public func workspace(_ id: String) throws -> Workspace { guard let w = workspaces.first(where: { $0.id == id }) else { throw VideoError.notFound("工作区不存在") }; return w }
     public func project(_ id: String) throws -> Project { guard let p = projects.first(where: { $0.id == id }) else { throw VideoError.notFound("项目不存在") }; return p }
     public func validate() throws {
         guard schema == 1 else { throw VideoError.unavailable("工程主版本不支持，请保留原文件") }
         let ws = Set(workspaces.map(\.id)); guard ws.count == workspaces.count else { throw VideoError.invalid("工作区ID重复") }
-        for p in products { guard ws.contains(p.workspaceID) else { throw VideoError.invalid("产品工作区缺失") }; try p.validate(); try DependencyRules.validateMappings(product:p,assets:assets,evidence:evidence) }
-        for p in projects { guard ws.contains(p.workspaceID), !p.revisions.isEmpty else { throw VideoError.invalid("项目工作区或版本缺失") }; for r in p.revisions { try r.validateContext();try r.audioQuality?.validate();guard (1...2).contains(r.schemaVersion), r.workspaceID == p.workspaceID, (!r.scenes.isEmpty || r.contentContext != nil), r.fps == 30 else { throw VideoError.invalid("工程IR不完整或版本不兼容") }; for s in r.scenes { try s.validate(assets: assets.filter { $0.workspaceID == p.workspaceID }) } } }
+        for p in products { guard ws.contains(p.workspaceID) else { throw VideoError.invalid("产品工作区缺失") }; try p.validate(); try DependencyRules.validateMappings(product:p,assets:assets,evidence:evidence,requireCurrentConfirmation:false) }
+        for p in projects { try ProductionDeliveryRules.validate(project:p,assets:assets,evidence:evidence); guard ws.contains(p.workspaceID), !p.revisions.isEmpty else { throw VideoError.invalid("项目工作区或版本缺失") }; for r in p.revisions { try r.validateContext();if let context=r.contentContext {try DependencyRules.validateMappings(context:context,assets:assets,evidence:evidence,requireCurrentConfirmation:false)};try r.audioQuality?.validate();guard (1...2).contains(r.schemaVersion), r.workspaceID == p.workspaceID, (!r.scenes.isEmpty || r.contentContext != nil), r.fps == 30 else { throw VideoError.invalid("工程IR不完整或版本不兼容") }; for s in r.scenes { try s.validate(assets: assets.filter { $0.workspaceID == p.workspaceID }) } } }
         for o in orders { try o.validate() }; for m in metrics {try m.validate()}; try Finance.validateAttribution(attributions)
         guard Set(orders.map(\.id)).count == orders.count, Set(metrics.map(\.id)).count == metrics.count, Set(cash.map(\.id)).count == cash.count, Set(expenses.map(\.id)).count == expenses.count else { throw VideoError.invalid("订单、指标或账目ID重复") }
         for x in expenses { guard x.hours >= 0, x.money == nil || x.money!.amount >= 0, x.allocation.values.allSatisfy({ $0 >= 0 }), x.allocation.values.reduce(0,+) <= 1 else { throw VideoError.invalid("工时、成本与分摊比例不合法") } }
         for x in cash { guard x.refunded >= 0, x.refunded <= x.received.amount else { throw VideoError.invalid("现金退款超过实收") } }
         for x in toolSales { try x.validate() }; for x in brandDeals { try x.validate() }
+        try TeachingStoreRules.validate(database:self)
         try CohortFinance.validateStatements(self)
+        try TeachingBatchRules.validateDatabase(self)
     }
     public mutating func importOrders(_ rows: [Order], batchID: String) throws {
         if imports.contains(where: { $0.id == batchID && !$0.rolledBack }) { return }
