@@ -50,7 +50,7 @@ public final class MediaRenderer: @unchecked Sendable {
             let policy=r.audioQuality ?? AudioQualityPolicy()
             let audio=try await AudioInspection.inspect(final,policy:policy)
             guard audio.clippedSamples==0,audio.rmsDBFS <= -10 else { throw VideoError.review("实际混音存在削波或过高平均电平，请降低分轨音量并重做、听审；失败产物未标可交付") }
-            let audible=r.scenes.contains { !$0.muted && (($0.voice != nil && $0.voiceGain>0) || ($0.kind == .video && $0.sourceGain>0) || ($0.classicArtwork?.audioCues.contains(where:{$0.gain>0}) == true)) } || (r.musicAssetID != nil && r.scenes.contains{$0.musicGain>0})
+            let audible=r.scenes.contains { !$0.muted && (($0.voice != nil && $0.voiceGain>0) || ($0.kind == .video && $0.sourceGain>0) || ($0.classicArtwork?.audioCues.contains(where:{$0.gain>0}) == true)) } || (r.musicAssetID != nil && r.scenes.contains{!$0.muted && $0.musicGain>0})
             if audible && audio.peakDBFS < -50 { throw VideoError.review("工程含声音但实际混音接近静音，请核对分轨与源音轨后重做") }
             guard let loudness=audio.loudness else{throw VideoError.review("实际混音尚无响度与真峰值检测，未标可交付")}
             if audible,let peak=loudness.truePeakDBTP,peak>=0 {throw VideoError.review(String(format:"实际混音的4倍过采样真峰值估计 %.2f dBTP 达到满幅过载，请降低分轨音量并重新制作、听审",peak))}
@@ -68,7 +68,7 @@ public final class MediaRenderer: @unchecked Sendable {
             let subtitles=output.appendingPathComponent("captions.srt"); try Self.subtitles(r).write(to:subtitles,atomically:true,encoding:.utf8)
             let text=output.appendingPathComponent("publication.txt");let note=try Self.publicationNotes(r,audio:audio);try note.write(to:text,atomically:true,encoding:.utf8)
             let refs=try [final,cover,subtitles,text].map { u -> Artifact in let data=try Data(contentsOf:u); let mime:[String:String]=["mp4":"video/mp4","png":"image/png","srt":"application/x-subrip","txt":"text/plain"]; return Artifact(path:u.path,mime:mime[u.pathExtension]!,bytes:data.count,sha256:Codec.hash(data),revision:r.id) }
-            try progress(1); return RenderResult(artifacts:refs,frames:r.frames,seconds:Date().timeIntervalSince(start),warnings:(r.scenes.allSatisfy({$0.voice == nil && $0.sourceGain==0 && ($0.classicArtwork?.audioCues.allSatisfy{$0.gain==0} ?? true)}) ? ["此版本无旁白，AAC音轨为明确的静音底轨"] : []) + ["画面缓存复用 \(visuals)/\(r.scenes.count) 镜头；声音与整片时间轴重新合成"])
+            try progress(1); return RenderResult(artifacts:refs,frames:r.frames,seconds:Date().timeIntervalSince(start),warnings:(!audible ? ["此版本无旁白，AAC音轨为明确的静音底轨"] : []) + ["画面缓存复用 \(visuals)/\(r.scenes.count) 镜头；声音与整片时间轴重新合成"])
         } catch { try? FileManager.default.removeItem(at:final); throw error }
     }
     private func mix(video:URL,final:URL,revision r:Revision,repository:Repository,database:Database,progress: @escaping @Sendable (Double) throws -> Void) async throws {

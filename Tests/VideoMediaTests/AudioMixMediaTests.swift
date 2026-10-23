@@ -69,4 +69,45 @@ final class AudioMixMediaTests:XCTestCase {
         XCTAssertEqual(rendered.artifacts.count,4)
         XCTAssertFalse(revision.review.sound,"真实混音检测不能代替人工听审")
     }
+
+    func testMusicOnlyWarningMatchesDecodedAACIncludingMutedAndZeroGain()async throws {
+        let root=FileManager.default.temporaryDirectory.appendingPathComponent("music-warning-rules-"+Codec.id())
+        try FileManager.default.createDirectory(at:root,withIntermediateDirectories:true)
+        defer{try? FileManager.default.removeItem(at:root)}
+        let source=root.appendingPathComponent("source.caf")
+        try tone(source,seconds:1,frequency:400)
+        let cases:[(name:String,linked:Bool,muted:Bool,gain:Double,audible:Bool)]=[
+            ("music-only",true,false,0.5,true),
+            ("muted-music",true,true,0.5,false),
+            ("zero-gain",true,false,0,false),
+            ("no-audio",false,false,0.5,false)
+        ]
+        for item in cases {
+            let repo=try Repository(root:root.appendingPathComponent(item.name))
+            let music=try repo.ingest(Data(contentsOf:source),name:"isolated-tone.caf",workspaceID:"w",mediaType:"audio",durationFrames:30)
+            var scene=VideoCore.Scene(title:"真实声音提示检查",body:"隔离媒体规则，非成品配音。",durationFrames:30)
+            scene.musicGain=item.gain;scene.muted=item.muted
+            var revision=try Planner.create(workspaceID:"w",name:item.name,aspect:.landscape,scenes:[scene])
+            if item.linked{revision.musicAssetID=music.id}
+            revision.dependencies=try DependencyRules.freeze(revision:revision,assets:[music],evidence:[])
+            try repo.transaction {db in
+                var workspace=Workspace(name:"隔离声音规则",owner:"rules");workspace.id="w"
+                db.workspaces=[workspace];db.assets=[music]
+                db.projects=[Project(workspaceID:"w",name:item.name,revision:revision)]
+            }
+            let rendered=try await MediaRenderer().render(revision:revision,repository:repo,output:repo.root.appendingPathComponent("output"))
+            let artifact=try XCTUnwrap(rendered.artifacts.first{$0.mime=="video/mp4"})
+            let movie=URL(fileURLWithPath:artifact.path)
+            let inspection=try await MediaInspection.inspect(movie)
+            XCTAssertEqual(inspection.audioCodec,"aac ",item.name)
+            XCTAssertEqual(inspection.sampleRate,48000,item.name)
+            let samples=try await decodedMono(movie)
+            let measured=try amplitude(samples,from:0.2,to:0.8,frequency:400)
+            if item.audible{XCTAssertGreaterThan(measured,0.02,item.name)}
+            else{XCTAssertLessThan(measured,0.0005,item.name)}
+            XCTAssertEqual(rendered.warnings.contains{$0.contains("静音底轨")},!item.audible,item.name)
+            XCTAssertEqual(rendered.artifacts.count,4,item.name)
+            XCTAssertFalse(revision.review.sound,"实际声音测量不能代替人工听审")
+        }
+    }
 }

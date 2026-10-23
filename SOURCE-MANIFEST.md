@@ -2,10 +2,10 @@
 
 VideoFree source export · package_free.py · version 1
 
-生成时间：2026-10-23 21:19:30 北京时间
+生成时间：2026-10-23 22:33:47 北京时间
 
-- 源码与必要元数据：165个文件；1796335字节（不含本清单）。
-- 整体内容指纹：`006a626b103e1ec83ac23f06a94ed12b211753443fbeb1a8ef26912093629450`。
+- 源码与必要元数据：165个文件；1799043字节（不含本清单）。
+- 整体内容指纹：`250144909e8f7d4c3c918717e42204ae701f32cc24ce650ea65b403de2dfa3cf`。
 - 来源：受控原始工程中的逐文件白名单；Package.swift来自Distribution/Free/Package.swift模板，README由发行脚本生成。
 - 本包不含.git，不可作为新业务checkout；本清单生成过程不执行构建、设备验收、签名安装或公共上传，各阶段以独立证据为准。
 - 排除：App、VideoGame、VideoCartoon、Premium、高级实现运行时测试、私有仓库地址、凭据、客户数据、缓存、日志及媒体过程产物。
@@ -115,7 +115,7 @@ VideoFree source export · package_free.py · version 1
 | 475141920104958511115c298a451fabbaa688839af179e7190838a3435a0421 | 8886 | Sources/VideoMedia/RemoteSceneModule.swift |
 | f2f52a2d58c433b8e9c5c701ab197dc8ca278f4ed376e5d0f1a628b249ad88ee | 5891 | Sources/VideoMedia/RenderInvocation.swift |
 | 95b078a4758dade5eb832e5f7fad66f3cbc7e78f9c20d63289727096abc2342b | 34363 | Sources/VideoMedia/RenderModules.swift |
-| c880536bc459fc74b152506aaf036af739e25178e2e8d57b89cb77d8e39dcc5d | 29135 | Sources/VideoMedia/Renderer.swift |
+| ce9eac828601edf3520f325412bc8a447d9f3db66bac479689ea11998c999746 | 29033 | Sources/VideoMedia/Renderer.swift |
 | 06fdff6e71495ced1c996fc1d589d46010e2f1b798ce03b6e065df78ac8419da | 4392 | Sources/VideoMedia/ScriptJobs.swift |
 | 9ec229f48547a7e2e0218d913dba2dfd38457f08ae55196979968dbbdee2d4e0 | 11971 | Sources/VideoMedia/SpeechService.swift |
 | 5da2cf1bfa78c1c4ea40a6ec253aa35551b1ebbe73c3adcc090fb649230370a0 | 13113 | Sources/VideoMedia/VisualCache.swift |
@@ -167,7 +167,7 @@ VideoFree source export · package_free.py · version 1
 | c927d9faea68877b494d6fbac3aa5f76001c427ff5de168208d5e049036ec918 | 7072 | Tests/VideoCoreTests/SpeechTests.swift |
 | d9c73a0cf74c764280d45920b0e7a4f073143c94c4035b335917aaf2d355d2bf | 15186 | Tests/VideoCoreTests/TeachingTests.swift |
 | 7ba0ca151fe677d9a3e081af45a3e9c0cbc725c82549e6b7b8193ef2cfbb8a3e | 24793 | Tests/VideoCoreTests/WorkspaceAccessTests.swift |
-| 69a1c1dde465f45b51620943a9dd3c9240537e51fe861897a7528cd6c3c194ed | 5331 | Tests/VideoMediaTests/AudioMixMediaTests.swift |
+| 1954490c7030c07bd27536157df492a6f5377db90aa91b2da8c0d5b80471ce2a | 8141 | Tests/VideoMediaTests/AudioMixMediaTests.swift |
 | 0207a9002bb7aef610449bd354ee6c50034a84f81d1a261ea8846a9bb864aada | 1906 | Tests/VideoMediaTests/BaiduVideoProviderTests.swift |
 | 04c765d5be6d04f06db5752c8b0beef1dad8cda87a0be1193be63fa17318f8da | 4089 | Tests/VideoMediaTests/BubbleArtworkMediaTests.swift |
 | 88150479390d0501342c4c5789864dec9fc2a74522e0806dabeec9d269e143c7 | 3816 | Tests/VideoMediaTests/CloudReviewLocationTests.swift |
