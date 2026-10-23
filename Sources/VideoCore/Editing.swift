@@ -35,6 +35,15 @@ public enum Editor {
                         scene.simulationRecordingConfirmed = false
                     }
                     revision.invalidated += ["规则录制与复核"]
+                    if old.simulation.knowledge != nil || scene.simulation.knowledge != nil {
+                        if scene.voice?.assetID == old.voice?.assetID { scene.voice = nil }
+                        for index in scene.captions.indices { scene.captions[index].confirmed = false }
+                        if var artwork = scene.classicArtwork {
+                            for index in artwork.audioCues.indices { artwork.audioCues[index].listened = false }
+                            scene.classicArtwork = artwork
+                        }
+                        revision.invalidated += ["知识因果、结论、声音与字幕重新复核"]
+                    }
                 }
                 if old.narration != scene.narration, scene.speechPlan?.source != scene.narration { scene.speechPlan=nil }
                 let oldSpeechDigest=try? old.speechDigest(), newSpeechDigest=try? scene.speechDigest()

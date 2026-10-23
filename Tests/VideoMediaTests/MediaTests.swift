@@ -4,9 +4,6 @@ import VideoCore
 import AVFoundation
 import CoreMedia
 import CoreGraphics
-#if (os(iOS) || os(macOS)) && canImport(CloudKit)
-import CloudKit
-#endif
 
 final class MediaTests:XCTestCase {
     func testSnapshotPriceCaptionsCTAAndFooterRemainDistinctInBothAspectFrames() throws {
@@ -124,40 +121,3 @@ final class MediaTests:XCTestCase {
         r.toolchain="new-codec-runtime";let upgraded=try await MediaRenderer().render(revision:r,repository:repo,output:root.appendingPathComponent("five"));XCTAssertTrue(upgraded.warnings.contains{$0.contains("0/2")})
     }
 }
-
-#if (os(iOS) || os(macOS)) && canImport(CloudKit)
-final class CloudReviewDeletionTests:XCTestCase {
-    private let types:Set<String>=["VideoReviewComment","VideoStoryboardProposal","VideoProposalReceipt"]
-    private func record(_ name:String,root:CKRecord.ID,type:String="VideoReviewComment")->CKRecord {
-        let value=CKRecord(recordType:type,recordID:CKRecord.ID(recordName:name,zoneID:root.zoneID))
-        value.parent=CKRecord.Reference(recordID:root,action:.none)
-        value["root"]=CKRecord.Reference(recordID:root,action:.none)
-        return value
-    }
-    func testDeletionSelectsOnlyCurrentHierarchyAcrossOtherRootsAndZones() throws {
-        let zone=CKRecordZone.ID(zoneName:"shared-reviews",ownerName:CKCurrentUserDefaultName)
-        let root=CKRecord.ID(recordName:"review-one",zoneID:zone),other=CKRecord.ID(recordName:"review-two",zoneID:zone)
-        let differentZone=CKRecord.ID(recordName:root.recordName,zoneID:CKRecordZone.ID(zoneName:"another-zone",ownerName:CKCurrentUserDefaultName))
-        let comment=record("one-comment",root:root),proposal=record("one-proposal",root:root,type:"VideoStoryboardProposal"),receipt=record("one-receipt",root:root,type:"VideoProposalReceipt")
-        let ids=try CloudReviewDeletionRules.childIDs([comment,record("other-comment",root:other),record("other-zone-comment",root:differentZone),receipt,proposal],rootID:root,types:types)
-        XCTAssertEqual(Set(ids),Set([comment.recordID,proposal.recordID,receipt.recordID]))
-        XCTAssertFalse(ids.contains(root));XCTAssertFalse(ids.contains(other))
-    }
-    func testDeletionRejectsARecordWithConflictingParentAndRootPointers() throws {
-        let zone=CKRecordZone.ID(zoneName:"shared-reviews",ownerName:CKCurrentUserDefaultName)
-        let root=CKRecord.ID(recordName:"review-one",zoneID:zone),other=CKRecord.ID(recordName:"review-two",zoneID:zone)
-        let child=record("conflicting",root:root)
-        child["root"]=CKRecord.Reference(recordID:other,action:.none)
-        XCTAssertThrowsError(try CloudReviewDeletionRules.childIDs([child],rootID:root,types:types))
-        child.parent=CKRecord.Reference(recordID:other,action:.none);child["root"]=CKRecord.Reference(recordID:root,action:.none)
-        XCTAssertThrowsError(try CloudReviewDeletionRules.childIDs([child],rootID:root,types:types))
-    }
-    func testDeletionRejectsUnknownOrIncompleteChildrenRatherThanDeletingUnrelatedData() throws {
-        let root=CKRecord.ID(recordName:"review-one",zoneID:CKRecordZone.ID(zoneName:"shared-reviews",ownerName:CKCurrentUserDefaultName))
-        XCTAssertThrowsError(try CloudReviewDeletionRules.childIDs([record("unmanaged",root:root,type:"OtherClientData")],rootID:root,types:types))
-        let incomplete=record("missing-link",root:root);incomplete["root"]=nil
-        XCTAssertThrowsError(try CloudReviewDeletionRules.childIDs([incomplete],rootID:root,types:types))
-        XCTAssertEqual(try CloudReviewDeletionRules.childIDs([],rootID:root,types:types),[])
-    }
-}
-#endif

@@ -1,5 +1,16 @@
 import Foundation
 
+public enum PluginInputCompatibility {
+    public static func supports(pluginID: String, version: Int) -> Bool {
+        version == 1 || (pluginID == "video.game" && version == 2)
+    }
+    public static func requireKnowledgeSupport(_ simulation: Simulation, pluginID: String, inputSchema: Int) throws {
+        guard supports(pluginID: pluginID, version: inputSchema), simulation.knowledge == nil || (pluginID == "video.game" && inputSchema == 2) else {
+            throw VideoError.unavailable("此已安装模块不支持当前知识模型输入；请安装相容且受信的高级模块，未退回旧计数器画面")
+        }
+    }
+}
+
 /// Public capability protocol. No filesystem grant, credentials, approvals or closed types.
 public enum PluginMethod:String,Codable,CaseIterable,Sendable {
     case handshake,describe,validate,estimate,execute,progress,cancel,health
@@ -70,7 +81,7 @@ public struct PluginCost:Codable,Equatable,Sendable {
 public struct PluginDescription:Codable,Equatable,Sendable {
     public var pluginID:String;public var capabilityID:String;public var version:String;public var methods:[PluginMethod];public var inputSchemaVersion:Int;public var outputSchemaVersion:Int
     public var inputContract:String;public var outputContract:String;public var inputSchema:AgentValue;public var outputSchema:AgentValue;public var filesystemAccess:Bool;public var networkAccess:Bool
-    public init(pluginID:String,capabilityID:String,version:String){self.pluginID=pluginID;self.capabilityID=capabilityID;self.version=version;methods=PluginMethod.allCases;inputSchemaVersion=1;outputSchemaVersion=1;inputContract="PluginFrameInput v1: visual-only props, already-mapped source frame, byte-bound image bank, frozen invocation and budget reference";outputContract="PluginTaskSnapshot v1: cancellable asynchronous frame task; verified transparent sRGB PNG Data, input digest and dependency fingerprints";inputSchema=PluginRPCSchemas.request();outputSchema=PluginRPCSchemas.response();filesystemAccess=false;networkAccess=false}
+    public init(pluginID:String,capabilityID:String,version:String,inputSchemaVersion:Int=1){self.pluginID=pluginID;self.capabilityID=capabilityID;self.version=version;methods=PluginMethod.allCases;self.inputSchemaVersion=inputSchemaVersion;outputSchemaVersion=1;inputContract="PluginFrameInput v\(inputSchemaVersion): visual-only props, already-mapped source frame, byte-bound image bank, frozen invocation and budget reference";outputContract="PluginTaskSnapshot v1: cancellable asynchronous frame task; verified transparent sRGB PNG Data, input digest and dependency fingerprints";inputSchema=PluginRPCSchemas.request(inputSchemaVersion:inputSchemaVersion);outputSchema=PluginRPCSchemas.response(inputSchemaVersion:inputSchemaVersion);filesystemAccess=false;networkAccess=false}
 }
 public struct PluginRPCError:Codable,Equatable,Sendable {
     public var code:String;public var message:String;public var retryable:Bool;public var nextAction:String
@@ -117,7 +128,7 @@ public enum PluginProtocolRules {
         }
         guard p.artworkRequired,let artwork=p.artwork else{throw VideoError.review("高级插件只接受实际图集输入，不启用旧几何默认")}
         do {
-            let roles=Set(artwork.sprites.map(\.role)),required:Set<String> = p.kind == .cartoon ? ["hero","floor"]:["hero","crate","wall","floor"]
+            let roles=Set(artwork.sprites.map(\.role)),required = ClassicArtworkRules.requiredRoles(knowledge: p.kind == .simulation && p.simulation.knowledge != nil, cartoon: p.kind == .cartoon)
             guard !artwork.sprites.isEmpty,artwork.sprites.count<=32,roles.count==artwork.sprites.count,required.isSubset(of:roles),Set(artwork.sprites.map(\.assetID))==Set(input.assets.map(\.assetID)) else{throw VideoError.invalid("插件图块与实际图片集合不符")}
             for s in artwork.sprites {guard text(s.role,maximum:512),[s.x,s.y,s.width,s.height].allSatisfy(\.isFinite),s.x>=0,s.y>=0,s.width>0,s.height>0,s.x+s.width<=1.000001,s.y+s.height<=1.000001 else{throw VideoError.invalid("插件图块坐标无效")}}
         }
@@ -139,7 +150,7 @@ public enum PluginRPCSchemas {
         for entry in declaration.split(separator:" ") {let parts=entry.split(separator:":",maxSplits:1);let optional=parts[0].hasSuffix("?"),key=String(optional ? parts[0].dropLast():parts[0]);properties[key]=shape(String(parts[1]));if !optional{required.append(.string(key))}}
         return .object(["type":.string("object"),"properties":.object(properties),"required":.array(required),"additionalProperties":.boolean(false)])
     }
-    public static func definitions()->[String:AgentValue] {
+    public static func definitions(inputSchemaVersion: Int = 2)->[String:AgentValue] {
         let declarations:[String:String]=[
             "PluginInvocation":"workspaceID:s projectID:s revisionID:s revisionDigest:s jobID?:s invocationID:s budgetReference:s currency:s budgetLimit:n deadlineUnixTime:n",
             "PluginRect":"x:n y:n width:n height:n",
@@ -148,7 +159,7 @@ public enum PluginRPCSchemas {
             "PluginCharacterProps":"silhouette:CharacterSilhouette color:s actions:[s]",
             "PluginArtworkProps":"gameplay:ClassicGameplay sprites:[ClassicSprite] derivation:Derivation",
             "ClassicSprite":"role:s assetID:s x:n y:n width:n height:n",
-            "Simulation":"seed:n initial:i capacity:i unit:s events:[RuleEvent]",
+            "Simulation":"seed:n initial:i capacity:i unit:s events:[RuleEvent]" + (inputSchemaVersion >= 2 ? " knowledge?:KnowledgeSimulation" : ""),
             "RuleEvent":"id:s tick:i delta:i label:s",
             "PluginRasterAsset":"assetID:s data:data sha256:s width:i height:i",
             "PluginPNGFrame":"data:data sha256:s width:i height:i sourceFrame:i inputDigest:s dependencyFingerprints:hashes",
@@ -159,18 +170,22 @@ public enum PluginRPCSchemas {
             "PluginDescription":"pluginID:s capabilityID:s version:s methods:[PluginMethod] inputSchemaVersion:i outputSchemaVersion:i inputContract:s outputContract:s inputSchema:Schema outputSchema:Schema filesystemAccess:b networkAccess:b"
         ]
         var result=declarations.mapValues(record)
+        if inputSchemaVersion >= 2 {
+            for (key, declaration) in KnowledgeSimulationSchema.records { result[key] = record(declaration) }
+            for (key, values) in KnowledgeSimulationSchema.enums { result[key] = .object(["type": .string("string"), "enum": .array(values.map(AgentValue.string))]) }
+        }
         let enums:[String:[String]]=["SceneKind":[SceneKind.simulation.rawValue,SceneKind.cartoon.rawValue],"CharacterSilhouette":["圆形","方形","菱形"],"ClassicGameplay":ClassicGameplay.allCases.map(\.rawValue),"Derivation":[ClassicArtwork.Derivation.original.rawValue,ClassicArtwork.Derivation.qStyle.rawValue],"PluginTaskState":["running","succeeded","cancelled","failed","timedOut"],"PluginMethod":PluginMethod.allCases.map(\.rawValue)]
         for(key,values)in enums{result[key] = .object(["type":.string("string"),"enum":.array(values.map(AgentValue.string))])}
         result["Schema"] = .object(["type":.string("object")]);return result
     }
-    public static func request()->AgentValue {
+    public static func request(inputSchemaVersion: Int = 2)->AgentValue {
         var schema=record("protocolMajor:i requestID:s method:PluginMethod input?:PluginFrameInput invocation?:PluginInvocation taskID?:s").object!
-        schema["$defs"] = .object(definitions());schema["$schema"] = .string("https://json-schema.org/draft/2020-12/schema")
+        schema["$defs"] = .object(definitions(inputSchemaVersion: inputSchemaVersion));schema["$schema"] = .string("https://json-schema.org/draft/2020-12/schema")
         schema["description"] = .string("protocolMajor=1. validate/estimate/execute require input. progress/cancel require the complete matching invocation; progress also requires taskID. cancel without taskID closes the whole invocation and exits the service.")
         return .object(schema)
     }
-    public static func response()->AgentValue {
+    public static func response(inputSchemaVersion: Int = 2)->AgentValue {
         var schema=record("protocolMajor:i requestID:s ok:b state:s descriptor?:PluginDescription inputDigest?:s task?:PluginTaskSnapshot cost?:PluginCost error?:PluginRPCError").object!
-        schema["$defs"] = .object(definitions());schema["$schema"] = .string("https://json-schema.org/draft/2020-12/schema");return .object(schema)
+        schema["$defs"] = .object(definitions(inputSchemaVersion: inputSchemaVersion));schema["$schema"] = .string("https://json-schema.org/draft/2020-12/schema");return .object(schema)
     }
 }

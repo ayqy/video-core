@@ -83,13 +83,18 @@ public enum ClassicArtworkMedia {
     }
 }
 public enum ClassicSpritePainter {
-    public static func draw(_ role:String,artwork:ClassicArtwork,resources:RenderResources,in rect:CGRect,context:CGContext,flip:Bool=false,rotation:CGFloat=0) throws {
+    public enum ContentMode { case fit, fill }
+    public static func draw(_ role:String,artwork:ClassicArtwork,resources:RenderResources,in rect:CGRect,context:CGContext,flip:Bool=false,rotation:CGFloat=0,contentMode:ContentMode = .fit) throws {
         let image=try resources.sprite(role,artwork:artwork)
         context.saveGState();defer{context.restoreGState()}
+        // Backgrounds may crop their already validated source viewport to cover
+        // a stage. Character and legacy sprite calls retain complete-image fit.
+        if contentMode == .fill { context.clip(to:rect) }
         context.translateBy(x:rect.midX,y:rect.midY);context.rotate(by:rotation)
         if flip {context.scaleBy(x:-1,y:1)}
         context.interpolationQuality = artwork.derivation == .original ? .none:.high
-        let ratio=min(rect.width/CGFloat(image.width),rect.height/CGFloat(image.height))
+        let horizontal=rect.width/CGFloat(image.width),vertical=rect.height/CGFloat(image.height)
+        let ratio=contentMode == .fill ? max(horizontal,vertical):min(horizontal,vertical)
         context.draw(image,in:CGRect(x:-CGFloat(image.width)*ratio/2,y:-CGFloat(image.height)*ratio/2,width:CGFloat(image.width)*ratio,height:CGFloat(image.height)*ratio))
     }
 }

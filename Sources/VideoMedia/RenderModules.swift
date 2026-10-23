@@ -195,7 +195,7 @@ public enum RenderCatalogResolver {
             let manifest = try entry.manifest.verified(as: PluginManifest.self, publicKey: publicKey)
             let policy = try entry.policy.verified(as: CommercialPolicy.self, publicKey: publicKey)
             guard let capability = supportedCapabilities[manifest.id], seen.insert(manifest.id).inserted, !manifest.version.isEmpty,
-                  manifest.abi == 1, manifest.minimumCore <= 1, manifest.inputSchema == 1, manifest.outputSchema == 1,
+                  manifest.abi == 1, manifest.minimumCore <= 1, PluginInputCompatibility.supports(pluginID: manifest.id, version: manifest.inputSchema), manifest.outputSchema == 1,
                   manifest.permissions.isEmpty, manifest.capabilities == [capability], ["open", "closed"].contains(manifest.sourceVisibility),
                   policy.pluginID == manifest.id, ["free", "paid", "disabled"].contains(policy.access),
                   ["open", "closed"].contains(policy.sourceVisibility), policy.updatedAt <= now.addingTimeInterval(300) else {

@@ -64,6 +64,19 @@ final class ModuleCatalogPublicationTests: XCTestCase {
         changed[0].policy.version += 1
         XCTAssertEqual(try plan(changed, previous: original)[0].policy.sourceVisibility, "open")
     }
+    func testKnowledgeSchemaUpgradeRequiresNewModuleVersionButNotNewAccessPolicy() throws {
+        let original = entries(); var upgraded = original
+        upgraded[0].manifest.inputSchema = 2
+        XCTAssertThrowsError(try plan(upgraded, previous: original), "相同module版本不可由旧schema改为新知识语义")
+        upgraded[0].policy.version += 1
+        XCTAssertThrowsError(try plan(upgraded, previous: original), "只提高商业策略版本不能冒充模块升版")
+        upgraded[0].manifest.version = "1.1.0"; upgraded[0].policy = original[0].policy
+        let result = try plan(upgraded, previous: original)
+        XCTAssertEqual(result[0].manifest.inputSchema, 2); XCTAssertEqual(result[0].manifest.version, "1.1.0")
+        XCTAssertEqual(try Codec.data(result[0].policy), try Codec.data(original[0].policy), "新知识实现可保原商业权益，策略时间戳不伪造")
+        var free = result; free[0].policy.version += 1; free[0].policy.access = "free"
+        XCTAssertEqual(try plan(free, previous: result)[0].manifest, result[0].manifest, "paid/free切换仍不要求重写调用或模块实现")
+    }
     private func sourceReview() throws -> (SourcePublicationReview,[SourcePublicationFile]) {
         func file(_ path:String,_ content:String)->SourcePublicationFile {
             let data=Data(content.utf8);return SourcePublicationFile(path:path,bytes:data.count,sha256:Codec.hash(data))

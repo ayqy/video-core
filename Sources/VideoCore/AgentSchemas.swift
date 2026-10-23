@@ -66,9 +66,9 @@ public enum AgentSchemas {
             "ClassicAudioCue":"id:s assetID:s startFrame:i durationFrames:i gain:n use:ClassicAudioUse listened:b",
             "Caption":"id:s text:s startFrame:i endFrame:i alignment:s confirmed:b",
             "VoiceTake":"assetID:s textDigest:s durationFrames:i method:s listened:b",
-            "Simulation":"seed:i initial:i capacity:i unit:s events:[RuleEvent]",
+            "Simulation":"seed:i initial:i capacity:i unit:s events:[RuleEvent] knowledge?:KnowledgeSimulation",
             "RuleEvent":"id:s tick:i delta:i label:s",
-            "RuleTrace":"ruleVersion:i inputDigest:s seed:i unit:s initial:i capacity:i throughTick:i frameStep:i transitions:[RuleTransition] finalState:i recordedFPS?:i recordedDurationFrames?:i recordedSpeed?:n recordedPauseFrames?:i recordedLastSourceFrame?:i",
+            "RuleTrace":"ruleVersion:i inputDigest:s seed:i unit:s initial:i capacity:i throughTick:i frameStep:i transitions:[RuleTransition] finalState:i recordedFPS?:i recordedDurationFrames?:i recordedSpeed?:n recordedPauseFrames?:i recordedLastSourceFrame?:i knowledgeTrace?:KnowledgeTrace",
             "RuleTransition":"tick:i eventID:s label:s requestedDelta:i before:i after:i appliedDelta:i clippedDelta:i",
             "Keyframe":"id:s frame:i x:n y:n scale:n",
             "SceneLayer":"id:s kind:LayerKind text:s assetID?:s x:n y:n width:n height:n color:s opacity:n startFrame:i endFrame:i locked:b keyframes:[Keyframe]",
@@ -79,6 +79,8 @@ public enum AgentSchemas {
             "NarrativeSource":"id:s assetID:s pages:[i] startFrame?:i endFrame?:i excerpt:s confirmed:b"
         ]
         var result=records.mapValues(entity)
+        for (key, declaration) in KnowledgeSimulationSchema.records { result[key] = entity(declaration) }
+        for (key, values) in KnowledgeSimulationSchema.enums { result[key] = .object(["type": .string("string"), "enum": .array(values.map(AgentValue.string))]) }
         let enums:[String:[String]]=["Purpose":Purpose.allCases.map(\.rawValue),"SceneKind":SceneKind.allCases.map(\.rawValue),"Aspect":Aspect.allCases.map(\.rawValue),"RangeKind":CourseMapping.RangeKind.allCases.map(\.rawValue),"CustomerKind":CustomerKind.allCases.map(\.rawValue),"RevenueKind":RevenueKind.allCases.map(\.rawValue),"Settlement":Settlement.allCases.map(\.rawValue),"AuthorizationScope":AuthorizationScope.allCases.map(\.rawValue),"LayerKind":SceneLayer.Kind.allCases.map(\.rawValue),"CharacterSilhouette":CharacterSilhouette.allCases.map(\.rawValue),"BaiduSegmentKind":["text","image","video"],"BillingKind":["charge","refundRequested","refundReceived"],"ClassicGameplay":ClassicGameplay.allCases.map(\.rawValue),"ClassicDerivation":ClassicArtwork.Derivation.allCases.map(\.rawValue),"ClassicAudioUse":ClassicAudioCue.Use.allCases.map(\.rawValue)]
         for (key,values) in enums{result[key] = .object(["type":.string("string"),"enum":.array(values.map(AgentValue.string))])}
         let edits:[String:String] = ["insertScene":"_0:Scene _1:i","replaceScene":"_0:s _1:Scene","removeScene":"_0:s","moveScene":"_0:s _1:i","splitScene":"_0:s _1:i","lockScene":"_0:s _1:b","aspect":"_0:Aspect","cta":"_0:s","music":"_0?:s","audioQuality":"_0?:AudioQualityPolicy","productionBrief":"_0?:ProductionBrief","purpose":"_0:Purpose","restore":"_0:s","lockLayer":"_0:s _1:s _2:b","recordSimulation":"_0:s","confirmSimulationRecording":"_0:s"]

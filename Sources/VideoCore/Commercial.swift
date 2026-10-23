@@ -57,7 +57,7 @@ public struct SignedDocument: Codable, Sendable {
 }
 public enum PluginHost {
     public static func validate(manifest: PluginManifest, policy: CommercialPolicy, installedDigest: String, entitlements: Set<String>, grantedPermissions: Set<String>) throws {
-        guard manifest.abi == 1, manifest.inputSchema == 1, manifest.outputSchema == 1, manifest.minimumCore <= 1 else { throw VideoError.unavailable("插件ABI或schema不兼容") }
+        guard manifest.abi == 1, PluginInputCompatibility.supports(pluginID: manifest.id, version: manifest.inputSchema), manifest.outputSchema == 1, manifest.minimumCore <= 1 else { throw VideoError.unavailable("插件ABI或schema不兼容") }
         guard manifest.implementationDigest == installedDigest, !installedDigest.isEmpty else { throw VideoError.permission("插件实现摘要不匹配") }
         guard manifest.permissions.isSubset(of: grantedPermissions) else { throw VideoError.permission("插件请求越权") }
         guard policy.pluginID == manifest.id, ["free", "paid", "disabled"].contains(policy.access), ["open", "closed"].contains(policy.sourceVisibility) else { throw VideoError.invalid("插件策略不合法") }

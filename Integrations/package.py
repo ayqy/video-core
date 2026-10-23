@@ -6,7 +6,6 @@ import argparse
 import importlib.util
 import json
 from pathlib import Path
-import re
 import shutil
 import tempfile
 
@@ -14,14 +13,19 @@ HOSTS = ("codex", "claude", "gemini", "grok", "deepseek-codex", "deepseek-qwen")
 
 
 def package(source: Path, destination: Path, host: str, version: str, *, dry_run=False) -> str:
-    if host not in HOSTS or not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+(?:-[a-z0-9.-]+)?", version):
-        raise ValueError("需要实际支持的宿主和明确的语义版本")
     spec = importlib.util.spec_from_file_location("video_skill_install", Path(__file__).with_name("install.py"))
     installer = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(installer)
+    installer.reject_links(source)
+    installer.reject_links(destination)
+    source, destination = source.resolve(), destination.resolve()
+    if source == destination or source in destination.parents or destination in source.parents:
+        raise ValueError("源Skill和宿主包目标不能相同、互为祖先或互相包含")
+    relative = installer.skill_relative(host)
+    manifests = installer.host_manifests(host, version)
     expected = installer.fingerprints(source)
-    if any(path.is_symlink() for path in (destination, *destination.parents)):
-        raise ValueError("交付目录或父目录不能是符号链接")
+    if not {"LICENSE", "NOTICE"}.issubset(expected):
+        raise ValueError("共用Skill缺少完整许可与第三方声明")
     if destination.exists():
         raise ValueError("宿主包目标已存在，不覆盖用户文件")
     if dry_run:
@@ -31,36 +35,20 @@ def package(source: Path, destination: Path, host: str, version: str, *, dry_run
     try:
         payload = stage / "payload"
         payload.mkdir()
-        if host in ("codex", "deepseek-codex"):
-            relative = ".agents/skills/video"
-        elif host == "deepseek-qwen":
-            relative = ".qwen/skills/video"
-        else:
-            relative = "skills/video"
         target = payload / relative
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copytree(source, target)
         if installer.fingerprints(target) != expected:
             raise ValueError("宿主Skill与共用源不一致，未交付")
-        if host in ("claude", "grok"):
-            folder = payload / ".claude-plugin"
-            folder.mkdir()
-            manifest = {"name": "video", "version": version,
-                        "description": "Free native video production Skill using the installed video CLI.",
-                        "author": {"name": "Video contributors"},
-                        "homepage": "https://ayqy.github.io/video-core/",
-                        "repository": "https://github.com/ayqy/video-core",
-                        "license": "Apache-2.0"}
-            (folder / "plugin.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n")
-        elif host == "gemini":
-            manifest = {"name": "video", "version": version,
-                        "description": "Free native video production Skill using the installed video CLI."}
-            (payload / "gemini-extension.json").write_text(json.dumps(manifest, indent=2) + "\n")
+        for name, manifest in manifests.items():
+            path = payload / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n")
         shutil.copyfile(source / "LICENSE", payload / "LICENSE")
         shutil.copyfile(source / "NOTICE", payload / "NOTICE")
         if destination.exists() or destination.is_symlink():
             raise ValueError("目标在打包期间出现，保留用户文件")
-        payload.rename(destination)
+        installer.install_package(payload, destination, host)
     finally:
         shutil.rmtree(stage, ignore_errors=True)
     return "宿主源包已生成并逐文件核对；不含模型配置、凭据、MCP或闭源实现，不声称已安装、可调用或上架"

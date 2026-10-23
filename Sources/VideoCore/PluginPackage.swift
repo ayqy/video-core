@@ -59,7 +59,7 @@ public enum PluginPackageRules {
     public static func validate(_ manifest:PluginPackageManifest,policy:CommercialPolicy,architecture:String,osMajor:Int,minimumPolicyVersion:Int=1,now:Date=Date())throws {
         let module=manifest.module,expected=try PluginExecutionDescriptor(pluginID:module.id,architecture:architecture)
         guard manifest.format==1,manifest.policyRef==policyName,manifest.execution==expected,osMajor>=expected.minimumOSMajor,
-              module.abi==1,module.minimumCore==1,module.inputSchema==1,module.outputSchema==1,
+              module.abi==1,module.minimumCore==1,PluginInputCompatibility.supports(pluginID:module.id,version:module.inputSchema),module.outputSchema==1,
               module.capabilities==[capabilities[module.id]!],module.permissions.isEmpty,
               module.version.utf8.count<=100,module.version.range(of:"^[0-9]+\\.[0-9]+\\.[0-9]+(?:-[A-Za-z0-9.-]+)?$",options:.regularExpression) != nil,
               manifest.implementationDigest==module.implementationDigest,module.implementationDigest.range(of:"^[a-f0-9]{64}$",options:.regularExpression) != nil,

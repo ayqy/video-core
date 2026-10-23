@@ -55,7 +55,7 @@ final class ContentWorkflowIntegrationTests:XCTestCase {
         let decoded=try Codec.decoder().decode(StyleKit.self,from:encoded)
         XCTAssertNil(decoded.createdAt);XCTAssertEqual(try Codec.data(decoded),encoded)
     }
-    func testBriefRightsAndOriginalDocumentJoinFrozenCloudScopeAndRequireUploadConsent()throws {
+    func testBriefRightsAndOriginalDocumentJoinFrozenLocalVersion()throws {
         var(db,w,_)=try fixture()
         var source=Asset(workspaceID:w.id,name:"授权原件",hash:String(repeating:"a",count:64),ext:"pdf",bytes:123,mediaType:"document")
         let sourceRights=Evidence(workspaceID:w.id,title:"原件使用许可",source:"signed-document",claim:"允许核对原件",owner:"权利方",commercialAllowed:true,uploadConsent:true,verified:true)
@@ -71,9 +71,9 @@ final class ContentWorkflowIntegrationTests:XCTestCase {
         XCTAssertTrue(ids.contains("evidence:"+briefRights.id));XCTAssertTrue(ids.contains("asset:"+source.id));XCTAssertTrue(ids.contains("evidence:"+sourceRights.id))
         let p=db.projects[0],access=WorkspaceAccessContext(workspaceID:w.id,principal:w.owner)
         let scope=try WorkspaceAccessRules.readModel(projectID:p.id,revisionID:revision.id,access:access,in:db)
-        let preview=ScopedArtifact(id:"preview",jobID:"real-job",mime:"video/mp4",sha256:String(repeating:"b",count:64),bytes:1)
-        var checkedScope=scope;checkedScope.artifacts=[preview]
-        XCTAssertThrowsError(try CloudReviewRules.prepare(scope:checkedScope,preview:preview,role:.collaborator,expiresAt:Date().addingTimeInterval(300)))
+        XCTAssertEqual(scope.revision.id,revision.id)
+        XCTAssertEqual(Set(scope.assets.map(\.id)),[source.id])
+        XCTAssertEqual(Set(scope.evidence.map(\.id)),[sourceRights.id,briefRights.id])
     }
     func testNativeZeroBatchStillPinsVersionWhileForeignCurrencyDoesNotBlockFreeLocalWork()throws {
         var(db,w,p)=try fixture()

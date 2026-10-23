@@ -22,11 +22,11 @@ public final class PluginRPCServer:@unchecked Sendable {
     private var tasks:[String:PluginTaskSnapshot]=[:]
     private var order:[String]=[]
     private var executeReceipts:[String:(digest:String,taskID:String)]=[:]
-    public init(pluginID:String,capabilityID:String,version:String,moduleFactory:(PluginManifest)throws->any SceneRenderModule,terminate:@escaping @Sendable ()->Void={_exit(124)},taskTimeout:Double=PluginProtocolRules.maximumTaskSeconds)throws {
-        guard PluginProtocolRules.text(pluginID),PluginProtocolRules.text(version),["game.simulate","cartoon.animate"].contains(capabilityID),taskTimeout.isFinite,taskTimeout>0,taskTimeout<=PluginProtocolRules.maximumTaskSeconds else{throw VideoError.invalid("能力服务标识或单帧截止不合法")}
-        descriptor=PluginDescription(pluginID:pluginID,capabilityID:capabilityID,version:version);self.terminate=terminate;self.taskTimeout=taskTimeout
+    public init(pluginID:String,capabilityID:String,version:String,inputSchemaVersion:Int=1,moduleFactory:(PluginManifest)throws->any SceneRenderModule,terminate:@escaping @Sendable ()->Void={_exit(124)},taskTimeout:Double=PluginProtocolRules.maximumTaskSeconds)throws {
+        guard PluginProtocolRules.text(pluginID),PluginProtocolRules.text(version),["game.simulate","cartoon.animate"].contains(capabilityID),taskTimeout.isFinite,taskTimeout>0,taskTimeout<=PluginProtocolRules.maximumTaskSeconds,PluginInputCompatibility.supports(pluginID:pluginID,version:inputSchemaVersion) else{throw VideoError.invalid("能力服务标识或单帧截止不合法")}
+        descriptor=PluginDescription(pluginID:pluginID,capabilityID:capabilityID,version:version,inputSchemaVersion:inputSchemaVersion);self.terminate=terminate;self.taskTimeout=taskTimeout
         // This describes the actual linked implementation only, never grants paid access.
-        module=try moduleFactory(PluginManifest(id:pluginID,version:version,capabilities:[capabilityID],implementationDigest:BuiltinExecutableIdentity.current().digest,permissions:[]))
+        module=try moduleFactory(PluginManifest(id:pluginID,version:version,capabilities:[capabilityID],inputSchema:inputSchemaVersion,implementationDigest:BuiltinExecutableIdentity.current().digest,permissions:[]))
     }
     deinit{watchdog?.cancel();taskWatchdog?.cancel()}
     public func exchange(_ data:Data,reply:@escaping @Sendable (Data)->Void) {
@@ -86,7 +86,7 @@ public final class PluginRPCServer:@unchecked Sendable {
     }
     private func input(_ request:PluginRPCRequest)throws->PluginFrameInput {
         guard let value=request.input else{throw VideoError.invalid("插件操作缺少实际帧输入")}
-        _=try scope(request);try PluginProtocolRules.validate(value,capabilityID:descriptor.capabilityID)
+        _=try scope(request);try PluginInputCompatibility.requireKnowledgeSupport(value.props.simulation,pluginID:descriptor.pluginID,inputSchema:descriptor.inputSchemaVersion);try PluginProtocolRules.validate(value,capabilityID:descriptor.capabilityID)
         return value
     }
     private func handle(_ request:PluginRPCRequest)throws->PluginRPCResponse {

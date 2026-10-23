@@ -1,11 +1,14 @@
 """Transport/security rules use a local protocol peer, never a model account."""
 from pathlib import Path
+import hashlib
 import json
+import os
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
-from qwen_stream import ExactPolicy, consume, create_isolated_settings
+from qwen_stream import ExactPolicy, FilePin, PinnedPolicy, consume, create_isolated_settings, run_qwen
 
 
 PEER = '''import json,sys,time
@@ -29,7 +32,7 @@ assert sys.stdin.readline()==''
 
 class QwenStreamTests(unittest.TestCase):
     def setUp(self):
-        base = Path.cwd() / ".qwen-check" / "test-temp"
+        base = Path.cwd() / ".cache" / "qwen-check" / "test-temp"
         base.mkdir(parents=True, exist_ok=True)
         self.temporary = tempfile.TemporaryDirectory(dir=base)
         self.root = Path(self.temporary.name)
@@ -94,6 +97,241 @@ class QwenStreamTests(unittest.TestCase):
         self.assertEqual(settings["modelProviders"]["openai"][0]["envKey"], "DEEPSEEK_API_KEY")
         with self.assertRaises(ValueError):
             create_isolated_settings(self.root, home, runtime)
+
+
+PINNED_PEER = '''import json,sys
+mode=sys.argv[1]
+first=json.loads(sys.stdin.readline())
+print(json.dumps({'type':'control_response','response':{'subtype':'success','request_id':first['request_id'],'response':{'subtype':'initialize','capabilities':{'can_handle_can_use_tool':True}}}}),flush=True)
+assert json.loads(sys.stdin.readline())['type']=='user'
+if mode=='empty':
+ print(json.dumps({'type':'result','subtype':'success','is_error':False}),flush=True)
+ sys.exit(0)
+commands=['rtk proxy video schema','rtk proxy video doctor']
+if mode=='reverse':commands.reverse()
+if mode=='repeat':commands[1]=commands[0]
+for i,command in enumerate(commands):
+ identifier='call-'+str(i)
+ values={'command':command}
+ use={'type':'assistant','message':{'role':'assistant','content':[{'type':'tool_use','id':identifier,'name':'run_shell_command','input':values}]}}
+ if mode!='permission-first':print(json.dumps(use),flush=True)
+ print(json.dumps({'type':'control_request','request_id':'permission-'+str(i),'request':{'subtype':'can_use_tool','tool_name':'run_shell_command','tool_use_id':identifier,'input':values}}),flush=True)
+ reply=json.loads(sys.stdin.readline())
+ if reply['response']['response']['behavior']!='allow':sys.exit(0)
+ if mode=='permission-first':print(json.dumps(use),flush=True)
+ if mode=='mutated':
+  from pathlib import Path
+  Path(sys.argv[2]).write_text('changed after permission')
+ result={'type':'tool_result','tool_use_id':identifier if mode!='unknown-result' else 'unknown','is_error':mode=='error'}
+ print(json.dumps({'type':'user','message':{'role':'user','content':[result]}}),flush=True)
+print(json.dumps({'type':'result','subtype':'success','is_error':False}),flush=True)
+assert sys.stdin.readline()==''
+'''
+
+
+class PinnedQwenPolicyTests(unittest.TestCase):
+    """Only a local protocol peer is used; it never executes a tool or model."""
+    def setUp(self):
+        base = Path.cwd() / ".cache" / "qwen-check" / "test-temp"
+        base.mkdir(parents=True, exist_ok=True)
+        self.temporary = tempfile.TemporaryDirectory(dir=base)
+        self.root = Path(self.temporary.name).resolve()
+        self.fixed = self.root / "fixed-input.txt"
+        self.fixed.write_text("fixed reviewed input")
+        self.digest = hashlib.sha256(self.fixed.read_bytes()).hexdigest()
+        self.commands = ("rtk proxy video schema", "rtk proxy video doctor")
+
+    def tearDown(self):
+        self.temporary.cleanup()
+
+    def policy(self, **kwargs):
+        return PinnedPolicy(self.root, self.commands, (FilePin(self.fixed, self.digest),), **kwargs)
+
+    def request(self, command=None, identifier="one", **values):
+        return {"subtype": "can_use_tool", "tool_name": "run_shell_command", "tool_use_id": identifier,
+                "input": {"command": command or self.commands[0], **values}}
+
+    def use(self, request):
+        return {"type": "assistant", "message": {"role": "assistant", "content": [
+            {"type": "tool_use", "id": request["tool_use_id"], "name": request["tool_name"], "input": request["input"]}]}}
+
+    def result(self, identifier="one", **extra):
+        return {"type": "user", "message": {"role": "user", "content": [
+            {"type": "tool_result", "tool_use_id": identifier, "is_error": False, **extra}]}}
+
+    def complete_one(self, policy, request):
+        policy.observe(self.use(request))
+        self.assertTrue(policy.allows(request))
+        policy.observe(self.result(request["tool_use_id"]))
+
+    def peer(self, mode):
+        script = self.root / "peer.py"
+        script.write_text(PINNED_PEER)
+        return [sys.executable, str(script), mode, str(self.fixed)]
+
+    def testPinnedSequenceHasNativeLifecycleWithoutCallerCallback(self):
+        for mode in ("ordered", "permission-first"):
+            with self.subTest(mode=mode):
+                result = consume(self.peer(mode), "test protocol only", self.policy(), seconds=3)
+                self.assertEqual(result["status"], "native_result")
+                self.assertEqual(result["exit_code"], 0)
+                self.assertTrue(result["policy_complete"])
+                self.assertEqual([d["allowed"] for d in result["decisions"]], [True, True])
+
+    def testReverseRepeatedUnknownAndErrorResultsCannotReportPolicyComplete(self):
+        for mode in ("reverse", "repeat", "unknown-result", "error", "empty"):
+            with self.subTest(mode=mode):
+                result = consume(self.peer(mode), "test protocol only", self.policy(), seconds=3)
+                self.assertEqual(result["status"], "policy_refused")
+                self.assertFalse(result["policy_complete"])
+
+    def testCompletionRechecksPinnedBytesAfterPermission(self):
+        result = consume(self.peer("mutated"), "test protocol only", self.policy(), seconds=3)
+        self.assertEqual(result["status"], "policy_refused")
+        self.assertFalse(result["policy_complete"])
+
+    def testPermissionRechecksPinsAndDoesNotGrantAfterFailure(self):
+        policy = self.policy()
+        self.fixed.write_text("changed before permission")
+        self.assertFalse(policy.allows(self.request()))
+        self.assertTrue(policy.failed)
+        self.assertFalse(policy.allows(self.request(identifier="another")))
+
+    def testDirectoryReplacementAndNoncanonicalAliasAreRefused(self):
+        directory = self.root / "workdir"
+        directory.mkdir()
+        policy = PinnedPolicy(directory, self.commands, (FilePin(self.fixed, self.digest),))
+        replacement = self.root / "moved-workdir"
+        directory.rename(replacement)
+        directory.symlink_to(replacement, target_is_directory=True)
+        self.assertFalse(policy.allows(self.request()))
+        self.assertFalse(self.policy().allows(self.request(directory=str(self.root / ".." / self.root.name))))
+
+    def testPinRejectsSymlinkHardlinkWrongHashAndSameByteReplacement(self):
+        link = self.root / "link"
+        link.symlink_to(self.fixed)
+        for pin in (FilePin(link, self.digest), FilePin(self.fixed, "0" * 64)):
+            with self.assertRaises(ValueError):
+                pin.verify()
+        link.unlink()
+        os.link(self.fixed, link)
+        with self.assertRaises(ValueError):
+            FilePin(self.fixed, self.digest).verify()
+        link.unlink()
+        pin = FilePin(self.fixed, self.digest)
+        pin.verify()
+        replacement = self.root / "replacement"
+        replacement.write_bytes(self.fixed.read_bytes())
+        replacement.replace(self.fixed)
+        with self.assertRaisesRegex(ValueError, "identity_changed"):
+            pin.verify()
+
+    def testPendingDuplicateAndReorderedCommandsAreFailClosed(self):
+        for scenario in ("pending", "same-id", "same-command", "reverse", "extra"):
+            with self.subTest(scenario=scenario):
+                policy = self.policy()
+                if scenario == "reverse":
+                    self.assertFalse(policy.allows(self.request(self.commands[1])))
+                else:
+                    first = self.request()
+                    if scenario == "pending":
+                        self.assertTrue(policy.allows(first))
+                    else:
+                        self.complete_one(policy, first)
+                    if scenario == "extra":
+                        self.complete_one(policy, self.request(self.commands[1], "two"))
+                    request = self.request(self.commands[1] if scenario in ("pending", "same-id") else self.commands[0],
+                                           "one" if scenario == "same-id" else "extra")
+                    self.assertFalse(policy.allows(request))
+                self.assertTrue(policy.failed)
+
+    def testStrictRequestsRejectUnknownFieldsDirectoryBackgroundAndWrites(self):
+        variants = [{"env": {"UNREVIEWED": "value"}}, {"timeout": 0}, {"async": False},
+                    {"directory": str(self.root.parent)}, {"is_background": True}, {"is_background": 0},
+                    {"command": self.commands[0] + " --extra"}]
+        for values in variants:
+            with self.subTest(values=values):
+                self.assertFalse(self.policy().allows(self.request(**values)))
+        for path in (self.fixed, self.root / "other.json"):
+            self.assertFalse(self.policy().allows({"subtype": "can_use_tool", "tool_use_id": "edit", "tool_name": "write_file",
+                                                   "input": {"file_path": str(path), "content": "{}"}}))
+
+    def testUnknownDuplicateChangedAndUninitializedUsesAreRefused(self):
+        for scenario in ("duplicate", "changed", "uninitialized", "unknown-result", "result-without-use"):
+            with self.subTest(scenario=scenario):
+                policy = self.policy()
+                request = self.request()
+                if scenario == "duplicate":
+                    policy.observe(self.use(request))
+                    event = self.use(request)
+                elif scenario == "changed":
+                    self.assertTrue(policy.allows(request))
+                    event = self.use(self.request(description="changed input"))
+                elif scenario in ("unknown-result", "result-without-use"):
+                    self.assertTrue(policy.allows(request))
+                    event = self.result("unknown" if scenario == "unknown-result" else "one")
+                else:
+                    event = self.use(request)
+                with self.assertRaises(ValueError):
+                    policy.observe(event, initialized=scenario != "uninitialized")
+                self.assertTrue(policy.failed)
+
+    def testSkillIsOptionalSingleUseBeforeShellAndNoOtherSkillIsGranted(self):
+        request = {"subtype": "can_use_tool", "tool_name": "skill", "tool_use_id": "skill-one", "input": {"skill": "video"}}
+        self.assertFalse(self.policy().allows(request))
+        policy = self.policy(allow_skill=True)
+        self.complete_one(policy, request)
+        self.complete_one(policy, self.request())
+        self.assertFalse(policy.allows({**request, "tool_use_id": "skill-two"}))
+        other = {**request, "input": {"skill": "other"}}
+        self.assertFalse(self.policy(allow_skill=True).allows(other))
+
+    def testPolicyIsSingleInvocationAndRequiresDistinctFiniteCommandsAndPins(self):
+        policy = self.policy()
+        policy.begin()
+        with self.assertRaises(ValueError):
+            policy.begin()
+        for commands, pins in (((), (FilePin(self.fixed, self.digest),)), ((self.commands[0],) * 2, (FilePin(self.fixed, self.digest),)),
+                               (self.commands, ()), (self.commands, (FilePin(self.fixed, self.digest),) * 2)):
+            with self.assertRaises(ValueError):
+                PinnedPolicy(self.root, commands, pins)
+
+    def testStrictSettingsAndRunToolArgumentsHaveNoWriteOrAutomaticSkill(self):
+        for allow_skill in (False, True):
+            with self.subTest(allow_skill=allow_skill):
+                policy = self.policy(allow_skill=allow_skill)
+                home, runtime = self.root / ("home-" + str(allow_skill)), self.root / ("runtime-" + str(allow_skill))
+                create_isolated_settings(self.root, home, runtime, strict_policy=policy)
+                settings = json.loads((home / "settings.json").read_text())
+                expected_tools = ["run_shell_command"] + (["skill"] if allow_skill else [])
+                self.assertEqual(settings["permissions"], {"ask": ["Bash", "Edit"] + (["Skill"] if allow_skill else []), "allow": []})
+                self.assertEqual(settings["tools"], {"core": expected_tools})
+                with patch("qwen_stream.consume", return_value={"test_only": True}) as local_contract:
+                    run_qwen("not sent to a host", policy, home, runtime)
+                    arguments = local_contract.call_args.args[0]
+                self.assertEqual(arguments[arguments.index("--core-tools") + 1:], expected_tools)
+                self.assertEqual(arguments[arguments.index("--max-tool-calls") + 1], str(2 + int(allow_skill)))
+
+    def testStrictRunRejectsActualWeakenedSettingsBeforeAnyProcess(self):
+        for variant in ("allow", "ask", "tools", "hooks", "project"):
+            with self.subTest(variant=variant):
+                policy = self.policy(allow_skill=True)
+                home, runtime = self.root / ("home-" + variant), self.root / ("runtime-" + variant)
+                create_isolated_settings(self.root, home, runtime, strict_policy=policy)
+                config = home / "settings.json"
+                settings = json.loads(config.read_text())
+                if variant == "allow":settings["permissions"]["allow"] = ["Bash"]
+                elif variant == "ask":settings["permissions"]["ask"].remove("Skill")
+                elif variant == "tools":settings["tools"]["core"].append("write_file")
+                elif variant == "hooks":settings["hooks"] = {"unreviewed": "not executed"}
+                else:
+                    (self.root / ".qwen").mkdir()
+                    (self.root / ".qwen" / "settings.json").write_text("{}")
+                config.write_text(json.dumps(settings))
+                with patch("qwen_stream.consume") as local_contract:
+                    with self.assertRaises(ValueError):
+                        run_qwen("must not start", policy, home, runtime)
+                    local_contract.assert_not_called()
 
 
 if __name__ == "__main__":

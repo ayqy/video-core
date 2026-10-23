@@ -39,7 +39,11 @@ public enum BeijingTime {
 }
 
 public enum Purpose: String, Codable, CaseIterable, Sendable { case course = "课程推广", tool = "工具推广", brand = "品牌合作", education = "非商业教学" }
-public enum SceneKind: String, Codable, CaseIterable, Sendable { case explanation = "图文讲解", simulation = "规则模拟", cartoon = "原创卡通", image = "图片", video = "真实录屏" }
+public enum SceneKind: String, Codable, CaseIterable, Sendable {
+    case explanation = "图文讲解", simulation = "规则模拟", cartoon = "原创卡通", image = "图片", video = "真实录屏"
+    /// Preserve the historical wire value while showing the current familiar-character scope.
+    public var displayName: String { self == .cartoon ? "熟悉角色卡通" : rawValue }
+}
 public enum Aspect: String, Codable, CaseIterable, Sendable {
     case landscape = "16:9", portrait = "9:16"
     public var width: Int { self == .landscape ? 1280 : 720 }

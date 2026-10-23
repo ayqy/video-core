@@ -121,7 +121,7 @@ public enum ModuleCatalogPublicationRules {
         for entry in entries {
             let manifest = entry.manifest, policy = entry.policy
             guard manifest.abi == 1, manifest.minimumCore == 1,
-                  manifest.inputSchema == 1, manifest.outputSchema == 1,
+                  PluginInputCompatibility.supports(pluginID: manifest.id, version: manifest.inputSchema), manifest.outputSchema == 1,
                   manifest.capabilities == [expectedCapabilities[manifest.id]!], manifest.permissions.isEmpty,
                   manifest.version.utf8.count <= 100,
                   manifest.version.range(of: "^[0-9]+\\.[0-9]+\\.[0-9]+(?:-[A-Za-z0-9][A-Za-z0-9.-]*)?(?:\\+[A-Za-z0-9][A-Za-z0-9.-]*)?$", options: .regularExpression) != nil,
@@ -149,6 +149,10 @@ public enum ModuleCatalogPublicationRules {
         let old = Dictionary(uniqueKeysWithValues: previous.map { ($0.manifest.id, $0) })
         return try proposed.map { entry in
             let prior = old[entry.manifest.id]!
+            guard entry.manifest.version != prior.manifest.version ||
+                  (entry.manifest.inputSchema == prior.manifest.inputSchema && entry.manifest.outputSchema == prior.manifest.outputSchema) else {
+                throw VideoError.conflict("同一模块的同版本输入/输出schema语义不同；请提高模块版本，原目录保留")
+            }
             guard entry.policy.version >= prior.policy.version else {
                 throw VideoError.permission("发行策略版本低于该模块已发布版本，未替换原目录")
             }

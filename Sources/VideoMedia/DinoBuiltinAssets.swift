@@ -19,6 +19,7 @@ public enum DinoBuiltinAssets {
     private static let files: [File] = [
         File(name:"dino-offline-sprite-original.png",hash:"e4222715b556e7d99622c83e620d2f8e090047e56adb07923047f95828d561f2",type:"image",source:upstream+sprite),
         File(name:"dino-hero-q-v1.png",hash:"6c65ae3d80eab79c5e2c2799fe228fd39d6c1a8b4ab37ada80ae805b706c8071",type:"image",source:upstream+sprite+"；同小恐龙实际Q版派生v1，2026-10-23"),
+        File(name:"dino-actions-q-v1.png",hash:"dc126cac1e9115848cf820019a198502e3b70743cd139869e3396a87049ccd56",type:"image",source:upstream+sprite+"；同小恐龙六动作实际Q版派生v1，2026-10-24，完整过程见dino-actions-q-v1.md"),
         File(name:"dino-backdrop-q-v2.png",hash:"30b2b721d6ecf8e8e1435911d5085ff5377dd6c955a7a044ead7ecc9681a5917",type:"image",source:upstream+sprite+"；同仙人掌/云/地面实际Q版宽幅派生v2，2026-10-23"),
         File(name:"dino-button-press-original.mp3",hash:"c29ea1bb6353a9bd16753d3f46957f0c80fb08769cc945d83b20d3c48470236e",type:"source_audio",source:upstream+"components/neterror/resources/sounds/button-press.mp3"),
         File(name:"dino-hit-original.mp3",hash:"4a618da307a0e5807de7782693113328bf0bd2bcdedc1029a7ed5c545354f4a1",type:"source_audio",source:upstream+"components/neterror/resources/sounds/hit.mp3"),
@@ -30,7 +31,8 @@ public enum DinoBuiltinAssets {
     private static let documents: [(String,String)] = [
         ("LICENSE","368cca1106be99d39ecd32a38d8305585d802a475effb66380b91ffc9bcf709b"),
         ("AUTHORS","846216f8ce44bcb56148603c2f0bdac18c06cff564aa7d4a72c50ad6619da310"),
-        ("dino-sources.md","dae5ae2d76cf5c6292df0eca0353e9cef1c73a419bf71c7310990877c8c06ff0")
+        ("dino-sources.md","e78cdd18e6d1fb5cb83d7e04812e08e3e7f87f8abd9be72c42d66e5dd0146ba6"),
+        ("dino-actions-q-v1.md","8ca912ef5f75193eb80b75754078c3c27a50819d4e3715f24278f7e7d31e4891")
     ]
     public static func importPack(bundle: Bundle = .main, workspaceID: String, repository: Repository) async throws -> DinoImportedPack {
         try await importPack(workspaceID:workspaceID,repository:repository) { name in
@@ -91,9 +93,17 @@ public enum DinoBuiltinAssets {
                 byName[file.name]=asset
                 sources.append(ClassicSource(assetID:asset.id,hash:asset.hash,source:file.source,owner:owner,license:"BSD-3-Clause；原件/实际派生/格式转换分别留存，具体用途另审",evidenceID:asset.evidenceID!))
             }
-            let original=byName["dino-offline-sprite-original.png"]!,hero=byName["dino-hero-q-v1.png"]!,background=byName["dino-backdrop-q-v2.png"]!
-            let sprites=[ClassicSprite(role:"hero",assetID:hero.id,x:347.0/1536,y:162.0/1024,width:845.0/1536,height:742.0/1024),ClassicSprite(role:"floor",assetID:background.id,x:0,y:0.80,width:0.70,height:0.12),ClassicSprite(role:"backdrop",assetID:background.id)]
-            let artwork=ClassicArtwork(gameplay:.platformer,sprites:sprites,sources:sources,derivation:.qStyle,transformation:"基于官方Chrome小恐龙sprite的同角色Q派生及同仙人掌/云/地面宽幅Q场景；已有文件实际像素裁切，未创造箱子/墙或冒充原游戏规则。",originalAssetIDs:[original.id])
+            let original=byName["dino-offline-sprite-original.png"]!,hero=byName["dino-hero-q-v1.png"]!,background=byName["dino-backdrop-q-v2.png"]!,actions=byName["dino-actions-q-v1.png"]!
+            var sprites=[ClassicSprite(role:"hero",assetID:hero.id,x:347.0/1536,y:162.0/1024,width:845.0/1536,height:742.0/1024),ClassicSprite(role:"floor",assetID:background.id,x:0,y:0.80,width:0.70,height:0.12),ClassicSprite(role:"backdrop",assetID:background.id),ClassicSprite(role:"knowledge_backdrop",assetID:background.id,x:0,y:0,width:0.80,height:1),ClassicSprite(role:"obstacle",assetID:background.id,x:1740.0/2048,y:397.0/683,width:260.0/2048,height:170.0/683)]
+            // Actual alpha silhouettes, including a six-pixel edge margin. No cell crosses
+            // another pose and no missing crate/wall is invented for the legacy model.
+            let poses:[(String,Double,Double,Double,Double)]=[
+                ("hero_idle",87,137,349,332),("hero_walk",586,143,367,330),
+                ("hero_walk_alt",1067,137,399,333),("hero_contribute",75,647,402,300),
+                ("hero_success",587,562,368,324),("hero_blocked",1075,602,389,345)
+            ]
+            sprites += poses.map { ClassicSprite(role:$0.0,assetID:actions.id,x:$0.1/1536,y:$0.2/1024,width:$0.3/1536,height:$0.4/1024) }
+            let artwork=ClassicArtwork(gameplay:.platformer,sprites:sprites,sources:sources,derivation:.qStyle,transformation:"基于官方Chrome小恐龙sprite的同角色Q派生、六动作图集及同仙人掌/云/地面宽幅Q场景；具体两次派生提示词与版本随来源原件保留。已有像素实际裁切，未创造箱子/墙或冒充原游戏规则；知识因果由明确教学模型驱动。",originalAssetIDs:[original.id])
             return DinoImportedPack(artwork:artwork,audioAssets:files.filter{$0.type=="audio"}.map{byName[$0.name]!})
         }
     }

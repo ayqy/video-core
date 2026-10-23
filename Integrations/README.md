@@ -20,6 +20,10 @@
 
 需要回滚时，以 `--rollback-from <上一版指纹> --update-from <当前指纹>` 指明目标及当前状态。工具校验已保留上一版的逐文件摘要，再执行同样的暂存、替换与回读；失败恢复原安装。回滚后的当前版本仍被保留，可再次更新。不存在、篡改、符号链接或来源不符的上一版不会使用。这里只保存已安装的公开 Skill 文件，不保存认证或会话。完整工程的安装迁移与回滚由工具运行时负责，不由 Skill 文件替换承担。
 
+Claude/Grok插件和Gemini扩展须更新完整包，单独替换`skills/video`不会更新原生manifest。用`package.py`生成并审查候选后，显式使用`install.py --host <宿主> --host-package --package-source <候选包根目录> --destination <选定包根目录>`。此模式将原生manifest、同源Skill与根LICENSE/NOTICE作为一个安装单元；`--host-package --fingerprint`回读整包摘要，更新时用`--update-from`绑定该摘要，回滚仍用`--rollback-from`和当前摘要。Codex及两个DeepSeek宿主路由同样支持整包模式。旧的单Skill安装命令保持原用途；两种指纹不可混用。
+
+整包校验拒绝未知文件/目录、链接、附加hooks/MCP和不符的manifest身份或许可。安装后回读失败会恢复原目录；若恢复现场已有其他文件，保留原版并报告实际恢复位置，不覆盖用户文件或删除唯一原版。安装与升级不更改模型、认证或全局宿主设置，不声称已重载当前会话、完整模型调用或市场审核通过。
+
 2026-10-22（北京时间）的离线发现结果保留在`artifacts/checks/host-discovery.md`。本次在受管临时工作树内，分别对Codex、Claude、Gemini和Grok安装同一份5文件Skill并逐字节复核；未改全局可信目录、模型或provider。真实执行结果保留在`artifacts/checks/host-live.md`：Codex复用已有ChatGPT登录，产生真实`command_execution`成功事件，`discover.py`调用原生`video schema`所得40命令摘要与直接调用一致。该验证只证明能力发现，不替代首次成片、安装更新、权限拒绝和完整五生态验收。
 
 Claude的3-turn/0.10美元上限会话与缩减后的1-turn/0.01美元上限探针均未收到模型响应；超时后只结束本任务子进程。Gemini现有认证被官方个人层兼容条件拒绝；在受管cache树禁用npm生命周期脚本安装官方0.65.0后仅复验一次，仍为同一认证错误，未修改全局CLI，当前没有已配置的API凭据替代；Grok当前未登录。此前DeepSeek尚未核验实际provider或模型调用；2026-10-23的实际增量见下文。先尝试的Login受管认证工具未支持这些CLI渠道，本次没有新建登录、索要人工操作或读取凭据；保留实际失败而不把安装成功写成可调用。
@@ -46,9 +50,13 @@ Claude的3-turn/0.10美元上限会话与缩减后的1-turn/0.01美元上限探�
 
 `qwen_stream.py`提供有限的原生stream-json消费包装。运行依赖Python 3与PATH中的原生Qwen CLI，消费端直接启动Qwen。Qwen Code 0.17.0按第一条消息选择模式：直接发送用户消息会关闭SDK控制服务；工具需要询问时，消费端便收不到`can_use_tool`。包装先发送`control_request/initialize`，确认回执声明`can_handle_can_use_tool=true`后才发用户任务，并保持stdin至原生result。未确认许可能力时不执行任务。
 
-调用方使用`create_isolated_settings`在当前工作区内创建新的独立`QWEN_HOME`和运行目录；只传已有环境变量的名称，由原生Qwen消费凭据，不迁移全局设置。`ExactPolicy`指定完整Shell命令和可写的JSON输入文件绝对路径；Bash和Edit统一强制询问，匹配后只放行本次调用。追加参数、目录变更、后台运行和其他文件路径均拒绝。原生`Bash(pattern)`包含前缀匹配，不能当成完整命令相等；PreToolUse异常时可能放行，也不作为独立强制门禁。
+调用方使用`create_isolated_settings`在当前工作区内创建新的独立`QWEN_HOME`和运行目录；只传已有环境变量的名称，由原生Qwen消费凭据，不迁移全局设置。兼容的`ExactPolicy`仅核精确Shell成员、工作目录及显式允许的JSON文件，不提供命令顺序或文件身份保证。原生`Bash(pattern)`包含前缀匹配，不能当成完整命令相等；PreToolUse异常时可能放行，也不作为独立强制门禁。
 
-消费方通过`run_qwen(..., seconds=45)`给出父进程硬预算，最多300秒。到期只终止本次创建的进程组，不依赖原生`max-wall-time`及时结束；同时保留30工具调用、36轮的原生有限上限。函数只返回内存事件、许可决定和安全状态，不保存原始流。`result/success`不是业务验收：还需逐项核验CLI结构化`ok/error`、实际工程版本、备份恢复和独立回读；超过轮数的会话保持其原退出状态，后续只读重开单独记账。
+需要固定有限链时使用`PinnedPolicy(directory, commands=(...), pins=(FilePin(绝对路径, SHA256), ...))`，每个命令仅执行一次且须按顺序完成。调用者先固定审查过的解释器、二进制、脚本、Skill及输入原件，再将同一`strict_policy`传给`create_isolated_settings`；`run_qwen`核对实际工具和许可配置后才启动。严格模式不暴露文件写工具，只有显式`allow_skill=True`才允许video Skill，并逐次询问。原生工具开始、许可和完成事件由消费器本身核对，不能仅靠调用方额外callback补审；拒绝、未完成、文件变化或顺序不符不标许可链完成。
+
+文件pin在许可前和完成时核对，不能消除原生宿主从检查到启动之间的全部文件竞争。`policy_complete`只表示许可与工具生命周期一致，仍须独立核CLI退出码、结构化业务回执、实际版本和产物；模型返回success不等于制作成功。
+
+消费方通过`run_qwen(..., seconds=45)`给出父进程硬预算，最多300秒。到期只终止本次创建的进程组，不依赖原生`max-wall-time`及时结束；Exact默认最多30工具调用，Pinned进一步按明确命令数加可选Skill收紧，两种模式均保留36轮上限。函数只返回内存事件、许可决定和安全状态，不保存原始流。`result/success`不是业务验收：还需逐项核验CLI结构化`ok/error`、实际工程版本、备份恢复和独立回读；超过轮数的会话保持其原退出状态，后续只读重开单独记账。
 
 调用CLI前使用现有`discover.py --binary <video>`取得当前命令目录的实际摘要，避免将重复嵌套的完整schema塞进模型上下文。需要枚举值时以真实schema为准：例如非商业草稿的`purpose="非商业教学"`、`aspect="9:16"`、`kind="图文讲解"`，Swift case名称和近义词不是机器协议值。
 

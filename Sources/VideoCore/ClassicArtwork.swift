@@ -44,10 +44,14 @@ public struct ClassicArtwork: Codable, Equatable, Sendable {
     }
 }
 public enum ClassicArtworkRules {
+    public static func requiredRoles(knowledge: Bool, cartoon: Bool) -> Set<String> {
+        if knowledge { return ["hero", "floor", "knowledge_backdrop", "obstacle", "hero_idle", "hero_walk", "hero_contribute", "hero_success", "hero_blocked"] }
+        return cartoon ? ["hero", "floor"] : ["hero", "crate", "wall", "floor"]
+    }
     public static func validate(scene:Scene,assets:[Asset]) throws {
         guard let artwork=scene.classicArtwork else { return }
         guard (1...54000).contains(scene.durationFrames),[.simulation,.cartoon].contains(scene.kind),!artwork.sprites.isEmpty,artwork.sprites.count<=32,artwork.sources.count<=64,Set(artwork.sprites.map(\.role)).count==artwork.sprites.count else { throw VideoError.invalid("经典素材场景类型、图块数或角色标识无效") }
-        let required:Set<String> = scene.kind == .cartoon ? ["hero","floor"] : ["hero","crate","wall","floor"]
+        let required = requiredRoles(knowledge: scene.kind == .simulation && scene.simulation.knowledge != nil, cartoon: scene.kind == .cartoon)
         guard required.isSubset(of:Set(artwork.sprites.map(\.role))) else { throw VideoError.invalid("外部图集须提供角色、地面以及游戏所需箱子和墙体") }
         guard Set(artwork.sources.map(\.assetID)).count==artwork.sources.count else { throw VideoError.invalid("同一素材不能填写互相冲突的来源记录") }
         for source in artwork.sources {
@@ -61,7 +65,7 @@ public enum ClassicArtworkRules {
         }
         if artwork.derivation == .qStyle {
             let originalHashes=Set(assets.filter{artwork.originalAssetIDs.contains($0.id)}.map(\.hash))
-            let primaryRoles:Set<String> = scene.kind == .simulation ? ["hero","crate"]:["hero"]
+        let primaryRoles:Set<String> = scene.kind == .simulation && scene.simulation.knowledge == nil ? ["hero","crate"]:["hero"]
             let primarySprites=artwork.sprites.filter{primaryRoles.contains($0.role)}
             guard !artwork.originalAssetIDs.isEmpty,!artwork.transformation.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty,
                   primarySprites.allSatisfy({ sprite in assets.first(where:{$0.id==sprite.assetID}).map{!originalHashes.contains($0.hash)} == true }) else { throw VideoError.review("Q版角色与主要游戏元素须绑定实际派生产物、原件及转换过程；不能仅更换背景或把原件改标签充当派生") }

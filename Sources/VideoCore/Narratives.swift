@@ -194,6 +194,7 @@ public struct RuleTrace: Codable, Equatable, Sendable {
     public var recordedSpeed: Double?
     public var recordedPauseFrames: Int?
     public var recordedLastSourceFrame: Int?
+    public var knowledgeTrace: KnowledgeTrace?
 }
 public struct RuleParticle: Codable, Equatable, Sendable { public var x: Double; public var y: Double; public var phase: Double }
 public struct RuleFrameState: Codable, Equatable, Sendable { public var value: Int; public var capacity: Int; public var unit: String; public var tick: Int; public var activeEvents: [String]; public var particles: [RuleParticle] }
@@ -233,6 +234,11 @@ public enum SimulationReplay {
         }
         let lastSourceFrame = scene.renderSourceFrame(atTimelineFrame: scene.timelineFrames - 1)
         let lastTick = lastSourceFrame / fps
+        if let knowledge = scene.simulation.knowledge {
+            guard try knowledge.lastSettlementTick() <= lastTick else {
+                throw VideoError.review("知识模型尚未在镜头内完成全部轮次结算；请延长镜头或减少轮次后重新运行")
+            }
+        }
         guard scene.simulation.events.allSatisfy({ $0.tick <= lastTick }) else {
             throw VideoError.review("规则事件超出镜头可见时长；请延长镜头或调整事件，再重新录制和复核")
         }
@@ -257,6 +263,21 @@ public enum SimulationReplay {
         }
     }
     public static func record(simulation s: Simulation, throughTick: Int, frameStep: Int = 1) throws -> RuleTrace {
+        if let knowledge = s.knowledge {
+            guard s.events.isEmpty, (0...1800).contains(throughTick), (1...60).contains(frameStep) else { throw VideoError.invalid("知识模型不可混用旧数值增减事件，且须使用有限的录制区间") }
+            let trace = try KnowledgeSimulationEngine.record(model: knowledge, seed: s.seed, throughTick: throughTick)
+            let initial = knowledge.participants.reduce(0) { $0 + $1.initialResources }
+            var before = initial
+            let transitions = trace.events.map { event -> RuleTransition in
+                let after = event.actors.reduce(0) { $0 + $1.resources }, delta = after - before
+                defer { before = after }
+                return RuleTransition(tick: event.tick, eventID: "knowledge-" + event.id, label: "第\(event.round)轮·\(event.phase.rawValue)", requestedDelta: delta, before: before, after: after, appliedDelta: delta, clippedDelta: 0)
+            }
+            let maximum = max(1, initial + knowledge.participants.count * knowledge.rounds * knowledge.benefit)
+            var value = RuleTrace(ruleVersion: 2, inputDigest: try Codec.digest(s), seed: s.seed, unit: knowledge.resourceLabel, initial: initial, capacity: maximum, throughTick: throughTick, frameStep: frameStep, transitions: transitions, finalState: trace.finalResources.reduce(0) { $0 + $1.resources })
+            value.knowledgeTrace = trace
+            return value
+        }
         guard throughTick >= 0, throughTick <= 1800, frameStep > 0, frameStep <= 60, s.capacity > 0, s.capacity <= 10000, s.initial >= 0, s.initial <= s.capacity, !s.unit.isEmpty, s.unit.count <= 40, s.events.count <= 2000, Set(s.events.map(\.id)).count == s.events.count, s.events.allSatisfy({ $0.tick >= 0 && $0.tick <= 1800 && (-10000...10000).contains($0.delta) && !$0.label.isEmpty }) else { throw VideoError.invalid("规则初值/容量/单位/事件/录制区间无效") }
         var value = s.initial; var trace: [RuleTransition] = []
         for (_, event) in s.events.enumerated().sorted(by: { $0.element.tick == $1.element.tick ? $0.offset < $1.offset : $0.element.tick < $1.element.tick }) where event.tick <= throughTick {
@@ -269,13 +290,13 @@ public enum SimulationReplay {
         var causalTrace = recording
         causalTrace.recordedFPS = nil; causalTrace.recordedDurationFrames = nil
         causalTrace.recordedSpeed = nil; causalTrace.recordedPauseFrames = nil; causalTrace.recordedLastSourceFrame = nil
-        guard causalTrace.ruleVersion == 1, causalTrace.inputDigest == (try Codec.digest(simulation)), causalTrace == (try record(simulation: simulation, throughTick: causalTrace.throughTick, frameStep: causalTrace.frameStep)) else { throw VideoError.review("规则、单位、参数、种子或事件已变，旧录制失效，请重新录制和复核") }
+        guard causalTrace.ruleVersion == (simulation.knowledge == nil ? 1 : 2), causalTrace.inputDigest == (try Codec.digest(simulation)), causalTrace == (try record(simulation: simulation, throughTick: causalTrace.throughTick, frameStep: causalTrace.frameStep)) else { throw VideoError.review("规则、单位、参数、种子或事件已变，旧录制失效，请重新录制和复核") }
     }
     public static func frameState(simulation: Simulation, frame: Int, fps: Int = 30) throws -> RuleFrameState {
         guard frame >= 0, (1...120).contains(fps), frame / fps <= 1800 else { throw VideoError.invalid("模拟帧或帧率超界") }
         let tick = frame / fps; let trace = try record(simulation: simulation, throughTick: tick); var random = simulation.seed
         func unit() -> Double { random &+= 0x9e3779b97f4a7c15; var z = random; z = (z ^ (z >> 30)) &* 0xbf58476d1ce4e5b9; z = (z ^ (z >> 27)) &* 0x94d049bb133111eb; return Double(z ^ (z >> 31)) / Double(UInt64.max) }
-        let particles = (0..<min(100, trace.finalState)).map { _ in RuleParticle(x: unit(), y: unit(), phase: unit()) }
-        return RuleFrameState(value: trace.finalState, capacity: simulation.capacity, unit: simulation.unit, tick: tick, activeEvents: trace.transitions.filter { $0.tick == tick }.map { "\($0.label)：\($0.before)→\($0.after) \(simulation.unit)（请求\($0.requestedDelta)，实际\($0.appliedDelta)）" }, particles: particles)
+        let particles = simulation.knowledge == nil ? (0..<min(100, trace.finalState)).map { _ in RuleParticle(x: unit(), y: unit(), phase: unit()) } : []
+        return RuleFrameState(value: trace.finalState, capacity: trace.capacity, unit: trace.unit, tick: tick, activeEvents: trace.transitions.filter { $0.tick == tick }.map { "\($0.label)：\($0.before)→\($0.after) \(trace.unit)（请求\($0.requestedDelta)，实际\($0.appliedDelta)）" }, particles: particles)
     }
 }

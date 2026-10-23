@@ -57,6 +57,8 @@ public struct RuleEvent: Codable, Equatable, Identifiable, Sendable {
 }
 public struct Simulation: Codable, Equatable, Sendable {
     public var seed: UInt64 = 42; public var initial: Int = 100; public var capacity: Int = 200; public var unit: String = "上下文单位"; public var events: [RuleEvent] = []
+    /// Nil preserves the original scalar-event contract and its recordings.
+    public var knowledge: KnowledgeSimulation?
     public init() {}
     public func state(at tick: Int) throws -> Int {
         // Input order is causal for events at the same tick (clamping is not commutative).
