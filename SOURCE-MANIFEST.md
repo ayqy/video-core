@@ -2,10 +2,10 @@
 
 VideoFree source export · package_free.py · version 1
 
-生成时间：2026-10-23 08:23:03 北京时间
+生成时间：2026-10-23 08:35:41 北京时间
 
-- 源码与必要元数据：122个文件；1254923字节（不含本清单）。
-- 整体内容指纹：`9f3378a6ae3fd78b1aa10c210a3ca4ba6fddb6625facb5a93c2806a6affed2a9`。
+- 源码与必要元数据：122个文件；1256045字节（不含本清单）。
+- 整体内容指纹：`59ebd52f8da00b4893d83c97320bccc6c4b87403f546f2143dc2288ad7669643`。
 - 来源：受控原始工程中的逐文件白名单；Package.swift来自Distribution/Free/Package.swift模板，README由发行脚本生成。
 - 本包不含.git，不可作为新业务checkout；本清单生成过程不执行构建、设备验收、签名安装或公共上传，各阶段以独立证据为准。
 - 排除：App、VideoGame、VideoCartoon、Premium、高级实现运行时测试、私有仓库地址、凭据、客户数据、缓存、日志及媒体过程产物。
@@ -79,7 +79,7 @@ VideoFree source export · package_free.py · version 1
 | ea4dc3e512b818726ea6fd7d350e697ef234e337bafff6e34d8af40720d9cc54 | 14314 | Sources/VideoMedia/BaiduVideoProvider.swift |
 | ec396089cb7046846c5bf86bd37f830869418de4445dec089466753f3c1e1329 | 4943 | Sources/VideoMedia/ClassicArtworkMedia.swift |
 | 6beff353416b9b4329e20ab3cbd84fcb19d34c8687427feb157b97d00ed63b4d | 10707 | Sources/VideoMedia/ClassicBuiltinAssets.swift |
-| d389ae3a6697c18d8f63e8a58e1334664b4b984db1dd7ca8de44c7025f8b61fd | 49409 | Sources/VideoMedia/CloudReview.swift |
+| 07a9e054545e7aa2aefe99c4ba0ff492f806b36d4e709911ee8712556146b3b1 | 50531 | Sources/VideoMedia/CloudReview.swift |
 | 451de62ae66ce51bc390deb9d210ca46de5ca66e5bb52b4572a6e5e792e141a2 | 4904 | Sources/VideoMedia/CoursePreview.swift |
 | a3c1ff6981dd81b2a97fee7cff2489fc9edb2381904ee46ebad18e9b6562dc91 | 4662 | Sources/VideoMedia/Diagnostics.swift |
 | 2eafa759e4f2e1a94a5ecb866f39784b13363f7a5cfcacb60b125cf5e2fa12bd | 13316 | Sources/VideoMedia/FamiliarBuiltinAssets.swift |

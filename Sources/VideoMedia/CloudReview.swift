@@ -125,33 +125,53 @@ enum CloudReviewDeletionRules {
         }
     }
     public func create(envelope:CloudReviewEnvelope,previewURL:URL) async throws -> CloudReviewInvitation {
-        let container=try await connect();try CloudReviewRules.validate(envelope)
-        let preview=try Data(contentsOf:previewURL,options:.mappedIfSafe)
-        guard previewURL.isFileURL,preview.count==envelope.preview.bytes,Codec.hash(preview)==envelope.preview.sha256 else {throw VideoError.conflict("所选预览文件与冻结版本摘要不符，未上传")}
-        let database=container.privateCloudDatabase
-        let zone=CKRecordZone(zoneName:zoneName)
-        let zones=try await database.modifyRecordZones(saving:[zone],deleting:[])
-        guard let zoneResult=zones.saveResults[zone.zoneID] else{throw VideoError.unavailable("CloudKit 未返回私有分区保存结果")};_=try zoneResult.get()
-        // A new root and share for every request/version; there is intentionally no payload-update API.
-        let record=CKRecord(recordType:rootType,recordID:CKRecord.ID(recordName:envelope.id,zoneID:zone.zoneID))
-        let staging=cacheRoot.appendingPathComponent("upload-"+Codec.id(),isDirectory:true)
-        try FileManager.default.createDirectory(at:staging,withIntermediateDirectories:true)
-        defer{try? FileManager.default.removeItem(at:staging)}
-        let payload=try Codec.data(envelope),payloadURL=staging.appendingPathComponent("version.reviewpayload"),videoURL=staging.appendingPathComponent("preview.mp4")
-        try payload.write(to:payloadURL,options:[.atomic,.completeFileProtection]);try preview.write(to:videoURL,options:[.atomic,.completeFileProtection])
-        try FileManager.default.setAttributes([.protectionKey:FileProtectionType.complete],ofItemAtPath:videoURL.path)
-        record["payload"]=CKAsset(fileURL:payloadURL);record["preview"]=CKAsset(fileURL:videoURL)
-        record["payloadDigest"]=Codec.hash(payload) as CKRecordValue
-        record["expiresAt"]=envelope.expiresAt as CKRecordValue
-        let share=CKShare(rootRecord:record);share.publicPermission = .none
-        share[CKShare.SystemFieldKey.title]="待审 · "+envelope.scope.projectName+" · v\(envelope.scope.revision.number)" as CKRecordValue
-        let result=try await database.modifyRecords(saving:[record,share],deleting:[],savePolicy:.ifServerRecordUnchanged,atomically:true)
-        guard let rootResult=result.saveResults[record.recordID],let shareResult=result.saveResults[share.recordID],let savedShare=try shareResult.get() as? CKShare else{throw VideoError.unavailable("CloudKit 未确认完整版本和私有共享保存")};_=try rootResult.get()
-        guard savedShare.publicPermission == .none,savedShare.url != nil else{throw VideoError.permission("CloudKit 未返回私有邀请，未展示分享入口")}
-        var location=try location(root:record.recordID,share:savedShare.recordID,container:container,owned:true)
-        location.revisionID=envelope.scope.revision.id;location.revisionDigest=envelope.revisionDigest;location.payloadDigest=Codec.hash(payload)
-        save(location);lastError=nil
-        return CloudReviewInvitation(id:location.id,share:savedShare,container:container,location:location)
+        try Task.checkCancellation()
+        let container=try await connect()
+        guard let actor=accountID else{throw VideoError.permission("发起创建时的实际 iCloud 身份未核验")}
+        let epoch=invalidation
+        func checkSession() throws {
+            guard epoch==invalidation,accountID==actor else{throw VideoError.permission("创建期间 iCloud 账户或会话已变化，未保存本机地址或交付分享入口。云端可能已保存，请切回发起创建时的原 iCloud 账户核验；不会自动删除或重建云稿。")}
+            try Task.checkCancellation()
+        }
+        do {
+            try checkSession();try CloudReviewRules.validate(envelope)
+            let preview=try Data(contentsOf:previewURL,options:.mappedIfSafe)
+            guard previewURL.isFileURL,preview.count==envelope.preview.bytes,Codec.hash(preview)==envelope.preview.sha256 else {throw VideoError.conflict("所选预览文件与冻结版本摘要不符，未上传")}
+            let database=container.privateCloudDatabase
+            let zone=CKRecordZone(zoneName:zoneName)
+            try checkSession()
+            let zones=try await database.modifyRecordZones(saving:[zone],deleting:[])
+            try checkSession()
+            guard let zoneResult=zones.saveResults[zone.zoneID] else{throw VideoError.unavailable("CloudKit 未返回私有分区保存结果")};_=try zoneResult.get()
+            // A new root and share for every request/version; there is intentionally no payload-update API.
+            let record=CKRecord(recordType:rootType,recordID:CKRecord.ID(recordName:envelope.id,zoneID:zone.zoneID))
+            let staging=cacheRoot.appendingPathComponent("upload-"+Codec.id(),isDirectory:true)
+            try FileManager.default.createDirectory(at:staging,withIntermediateDirectories:true)
+            defer{try? FileManager.default.removeItem(at:staging)}
+            let payload=try Codec.data(envelope),payloadURL=staging.appendingPathComponent("version.reviewpayload"),videoURL=staging.appendingPathComponent("preview.mp4")
+            try payload.write(to:payloadURL,options:[.atomic,.completeFileProtection]);try preview.write(to:videoURL,options:[.atomic,.completeFileProtection])
+            try FileManager.default.setAttributes([.protectionKey:FileProtectionType.complete],ofItemAtPath:videoURL.path)
+            record["payload"]=CKAsset(fileURL:payloadURL);record["preview"]=CKAsset(fileURL:videoURL)
+            record["payloadDigest"]=Codec.hash(payload) as CKRecordValue
+            record["expiresAt"]=envelope.expiresAt as CKRecordValue
+            let share=CKShare(rootRecord:record);share.publicPermission = .none
+            share[CKShare.SystemFieldKey.title]="待审 · "+envelope.scope.projectName+" · v\(envelope.scope.revision.number)" as CKRecordValue
+            try checkSession()
+            let result=try await database.modifyRecords(saving:[record,share],deleting:[],savePolicy:.ifServerRecordUnchanged,atomically:true)
+            try checkSession()
+            guard let rootResult=result.saveResults[record.recordID],let shareResult=result.saveResults[share.recordID],let savedShare=try shareResult.get() as? CKShare else{throw VideoError.unavailable("CloudKit 未确认完整版本和私有共享保存")};_=try rootResult.get()
+            guard savedShare.publicPermission == .none,savedShare.url != nil else{throw VideoError.permission("CloudKit 未返回私有邀请，未展示分享入口")}
+            var location=try location(root:record.recordID,share:savedShare.recordID,container:container,owned:true)
+            location.revisionID=envelope.scope.revision.id;location.revisionDigest=envelope.revisionDigest;location.payloadDigest=Codec.hash(payload)
+            try checkSession()
+            save(location);lastError=nil
+            return CloudReviewInvitation(id:location.id,share:savedShare,container:container,location:location)
+        } catch {
+            // An in-flight save may already have reached CloudKit. Stop local
+            // delivery without deleting/recreating a record under another account.
+            try checkSession()
+            throw error
+        }
     }
     public func accept(_ metadata:CKShare.Metadata) async {
         let id=metadata.share.recordID.recordName
