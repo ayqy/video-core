@@ -8,7 +8,8 @@ let package = Package(
         .library(name: "VideoCore", type: .static, targets: ["VideoCore"]),
         .library(name: "VideoMedia", type: .static, targets: ["VideoMedia"]),
         .executable(name: "video", targets: ["VideoCLI"]),
-        .executable(name: "video-install", targets: ["VideoInstall"])
+        .executable(name: "video-install", targets: ["VideoInstall"]),
+        .executable(name: "video-plugin-bridge", targets: ["VideoPluginBridge"])
     ],
     targets: [
         .systemLibrary(name: "CSQLite"),
@@ -17,6 +18,7 @@ let package = Package(
         .target(name: "VideoMedia", dependencies: ["VideoCore", "CZlib"]),
         .executableTarget(name: "VideoCLI", dependencies: ["VideoCore", "VideoMedia"]),
         .executableTarget(name: "VideoInstall", dependencies: ["VideoCore", "VideoMedia"]),
+        .executableTarget(name: "VideoPluginBridge", dependencies: ["VideoCore", "VideoMedia"]),
         .testTarget(name: "VideoCoreTests", dependencies: ["VideoCore"]),
         .testTarget(name: "VideoMediaTests", dependencies: ["VideoCore", "VideoMedia"])
     ]

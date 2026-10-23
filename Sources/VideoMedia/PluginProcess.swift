@@ -1,0 +1,257 @@
+import Foundation
+import Darwin
+import Security
+import VideoCore
+
+public enum PluginNativeCode {
+    public static let teamID="VTU3X26EU8"
+    public static func validService(_ value:String)->Bool {value.range(of:"^[A-Za-z0-9]+(?:[.-][A-Za-z0-9]+)+$",options:.regularExpression) != nil && value.utf8.count<=200}
+    public static func requirement(identifier:String)->String {"anchor apple generic and certificate leaf[subject.OU] = \""+teamID+"\" and identifier \""+identifier+"\""}
+    public static func verify(root:URL,execution:PluginExecutionDescriptor)throws {
+        guard validService(execution.serviceName) else{throw VideoError.permission("独立插件服务标识不合法")}
+        let host=root.appendingPathComponent("PluginHost.app"),service=host.appendingPathComponent("Contents/XPCServices/"+execution.serviceName+".xpc")
+        for (url,identifier,isService) in [(host,execution.serviceName+".host",false),(service,execution.serviceName,true)] {
+            var code:SecStaticCode?,requirement:SecRequirement?
+            guard SecStaticCodeCreateWithPath(url as CFURL,[],&code)==errSecSuccess,let code,
+                  SecRequirementCreateWithString(self.requirement(identifier:identifier) as CFString,[],&requirement)==errSecSuccess,
+                  SecStaticCodeCheckValidity(code,SecCSFlags(rawValue:kSecCSStrictValidate|kSecCSCheckNestedCode|kSecCSCheckAllArchitectures),requirement)==errSecSuccess else{throw VideoError.permission("独立插件实际Apple代码、资源或固定签名身份未通过")}
+            var raw:CFDictionary?
+            guard SecCodeCopySigningInformation(code,SecCSFlags(rawValue:kSecCSSigningInformation),&raw)==errSecSuccess,let info=raw as? [String:Any],
+                  let flags=info[kSecCodeInfoFlags as String] as? NSNumber,flags.uint32Value & 0x10000 != 0 else{throw VideoError.permission("独立插件缺少有效Hardened Runtime签名")}
+            let entitlements=info[kSecCodeInfoEntitlementsDict as String] as? [String:Any] ?? [:]
+            let identityKeys:Set<String>=["com.apple.application-identifier","com.apple.developer.team-identifier"]
+            if isService {
+                guard let sandbox=entitlements["com.apple.security.app-sandbox"],CFGetTypeID(sandbox as CFTypeRef)==CFBooleanGetTypeID(),sandbox as? Bool==true,
+                      Set(entitlements.keys).subtracting(identityKeys)==["com.apple.security.app-sandbox"] else{throw VideoError.permission("高级代码必须处于独立非inherit、无网络和客户目录授权的沙盒服务")}
+            }else{
+                // A trusted byte-only bridge can inherit the editor's existing domain;
+                // it never links or loads premium code. The XPC service must not inherit it.
+                guard Set(entitlements.keys).subtracting(identityKeys).isSubset(of:["com.apple.security.app-sandbox","com.apple.security.inherit"]),
+                      entitlements["com.apple.security.get-task-allow"] == nil else{throw VideoError.permission("公开桥包含未允许的权限")}
+            }
+        }
+    }
+}
+
+public enum PluginBridgeWire {
+    public static let metadata="__video_transport"
+    public static func response(_ data:Data,pid:pid_t)throws->Data {
+        guard data.count<=PluginProtocolRules.maximumResponseBytes,var value=try JSONSerialization.jsonObject(with:data) as? [String:Any],pid>1 else{throw VideoError.invalid("插件桥响应不合法")}
+        value[metadata]=["event":"response","peer_pid":Int(pid)]
+        return try JSONSerialization.data(withJSONObject:value,options:[.sortedKeys])
+    }
+    public static func event(_ name:String,pid:pid_t)->Data { (try? JSONSerialization.data(withJSONObject:[metadata:["event":name,"peer_pid":Int(pid)]],options:[.sortedKeys])) ?? Data() }
+    public static func parse(_ data:Data)throws->(String,pid_t) {
+        guard data.count<=PluginProtocolRules.maximumResponseBytes+1024,let value=try JSONSerialization.jsonObject(with:data) as? [String:Any],let transport=value[metadata] as? [String:Any],Set(transport.keys)==["event","peer_pid"],let event=transport["event"] as? String,["response","peer_exited","transport_failed"].contains(event),let pid=transport["peer_pid"] as? Int,pid>1,pid<=Int(Int32.max) else{throw VideoError.permission("插件桥缺少真实peer身份或有限事件")}
+        if event != "response",Set(value.keys) != [metadata]{throw VideoError.permission("插件退出事件夹带额外数据")}
+        return(event,pid_t(pid))
+    }
+}
+
+private struct PluginPIDIdentity:Equatable {
+    let pid:pid_t;let seconds:Int;let microseconds:Int
+    static func read(_ pid:pid_t)->PluginPIDIdentity? {
+        guard pid>1 else{return nil};var mib:[Int32]=[CTL_KERN,KERN_PROC,KERN_PROC_PID,pid],info=kinfo_proc(),size=MemoryLayout<kinfo_proc>.size
+        guard sysctl(&mib,UInt32(mib.count),&info,&size,nil,0)==0,size==MemoryLayout<kinfo_proc>.size,info.kp_proc.p_pid==pid else{return nil}
+        return PluginPIDIdentity(pid:pid,seconds:info.kp_proc.p_un.__p_starttime.tv_sec,microseconds:Int(info.kp_proc.p_un.__p_starttime.tv_usec))
+    }
+}
+/// Exact dynamic parent provenance, captured before establishing any service connection.
+private struct PluginBridgeParent {
+    let identity:PluginPIDIdentity;let codeHash:Data;let probeOnly:Bool
+    static func inspect()throws->PluginBridgeParent {
+        let pid=getppid();guard let identity=PluginPIDIdentity.read(pid) else{throw VideoError.permission("桥不能核验真实父进程启动身份")}
+        var code:SecCode?
+        guard SecCodeCopyGuestWithAttributes(nil,[kSecGuestAttributePid as String:pid] as CFDictionary,[],&code)==errSecSuccess,let code else{throw VideoError.permission("桥父进程缺少有效动态代码身份")}
+        var role:Bool?
+        for (identifier,probe) in [("com.ayqy.video.mac",false),("com.ayqy.video.advanced",false),("com.ayqy.video.install",true),("com.ayqy.video.publisher",true)] {
+            var requirement:SecRequirement?
+            if SecRequirementCreateWithString(PluginNativeCode.requirement(identifier:identifier) as CFString,[],&requirement)==errSecSuccess,
+               SecCodeCheckValidity(code,SecCSFlags(rawValue:kSecCSStrictValidate),requirement)==errSecSuccess{role=probe;break}
+        }
+        var raw:CFDictionary?,staticCode:SecStaticCode?
+        guard let probe=role,SecCodeCopyStaticCode(code,[],&staticCode)==errSecSuccess,let staticCode,
+              SecCodeCopySigningInformation(staticCode,SecCSFlags(rawValue:kSecCSSigningInformation),&raw)==errSecSuccess,
+              let info=raw as? [String:Any],let hash=info[kSecCodeInfoUnique as String] as? Data,
+              let flags=info[kSecCodeInfoFlags as String] as? NSNumber,flags.uint32Value & 0x10000 != 0,
+              (info[kSecCodeInfoEntitlementsDict as String] as? [String:Any])?["com.apple.security.get-task-allow"] == nil else{throw VideoError.permission("桥父进程不是固定发行Host或只读安装探针")}
+        return PluginBridgeParent(identity:identity,codeHash:hash,probeOnly:probe)
+    }
+    func verify(method:PluginMethod)throws {
+        let current=try Self.inspect()
+        guard current.identity==identity,current.codeHash==codeHash,current.probeOnly==probeOnly,
+              !probeOnly || [PluginMethod.handshake,.describe,.health].contains(method) else{throw VideoError.permission("桥父进程身份变化或只读探针请求越权")}
+    }
+}
+final class PluginCloseReceipt:@unchecked Sendable {
+    private let condition=NSCondition();private var result:Result<Void,VideoError>?
+    func finish(_ value:Result<Void,VideoError>){condition.lock();if result==nil{result=value};condition.broadcast();condition.unlock()}
+    func wait()throws {condition.lock();defer{condition.unlock()};let until=Date().addingTimeInterval(7)
+        while result==nil {guard condition.wait(until:until) else{throw VideoError.unavailable("原插件清理仍未形成终止回执，不重试终止")}}
+        return try result!.get()
+    }
+}
+final class PluginWeakCancellation {
+    weak var value:RenderCancellation?
+    init(_ value:RenderCancellation){self.value=value}
+}
+private final class PluginBridgePeer:@unchecked Sendable {
+    let connection:NSXPCConnection;let lock=NSLock();let exited=DispatchSemaphore(value:0)
+    var pid:pid_t=0;var identity:PluginPIDIdentity?;var watcher:DispatchSourceProcess?;var didExit=false
+    init(service:String){connection=NSXPCConnection(serviceName:service);connection.remoteObjectInterface=NSXPCInterface(with:PluginXPCWire.self);connection.setCodeSigningRequirement(PluginNativeCode.requirement(identifier:service));connection.resume()}
+    func observe()throws->pid_t {
+        lock.lock();defer{lock.unlock()};let actual=connection.processIdentifier
+        guard actual>1,pid==0 || pid==actual else{throw VideoError.permission("XPC实际peer身份变化")}
+        if pid==0 {
+            pid=actual;identity=PluginPIDIdentity.read(actual)
+            let source=DispatchSource.makeProcessSource(identifier:actual,eventMask:.exit,queue:.global(qos:.utility))
+            source.setEventHandler{[weak self] in guard let self else{return};self.lock.lock();self.didExit=true;self.lock.unlock();self.exited.signal()}
+            watcher=source;source.resume()
+        }
+        return pid
+    }
+    func exchange(_ data:Data,until:Date)throws->Data {
+        let done=DispatchSemaphore(value:0),answer=PluginReplyBox()
+        guard let proxy=connection.remoteObjectProxyWithErrorHandler({_ in answer.fail();done.signal()}) as? PluginXPCWire else{throw VideoError.unavailable("XPC服务未提供标准接口")}
+        proxy.exchange(data){data in answer.set(data);done.signal()}
+        guard done.wait(timeout:.now()+max(0,until.timeIntervalSinceNow)) == .success,let value=answer.value else{throw VideoError.unavailable("XPC调用未在明确截止内完成")}
+        _=try observe();return value
+    }
+    func close(invocation:PluginInvocation?)throws {
+        // Closing a connection is not evidence of process exit. Only this kernel
+        // watcher for the authenticated peer can authorize peer_exited.
+        lock.lock();let target=pid,alreadyExited=didExit;lock.unlock()
+        guard target>1 else{throw VideoError.unavailable("未取得XPC实际peer身份，不能声称已终止")}
+        if !alreadyExited,let invocation {
+            let request=PluginRPCRequest(requestID:Codec.id(),method:.cancel,invocation:invocation)
+            _=try? exchange(Codec.data(request),until:Date().addingTimeInterval(1))
+        }
+        lock.lock();var ended=didExit;lock.unlock()
+        if !ended {_ = exited.wait(timeout:.now()+1);lock.lock();ended=didExit;lock.unlock()}
+        if !ended {
+            // No PID guessing or global kill. Refuse if start identity is unavailable
+            // or reused; a previous failed cleanup never grants a second attempt.
+            guard let original=identity,PluginPIDIdentity.read(target)==original,connection.processIdentifier==target else{throw VideoError.unavailable("实际XPC进程身份无法复核；终止未确认")}
+            guard Darwin.kill(target,SIGKILL)==0 else{throw VideoError.unavailable("实际XPC进程强终止被拒，保留失败")}
+            _=exited.wait(timeout:.now()+1);lock.lock();ended=didExit;lock.unlock()
+        }
+        guard ended else{throw VideoError.unavailable("未获得XPC实际进程退出事件")}
+        connection.invalidate();watcher?.cancel()
+    }
+}
+private final class PluginReplyBox:@unchecked Sendable {
+    let lock=NSLock();private var data:Data?;private var failed=false
+    var value:Data?{lock.lock();defer{lock.unlock()};return failed ? nil:data}
+    func set(_ value:Data){lock.lock();data=value;lock.unlock()}
+    func fail(){lock.lock();failed=true;lock.unlock()}
+}
+
+/// Trusted headless bridge. It contains no premium renderer and emits no diagnostics or input text.
+public enum PluginStdioBridge {
+    public static func run()->Never {
+        guard CommandLine.arguments.count==1,let name=Bundle.main.infoDictionary?["VideoPluginServiceName"] as? String,PluginNativeCode.validService(name),Bundle.main.bundleIdentifier==name+".host" else{_exit(78)}
+        guard let parent=try? PluginBridgeParent.inspect() else{_exit(77)}
+        _ = fcntl(STDOUT_FILENO,F_SETNOSIGPIPE,1)
+        let parentExit=DispatchSource.makeProcessSource(identifier:parent.identity.pid,eventMask:.exit,queue:.global(qos:.utility))
+        parentExit.setEventHandler{_exit(125)};parentExit.resume()
+        let parentMonitor=DispatchSource.makeTimerSource(queue:.global(qos:.utility))
+        parentMonitor.schedule(deadline:.now()+0.5,repeating:0.5)
+        parentMonitor.setEventHandler{if (try? parent.verify(method:.handshake)) == nil{_exit(125)}};parentMonitor.resume()
+        let peer=PluginBridgePeer(service:name);var scope:PluginInvocation?,buffer=Data();var failed=false
+        do {
+            func request(_ line:Data)throws {
+                guard !line.isEmpty,line.count<=PluginProtocolRules.maximumRequestBytes else{throw VideoError.invalid("桥消息超限")}
+                let value=try Codec.decoder().decode(PluginRPCRequest.self,from:line)
+                try parent.verify(method:value.method)
+                guard let current=value.invocation ?? value.input?.invocation else{throw VideoError.permission("桥请求缺少调用范围")}
+                try PluginProtocolRules.validate(current)
+                if let scope {guard scope==current else{throw VideoError.permission("桥拒绝切换完整调用")}}else{scope=current}
+                let answer=try peer.exchange(line,until:Date(timeIntervalSince1970:current.deadlineUnixTime))
+                try parent.verify(method:value.method)
+                let output=try PluginBridgeWire.response(answer,pid:peer.pid)
+                FileHandle.standardOutput.write(output);FileHandle.standardOutput.write(Data([10]))
+            }
+            while let data=try FileHandle.standardInput.read(upToCount:65536),!data.isEmpty {
+                buffer.append(data)
+                while let newline=buffer.firstIndex(of:10){let line=Data(buffer[..<newline]);buffer.removeSubrange(...newline);try request(line)}
+                guard buffer.count<=PluginProtocolRules.maximumRequestBytes else{throw VideoError.invalid("桥消息超限")}
+            }
+            if !buffer.isEmpty{try request(buffer)}
+        }catch{failed=true}
+        do {try peer.close(invocation:scope);FileHandle.standardOutput.write(PluginBridgeWire.event("peer_exited",pid:peer.pid));FileHandle.standardOutput.write(Data([10]))}
+        catch{failed=true;if peer.pid>1{FileHandle.standardOutput.write(PluginBridgeWire.event("transport_failed",pid:peer.pid));FileHandle.standardOutput.write(Data([10]))}}
+        _exit(failed ? 8:0)
+    }
+}
+
+/// One exact render invocation owns one headless bridge and one isolated XPC process.
+final class PluginProcessClient {
+    let process=Process(),input=Pipe(),output=Pipe(),errors=Pipe();let invocation:PluginInvocation
+    private let closeLock=NSLock();private var closeRequested=false
+    var buffer=Data();var stderrBytes=0;var stderrOpen=true;var peer:pid_t?;var termination:Result<Void,VideoError>?
+    init(package:VerifiedPluginPackage,scope:RenderInvocation)throws {
+        try scope.check();try PluginPackageRules.verifyFiles(package.manifest,root:package.rootURL);try PluginNativeCode.verify(root:package.rootURL,execution:package.execution)
+        invocation=PluginInvocation(workspaceID:scope.workspaceID,projectID:scope.projectID,revisionID:scope.revisionID,revisionDigest:scope.revisionDigest,jobID:scope.jobID,invocationID:scope.id,budgetReference:scope.budgetReference,currency:scope.currency,budgetLimit:scope.budgetLimit.amount,deadlineUnixTime:scope.deadline.timeIntervalSince1970)
+        try PluginProtocolRules.validate(invocation)
+        process.executableURL=package.rootURL.appendingPathComponent(package.execution.entrypoint);process.currentDirectoryURL=package.rootURL
+        process.arguments=[];process.environment=["PATH":"/usr/bin:/bin:/usr/sbin:/sbin","LANG":"en_US.UTF-8"]
+        process.standardInput=input;process.standardOutput=output;process.standardError=errors;try process.run()
+        for fd in [input.fileHandleForWriting.fileDescriptor,output.fileHandleForReading.fileDescriptor,errors.fileHandleForReading.fileDescriptor]{_ = fcntl(fd,F_SETFL,O_NONBLOCK)}
+        _ = fcntl(input.fileHandleForWriting.fileDescriptor,F_SETNOSIGPIPE,1)
+    }
+    func requestClose(){closeLock.lock();closeRequested=true;closeLock.unlock()}
+    private func check(_ scope:RenderInvocation)throws{try scope.check();closeLock.lock();let closing=closeRequested;closeLock.unlock();if closing{throw CancellationError()}}
+    private func next(until:Date,check:()throws->Void={})throws->Data {
+        while Date()<until {
+            try check()
+            if let newline=buffer.firstIndex(of:10){let line=Data(buffer[..<newline]);buffer.removeSubrange(...newline);return line}
+            var descriptors=[pollfd(fd:output.fileHandleForReading.fileDescriptor,events:Int16(POLLIN|POLLHUP),revents:0),pollfd(fd:stderrOpen ? errors.fileHandleForReading.fileDescriptor:-1,events:Int16(POLLIN|POLLHUP),revents:0)]
+            let status=poll(&descriptors,2,25);guard status>=0 || errno==EINTR else{throw VideoError.unavailable("插件管道未能继续读取")}
+            for index in 0..<2 where descriptors[index].revents != 0 {
+                var bytes=[UInt8](repeating:0,count:65536);let count=read(descriptors[index].fd,&bytes,bytes.count)
+                if count>0 {if index==0{buffer.append(contentsOf:bytes.prefix(count))}else{stderrBytes+=count}}
+                if count==0,index==1{stderrOpen=false}
+                if count==0,index==0,buffer.firstIndex(of:10)==nil{throw VideoError.unavailable("插件桥提前关闭，缺少完整退出或响应回执")}
+            }
+            guard buffer.count<=PluginProtocolRules.maximumResponseBytes+2048,stderrBytes<=1024*1024 else{throw VideoError.unavailable("插件管道输出超出有界长度")}
+        }
+        throw VideoError.unavailable("插件响应或终止超过明确截止")
+    }
+    func exchange(_ request:PluginRPCRequest,scope:RenderInvocation)throws->PluginRPCResponse {
+        try check(scope);guard request.invocation==invocation || request.input?.invocation==invocation else{throw VideoError.permission("插件请求不属于原完整调用")}
+        var data=try Codec.data(request);guard data.count<=PluginProtocolRules.maximumRequestBytes else{throw VideoError.invalid("插件请求超过有界长度")};data.append(10)
+        var offset=0
+        while offset<data.count {
+            try check(scope);let count=data.withUnsafeBytes{write(input.fileHandleForWriting.fileDescriptor,$0.baseAddress!.advanced(by:offset),data.count-offset)}
+            if count>0{offset+=count}else if errno==EAGAIN || errno==EINTR{Thread.sleep(forTimeInterval:0.005)}else{throw VideoError.unavailable("插件桥未接收完整请求")}
+        }
+        let answer=try next(until:min(scope.deadline,Date().addingTimeInterval(10))){try self.check(scope)};try check(scope)
+        let(event,pid)=try PluginBridgeWire.parse(answer)
+        guard event=="response",peer==nil || peer==pid else{throw VideoError.permission("插件响应来自其他进程或不是方法回执")};peer=pid
+        let value=try Codec.decoder().decode(PluginRPCResponse.self,from:answer)
+        guard value.protocolMajor==1,value.requestID==request.requestID,value.ok,value.error==nil else{throw VideoError.unavailable("独立插件拒绝请求或协议回执不符；未发表部分帧")}
+        return value
+    }
+    func close()throws {
+        if let termination{return try termination.get()}
+        // Mark an in-flight failure first. A catch/defer cannot retry termination.
+        termination = .failure(.unavailable("插件终止尚未确认"))
+        do {
+            try input.fileHandleForWriting.close();let deadline=Date().addingTimeInterval(5);var exited=false
+            while !exited {
+                let line=try next(until:deadline);let(event,pid)=try PluginBridgeWire.parse(line)
+                guard peer==nil || peer==pid else{throw VideoError.permission("插件终止peer身份变化")};peer=pid
+                if event=="peer_exited"{exited=true}else if event=="transport_failed"{throw VideoError.unavailable("插件实际进程终止未确认")}
+            }
+            while process.isRunning,Date()<deadline{Thread.sleep(forTimeInterval:0.01)}
+            guard !process.isRunning,process.terminationReason == .exit,process.terminationStatus==0,stderrBytes==0 else{throw VideoError.unavailable("插件peer已退出但公开桥清理未通过")}
+            termination = .success(())
+        }catch{
+            let failure=error as? VideoError ?? .unavailable("插件终止或管道回收失败")
+            termination = .failure(failure)
+            if process.isRunning{process.terminate();let end=Date().addingTimeInterval(0.2);while process.isRunning,Date()<end{Thread.sleep(forTimeInterval:0.01)};if process.isRunning{_ = Darwin.kill(process.processIdentifier,SIGKILL)}}
+        }
+        try? output.fileHandleForReading.close();try? errors.fileHandleForReading.close()
+        return try termination!.get()
+    }
+}

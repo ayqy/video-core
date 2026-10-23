@@ -25,6 +25,10 @@ final class ContentProjectMediaTests:XCTestCase {
         let inspection=try await MediaInspection.inspect(URL(fileURLWithPath:video.path))
         XCTAssertEqual(inspection.width,1280);XCTAssertEqual(inspection.height,720);XCTAssertEqual(inspection.duration,1,accuracy:0.1)
         XCTAssertEqual(inspection.videoCodec,"avc1");XCTAssertEqual(inspection.audioCodec,"aac ");XCTAssertEqual(inspection.sampleRate,48000)
+        let cover=try XCTUnwrap(result.artifacts.first{$0.mime=="image/png"})
+        let generator=AVAssetImageGenerator(asset:AVURLAsset(url:URL(fileURLWithPath:video.path)))
+        generator.appliesPreferredTrackTransform=true;generator.requestedTimeToleranceBefore = .zero;generator.requestedTimeToleranceAfter = .zero
+        XCTAssertEqual(cover.sha256,Codec.hash(try ScenePainter.png(generator.copyCGImage(at:.zero,actualTime:nil))),"封面须来自这份已编码成片首帧，不能另重执行旧帧任务")
         let notes=try XCTUnwrap(result.artifacts.first{$0.mime=="text/plain"})
         let text=try String(contentsOf:URL(fileURLWithPath:notes.path),encoding:.utf8)
         XCTAssertTrue(text.contains("普通教学剪辑"));XCTAssertFalse(text.contains("SKU："));XCTAssertFalse(text.contains("已有承接页："))

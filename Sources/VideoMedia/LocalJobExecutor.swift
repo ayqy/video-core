@@ -18,15 +18,28 @@ public enum LocalJobExecutor {
             return(db.jobs[index],r)
         }
         let token=claimed.0.lease!.token
+        let cancellation=RenderCancellation()
+        var scope:RenderInvocation?
         do {
-            let result=try await MediaRenderer(modules:modules).render(revision:claimed.1,repository:repository,output:repository.root.appendingPathComponent("exports/"+jobID)) { value in
-                try repository.transaction { db in guard let i=db.jobs.firstIndex(where:{$0.id==jobID}) else {throw VideoError.notFound("原任务不存在")};db.jobs[i]=try JobOperations.heartbeat(db.jobs[i],token:token,progress:value) }
-                progress(value)
-            }
+            let invocation=try RenderInvocation.job(repository:repository,claimed:claimed.0,revision:claimed.1,token:token,cancellation:cancellation)
+            scope=invocation
+            let result=try await withTaskCancellationHandler(operation: {
+                try await render(repository:repository,jobID:jobID,revision:claimed.1,token:token,modules:modules,invocation:invocation,progress:progress)
+            }, onCancel: { cancellation.cancel() })
+            try invocation.check()
             return try repository.transaction { db in guard let i=db.jobs.firstIndex(where:{$0.id==jobID}) else {throw VideoError.notFound("原任务不存在")};db.jobs[i]=try JobOperations.finish(db.jobs[i],token:token,artifacts:result.artifacts);db.jobs[i].message=result.warnings.joined(separator:"；");return db.jobs[i] }
         } catch {
+            cancellation.cancel()
+            if let scope { try? modules?.close(invocationID:scope.id) }
             try? repository.transaction { db in guard let i=db.jobs.firstIndex(where:{$0.id==jobID}),db.jobs[i].state == .running,db.jobs[i].lease?.token==token else{return};db.jobs[i].lease=nil;db.jobs[i].state=error is CancellationError ? .cancelled:.interrupted;db.jobs[i].message=(error as? VideoError)?.localizedDescription ?? "本地制作中断，工程与已校验缓存保留，可沿原任务恢复" }
             throw error
         }
+    }
+    private static func render(repository:Repository,jobID:String,revision:Revision,token:String,modules:RenderModuleRegistry?,invocation:RenderInvocation,progress:@escaping @Sendable(Double)->Void) async throws -> RenderResult {
+        let result=try await MediaRenderer(modules:modules).render(revision:revision,repository:repository,output:repository.root.appendingPathComponent("exports/"+jobID),invocation:invocation) { value in
+                try repository.transaction { db in guard let i=db.jobs.firstIndex(where:{$0.id==jobID}) else {throw VideoError.notFound("原任务不存在")};db.jobs[i]=try JobOperations.heartbeat(db.jobs[i],token:token,progress:value) }
+                progress(value)
+            }
+        return result
     }
 }

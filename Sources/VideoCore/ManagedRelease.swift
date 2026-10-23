@@ -25,30 +25,34 @@ public struct ManagedReleaseManifest:Codable,Sendable {
     public var appleTeamID:String
     public var createdAt:Date
     public var files:[ManagedReleaseFile]
-    public init(product:ManagedReleaseProduct,version:String,build:Int,architecture:String,minimumRollbackBuild:Int,publisherKeySHA256:String,appleTeamID:String,createdAt:Date=Date(),files:[ManagedReleaseFile]) {
+    public init(product:ManagedReleaseProduct,version:String,build:Int,architecture:String,minimumRollbackBuild:Int,publisherKeySHA256:String,appleTeamID:String,createdAt:Date=Date(),files:[ManagedReleaseFile],format:Int=1) {
+        self.format=format
         self.product=product;self.version=version;self.build=build;self.architecture=architecture;self.minimumRollbackBuild=minimumRollbackBuild;self.publisherKeySHA256=publisherKeySHA256;self.appleTeamID=appleTeamID;self.createdAt=createdAt;self.files=files
     }
 }
 public enum ManagedReleaseRules {
     public static let documentName="release.videorelease"
     public static func relativePath(_ value:String)throws {
+        if value.hasPrefix("plugins/") {
+            guard value.count<=512,(ManagedPayloadRules.allowedPaths(for:.advancedCLI,format:2).contains(value) || ManagedPayloadRules.allowedPaths(for:.advancedCLI,format:2).contains(where:{$0.hasPrefix(value+"/")})) else{throw VideoError.invalid("独立插件发行子路径不在明确白名单")};return
+        }
         let parts=value.split(separator:"/",omittingEmptySubsequences:false)
         guard value.utf8.count<=512,!parts.isEmpty,parts.count<=12,parts.allSatisfy({!$0.isEmpty && $0 != "." && $0 != ".." && $0.range(of:"^[A-Za-z0-9][A-Za-z0-9._-]{0,119}$",options:.regularExpression) != nil}),!parts.contains(where:{$0.lowercased().hasSuffix(".p8") || $0.lowercased().hasSuffix(".key") || $0.lowercased().contains("credential") || $0==".git"}) else{throw VideoError.invalid("发行文件路径无效或含敏感/目录穿越标识")}
     }
     public static func validate(_ manifest:ManagedReleaseManifest,publicKey:Data,architecture:String,osMajor:Int,teamID:String,now:Date=Date())throws {
-        guard manifest.format==1,manifest.version.range(of:"^[0-9]+\\.[0-9]+\\.[0-9]+(?:-[A-Za-z0-9.-]+)?$",options:.regularExpression) != nil,manifest.version.utf8.count<=100,manifest.build>0,manifest.minimumRollbackBuild>0,manifest.minimumRollbackBuild<=manifest.build else{throw VideoError.invalid("发行版本、构建号或回滚下限不合法")}
+        guard (manifest.format==1 || (manifest.format==2 && manifest.product == .advancedCLI)),manifest.version.range(of:"^[0-9]+\\.[0-9]+\\.[0-9]+(?:-[A-Za-z0-9.-]+)?$",options:.regularExpression) != nil,manifest.version.utf8.count<=100,manifest.build>0,manifest.minimumRollbackBuild>0,manifest.minimumRollbackBuild<=manifest.build else{throw VideoError.invalid("发行版本、构建号或回滚下限不合法")}
         guard manifest.platform=="macOS",["arm64","x86_64"].contains(manifest.architecture),manifest.architecture==architecture,manifest.minimumOSMajor>=14,osMajor>=manifest.minimumOSMajor,manifest.coreABI==1,manifest.repositorySchema==1 else{throw VideoError.unavailable("发行系统/架构/ABI/数据库主版本不兼容；原安装和数据保留")}
         guard publicKey.count==32,manifest.publisherKeySHA256==Codec.hash(publicKey),manifest.appleTeamID==teamID,!teamID.isEmpty,manifest.createdAt<=now.addingTimeInterval(300) else{throw VideoError.permission("发行者身份、Team或签名时间不符")}
         guard !manifest.files.isEmpty,manifest.files.count<=1000,Set(manifest.files.map(\.path)).count==manifest.files.count else{throw VideoError.invalid("发行文件集合为空、重复或超限")}
-        try ManagedPayloadRules.validate(manifest.files,product:manifest.product)
+        try ManagedPayloadRules.validate(manifest.files,product:manifest.product,format:manifest.format)
         var total=0
         for file in manifest.files {
             try relativePath(file.path)
-            guard file.bytes>0,file.bytes<=512*1024*1024,file.sha256.range(of:"^[a-f0-9]{64}$",options:.regularExpression) != nil,!file.executable || file.path.hasPrefix("bin/") else{throw VideoError.invalid("发行文件大小、摘要或可执行位置无效")}
+            guard file.bytes>0,file.bytes<=512*1024*1024,file.sha256.range(of:"^[a-f0-9]{64}$",options:.regularExpression) != nil,!file.executable || ManagedPayloadRules.executablePaths(for:manifest.product,format:manifest.format).contains(file.path) else{throw VideoError.invalid("发行文件大小、摘要或可执行位置无效")}
             guard total<=2*1024*1024*1024-file.bytes else{throw VideoError.invalid("发行包超过2GiB")};total += file.bytes
         }
         guard manifest.files.contains(where:{$0.path==manifest.product.entrypoint && $0.executable}) else{throw VideoError.invalid("发行包缺少该产品固定的实际CLI入口")}
-        if manifest.product == .advancedCLI {guard manifest.files.contains(where:{$0.path=="render-catalog.videomodules"}) else{throw VideoError.invalid("独立高级包须含对应实现的签名模块目录")}}
+        if manifest.product == .advancedCLI && manifest.format==1 {guard manifest.files.contains(where:{$0.path=="render-catalog.videomodules"}) else{throw VideoError.invalid("独立高级包须含对应实现的签名模块目录")}}
     }
     public static func verified(_ document:SignedDocument,publicKey:Data,architecture:String,osMajor:Int,teamID:String,now:Date=Date())throws->ManagedReleaseManifest {
         guard document.payload.count<=2*1024*1024,document.signature.count==64 else{throw VideoError.permission("发行签名封套大小或格式无效")}

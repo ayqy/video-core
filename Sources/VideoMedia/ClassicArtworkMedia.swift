@@ -14,6 +14,35 @@ public struct RenderResources: @unchecked Sendable {
         guard rect.width>0,rect.height>0,rect.minX>=0,rect.minY>=0,rect.maxX<=CGFloat(image.width),rect.maxY<=CGFloat(image.height),let cropped=image.cropping(to:rect) else { throw VideoError.invalid("外部图块无法按已保存区域裁切") }
         return cropped
     }
+    /// Snapshot only the already rights/hash-validated image bank. No source documents or audio.
+    public func pluginRasterAssets(props:PluginVisualProps)throws->[PluginRasterAsset] {
+        guard let artwork=props.artwork else{throw VideoError.review("高级插件缺少实际图集")}
+        let ids=Set(artwork.sprites.map(\.assetID))
+        guard ids==Set(images.keys) else{throw VideoError.permission("插件快照与已核实际图集集合不符")}
+        var result:[PluginRasterAsset]=[],total=0
+        for id in ids.sorted() {
+            guard let image=images[id] else{throw VideoError.notFound("实际图集缺失")}
+            let bytes=try ScenePainter.png(image);total+=bytes.count
+            guard bytes.count<=PluginProtocolRules.maximumAssetBytes,total<=PluginProtocolRules.maximumTotalAssetBytes else{throw VideoError.unavailable("实际图集超过插件有界传输预算，请缩小真实图集后重新核验")}
+            result.append(PluginRasterAsset(assetID:id,data:bytes,sha256:Codec.hash(bytes),width:image.width,height:image.height))
+        }
+        return result
+    }
+    /// Byte-only capability input, not a rights grant. Host must validate original rights first.
+    public static func pluginResources(assets:[PluginRasterAsset])throws->RenderResources {
+        guard assets.count<=32,Set(assets.map(\.assetID)).count==assets.count else{throw VideoError.invalid("插件图集数量或标识不合法")}
+        var result:[String:CGImage]=[:],total=0,pixels=0
+        for asset in assets {
+            total+=asset.data.count
+            guard !asset.data.isEmpty,asset.data.count<=PluginProtocolRules.maximumAssetBytes,total<=PluginProtocolRules.maximumTotalAssetBytes,Codec.hash(asset.data)==asset.sha256,
+                  let source=CGImageSourceCreateWithData(asset.data as CFData,nil),CGImageSourceGetType(source) as String? == "public.png",CGImageSourceGetCount(source)==1,
+                  let properties=CGImageSourceCopyPropertiesAtIndex(source,0,nil) as? [CFString:Any],let w=properties[kCGImagePropertyPixelWidth] as? Int,let h=properties[kCGImagePropertyPixelHeight] as? Int,
+                  (1...8192).contains(w),(1...8192).contains(h),w==asset.width,h==asset.height,w*h<=PluginProtocolRules.maximumImagePixels else{throw VideoError.invalid("插件图集真实字节、格式、摘要或像素无效")}
+            pixels+=w*h;guard pixels<=PluginProtocolRules.maximumTotalImagePixels,let image=CGImageSourceCreateImageAtIndex(source,0,[kCGImageSourceShouldCacheImmediately:true] as CFDictionary) else{throw VideoError.invalid("插件图片总像素超界或解码失败")}
+            result[asset.assetID]=image
+        }
+        return RenderResources(images:result)
+    }
 }
 public enum ClassicArtworkMedia {
     public static func load(scene:VideoCore.Scene,workspaceID:String,repository:Repository,database:Database,commercial:Bool,now:Date=Date()) throws -> RenderResources {

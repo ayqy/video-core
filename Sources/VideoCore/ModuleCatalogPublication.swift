@@ -51,10 +51,11 @@ public struct SourcePublicationReview: Codable, Sendable {
 public enum ModuleCatalogPublicationRules {
     /// Deliberate per-module source boundary. New implementation files require a boundary review,
     /// rather than silently widening an already approved source publication.
-    public static func sourcePaths(pluginID: String) throws -> Set<String> {
+    public static func sourcePaths(pluginID: String,executionFormat:Int=1) throws -> Set<String> {
+        guard [1,2].contains(executionFormat) else{throw VideoError.invalid("未知源码发布执行格式")}
         switch pluginID {
-        case "video.game": return ["Sources/VideoGame/GameModule.swift","Sources/VideoGame/LICENSE"]
-        case "video.cartoon": return ["Sources/VideoCartoon/CartoonModule.swift","Sources/VideoCartoon/LICENSE"]
+        case "video.game": return Set(["Sources/VideoGame/GameModule.swift","Sources/VideoGame/LICENSE"]+(executionFormat==2 ? ["Sources/VideoGamePlugin/main.swift"]:[]))
+        case "video.cartoon": return Set(["Sources/VideoCartoon/CartoonModule.swift","Sources/VideoCartoon/LICENSE"]+(executionFormat==2 ? ["Sources/VideoCartoonPlugin/main.swift"]:[]))
         default: throw VideoError.permission("源码审查引用了未支持的模块；未声明源码开放")
         }
     }
@@ -70,8 +71,8 @@ public enum ModuleCatalogPublicationRules {
     /// Actual files come from the publisher's bounded read adapter, never from review claims.
     /// Signature generation is a later step; missing rights must fail before opening the Issuer.
     public static func approvedOpenSources(_ review: SourcePublicationReview, actualFiles: [SourcePublicationFile], version: String, now: Date = Date()) throws -> Set<String> {
-        guard review.format==1, (1...2).contains(review.modules.count), Set(review.modules.map(\.pluginID)).count==review.modules.count,
-              Set(actualFiles.map(\.path)).count==actualFiles.count, actualFiles.count<=8 else {
+        guard [1,2].contains(review.format), (1...2).contains(review.modules.count), Set(review.modules.map(\.pluginID)).count==review.modules.count,
+              Set(actualFiles.map(\.path)).count==actualFiles.count, actualFiles.count<=(review.format==2 ? 10:8) else {
             throw VideoError.permission("源码审查的格式、模块或文件库存不合法；未声明源码开放")
         }
         func valid(_ file: SourcePublicationFile) -> Bool {
@@ -81,7 +82,7 @@ public enum ModuleCatalogPublicationRules {
         let actual=Dictionary(uniqueKeysWithValues:actualFiles.map{($0.path,$0)})
         var expected=Set<String>(), approved=Set<String>()
         for module in review.modules {
-            let paths=try sourcePaths(pluginID:module.pluginID)
+            let paths=try sourcePaths(pluginID:module.pluginID,executionFormat:review.format)
             guard module.version==version, module.sourceFiles.count==paths.count, Set(module.sourceFiles.map(\.path))==paths,
                   module.sourceFiles.allSatisfy({valid($0) && actual[$0.path]==$0}),
                   module.inventoryDigest == (try sourceInventoryDigest(module.sourceFiles)),

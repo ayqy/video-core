@@ -265,6 +265,12 @@ public final class RenderModuleRegistry: @unchecked Sendable {
     }
     private let lock = NSLock()
     private var entries: [String: Entry] = [:]
+    // A StoreKit refresh/unregister cannot release the last reference to a live scope.
+    private var activeScopes:[String:[String:any ScopedSceneRenderModule]] = [:]
+    private var failedCloses:[String:(token:PluginWeakCancellation,error:VideoError)] = [:]
+    private var scopeTokens:[String:PluginWeakCancellation] = [:]
+    private var closedScopeTokens:[String:PluginWeakCancellation] = [:]
+    private var closingScopes:[String:PluginCloseReceipt] = [:]
     private var highestPolicy: [String: Int] = [:]
     // Persistent hosts keep version floors separately. This semantic history also survives
     // unregister within this registry; it does not claim cross-process content persistence.
@@ -298,6 +304,24 @@ public final class RenderModuleRegistry: @unchecked Sendable {
     private func registerVerified(_ module: any SceneRenderModule, signedManifest: SignedDocument, signedPolicy: SignedDocument, signedLicense: SignedDocument?, storeAccess: StoreAccess?, publicKey: Data, grantedPermissions: Set<String>, minimumPolicyVersion: Int, now: Date) throws {
         let manifest = try signedManifest.verified(as: PluginManifest.self, publicKey: publicKey)
         let policy = try signedPolicy.verified(as: CommercialPolicy.self, publicKey: publicKey)
+        try registerResolved(module,manifest:manifest,policy:policy,installedDigest:BuiltinExecutableIdentity.current().digest,signedLicense:signedLicense,storeAccess:storeAccess,publicKey:publicKey,grantedPermissions:grantedPermissions,minimumPolicyVersion:minimumPolicyVersion,now:now)
+    }
+    public func registerRemote(_ module:RemoteSceneModule,signedLicense:SignedDocument?=nil,publicKey:Data,minimumPolicyVersion:Int=1,now:Date=Date())throws {
+        try PluginPackageRules.verifyFiles(module.package.manifest,root:module.package.rootURL)
+        try PluginNativeCode.verify(root:module.package.rootURL,execution:module.package.execution)
+        try registerResolved(module,manifest:module.package.module,policy:module.package.policy,installedDigest:module.package.manifest.implementationDigest,signedLicense:signedLicense,storeAccess:nil,publicKey:publicKey,grantedPermissions:[],minimumPolicyVersion:minimumPolicyVersion,now:now)
+    }
+    public func registerRemoteStoreKit(_ module:RemoteSceneModule,transaction:VerificationResult<StoreKit.Transaction>,publicKey:Data,minimumPolicyVersion:Int=1,now:Date=Date())throws {
+        guard case .verified(let verified)=transaction,verified.environment != .xcode,
+              let expected=Self.storeProduct(for:module.manifest.id,applicationBundleID:Bundle.main.bundleIdentifier ?? ""),verified.productID==expected,verified.appBundleID==Bundle.main.bundleIdentifier,
+              verified.productType == .nonConsumable || verified.productType == .autoRenewable else{throw VideoError.permission("商店交易或高级模块身份不符")}
+        let access=StoreAccess(pluginID:module.manifest.id,productID:verified.productID,purchaseDate:verified.purchaseDate,expiresAt:verified.expirationDate,revokedAt:verified.revocationDate,upgraded:verified.isUpgraded)
+        try access.validate(now:now)
+        try PluginPackageRules.verifyFiles(module.package.manifest,root:module.package.rootURL)
+        try PluginNativeCode.verify(root:module.package.rootURL,execution:module.package.execution)
+        try registerResolved(module,manifest:module.package.module,policy:module.package.policy,installedDigest:module.package.manifest.implementationDigest,signedLicense:nil,storeAccess:access,publicKey:publicKey,grantedPermissions:[],minimumPolicyVersion:minimumPolicyVersion,now:now)
+    }
+    private func registerResolved(_ module:any SceneRenderModule,manifest:PluginManifest,policy:CommercialPolicy,installedDigest:String,signedLicense:SignedDocument?,storeAccess:StoreAccess?,publicKey:Data,grantedPermissions:Set<String>,minimumPolicyVersion:Int,now:Date)throws {
         guard manifest == module.manifest, manifest.id.range(of: "^[a-z0-9][a-z0-9.-]{1,95}$", options: .regularExpression) != nil,
               !manifest.version.isEmpty, !manifest.capabilities.isEmpty,
               Set(manifest.capabilities).count == manifest.capabilities.count,
@@ -305,7 +329,6 @@ public final class RenderModuleRegistry: @unchecked Sendable {
               policy.version >= max(1, minimumPolicyVersion), policy.updatedAt <= now.addingTimeInterval(300) else {
             throw VideoError.permission("模块manifest、发布策略版本或声明与可信目录不一致")
         }
-        let identity = try BuiltinExecutableIdentity.current()
         var license: ModuleLicense?
         if policy.access == "paid" {
             if let storeAccess { guard storeAccess.pluginID == manifest.id else { throw VideoError.permission("商店模块权益不匹配") }; try storeAccess.validate(now: now) }
@@ -316,7 +339,7 @@ public final class RenderModuleRegistry: @unchecked Sendable {
             }
         }
         let entitlementIDs = storeAccess.map { Set([$0.pluginID]) } ?? license?.pluginIDs ?? []
-        try PluginHost.validate(manifest: manifest, policy: policy, installedDigest: identity.digest, entitlements: entitlementIDs, grantedPermissions: grantedPermissions)
+        try PluginHost.validate(manifest: manifest, policy: policy, installedDigest: installedDigest, entitlements: entitlementIDs, grantedPermissions: grantedPermissions)
         lock.lock(); defer { lock.unlock() }
         guard policy.version >= (highestPolicy[manifest.id] ?? minimumPolicyVersion) else { throw VideoError.permission("拒绝回退到较旧的商业策略，请刷新签名目录") }
         if let previous = highestPolicyDeclarations[manifest.id], previous.version == policy.version {
@@ -354,13 +377,41 @@ public final class RenderModuleRegistry: @unchecked Sendable {
         let manifest = entry.module.manifest
         return RenderModuleStatus(pluginID: manifest.id, version: manifest.version, capabilities: manifest.capabilities, access: entry.policy.access, sourceVisibility: entry.policy.sourceVisibility, expiresAt: entry.license?.expiresAt ?? entry.storeAccess?.expiresAt, policyVersion: entry.policy.version, implementationDigest: manifest.implementationDigest)
     }
-    public func draw(scene: VideoCore.Scene, localFrame: Int, fps: Int, rect: CGRect, context: CGContext, resources: RenderResources = .empty, now: Date = Date()) throws {
+    public func draw(scene: VideoCore.Scene, localFrame: Int, fps: Int, rect: CGRect, context: CGContext, resources: RenderResources = .empty, now: Date = Date(), invocation:RenderInvocation?=nil) throws {
         guard let capability = Self.capability(for: scene.kind) else { throw VideoError.invalid("普通图文/素材镜头不需要高级模块") }
         guard localFrame >= 0, fps > 0, fps <= 120, rect.width.isFinite, rect.height.isFinite, rect.minX.isFinite, rect.minY.isFinite, rect.width > 0, rect.height > 0 else { throw VideoError.invalid("高级模块绘制的时间或画布无效") }
         lock.lock(); let entry = entries.values.first { $0.module.manifest.capabilities.contains(capability) }; lock.unlock()
         guard let entry else { throw VideoError.unavailable("缺少已校验的独立能力：\(capability)。请安装此构建对应的签名模块目录并核对权益，或改用免费图文/真实素材镜头。") }
         try validateEntry(entry, now: now)
         context.saveGState(); defer { context.restoreGState() }; context.clip(to: rect)
-        try entry.module.draw(scene: scene, localFrame: localFrame, fps: fps, rect: rect, context: context, resources: resources)
+        if let scoped=entry.module as? any ScopedSceneRenderModule {
+            guard let invocation else{throw VideoError.permission("高级子进程缺少Host实时授权的完整调用")}
+            let manifest=entry.module.manifest
+            try invocation.check()
+            lock.lock()
+            closedScopeTokens=closedScopeTokens.filter{$0.value.value != nil};failedCloses=failedCloses.filter{$0.value.token.value != nil}
+            guard closingScopes[invocation.id]==nil,failedCloses[invocation.id]==nil,closedScopeTokens[invocation.id]==nil else{lock.unlock();throw VideoError.conflict("此调用正在关闭、已关闭或清理失败，禁止再绘制")}
+            scopeTokens[invocation.id]=PluginWeakCancellation(invocation.cancellation)
+            activeScopes[invocation.id,default:[:]][manifest.id]=scoped;lock.unlock()
+            try scoped.draw(scene:scene,localFrame:localFrame,fps:fps,rect:rect,context:context,resources:resources,invocation:invocation)
+            try invocation.check();lock.lock();let current=entries[manifest.id];lock.unlock()
+            guard let current,current.module.manifest==manifest else{throw VideoError.permission("高级模块在实际绘制期间已移除或替换，拒绝晚到帧")}
+            try validateEntry(current,now:Date())
+        }else{try entry.module.draw(scene: scene, localFrame: localFrame, fps: fps, rect: rect, context: context, resources: resources)}
+    }
+    public func close(invocationID:String)throws {
+        lock.lock()
+        closedScopeTokens=closedScopeTokens.filter{$0.value.value != nil};failedCloses=failedCloses.filter{$0.value.token.value != nil}
+        if let failure=failedCloses[invocationID]{lock.unlock();throw failure.error}
+        if let receipt=closingScopes[invocationID]{lock.unlock();return try receipt.wait()}
+        let modules=activeScopes.removeValue(forKey:invocationID)?.values.map{$0} ?? []
+        guard !modules.isEmpty else{lock.unlock();return}
+        let token=scopeTokens.removeValue(forKey:invocationID),receipt=PluginCloseReceipt();closingScopes[invocationID]=receipt;lock.unlock()
+        var failure:VideoError?
+        for module in modules {do{try module.close(invocationID:invocationID)}catch{if failure==nil{failure=error as? VideoError ?? .unavailable("高级进程清理失败")}}}
+        if let failure {
+            lock.lock();if let token{failedCloses[invocationID]=(token,failure);closedScopeTokens[invocationID]=token};receipt.finish(.failure(failure));closingScopes.removeValue(forKey:invocationID);lock.unlock();throw failure
+        }
+        lock.lock();if let token{closedScopeTokens[invocationID]=token};receipt.finish(.success(()));closingScopes.removeValue(forKey:invocationID);lock.unlock()
     }
 }

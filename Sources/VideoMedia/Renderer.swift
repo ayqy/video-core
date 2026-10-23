@@ -8,7 +8,19 @@ public struct RenderResult: Sendable { public var artifacts: [Artifact]; public 
 public final class MediaRenderer: @unchecked Sendable {
     public let modules:RenderModuleRegistry?
     public init(modules:RenderModuleRegistry?=nil) { self.modules=modules }
-    public func render(revision r: Revision, repository: Repository, output: URL, progress: @escaping @Sendable (Double) throws -> Void = { _ in }) async throws -> RenderResult {
+    public func render(revision r: Revision, repository: Repository, output: URL, invocation: RenderInvocation? = nil, progress: @escaping @Sendable (Double) throws -> Void = { _ in }) async throws -> RenderResult {
+        do {
+            try invocation?.verify(revision:r)
+            let result = try await renderBody(revision:r,repository:repository,output:output,invocation:invocation,progress:progress)
+            try invocation?.check()
+            if let invocation { try modules?.close(invocationID:invocation.id) }
+            return result
+        } catch {
+            if let invocation { invocation.cancellation.cancel(); try? modules?.close(invocationID:invocation.id) }
+            throw error
+        }
+    }
+    private func renderBody(revision r: Revision, repository: Repository, output: URL, invocation: RenderInvocation?, progress: @escaping @Sendable (Double) throws -> Void) async throws -> RenderResult {
         try r.validateContext()
         guard !r.scenes.isEmpty,r.frames>0,r.frames<=54000 else{throw VideoError.review("工程尚无可制作内容或时长超出范围，请添加真实片段后重试")}
         try ManagedInstallRules.authorizeWrite(repositoryRoot:repository.root)
@@ -29,7 +41,7 @@ public final class MediaRenderer: @unchecked Sendable {
         let raw = output.appendingPathComponent("working.mp4"), final = output.appendingPathComponent("video.mp4")
         for u in [raw,final] { if FileManager.default.fileExists(atPath:u.path) { try FileManager.default.removeItem(at:u) } }
         defer { try? FileManager.default.removeItem(at:raw) }
-        let visuals = try await VisualClipCache.compose(revision:r,repository:repository,database:db,output:raw,modules:modules,progress:progress)
+        let visuals = try await VisualClipCache.compose(revision:r,repository:repository,database:db,output:raw,modules:modules,invocation:invocation,progress:progress)
         do {
             try await mix(video:raw,final:final,revision:r,repository:repository,database:db,progress:progress)
             let inspection=try await MediaInspection.inspect(final)
@@ -45,7 +57,14 @@ public final class MediaRenderer: @unchecked Sendable {
             let violations=loudness.violations(policy:policy,audible:audible)
             guard violations.isEmpty else{throw VideoError.review(violations.joined(separator:"；"))}
 
-            let cover=output.appendingPathComponent("cover.png"); try ScenePainter.png(MediaPreview.image(revision:r,frame:0,repository:repository,modules:modules)).write(to:cover,options:.atomic)
+            // The cover is the first decoded frame of this verified final video.
+            // Re-submitting frame zero to a long-lived plugin scope would replay an
+            // evicted execution receipt, and could differ from the actual encode.
+            try invocation?.check(); try Task.checkCancellation()
+            let generator=AVAssetImageGenerator(asset:AVURLAsset(url:final))
+            generator.appliesPreferredTrackTransform=true;generator.requestedTimeToleranceBefore = .zero;generator.requestedTimeToleranceAfter = .zero
+            let cover=output.appendingPathComponent("cover.png")
+            try ScenePainter.png(generator.copyCGImage(at:.zero,actualTime:nil)).write(to:cover,options:.atomic)
             let subtitles=output.appendingPathComponent("captions.srt"); try Self.subtitles(r).write(to:subtitles,atomically:true,encoding:.utf8)
             let text=output.appendingPathComponent("publication.txt");let note=try Self.publicationNotes(r,audio:audio);try note.write(to:text,atomically:true,encoding:.utf8)
             let refs=try [final,cover,subtitles,text].map { u -> Artifact in let data=try Data(contentsOf:u); let mime:[String:String]=["mp4":"video/mp4","png":"image/png","srt":"application/x-subrip","txt":"text/plain"]; return Artifact(path:u.path,mime:mime[u.pathExtension]!,bytes:data.count,sha256:Codec.hash(data),revision:r.id) }

@@ -38,10 +38,10 @@ public enum ScenePainter {
             captionText=captionBackground.insetBy(dx:12,dy:8)
         }
     }
-    public static func image(revision: Revision, frame: Int, media: CGImage? = nil, layerImages: [String:CGImage] = [:], resources:RenderResources = .empty, modules: RenderModuleRegistry? = nil) throws -> CGImage {
+    public static func image(revision: Revision, frame: Int, media: CGImage? = nil, layerImages: [String:CGImage] = [:], resources:RenderResources = .empty, modules: RenderModuleRegistry? = nil, invocation: RenderInvocation? = nil) throws -> CGImage {
         let w = revision.aspect.width, h = revision.aspect.height
         guard let context = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w*4, space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { throw VideoError.unavailable("无法创建画布") }
-        try draw(revision: revision, frame: frame, in: context, media: media, layerImages:layerImages, resources:resources, modules:modules)
+        try draw(revision: revision, frame: frame, in: context, media: media, layerImages:layerImages, resources:resources, modules:modules, invocation:invocation)
         guard let result = context.makeImage() else { throw VideoError.unavailable("无法生成画面") }; return result
     }
     public static func scene(revision: Revision, frame: Int) -> (Scene, Int, Int) {
@@ -49,7 +49,8 @@ public enum ScenePainter {
         for (i,s) in revision.scenes.enumerated() { if frame < cursor+s.timelineFrames { return (s, max(0,frame-cursor), i) }; cursor += s.timelineFrames }
         return (revision.scenes.last!, max(0, revision.scenes.last!.timelineFrames-1), revision.scenes.count-1)
     }
-    public static func draw(revision: Revision, frame: Int, in c: CGContext, media: CGImage? = nil, layerImages: [String:CGImage] = [:], resources:RenderResources = .empty, modules: RenderModuleRegistry? = nil) throws {
+    public static func draw(revision: Revision, frame: Int, in c: CGContext, media: CGImage? = nil, layerImages: [String:CGImage] = [:], resources:RenderResources = .empty, modules: RenderModuleRegistry? = nil, invocation: RenderInvocation? = nil) throws {
+        try invocation?.verify(revision:revision)
         guard !revision.scenes.isEmpty else { throw VideoError.invalid("没有场景") }
         let w = CGFloat(revision.aspect.width), h = CGFloat(revision.aspect.height), portrait = h > w
         let (s, local, index) = scene(revision: revision, frame: frame)
@@ -68,7 +69,7 @@ public enum ScenePainter {
         if let media { c.saveGState(); c.addPath(CGPath(roundedRect: visual, cornerWidth: 28, cornerHeight: 28, transform: nil)); c.clip(); let ratio = min(visual.width/CGFloat(media.width),visual.height/CGFloat(media.height)); let rect = CGRect(x: visual.midX-CGFloat(media.width)*ratio/2,y: visual.midY-CGFloat(media.height)*ratio/2,width: CGFloat(media.width)*ratio,height: CGFloat(media.height)*ratio); c.draw(media,in: rect); c.restoreGState() }
         else if RenderModuleRegistry.capability(for:s.kind) != nil {
             guard let modules else { throw VideoError.unavailable("此镜头需要独立高级模块，请核对已安装模块与权益；免费图文、图片和录屏继续可用") }
-            try modules.draw(scene:s,localFrame:mapped,fps:revision.fps,rect:visual,context:c,resources:resources)
+            try modules.draw(scene:s,localFrame:mapped,fps:revision.fps,rect:visual,context:c,resources:resources,invocation:invocation)
         } else if media == nil {
             c.setFillColor(color(s.color,alpha:0.14)); c.addPath(CGPath(roundedRect:visual,cornerWidth:28,cornerHeight:28,transform:nil)); c.fillPath()
             try checkedText(s.body,in:visual.insetBy(dx:28,dy:26),size:portrait ? 32:34,color:"E2E8F0",context:c,fontName:s.fontName ?? "PingFangSC-Medium")

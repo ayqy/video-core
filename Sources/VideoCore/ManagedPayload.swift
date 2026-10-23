@@ -5,24 +5,33 @@ import CryptoKit
 /// A binary delivery is deliberately smaller than a source checkout. The same layout is
 /// enforced before publishing and after signature verification by the installer.
 public enum ManagedPayloadRules {
-    public static func requiredPaths(for product:ManagedReleaseProduct)->Set<String> {
+    public static func requiredPaths(for product:ManagedReleaseProduct,format:Int=1)->Set<String> {
         var result:Set<String>=[product.entrypoint,"LICENSE","NOTICE"]
         if product == .advancedCLI {
-            result.formUnion(["publisher.pub","render-catalog.videomodules",
-                              "licenses/VideoAdvanced.txt","licenses/VideoGame.txt","licenses/VideoCartoon.txt"])
+            result.formUnion(["publisher.pub","licenses/VideoAdvanced.txt","licenses/VideoGame.txt","licenses/VideoCartoon.txt"])
+            if format==1{result.insert("render-catalog.videomodules")}
+            if format==2{for id in PluginPackageRules.moduleSuffixes.keys{let prefix=try! PluginPackageRules.packagePath(pluginID:id)+"/";result.formUnion(try! PluginPackageRules.requiredPaths(pluginID:id).map{prefix+$0});result.formUnion([prefix+PluginPackageRules.manifestName,prefix+PluginPackageRules.policyName])}}
         }
         return result
     }
-    public static func allowedPaths(for product:ManagedReleaseProduct)->Set<String> {
-        requiredPaths(for:product).union(["bin/video-install"])
+    public static func allowedPaths(for product:ManagedReleaseProduct,format:Int=1)->Set<String> {
+        var result=requiredPaths(for:product,format:format).union(["bin/video-install"])
+        if product == .advancedCLI && format==2{for id in PluginPackageRules.moduleSuffixes.keys{let prefix=try! PluginPackageRules.packagePath(pluginID:id)+"/";result.formUnion(try! PluginPackageRules.allowedPaths(pluginID:id).map{prefix+$0})}}
+        return result
     }
-    public static func validate(_ files:[ManagedReleaseFile],product:ManagedReleaseProduct)throws {
-        let paths=Set(files.map(\.path)),required=requiredPaths(for:product)
-        guard paths.count==files.count,required.isSubset(of:paths),paths.isSubset(of:allowedPaths(for:product)) else {
+    public static func executablePaths(for product:ManagedReleaseProduct,format:Int=1)->Set<String>{
+        var result:Set<String>=[product.entrypoint,"bin/video-install"]
+        if product == .advancedCLI && format==2{for id in PluginPackageRules.moduleSuffixes.keys{let prefix=try! PluginPackageRules.packagePath(pluginID:id)+"/";result.formUnion(try! PluginPackageRules.executablePaths(pluginID:id).map{prefix+$0})}}
+        return result
+    }
+    public static func validate(_ files:[ManagedReleaseFile],product:ManagedReleaseProduct,format:Int=1)throws {
+        guard format==1 || (format==2 && product == .advancedCLI) else{throw VideoError.invalid("未知二进制发行布局，未回落旧格式")}
+        let paths=Set(files.map(\.path)),required=requiredPaths(for:product,format:format)
+        guard paths.count==files.count,required.isSubset(of:paths),paths.isSubset(of:allowedPaths(for:product,format:format)) else {
             throw VideoError.invalid("二进制发行库存缺少许可/声明或包含未允许文件；源码、调试映射、用户许可证和凭据不能进入发行payload")
         }
         for file in files {
-            let isExecutable=file.path==product.entrypoint || file.path=="bin/video-install"
+            let isExecutable=executablePaths(for:product,format:format).contains(file.path)
             guard file.executable==isExecutable else{throw VideoError.invalid("发行文件执行权限与固定入口不符")}
             if !isExecutable {
                 guard file.bytes>0,file.bytes<=2*1024*1024 else{throw VideoError.invalid("发行许可、公钥或目录文件为空或超过2MiB")}
@@ -61,12 +70,12 @@ public enum ManagedPayloadPreparation {
     /// directory before the single exclusive rename makes those bytes visible.
     @discardableResult
     public static func prepare(product:ManagedReleaseProduct,sources:[String:URL],output:URL,
-                               validate:(_ staged:URL,_ files:[ManagedReleaseFile])throws->Void)throws->[ManagedReleaseFile] {
+                               format:Int=1,validate:(_ staged:URL,_ files:[ManagedReleaseFile])throws->Void)throws->[ManagedReleaseFile] {
         let fm=FileManager.default,target=output.standardizedFileURL,parent=target.deletingLastPathComponent()
         try ManagedReleaseRules.safeDirectory(target)
         guard !fm.fileExists(atPath:target.path) else{throw VideoError.conflict("payload输出已存在，原内容保留；请选择新的明确目录")}
-        guard Set(sources.keys).isSubset(of:ManagedPayloadRules.allowedPaths(for:product)),
-              ManagedPayloadRules.requiredPaths(for:product).isSubset(of:Set(sources.keys)) else {
+        guard Set(sources.keys).isSubset(of:ManagedPayloadRules.allowedPaths(for:product,format:format)),
+              ManagedPayloadRules.requiredPaths(for:product,format:format).isSubset(of:Set(sources.keys)) else {
             throw VideoError.invalid("payload来源集合不符合固定产品边界")
         }
         var expected:[ManagedReleaseFile]=[]
@@ -74,7 +83,7 @@ public enum ManagedPayloadPreparation {
             try ManagedReleaseRules.relativePath(name)
             expected.append(try readSource(sources[name]!.standardizedFileURL,name:name))
         }
-        try ManagedPayloadRules.validate(expected,product:product)
+        try ManagedPayloadRules.validate(expected,product:product,format:format)
         try fm.createDirectory(at:parent,withIntermediateDirectories:true,attributes:[.posixPermissions:0o700])
         let staged=parent.appendingPathComponent(".video-payload-stage-"+Codec.id())
         try fm.createDirectory(at:staged,withIntermediateDirectories:false,attributes:[.posixPermissions:0o700])

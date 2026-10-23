@@ -40,7 +40,7 @@ private struct InstallArguments {
 private enum CandidateSelfTest {
     /// Execute only fixed native commands after all signed file bytes were verified. Capture
     /// bounded output in protected temporary files; never inherit provider/authentication env.
-    static func run(_ executable:URL,_ arguments:[String],root:URL,timeout:TimeInterval=20,includeStderr:Bool=false)throws->Data {
+    static func run(_ executable:URL,_ arguments:[String],root:URL,timeout:TimeInterval=20,includeStderr:Bool=false,inputData:Data?=nil)throws->Data {
         let fm=FileManager.default,cache=root.appendingPathComponent(".installer-probe-"+Codec.id())
         try fm.createDirectory(at:cache,withIntermediateDirectories:false,attributes:[.posixPermissions:0o700]);defer{try? fm.removeItem(at:cache)}
         let out=cache.appendingPathComponent("stdout"),err=cache.appendingPathComponent("stderr")
@@ -49,8 +49,11 @@ private enum CandidateSelfTest {
         defer{try? stdout.close();try? stderr.close()}
         let task=Process();task.executableURL=executable;task.arguments=arguments;task.currentDirectoryURL=root
         task.environment=["PATH":"/usr/bin:/bin:/usr/sbin:/sbin","LANG":"en_US.UTF-8","LC_ALL":"en_US.UTF-8","TMPDIR":cache.path]
-        task.standardInput=FileHandle.nullDevice;task.standardOutput=stdout;task.standardError=stderr
-        try task.run();let deadline=Date().addingTimeInterval(timeout)
+        let stdin=inputData==nil ? nil:Pipe()
+        if let stdin{task.standardInput=stdin}else{task.standardInput=FileHandle.nullDevice};task.standardOutput=stdout;task.standardError=stderr
+        try task.run()
+        if let inputData,let stdin{try stdin.fileHandleForWriting.write(contentsOf:inputData);try stdin.fileHandleForWriting.close()}
+        let deadline=Date().addingTimeInterval(timeout)
         while task.isRunning && Date()<deadline {
             let a=(try? out.resourceValues(forKeys:[.fileSizeKey]).fileSize) ?? 0,b=(try? err.resourceValues(forKeys:[.fileSizeKey]).fileSize) ?? 0
             if a>4*1024*1024 || b>1024*1024{task.terminate();break}
@@ -81,7 +84,7 @@ private enum CandidateSelfTest {
             if file.path==manifest.product.entrypoint{guard lines.contains(Substring("Identifier="+manifest.product.rawValue)) else{throw VideoError.permission("候选CLI签名标识与固定产品不一致")}}
             _=try run(URL(fileURLWithPath:"/usr/sbin/spctl"),["--assess","--type","execute",executable.path],root:data)
         }
-        if manifest.product == .advancedCLI {
+        if manifest.product == .advancedCLI && manifest.format==1 {
             let binary=program.appendingPathComponent(manifest.product.entrypoint)
             let digest=try MachOCodeIdentity.digest(Data(contentsOf:binary,options:.mappedIfSafe))
             let history=try ModulePolicyHistoryFileStore(root:data).read()
@@ -90,6 +93,20 @@ private enum CandidateSelfTest {
             // same signature/expiry/revocation and module entitlement checks again.
             let licence=data.appendingPathComponent("independent.videolicense")
             if FileManager.default.fileExists(atPath:licence.path){let signed=try PropertyListDecoder().decode(SignedDocument.self,from:Data(contentsOf:licence));_=try signed.verified(as:ModuleLicense.self,publicKey:InstallerTrust.publicKey)}
+        }
+        if manifest.product == .advancedCLI && manifest.format==2 {
+            let history=try ModulePolicyHistoryFileStore(root:data).read(),type:UInt32=manifest.architecture=="arm64" ? 0x0100000c:0x01000007
+            guard try PluginPackageRules.read(program.appendingPathComponent("publisher.pub"),limit:32)==InstallerTrust.publicKey else{throw VideoError.permission("独立插件发行公钥不匹配")}
+            for id in PluginPackageRules.moduleSuffixes.keys {
+                let root=program.appendingPathComponent(try PluginPackageRules.packagePath(pluginID:id))
+                let package=try PluginPackageRules.verify(root:root,publicKey:InstallerTrust.publicKey,architecture:manifest.architecture,osMajor:ProcessInfo.processInfo.operatingSystemVersion.majorVersion,minimumPolicyVersion:history.versions[id] ?? 1,implementationDigest:{url in try MachOCodeIdentity.digest(PluginPackageRules.read(url,limit:512*1024*1024),cpuType:type)},validateCode:PluginNativeCode.verify)
+                guard package.module.id==id else{throw VideoError.permission("独立插件位置和身份不符")}
+                _=try history.observing([package.policy])
+                let requests=try PluginPackageProbeRules.requests(),wire=try PluginPackageProbeRules.input(requests)
+                let result=try run(root.appendingPathComponent(package.execution.entrypoint),[],root:data,timeout:25,inputData:wire)
+                try PluginPackageProbeRules.validate(result,requests:requests,manifest:package.manifest)
+                try PluginPackageRules.verifyFiles(package.manifest,root:root)
+            }
         }
         let candidate=program.appendingPathComponent(manifest.product.entrypoint)
         try envelope(run(candidate,["schema"],root:data),command:"schema")

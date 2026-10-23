@@ -13,7 +13,7 @@ enum VisualClipCache {
         func cancel() { session.cancelExport() }
     }
     // Bump whenever layout/codec semantics change. Font bytes and OS are also fingerprinted.
-    static let version="native-scene-cache-5"
+    static let version="native-scene-cache-6"
     struct Key: Encodable {
         var version: String; var os: String; var font: String; var scene: Scene
         var purpose: Purpose; var aspect: Aspect; var fps: Int; var index: Int; var sceneCount: Int; var startFrame: Int
@@ -33,14 +33,15 @@ enum VisualClipCache {
         if RenderModuleRegistry.capability(for:scene.kind) != nil {guard let modules else{throw VideoError.unavailable("需要独立高级模块与有效权益")};let status=try modules.validate(kind:scene.kind);moduleIdentity=status.pluginID+status.version+status.implementationDigest}
         return try Codec.digest(Key(version:version+revision.toolchain,os:ProcessInfo.processInfo.operatingSystemVersionString,font:fontID,scene:scene,purpose:revision.purpose,aspect:revision.aspect,fps:revision.fps,index:index,sceneCount:revision.scenes.count,startFrame:revision.scenes.prefix(index).reduce(0){$0+$1.timelineFrames},price:scene.showPrice ? try revision.product?.price(at:revision.createdAt):nil,cta:index==revision.scenes.count-1 ? revision.cta:nil,sourceHash:database.assets.first{$0.id==scene.assetID}?.hash,layerHashes:Dictionary(uniqueKeysWithValues:database.assets.filter { a in scene.layers?.contains(where:{$0.assetID==a.id})==true }.map{($0.id,$0.hash)}),moduleIdentity:moduleIdentity,artworkIdentity:try ClassicArtworkMedia.fingerprint(scene:scene,database:database)))
     }
-    static func compose(revision r: Revision, repository: Repository, database db: Database, output: URL,modules:RenderModuleRegistry?, progress: @escaping @Sendable (Double) throws -> Void) async throws -> Int {
+    static func compose(revision r: Revision, repository: Repository, database db: Database, output: URL,modules:RenderModuleRegistry?, invocation:RenderInvocation?=nil, progress: @escaping @Sendable (Double) throws -> Void) async throws -> Int {
+        try invocation?.verify(revision:r)
         let directory=repository.root.appendingPathComponent("cache/visuals")
         try FileManager.default.createDirectory(at:directory,withIntermediateDirectories:true)
         let composition=AVMutableComposition()
         guard let track=composition.addMutableTrack(withMediaType:.video,preferredTrackID:kCMPersistentTrackID_Invalid) else { throw VideoError.unavailable("无法建立画面时间轴") }
         var cursor=0, hits=0
         for (index,scene) in r.scenes.enumerated() {
-            try Task.checkCancellation()
+            try Task.checkCancellation(); try invocation?.check()
             if let aid=scene.assetID,let asset=db.assets.first(where:{$0.id==aid}) { let data=try Data(contentsOf:repository.assetURL(asset)); guard data.count==asset.bytes,Codec.hash(data)==asset.hash else { throw VideoError.invalid("源素材摘要不符，拒绝复用缓存") } }
             _ = try ClassicArtworkMedia.load(scene:scene,workspaceID:r.workspaceID,repository:repository,database:db,commercial:r.purpose != .education)
             let key=try fingerprint(revision:r,index:index,database:db,modules:modules)
@@ -50,7 +51,8 @@ enum VisualClipCache {
             if !valid {
                 let temporary=directory.appendingPathComponent(Codec.id()+".mp4")
                 do {
-                    try await renderClip(revision:r,index:index,startFrame:cursor,repository:repository,database:db,output:temporary,modules:modules) { local in try progress((Double(cursor)+Double(scene.timelineFrames)*local)/Double(r.frames)*0.75) }
+                    try await renderClip(revision:r,index:index,startFrame:cursor,repository:repository,database:db,output:temporary,modules:modules,invocation:invocation) { local in try progress((Double(cursor)+Double(scene.timelineFrames)*local)/Double(r.frames)*0.75) }
+                    try invocation?.check()
                     let bytes=try Data(contentsOf:temporary); let entry=Entry(key:key,bytes:bytes.count,sha256:Codec.hash(bytes),frames:scene.timelineFrames)
                     if FileManager.default.fileExists(atPath:clip.path) { try FileManager.default.removeItem(at:clip) }
                     try FileManager.default.moveItem(at:temporary,to:clip); try PropertyListEncoder().encode(entry).write(to:metadata,options:.atomic)
@@ -65,11 +67,11 @@ enum VisualClipCache {
         exporter.outputURL=output; exporter.outputFileType = .mp4; exporter.timeRange=CMTimeRange(start:.zero,duration:CMTime(value:Int64(r.frames),timescale:Int32(r.fps)))
         let control=ExportControl(exporter)
         await withTaskCancellationHandler(operation:{ await withCheckedContinuation { (c:CheckedContinuation<Void,Never>) in exporter.exportAsynchronously { c.resume() } } },onCancel:{ control.cancel() })
-        try Task.checkCancellation(); guard exporter.status == .completed else { throw VideoError.unavailable("镜头合成未完成") }
+        try Task.checkCancellation(); try invocation?.check(); guard exporter.status == .completed else { throw VideoError.unavailable("镜头合成未完成") }
         trim(directory:directory,limit:256*1024*1024)
         return hits
     }
-    static func renderClip(revision r: Revision,index: Int,startFrame: Int,repository: Repository,database db: Database,output: URL,modules:RenderModuleRegistry?,progress: @escaping (Double) throws -> Void) async throws {
+    static func renderClip(revision r: Revision,index: Int,startFrame: Int,repository: Repository,database db: Database,output: URL,modules:RenderModuleRegistry?,invocation:RenderInvocation?=nil,progress: @escaping (Double) throws -> Void) async throws {
         let scene=r.scenes[index]; let writer=try AVAssetWriter(outputURL:output,fileType:.mp4)
         let settings:[String:Any]=[AVVideoCodecKey:AVVideoCodecType.h264,AVVideoWidthKey:r.aspect.width,AVVideoHeightKey:r.aspect.height,AVVideoColorPropertiesKey:[AVVideoColorPrimariesKey:AVVideoColorPrimaries_ITU_R_709_2,AVVideoTransferFunctionKey:AVVideoTransferFunction_ITU_R_709_2,AVVideoYCbCrMatrixKey:AVVideoYCbCrMatrix_ITU_R_709_2],AVVideoCompressionPropertiesKey:[AVVideoAverageBitRateKey:2_500_000,AVVideoExpectedSourceFrameRateKey:r.fps,AVVideoAllowFrameReorderingKey:false,AVVideoMaxKeyFrameIntervalKey:r.fps*2,AVVideoProfileLevelKey:AVVideoProfileLevelH264HighAutoLevel]]
         let input=AVAssetWriterInput(mediaType:.video,outputSettings:settings); input.mediaTimeScale=Int32(r.fps*1000);input.expectsMediaDataInRealTime=false
@@ -86,14 +88,14 @@ enum VisualClipCache {
         }
         do {
             for local in 0..<scene.timelineFrames {
-                try Task.checkCancellation()
-                while !input.isReadyForMoreMediaData { guard writer.status != .failed else { throw VideoError.unavailable("画面编码失败") };try await Task.sleep(nanoseconds:2_000_000);try Task.checkCancellation() }
+                try Task.checkCancellation(); try invocation?.check()
+                while !input.isReadyForMoreMediaData { guard writer.status != .failed else { throw VideoError.unavailable("画面编码失败") };try await Task.sleep(nanoseconds:2_000_000);try Task.checkCancellation(); try invocation?.check() }
                 var buffer:CVPixelBuffer?;guard let pool=adaptor.pixelBufferPool,CVPixelBufferPoolCreatePixelBuffer(nil,pool,&buffer)==kCVReturnSuccess,let buffer else { throw VideoError.unavailable("帧缓冲内存不足") }
                 var media=picture
                 if let g=generator { let sourceFrame=scene.sourceStartFrame+min(scene.durationFrames-1,Int(Double(local)*scene.speed));media=try g.copyCGImage(at:CMTime(value:Int64(sourceFrame),timescale:Int32(r.fps)),actualTime:nil) }
                 CVPixelBufferLockBaseAddress(buffer,[])
                 guard let context=CGContext(data:CVPixelBufferGetBaseAddress(buffer),width:r.aspect.width,height:r.aspect.height,bitsPerComponent:8,bytesPerRow:CVPixelBufferGetBytesPerRow(buffer),space:CGColorSpace(name:CGColorSpace.sRGB)!,bitmapInfo:CGImageAlphaInfo.noneSkipFirst.rawValue) else { CVPixelBufferUnlockBaseAddress(buffer,[]);throw VideoError.unavailable("帧缓冲不可用") }
-                do { try ScenePainter.draw(revision:r,frame:startFrame+local,in:context,media:media,layerImages:layerImages,resources:resources,modules:modules) } catch { CVPixelBufferUnlockBaseAddress(buffer,[]);throw error };CVPixelBufferUnlockBaseAddress(buffer,[])
+                do { try ScenePainter.draw(revision:r,frame:startFrame+local,in:context,media:media,layerImages:layerImages,resources:resources,modules:modules,invocation:invocation) } catch { CVPixelBufferUnlockBaseAddress(buffer,[]);throw error };CVPixelBufferUnlockBaseAddress(buffer,[])
                 guard adaptor.append(buffer,withPresentationTime:CMTime(value:Int64(local),timescale:Int32(r.fps))) else { throw VideoError.unavailable("帧写入失败") }
                 if local%15==0 { try progress(Double(local)/Double(scene.timelineFrames)) }
             }
