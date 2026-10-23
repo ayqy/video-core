@@ -40,10 +40,13 @@ public struct CourseMapping: Codable, Identifiable, Equatable, Sendable {
     }
     /// Applies only this selected source. Other scenes and locked sources remain untouched.
     public func applying(to scene: Scene, product: Product, assets: [Asset], evidence: [Evidence]) throws -> Scene {
+        return try applying(to:scene,workspaceID:product.workspaceID,assets:assets,evidence:evidence)
+    }
+    public func applying(to scene:Scene,workspaceID:String,assets:[Asset],evidence:[Evidence])throws->Scene {
         guard !scene.locked else { throw VideoError.conflict("请先解锁该场景，再替换课程来源") }
-        try validate(workspaceID: product.workspaceID, assets: assets, evidence: evidence)
+        try validate(workspaceID: workspaceID, assets: assets, evidence: evidence)
         guard confirmed else { throw VideoError.review("课程片段尚未人工确认") }
-        let asset = assets.first(where: { $0.id == assetID && $0.workspaceID == product.workspaceID })!
+        let asset = assets.first(where: { $0.id == assetID && $0.workspaceID == workspaceID })!
         var result = scene; result.courseMappingIDs = [id]; result.evidenceIDs = Array(Set(scene.evidenceIDs + evidenceIDs)).sorted()
         if asset.mediaType.hasPrefix("video") { result.kind = .video; result.assetID = asset.id; result.sourceStartFrame = rangeKind == .time ? start : 0; result.sourceEndFrame = rangeKind == .time ? end : asset.durationFrames; result.durationFrames = min(result.durationFrames, (rangeKind == .time ? end-start : asset.durationFrames) ?? result.durationFrames) }
         else if asset.mediaType.hasPrefix("image") { result.kind = .image; result.assetID = asset.id }
@@ -68,7 +71,8 @@ public struct FrozenDependency: Codable, Identifiable, Sendable {
 public struct DependencySnapshot: Codable, Sendable {
     public var version: Int = 1
     public var workspaceID: String
-    public var productID: String
+    public var productID: String?
+    public var contentContextID: String?
     public var records: [FrozenDependency]
     public var capturedAt: Date
 }
@@ -88,10 +92,11 @@ public enum DependencyRules {
         for mapping in mappings { try mapping.validate(workspaceID: product.workspaceID, assets: assets, evidence: evidence) }
     }
     public static func freeze(revision: Revision, assets: [Asset], evidence: [Evidence], now: Date = Date()) throws -> DependencySnapshot {
-        let workspaceID = revision.product.workspaceID
+        try revision.validateContext()
+        let workspaceID = revision.workspaceID
         var assetScenes: [String: Set<String>] = [:], evidenceScenes: [String: Set<String>] = [:], mappingScenes: [String: Set<String>] = [:]
         var selectedPages: [String: Set<Int>] = [:]
-        let mappings = revision.product.courseMappings ?? []
+        let mappings = revision.courseMappings
         func addAsset(_ id: String?, _ scenes: Set<String>) throws {
             guard let id else { return }
             guard let a = assets.first(where: { $0.id == id && $0.workspaceID == workspaceID }) else { throw VideoError.permission("引用的素材缺失或不属于当前工作区") }
@@ -144,11 +149,12 @@ public enum DependencyRules {
             let item = mappings.first(where: { $0.id == id })!
             records.append(FrozenDependency(id: "mapping:"+id, kind: .mapping, label: item.title, digest: try Codec.digest(item), sceneIDs: mappingScenes[id]!.sorted(), mapping: item))
         }
-        return DependencySnapshot(workspaceID: workspaceID, productID: revision.product.id, records: records, capturedAt: now)
+        return DependencySnapshot(version:revision.schemaVersion,workspaceID: workspaceID, productID: revision.product?.id, contentContextID:revision.contentContext?.id, records: records, capturedAt: now)
     }
     public static func diff(revision: Revision, assets: [Asset], evidence: [Evidence], currentProduct: Product? = nil, now: Date = Date()) -> [DependencyChange] {
+        if let product=currentProduct,(product.id != revision.product?.id || product.workspaceID != revision.workspaceID) {return [DependencyChange(id:"product",reason:.permission,summary:"当前产品事实不属于该工程上下文")]}
         guard let snapshot = revision.dependencies else { return [DependencyChange(id: "snapshot", reason: .unfrozen, summary: "此版本尚未冻结素材与证据依赖，请创建新版本并重新审核")] }
-        guard snapshot.version == 1, snapshot.workspaceID == revision.product.workspaceID, snapshot.productID == revision.product.id else { return [DependencyChange(id: "snapshot", reason: .permission, summary: "依赖快照不属于当前工程或版本不支持")] }
+        guard snapshot.version == revision.schemaVersion, snapshot.workspaceID == revision.workspaceID, snapshot.productID == revision.product?.id, snapshot.contentContextID == revision.contentContext?.id else { return [DependencyChange(id: "snapshot", reason: .permission, summary: "依赖快照不属于当前工程或版本不支持")] }
         var changes: [DependencyChange] = []
         let commercial = revision.purpose != .education
         for record in snapshot.records {
@@ -166,7 +172,7 @@ public enum DependencyRules {
                 if !item.verified || item.source.isEmpty || item.owner.isEmpty { add(.unverified, "来源、权利人或核实状态不完整") }
                 if commercial && !item.commercialAllowed { add(.permission, "未获得商业用途许可") }
             case .mapping:
-                guard let old = record.mapping, let product = currentProduct ?? Optional(revision.product), product.workspaceID == snapshot.workspaceID, let item = product.courseMappings?.first(where: { $0.id == old.id }) else { add(.missing, "课程映射已缺失"); continue }
+                guard let old = record.mapping, let item = (currentProduct?.courseMappings ?? revision.courseMappings).first(where: { $0.id == old.id }) else { add(.missing, "课程映射已缺失"); continue }
                 if (try? Codec.digest(item)) != record.digest { add(.changed, "课程范围、知识点、受众、成果或证据关联已变化") }
                 if !item.confirmed { add(.unverified, "课程片段映射尚未人工核实") }
             }

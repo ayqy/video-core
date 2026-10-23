@@ -34,7 +34,7 @@ final class MediaTests:XCTestCase {
             }
             func paint(_ value:Revision)throws->CGImage {try ScenePainter.image(revision:value,frame:15,media:hasMedia ? image:nil)}
             let original=try paint(revision)
-            var price=revision;price.product.prices[0].money=Money(200)
+            var price=revision;price.product!.prices[0].money=Money(200)
             var captions=revision;captions.scenes[0].captions[0].text="同步检查画面"
             var cta=revision;cta.cta="核对课程前提"
             for (changedRegion,variant) in [price,captions,cta].enumerated() {
@@ -87,7 +87,7 @@ final class MediaTests:XCTestCase {
         var project=try LearningExample.project(workspaceID:workspace.id,asset:source)
         let picture=try repo.ingest(ScenePainter.png(ScenePainter.image(revision:project.current,frame:0)),name:"layer.png",workspaceID:workspace.id,mediaType:"image/png")
         project.revisions[0].scenes[0].layers=[SceneLayer(kind:.image,assetID:picture.id,endFrame:30)]
-        try repo.transaction{$0.workspaces=[workspace];$0.assets=[source,picture];$0.products=[project.current.product];$0.projects=[project]}
+        try repo.transaction{$0.workspaces=[workspace];$0.assets=[source,picture];$0.products=[project.current.product!];$0.projects=[project]}
         var corrupt=try Data(contentsOf:repo.assetURL(picture));corrupt.append(0);try corrupt.write(to:repo.assetURL(picture),options:.atomic)
         do{_ = try await MediaRenderer().render(revision:project.current,repository:repo,output:root.appendingPathComponent("failed"));XCTFail("tampered layer was rendered")}
         catch{XCTAssertEqual((error as? VideoError)?.exitCode,5)}
@@ -100,7 +100,7 @@ final class MediaTests:XCTestCase {
         let p=Product(workspaceID:w.id,sku:"synthetic-qa",name:"上下文课",checkout:"https://example.com/qa",audience:"验收角色",task:"理解上下文",outcome:"复现变化",prerequisite:"会输入文字",scope:"容量与压缩",prices:[Price(money:Money(99),from:Date(timeIntervalSince1970:0),source:"合成验收材料",verified:true)])
         let a=Scene(title:"容量有限",body:"输入和输出共同占用容量。",durationFrames:30);var b=Scene(title:"核对当前产品",body:"这是合成验收材料，不代表真实销售。",durationFrames:30);b.showPrice=true
         var revision=Revision(product:p,purpose:.course,aspect:.landscape,scenes:[a,b],cta:"查看真实内容与前置条件")
-        let first=try ScenePainter.png(ScenePainter.image(revision:revision,frame:0));let last=try ScenePainter.png(ScenePainter.image(revision:revision,frame:59));var changed=revision;changed.id=Codec.id();changed.number=2;changed.product.prices[0].money=Money(200)
+        let first=try ScenePainter.png(ScenePainter.image(revision:revision,frame:0));let last=try ScenePainter.png(ScenePainter.image(revision:revision,frame:59));var changed=revision;changed.id=Codec.id();changed.number=2;changed.product!.prices[0].money=Money(200)
         XCTAssertEqual(Codec.hash(first),Codec.hash(try ScenePainter.png(ScenePainter.image(revision:changed,frame:0))));XCTAssertNotEqual(Codec.hash(last),Codec.hash(try ScenePainter.png(ScenePainter.image(revision:changed,frame:59))))
         for aspect in Aspect.allCases{revision.aspect=aspect;let result=try await MediaRenderer().render(revision:revision,repository:repo,output:root.appendingPathComponent(aspect == .landscape ? "wide":"tall"));let video=try XCTUnwrap(result.artifacts.first{$0.mime=="video/mp4"});let info=try await MediaInspection.inspect(URL(fileURLWithPath:video.path));XCTAssertEqual(info.width,aspect.width);XCTAssertEqual(info.height,aspect.height);XCTAssertEqual(info.videoCodec,"avc1");XCTAssertEqual(info.audioCodec,"aac ");XCTAssertEqual(info.sampleRate,48000);XCTAssertEqual(info.h264ChromaFormatIDC,1);XCTAssertEqual(info.h264BitDepthLuma,8);XCTAssertEqual(info.h264BitDepthChroma,8);XCTAssertTrue(info.isH2644208Bit);XCTAssertTrue(info.isBT709);XCTAssertEqual(info.colorPrimaries,kCMFormatDescriptionColorPrimaries_ITU_R_709_2 as String);XCTAssertEqual(info.transferFunction,kCMFormatDescriptionTransferFunction_ITU_R_709_2 as String);XCTAssertEqual(info.ycbcrMatrix,kCMFormatDescriptionYCbCrMatrix_ITU_R_709_2 as String);XCTAssertEqual(info.duration,2,accuracy:0.15);XCTAssertEqual(result.artifacts.count,4);XCTAssertEqual(video.sha256,Codec.hash(try Data(contentsOf:URL(fileURLWithPath:video.path))))}
     }
@@ -114,7 +114,7 @@ final class MediaTests:XCTestCase {
         let a=Scene(title:"知识",body:"知识保持不变。",durationFrames:15);var b=Scene(title:"课程",body:"价格来自产品快照。",durationFrames:15);b.showPrice=true
         var r=Revision(product:product,purpose:.course,aspect:.landscape,scenes:[a,b],cta:"查看原课程")
         let first=try await MediaRenderer().render(revision:r,repository:repo,output:root.appendingPathComponent("one"));XCTAssertTrue(first.warnings.contains{$0.contains("0/2")})
-        r.id=Codec.id();r.number=2;r.product.prices[0].money=Money(200)
+        r.id=Codec.id();r.number=2;r.product!.prices[0].money=Money(200)
         let changed=try await MediaRenderer().render(revision:r,repository:repo,output:root.appendingPathComponent("two"));XCTAssertTrue(changed.warnings.contains{$0.contains("1/2")})
         let cached=try await MediaRenderer().render(revision:r,repository:repo,output:root.appendingPathComponent("three"));XCTAssertTrue(cached.warnings.contains{$0.contains("2/2")})
         func frame(_ result:RenderResult,_ at:Int)throws->String {let url=URL(fileURLWithPath:result.artifacts.first{$0.mime=="video/mp4"}!.path);let g=AVAssetImageGenerator(asset:AVURLAsset(url:url));g.requestedTimeToleranceBefore = .zero;g.requestedTimeToleranceAfter = .zero;return Codec.hash(try ScenePainter.png(g.copyCGImage(at:CMTime(value:Int64(at),timescale:30),actualTime:nil)))}

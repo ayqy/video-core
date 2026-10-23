@@ -41,7 +41,7 @@ public enum Editor {
                     for j in scene.captions.indices { scene.captions[j].confirmed = false }; revision.invalidated += ["该镜头配音", "字幕对齐", "口型与节奏"]
                 }
                 try scene.validate(assets: assets); revision.scenes[i] = scene
-            case .removeScene(let id): guard let s = revision.scenes.first(where: { $0.id == id }), !s.locked, revision.scenes.count > 1 else { throw VideoError.permission("不能删除锁定镜头或唯一镜头") }; revision.scenes.removeAll { $0.id == id }
+            case .removeScene(let id): guard let s = revision.scenes.first(where: { $0.id == id }), !s.locked, (revision.scenes.count > 1 || revision.contentContext != nil) else { throw VideoError.permission("不能删除锁定镜头；旧产品工程须保留至少一个镜头") }; revision.scenes.removeAll { $0.id == id }
             case .moveScene(let id, let target): guard let i = revision.scenes.firstIndex(where: { $0.id == id }), (0..<revision.scenes.count).contains(target), !revision.scenes[i].locked else { throw VideoError.invalid("重排目标无效或片段已锁定") }; let s = revision.scenes.remove(at: i); revision.scenes.insert(s, at: target)
             case .splitScene(let id, let frame):
                 guard let i = revision.scenes.firstIndex(where: { $0.id == id }), !revision.scenes[i].locked else { throw VideoError.permission("片段不存在或已锁定") }; let original = revision.scenes[i]
@@ -72,15 +72,16 @@ public enum Editor {
                 try SimulationReplay.verify(scene:revision.scenes[i],fps:revision.fps,requireConfirmation:false)
                 revision.scenes[i].simulationRecordingConfirmed = true
             case .aspect(let aspect): revision.aspect = aspect
-            case .cta(let text): guard !text.isEmpty else { throw VideoError.invalid("CTA不能为空") }; revision.cta = text
+            case .cta(let text): revision.cta = text
             case .music(let id): revision.musicAssetID = id; revision.invalidated += ["混音"]
             case .audioQuality(let policy): try policy?.validate();revision.audioQuality=policy;revision.invalidated += ["混音测量策略","声音审核"]
-            case .restore(let id): guard let r = p.revisions.first(where: { $0.id == id }) else { throw VideoError.notFound("历史版本不存在") }; revision.scenes = r.scenes; revision.product = r.product; revision.cta = r.cta; revision.aspect = r.aspect; revision.musicAssetID = r.musicAssetID; revision.dependencies=r.dependencies;revision.audioQuality=r.audioQuality
+            case .restore(let id): guard let r = p.revisions.first(where: { $0.id == id }) else { throw VideoError.notFound("历史版本不存在") }; revision.schemaVersion=r.schemaVersion; revision.scenes = r.scenes; revision.product = r.product; revision.contentContext=r.contentContext; revision.cta = r.cta; revision.aspect = r.aspect; revision.musicAssetID = r.musicAssetID; revision.dependencies=r.dependencies;revision.audioQuality=r.audioQuality
             }
         }
         for s in revision.scenes { try s.validate(assets: assets) }; p.revisions.append(revision); return p
     }
     public static func updateFacts(_ product: Product, project: Project) -> Project {
+        guard project.current.product?.id==product.id,project.workspaceID==product.workspaceID else{return project}
         var p = project; let old = p.current; var r = old; r.id = Codec.id(); r.parentID = old.id; r.number += 1; r.product = product; r.createdAt = Date(); r.change = "产品事实更新"; r.review = Review(); r.invalidated = ["价格/主张", "配音", "字幕", "审批", "导出"]
         for i in r.scenes.indices { if r.scenes[i].showPrice { r.scenes[i].voice = nil; for c in r.scenes[i].captions.indices { r.scenes[i].captions[c].confirmed = false } } }
         p.revisions.append(r); return p
@@ -118,33 +119,35 @@ public enum ClaimRules {
 }
 public enum Quality {
     public static func inspect(_ revision: Revision, database: Database, requireReview: Bool, now: Date = Date(), enforceBrandDelivery: Bool = true) throws -> [QualityIssue] {
+        try revision.validateContext()
         try revision.audioQuality?.validate()
         var issues: [QualityIssue] = []
         let commercial = revision.purpose != .education
         if requireReview && enforceBrandDelivery {issues += BrandDeliveryRules.inspect(revision:revision,database:database,now:now)}
-        if commercial && revision.product.isExample==true {issues.append(QualityIssue("example","练习示例不是实际商品，不能用于商业发布；请在真实工作区选择已有产品与资料"))}
-        try revision.product.validate()
-        let currentPrice=try revision.product.price(at:now)
-        if !currentPrice.verified { issues.append(QualityIssue("price", "产品价格尚未按来源核实")) }
-        // Painter freezes the visible SKU price at createdAt. Time can cross a
-        // scheduled price boundary without changing Product or its dependency hash.
-        let frozenPrice=try? revision.product.price(at:revision.createdAt)
-        let priceCTA=ClaimRules.sentences(revision.cta).contains{ClaimRules.isCurrentPrice($0,product:revision.product,now:now) || ClaimRules.isCurrentPrice($0,product:revision.product,now:revision.createdAt)}
-        if (revision.scenes.contains(where:{$0.showPrice}) || priceCTA),frozenPrice?.money != currentPrice.money {
-            issues.append(QualityIssue("stale_rendered_price","当前生效价格已不同于本版本成片冻结价格；请创建新版本并重新制作、完整看听审核，历史版本保留"))
+        if let product=revision.product {
+            if commercial && product.isExample==true {issues.append(QualityIssue("example","练习示例不是实际商品，不能用于商业发布；请在真实工作区选择已有产品与资料"))}
+            try product.validate()
+            let currentPrice=try product.price(at:now)
+            if !currentPrice.verified {issues.append(QualityIssue("price","产品价格尚未按来源核实"))}
+            let frozenPrice=try? product.price(at:revision.createdAt)
+            let priceCTA=ClaimRules.sentences(revision.cta).contains{ClaimRules.isCurrentPrice($0,product:product,now:now) || ClaimRules.isCurrentPrice($0,product:product,now:revision.createdAt)}
+            if (revision.scenes.contains(where:{$0.showPrice}) || priceCTA),frozenPrice?.money != currentPrice.money {issues.append(QualityIssue("stale_rendered_price","当前生效价格已不同于本版本成片冻结价格；请创建新版本并重新制作、完整看听审核，历史版本保留"))}
+            if let currentProduct=database.products.first(where:{$0.id==product.id}),!currentProduct.hasSameFacts(as:product) {issues.append(QualityIssue("stale_facts","产品事实已变化，需更新项目快照"))}
+        } else if revision.scenes.contains(where:{$0.showPrice}) {
+            issues.append(QualityIssue("price_without_product","当前工程未关联产品事实，不能显示未经来源核实的产品价格"))
         }
-        if let currentProduct = database.products.first(where: { $0.id == revision.product.id }), !currentProduct.hasSameFacts(as:revision.product) { issues.append(QualityIssue("stale_facts", "产品事实已变化，需更新项目快照")) }
-        if requireReview || revision.dependencies != nil { for (index,message) in DependencyRules.reviewIssues(revision:revision,assets:database.assets,evidence:database.evidence,currentProduct:database.products.first{$0.id==revision.product.id},now:now).enumerated() { issues.append(QualityIssue("dependency-\(index)",message)) } }
+        func isCurrentPrice(_ text:String)->Bool {revision.product.map{ClaimRules.isCurrentPrice(text,product:$0,now:now)} ?? false}
+        if requireReview || revision.dependencies != nil { for (index,message) in DependencyRules.reviewIssues(revision:revision,assets:database.assets,evidence:database.evidence,currentProduct:database.products.first{$0.id==revision.product?.id},now:now).enumerated() { issues.append(QualityIssue("dependency-\(index)",message)) } }
         if revision.frames <= 0 || revision.frames > 54000 { issues.append(QualityIssue("duration", "总片长须在0—30分钟范围内")) }
-        if revision.cta.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty || revision.cta.contains("\n") || revision.cta.components(separatedBy:"https://").count>2 || revision.cta.components(separatedBy:"http://").count>2 { issues.append(QualityIssue("cta","请保留一个明确行动和一个目的地")) }
+        if revision.cta.contains("\n") || revision.cta.components(separatedBy:"https://").count>2 || revision.cta.components(separatedBy:"http://").count>2 { issues.append(QualityIssue("cta","请保留一个明确行动和一个目的地")) }
         if commercial {
             let linkedIDs=Set(revision.scenes.flatMap(\.evidenceIDs))
             let linked=database.evidence.filter{linkedIDs.contains($0.id)}
-            for (index,text) in ClaimRules.candidates(revision.cta).enumerated() where !ClaimRules.isCurrentPrice(text,product:revision.product,now:now) && !ClaimRules.hasProof(text,evidence:linked,workspaceID:revision.product.workspaceID,now:now) {issues.append(QualityIssue("cta-claims-\(index)","行动提示中的主张须关联该原句的有效证据："+String(text.prefix(100))))}
+            for (index,text) in ClaimRules.candidates(revision.cta).enumerated() where !isCurrentPrice(text) && !ClaimRules.hasProof(text,evidence:linked,workspaceID:revision.workspaceID,now:now) {issues.append(QualityIssue("cta-claims-\(index)","行动提示中的主张须关联该原句的有效证据："+String(text.prefix(100))))}
         }
         for s in revision.scenes {
-            try s.validate(assets: database.assets.filter{$0.workspaceID==revision.product.workspaceID})
-            do {try FontRightsRules.validate(fontName:s.fontName ?? "PingFangSC-Medium",workspaceID:revision.product.workspaceID,evidenceIDs:s.evidenceIDs,evidence:database.evidence,commercial:commercial,now:now)}
+            try s.validate(assets: database.assets.filter{$0.workspaceID==revision.workspaceID})
+            do {try FontRightsRules.validate(fontName:s.fontName ?? "PingFangSC-Medium",workspaceID:revision.workspaceID,evidenceIDs:s.evidenceIDs,evidence:database.evidence,commercial:commercial,now:now)}
             catch{issues.append(QualityIssue(s.id+"font_rights",(error as? VideoError)?.localizedDescription ?? "镜头字体授权尚未核对"))}
             if s.kind == .simulation || s.kind == .cartoon {
                 if s.kind == .simulation {
@@ -153,21 +156,21 @@ public enum Quality {
                 }
                 if s.classicArtwork == nil {issues.append(QualityIssue(s.id+"classic_artwork","请绑定有来源的Q版角色与场景；旧几何预览不代表已满足当前素材要求"))}
                 else if s.classicArtwork?.derivation != .qStyle {issues.append(QualityIssue(s.id+"classic_qstyle","下载原件须绑定实际Q版处理产物及来源后再制作新成片"))}
-                else {do {try ClassicArtworkRules.validateRights(scene:s,workspaceID:revision.product.workspaceID,assets:database.assets,evidence:database.evidence,commercial:commercial,requireListening:requireReview,now:now)} catch {issues.append(QualityIssue(s.id+"classic_rights",(error as? VideoError)?.localizedDescription ?? "外部游戏素材、处理来源或音轨许可尚未核对"))}}
+                else {do {try ClassicArtworkRules.validateRights(scene:s,workspaceID:revision.workspaceID,assets:database.assets,evidence:database.evidence,commercial:commercial,requireListening:requireReview,now:now)} catch {issues.append(QualityIssue(s.id+"classic_rights",(error as? VideoError)?.localizedDescription ?? "外部游戏素材、处理来源或音轨许可尚未核对"))}}
             }
             if s.title.isEmpty || s.body.isEmpty { issues.append(QualityIssue(s.id+"text", "镜头标题或知识内容为空")) }
             if s.kind == .image || s.kind == .video { if s.assetID == nil { issues.append(QualityIssue(s.id+"asset", "图片/录屏镜头缺少实际素材")) } }
             var refs = s.evidenceIDs
             let sourceIDs=Set([s.assetID,s.characterProfile?.voiceAssetID].compactMap{$0}+(s.layers ?? []).compactMap(\.assetID)+(s.narrativeSources ?? []).map(\.assetID))
             for aid in sourceIDs {
-                guard let a=database.assets.first(where:{$0.id==aid && $0.workspaceID==revision.product.workspaceID}) else {issues.append(QualityIssue(aid+"source_missing","实际引用的素材缺失或跨工作区"));continue}
+                guard let a=database.assets.first(where:{$0.id==aid && $0.workspaceID==revision.workspaceID}) else {issues.append(QualityIssue(aid+"source_missing","实际引用的素材缺失或跨工作区"));continue}
                 if let e=a.evidenceID {refs.append(e)} else if commercial {issues.append(QualityIssue(aid+"rights","源素材或元素层尚未关联权利凭据"))}
             }
-            for id in Set(refs) { guard let e = database.evidence.first(where: { $0.id == id && $0.workspaceID==revision.product.workspaceID }), e.usable(commercial: commercial, now: now) else { issues.append(QualityIssue(id+"rights", "素材/主张未核实、越出工作区、过期或不允许商用")); continue } }
+            for id in Set(refs) { guard let e = database.evidence.first(where: { $0.id == id && $0.workspaceID==revision.workspaceID }), e.usable(commercial: commercial, now: now) else { issues.append(QualityIssue(id+"rights", "素材/主张未核实、越出工作区、过期或不允许商用")); continue } }
             let claim=([s.title,s.body,s.narration]+s.captions.map(\.text)+(s.layers ?? []).map(\.text)).joined(separator:"\n")
             if commercial {
                 let linked=database.evidence.filter{s.evidenceIDs.contains($0.id)}
-                let unsupported=ClaimRules.candidates(claim).filter{!ClaimRules.isCurrentPrice($0,product:revision.product,now:now) && !ClaimRules.hasProof($0,evidence:linked,workspaceID:revision.product.workspaceID,now:now)}
+                let unsupported=ClaimRules.candidates(claim).filter{!isCurrentPrice($0) && !ClaimRules.hasProof($0,evidence:linked,workspaceID:revision.workspaceID,now:now)}
                 for (index,text) in unsupported.enumerated() {issues.append(QualityIssue(s.id+"claims-\(index)","主张须关联已核实、允许商用且逐句记录该原句的证据："+String(text.prefix(100))+"。自动检查不代替事实审核"))}
             }
             if !s.narration.isEmpty {
@@ -182,7 +185,7 @@ public enum Quality {
                 func numbers(_ text:String)->Set<String> { let ns=text as NSString;return Set(pattern.matches(in:text,range:NSRange(location:0,length:ns.length)).map{ns.substring(with:$0.range)}) }
                 if numbers(s.narration) != numbers(s.captions.map(\.text).joined(separator:" ")) { issues.append(QualityIssue(s.id+"numeric_captions","旁白原文与字幕关键数字不一致，请对照实际口播校正")) }
             }
-            if s.showPrice,let price=try? revision.product.price(at:now),price.money.currency=="CNY" {
+            if s.showPrice,let product=revision.product,let price=try? product.price(at:now),price.money.currency=="CNY" {
                 let text=s.body+" "+s.narration+" "+s.captions.map(\.text).joined(separator:" "),ns=(s.body+" "+s.narration+" "+s.captions.map(\.text).joined(separator:" ")) as NSString
                 let pattern=try NSRegularExpression(pattern:"([0-9]+(?:\\.[0-9]+)?)\\s*元")
                 if pattern.matches(in:text,range:NSRange(location:0,length:ns.length)).contains(where:{Decimal(string:ns.substring(with:$0.range(at:1))) != price.money.amount}) { issues.append(QualityIssue(s.id+"stale_price_text","产品价格镜头的文字/字幕/旁白含旧价或其他金额，请与当前SKU逐项核对；历史比较请使用独立且有证据的镜头")) }
@@ -190,8 +193,8 @@ public enum Quality {
             if s.body.count > 180 { issues.append(QualityIssue(s.id+"density", "单镜头文字过密，请拆分以保证安全区可读")) }
         }
         for aid in Set(revision.scenes.compactMap{$0.voice?.assetID} + [revision.musicAssetID].compactMap{$0}) {
-            guard let asset=database.assets.first(where:{$0.id==aid && $0.workspaceID==revision.product.workspaceID}) else { issues.append(QualityIssue(aid+"audio_missing","声音素材缺失或跨工作区"));continue }
-            if commercial { guard let id=asset.evidenceID, let e=database.evidence.first(where:{$0.id==id && $0.workspaceID==revision.product.workspaceID}), e.usable(commercial:true,now:now) else { issues.append(QualityIssue(aid+"audio_rights","旁白/配乐尚未核实商业授权"));continue } }
+            guard let asset=database.assets.first(where:{$0.id==aid && $0.workspaceID==revision.workspaceID}) else { issues.append(QualityIssue(aid+"audio_missing","声音素材缺失或跨工作区"));continue }
+            if commercial { guard let id=asset.evidenceID, let e=database.evidence.first(where:{$0.id==id && $0.workspaceID==revision.workspaceID}), e.usable(commercial:true,now:now) else { issues.append(QualityIssue(aid+"audio_rights","旁白/配乐尚未核实商业授权"));continue } }
         }
         let currentDigest = try revision.contentDigest()
         if requireReview && (!revision.review.complete || revision.review.digest != currentDigest) { issues.append(QualityIssue("review", "完整预览、声音、字幕、主张与权利需对当前版本逐项确认")) }
@@ -199,6 +202,21 @@ public enum Quality {
     }
 }
 public enum Planner {
+    /// Creates an ordinary editing draft from actual workspace/content, without commerce prerequisites.
+    public static func create(workspaceID:String,name:String,aspect:Aspect = .landscape,scenes:[Scene] = [])throws->Revision {
+        let context=ContentContext(workspaceID:workspaceID,name:name)
+        try context.validate()
+        return Revision(contentContext:context,aspect:aspect,scenes:scenes)
+    }
+    /// Plans a teaching video from user-supplied content without inventing a product or sales action.
+    public static func create(workspaceID:String,name:String,knowledge:String,demonstration:String,hook:String,purpose:Purpose = .education,aspect:Aspect = .portrait,kind:SceneKind = .explanation,evidenceIDs:[String] = [])throws->Revision {
+        guard [knowledge,demonstration,hook].allSatisfy({!$0.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty}) else{throw VideoError.invalid("请填写完整知识点、真实演示和开场问题")}
+        let context=ContentContext(workspaceID:workspaceID,name:name);try context.validate()
+        var explanation=Scene(kind:kind,title:hook,body:knowledge,durationFrames:180)
+        var demonstrationScene=Scene(kind:.explanation,title:"实际演示",body:demonstration,durationFrames:240)
+        explanation.evidenceIDs=evidenceIDs;demonstrationScene.evidenceIDs=evidenceIDs
+        return Revision(contentContext:context,purpose:purpose,aspect:aspect,scenes:[explanation,demonstrationScene])
+    }
     public static let grammars = ["误区纠正", "前后对比", "实操演示", "规则模拟", "角色争论", "成本拆解"]
     public static func create(product: Product, knowledge: String, demonstration: String, hook: String, purpose: Purpose, aspect: Aspect, kind: SceneKind, evidenceIDs: [String]) throws -> Revision {
         try product.validate(); guard !knowledge.isEmpty, !demonstration.isEmpty, !hook.isEmpty else { throw VideoError.invalid("请填写完整知识点、真实演示和开场问题") }

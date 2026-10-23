@@ -2,58 +2,50 @@
 
 免费的视频制作基础源码，包含 Swift SDK、macOS 命令行工具和共用 Agent Skill，采用 Apache-2.0 许可。
 
-普通图文讲解、真实素材编辑、基础声音与字幕、原生 H.264/AAC 导出可以独立于人工编辑 App 使用，不要求购买高级模块或联网激活。产品资料、来源证据、不可变版本、费用报价、有限任务、审核和备份恢复使用同一数据规则。外部模型或云服务使用用户自己的账户，其费用和素材许可另行核对。
+普通工程从材料、讲稿或空白时间线开始，不要求商品、SKU、价格或购买页。可编辑真实素材、声音与字幕，并使用原生 H.264/AAC 导出；基础制作独立于高级模块和 Mac App，不要求联网激活。营收管理、销售订单和变现渠道不属于桌面制作工具的功能。旧工程兼容数据结构继续保留，不会因此成为普通制作的前置。
 
 ## 运行条件
 
-- 命令行工具需要 macOS 14 或更新版本、兼容 Xcode 与 Swift 5.10 或更新工具链，以及宿主授予的本机 shell 执行权限。当前不是 Windows、Linux 或浏览器端视频运行时。
-- `VideoCore`、`VideoMedia` 是 Swift Package 产品，平台声明支持 iOS 17 和 macOS 14 起。集成到 iOS App 时需要 iOS 17 或更新 SDK，调用方负责真实设备验证、权限、签名及所用云服务配置；这份源码不包含完整 iOS 商用客户端。
-- 共用 Skill 需要能实际调用原生工具的宿主。聊天模型或模型 API 本身不会获得本机执行能力；不同生态的发现、工具许可和贡献入口以各宿主的真实能力为准。
+- CLI 需要 macOS 14 或更新版本、Swift 5.10 或更新的兼容 Apple 工具链，以及宿主明确授予的本机工具执行权限。不是 Windows、Linux 或浏览器端视频运行时。
+- VideoCore、VideoMedia 的包声明保留历史 iOS 17 兼容范围；当前人工应用目标为 macOS 桌面，本仓库不包含完整人工 App，也不代表发行手机 App。
+- 外部模型和云服务使用用户自己的账户；服务费用、输入数据和素材许可由使用者核对。模型 API 本身不会取得本机执行权限。
 
 ## 从源码构建
 
-在仓库根目录构建，示例将派生缓存放到相邻目录：
+在仓库根目录构建；示例把派生缓存放到明确的本机缓存目录：
 
-```sh
-swift build --scratch-path ../video-core-build --product video
-../video-core-build/debug/video doctor
-../video-core-build/debug/video capabilities
-../video-core-build/debug/video schema
-```
+    swift build --scratch-path .cache/build --product video
+    .cache/build/debug/video doctor
+    .cache/build/debug/video capabilities
+    .cache/build/debug/video schema
 
-业务操作使用显式 `--workspace` 和 `--input`。字段、权限、幂等语义和退出码从实际 `schema` 发现；`queued` 仅表示排队，`needs_review` 仍需真实的人完整看听，不能由 Agent 代填审核。版本、声音、字幕或素材改变后重新核对对应产物。
+业务调用使用显式 --workspace 和 --input。projects create 可以建立没有商品的 schema 2 工程；script create 的 product_id 可省略。命令字段、权限、退出码和幂等语义以实际 schema 为准。旧 schema 1 产品工程仍按原证据规则读取，不会伪造零元商品或默认销售 CTA。
 
-`video-install` 提供固定发行者签名目录包的安装、更新和程序/数据成对回滚：
+queued 只表示排队；needs_review 仍需真实的人完整看听并审核。Agent 不得代填人工声明。修改版本、声音、字幕或素材会使相应审核和导出失效，未审核产物不能冒称可交付。
 
-```sh
-swift build --scratch-path ../video-core-build --product video-install
-../video-core-build/debug/video-install --help
-```
+video-install 提供固定发行者签名目录包的安装、更新和程序/数据成对回滚：
 
-安装器不提供私钥、许可证或跳过签名验证的开关，不用于替换 iOS App 可执行代码。当前提供源码，尚未提供已签名或公证的二进制发行。
+    swift build --scratch-path .cache/build --product video-install
+    .cache/build/debug/video-install --help
+
+更新器不提供私钥、许可证或跳过签名检查的开关。当前公开的是源码，尚无已签名、公证的 Mac 二进制或正式购买入口。
 
 ## SDK 与 Skill
 
-Swift Package 的 `VideoCore` 提供工程 IR 和领域规则，`VideoMedia` 提供 Apple 原生素材与渲染适配。使用者可以在自己的工程中通过本地 Swift Package 引用这两个产品。
+VideoCore 提供不可变工程 IR、版本、权限和审核规则；VideoMedia 提供 Apple 原生素材、声音和渲染适配。两个产品可通过 Swift Package 集成。
 
-Skill 的逐文件安装、发现辅助与宿主边界见 [Integrations](Integrations/README.md)。安装器仅向明确选择的目录写入，不更改模型账户或供应商配置。提供安装路径不表示已通过所有宿主业务验收或市场审核。
+共用 Skill 的逐文件安装、发现辅助和宿主能力边界见 [Integrations](Integrations/README.md)。安装只写用户明确选择的目录，不更改模型账户、供应商配置或执行许可。提供适配材料不等于五种宿主的完整业务链或市场审核已经通过。
 
-## 当前能力与验证范围
+## 当前验证边界
 
-免费基础覆盖来源与许可记录、不可变版本、材料编辑、声音与字幕、原生视频导出、原任务状态查询与恢复、历史产物校验、工作区隔离及完整备份恢复。公共协议可以描述高级能力，签名目录规则会校验完整模块集合、逐模块策略版本及同版本语义；这些接口不包含高级实现，也不授予相应权益。 策略历史支持从旧版本记录迁移并保存已验证声明的访问语义，安装更新和回滚合并保留防回退记录；集成方仍须先校验发行签名与实际代码身份，历史记录本身不是购买凭证。
+2026-10-23（北京时间），本轮独立免费包在 macOS 重新编译通过，并通过真实 CLI 的 18 次普通工程调用：没有商品的空白草稿、真实输入脚本、重复请求与冲突、权限、空草稿制作门禁和数据诊断。该检查不代填人工审核；不沿用旧商品链结果作为普通工程通过证据。发布后的媒体与备份恢复链单独核验，不由这 18 次调用推断通过。
 
-2026-10-23（北京时间）在本机 macOS 对当前独立免费包完成重新编译，同一已构建 XCTest Bundle 实际运行 261 项测试，261 项通过、0 失败。本次新增签名目录包准备、不可变暂存、路径与许可证隔离等发行规则；准备源码包不表示已签名、公证或安装。
-
-最近一轮普通 CLI 媒体集成记录来自 2026-10-22（北京时间）：实际生成 26 秒、720×1280、30fps 的 H.264/AAC 成片，逐一校验 MP4、字幕、封面和发布文字四份产物；真实移动工作区后重开，并完整备份恢复到新目录，四份原产物哈希保持一致。该记录保留其当时的源码身份，本次冻结源码的 CLI 回归另行核验。产物保留 `needs_review`，这不代表人工完整看听审核已经通过。
-
-规则与媒体测试覆盖权限、版本与产物一致性、目录迁移、字体许可、旁白、价格时效、画面层隔离及策略演进等边界。以上是本机源码验证记录，具体通过结果仍以当前源码和实际运行环境的输出为准。[源码清单](SOURCE-MANIFEST.md)用于逐文件核对，不是已签名二进制、完整 iOS 用户链、真实商店购买、独立高级模块或跨身份云协作已经验收的证明。
-
-游戏与卡通高级实现、人工 App、发行私钥、模型权重、客户数据及媒体素材不包含在本仓库。公共 Host 不会因为接口存在而获得独立模块的使用权限。已有工程、素材和历史导出不应因购买或联网激活被扣押。
+已有工程、素材和历史导出不会因购买或联网激活被扣押。高级游戏/卡通实现、人工 Mac App、发行私钥、模型权重、客户数据和媒体素材不包含在本仓库。公共能力协议和策略接口不会授予闭源实现或相应权益。
 
 ## 产品支持文档
 
-[docs/](docs/index.html)提供知幕 iOS 的产品介绍、隐私、使用支持与许可说明，使用本地静态页面和共用样式，无追踪脚本或外部资源。这些文档不构成完整 iOS 客户端；应用下载与商品可用性以 Apple 实际页面为准。
+[产品介绍](docs/index.html)、[使用支持](docs/support.html)、[隐私说明](docs/privacy.html)和[使用条款](docs/terms.html)说明 macOS 桌面视频剪辑产品的范围。桌面 App 仍在开发，页面不提供正式应用下载或购买，不以网页介绍冒充已发行产物。
 
 ## 许可与源码核对
 
-参阅 [LICENSE](LICENSE)、[NOTICE](NOTICE) 和 [SOURCE-MANIFEST.md](SOURCE-MANIFEST.md)。源码许可不替代系统框架、外部服务或用户素材各自的许可与费用，也不代表已经公开发布二进制或应用商店版本。
+参阅 [LICENSE](LICENSE)、[NOTICE](NOTICE) 和 [SOURCE-MANIFEST.md](SOURCE-MANIFEST.md)。源码许可不替代系统框架、外部服务或用户素材各自的许可与费用。清单证明指定源码字节，不证明 Mac UI、真实购买、跨身份协作、公证发行或完整集中验收通过。

@@ -26,7 +26,7 @@ final class CloudReviewTests:XCTestCase {
     func testUnreferencedMaterialsAndOtherCourseMappingsAreRefused() throws {
         var(scope,preview)=try fixture();scope.assets=[Asset(workspaceID:"other-client",name:"其他客户文件",hash:"unrelated",ext:"txt",bytes:1,mediaType:"text")]
         XCTAssertThrowsError(try CloudReviewRules.prepare(scope:scope,preview:preview,role:.brandReviewer,expiresAt:now.addingTimeInterval(300),now:now))
-        (scope,preview)=try fixture();scope.revision.product.courseMappings=[CourseMapping(title:"未引用",knowledge:"其他课程",audience:"其他人",task:"其他任务",outcome:"其他成果",prerequisite:"无",assetID:"missing",rangeKind:.whole)]
+        (scope,preview)=try fixture();scope.revision.product!.courseMappings=[CourseMapping(title:"未引用",knowledge:"其他课程",audience:"其他人",task:"其他任务",outcome:"其他成果",prerequisite:"无",assetID:"missing",rangeKind:.whole)]
         XCTAssertThrowsError(try CloudReviewRules.prepare(scope:scope,preview:preview,role:.brandReviewer,expiresAt:now.addingTimeInterval(300),now:now))
     }
     func testPrivateAcceptedServerOwnerIdentityIsRequiredAndCollaborationCannotRewritePayload() throws {

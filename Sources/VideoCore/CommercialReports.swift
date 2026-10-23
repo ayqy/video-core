@@ -52,7 +52,7 @@ public enum BrandDeliveryRules {
     }
     public static func validateTerms(deal: BrandDeal, revision: Revision, database: Database, now: Date = Date()) throws {
         try deal.validate()
-        guard revision.purpose == .brand, revision.product.workspaceID == deal.workspaceID, !deal.usage.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, !deal.exclusivity.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, !deal.vertical.isEmpty, deal.expiresAt > now else { throw VideoError.review("品牌用途、排他条款、垂类或授权期未明确/已到期，须重新核对后商业交付") }
+        guard revision.purpose == .brand, revision.workspaceID == deal.workspaceID, !deal.usage.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, !deal.exclusivity.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, !deal.vertical.isEmpty, deal.expiresAt > now else { throw VideoError.review("品牌用途、排他条款、垂类或授权期未明确/已到期，须重新核对后商业交付") }
         guard let template = deal.checklistTemplate else { throw VideoError.review("请先保存本商单的明确垂类清单与逐项证据") }; try template.validate()
         func source(_ id: String, maximumAgeDays: Int? = nil) -> Bool {
             database.evidence.contains { value in value.id == id && value.workspaceID == deal.workspaceID && value.usable(commercial: true, now: now) && value.checkedAt <= now && (maximumAgeDays == nil || value.checkedAt.addingTimeInterval(Double(maximumAgeDays!) * 86400) > now) }
@@ -75,7 +75,7 @@ public enum BrandDeliveryRules {
     }
     public static func inspect(revision: Revision, database: Database, now: Date = Date()) -> [QualityIssue] {
         guard revision.purpose == .brand else { return [] }
-        let projects = database.projects.filter { $0.workspaceID == revision.product.workspaceID && $0.revisions.contains(where: { $0.id == revision.id }) }
+        let projects = database.projects.filter { $0.workspaceID == revision.workspaceID && $0.revisions.contains(where: { $0.id == revision.id }) }
         guard projects.count == 1, let project = projects.first else { return [QualityIssue("brand_project", "品牌成片尚未绑定唯一的本工作区工程，不能标商业交付")] }
         let deals = database.brandDeals.filter { $0.workspaceID == project.workspaceID && $0.projectID == project.id }
         guard deals.count == 1, let deal = deals.first else { return [QualityIssue("brand_deal", "请在商单交付页明确绑定唯一Brief和品牌审稿版；作者看听不代替品牌审批")] }

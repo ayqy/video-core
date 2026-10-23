@@ -59,7 +59,8 @@ public enum AgentContract {
         AgentCommand("assets list",required:["workspace_id"]),
         AgentCommand("evidence add", required: ["workspace_id", "evidence"], writes: true, idempotency: "atomic_database_request_receipt"),
         AgentCommand("projects list", required: ["workspace_id"]),
-        AgentCommand("script create", required: ["workspace_id", "product_id", "knowledge", "demonstration", "hook"], optional: ["name", "purpose", "aspect", "kind", "evidence_ids"], writes: true, idempotency: "atomic_database_request_receipt"),
+        AgentCommand("projects create",required:["workspace_id","name"],optional:["aspect","scenes"],writes:true,idempotency:"atomic_database_request_receipt"),
+        AgentCommand("script create", required: ["workspace_id", "knowledge", "demonstration", "hook"], optional: ["product_id", "name", "purpose", "aspect", "kind", "evidence_ids"], writes: true, idempotency: "atomic_database_request_receipt"),
         AgentCommand("edit apply", required: ["workspace_id", "project_id", "base_revision", "edits"], optional: ["text"], permission: .projectWrite, writes: true, idempotency: "atomic_database_request_receipt"),
         AgentCommand("review record", required: ["workspace_id", "project_id", "base_revision", "review"], permission: .projectReview, writes: true, idempotency: "atomic_database_request_receipt"),
         AgentCommand("render estimate", required: ["workspace_id", "project_id"], optional: ["estimate", "text"], permission: .projectRead),
@@ -92,7 +93,7 @@ public enum AgentContract {
     ]
     private static let common = ["principal", "request_id"]
     private static let objectFields: Set<String> = ["product", "evidence", "review", "quote", "budget", "publication", "sale", "deal", "expense", "cash", "baseline", "estimate", "billing_record", "baidu_input"]
-    private static let arrayFields: Set<String> = ["evidence_ids", "edits", "orders", "metrics", "job_ids"]
+    private static let arrayFields: Set<String> = ["evidence_ids", "edits", "orders", "metrics", "job_ids", "scenes"]
     public static func describe(_ command: String) throws -> AgentCommand {
         guard let descriptor = commands.first(where: { $0.name == command }) else { throw VideoError.invalid("未知命令，请用schema发现受支持命令") }; return descriptor
     }
@@ -186,7 +187,7 @@ public enum AgentContract {
         let descriptions = try commands.map { command -> AgentValue in
             .object(["name": .string(command.name), "input_schema": try inputSchema(command.name), "permission": .string(command.permission.rawValue), "writes": .boolean(command.writes), "network": .boolean(command.network), "idempotency": .string(command.idempotency), "dry_run": .boolean(command.writes), "noninteractive": .boolean(true)])
         }
-        return .object(["schema_version": .string(version), "commands": .array(descriptions), "limits": .object(["max_input_bytes": .number(10 * 1024 * 1024), "max_depth": .number(64), "max_nodes": .number(200000)]), "exit_codes": .object(["0": .string("成功或已接受；仍需检查state"), "2": .string("输入/未找到"), "3": .string("缺权限"), "4": .string("预算"), "5": .string("待审核"), "6": .string("版本/幂等冲突"), "8": .string("外部条件不确定；先查原任务")])])
+        return .object(["schema_version": .string(version), "ir_schema_versions":.array([.number(1),.number(2)]), "project_formats":.object(["1":.string("legacy_product_snapshot; original encoded product facts and digest preserved"),"2":.string("contentContext without product; ordinary editing and teaching; older tools must upgrade before opening")]), "commands": .array(descriptions), "limits": .object(["max_input_bytes": .number(10 * 1024 * 1024), "max_depth": .number(64), "max_nodes": .number(200000)]), "exit_codes": .object(["0": .string("成功或已接受；仍需检查state"), "2": .string("输入/未找到"), "3": .string("缺权限"), "4": .string("预算"), "5": .string("待审核"), "6": .string("版本/幂等冲突"), "8": .string("外部条件不确定；先查原任务")])])
     }
 }
 

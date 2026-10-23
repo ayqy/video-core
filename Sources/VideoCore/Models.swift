@@ -114,11 +114,46 @@ public struct Comment: Codable, Identifiable, Sendable {
     public var id = Codec.id(); public var revisionID: String; public var sceneID: String?; public var frame: Int; public var element: String; public var text: String; public var author: String; public var resolved = false
     public init(revisionID: String, sceneID: String?, frame: Int, element: String, text: String, author: String) { self.revisionID = revisionID; self.sceneID = sceneID; self.frame = frame; self.element = element; self.text = text; self.author = author }
 }
+/// A real video project can exist without a product, price or purchase destination.
+/// This context owns source references independently of optional legacy commerce facts.
+public struct ContentContext: Codable, Identifiable, Equatable, Sendable {
+    public var id = Codec.id()
+    public var workspaceID: String
+    public var name: String
+    public var assetIDs: [String] = []
+    public var courseMappings: [CourseMapping]?
+    public init(workspaceID: String, name: String) { self.workspaceID=workspaceID;self.name=name }
+    public func validate() throws {
+        guard !id.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty,
+              !workspaceID.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty,
+              !name.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty else {throw VideoError.invalid("视频工程名称和工作区不能为空")}
+        guard Set(assetIDs).count==assetIDs.count else{throw VideoError.invalid("工程素材引用重复")}
+    }
+}
 public struct Revision: Codable, Identifiable, Sendable {
     public var dependencies: DependencySnapshot?
     public var audioQuality:AudioQualityPolicy?
-    public var id = Codec.id(); public var parentID: String?; public var number: Int; public var schemaVersion = 1; public var toolchain = "video-native-1"; public var product: Product; public var purpose: Purpose; public var aspect: Aspect; public var fps = 30; public var scenes: [Scene]; public var cta: String; public var musicAssetID: String?; public var review = Review(); public var createdAt = Date(); public var change: String; public var invalidated: [String] = []
+    public var id = Codec.id(); public var parentID: String?; public var number: Int; public var schemaVersion = 1; public var toolchain = "video-native-1"; public var product: Product?; public var contentContext: ContentContext?; public var purpose: Purpose; public var aspect: Aspect; public var fps = 30; public var scenes: [Scene]; public var cta: String; public var musicAssetID: String?; public var review = Review(); public var createdAt = Date(); public var change: String; public var invalidated: [String] = []
     public init(number: Int = 1, product: Product, purpose: Purpose, aspect: Aspect, scenes: [Scene], cta: String, change: String = "创建") { self.number = number; self.product = product; self.purpose = purpose; self.aspect = aspect; self.scenes = scenes; self.cta = cta; self.change = change }
+    public init(number:Int = 1,contentContext:ContentContext,purpose:Purpose = .education,aspect:Aspect,scenes:[Scene],cta:String = "",change:String = "创建") {self.number=number;self.schemaVersion=2;self.contentContext=contentContext;self.purpose=purpose;self.aspect=aspect;self.scenes=scenes;self.cta=cta;self.change=change}
+    public var workspaceID:String {contentContext?.workspaceID ?? product?.workspaceID ?? ""}
+    public var contentName:String {contentContext?.name ?? product?.name ?? ""}
+    public var courseMappings:[CourseMapping] {contentContext?.courseMappings ?? product?.courseMappings ?? []}
+    public var sourceAssetIDs:[String] {contentContext?.assetIDs ?? product?.assetIDs ?? []}
+    public func validateContext() throws {
+        guard (product == nil) != (contentContext == nil) else{throw VideoError.invalid("工程须且仅须有独立内容上下文或既有产品事实")}
+        guard (product != nil && schemaVersion==1) || (contentContext != nil && schemaVersion==2) else{throw VideoError.unavailable("工程IR版本与内容上下文不兼容，请使用支持该版本的工具")}
+        if let context=contentContext {try context.validate()}
+        if let product {try product.validate()}
+    }
+    private enum CodingKeys:String,CodingKey {case dependencies,audioQuality,id,parentID,number,schemaVersion,toolchain,product,contentContext,purpose,aspect,fps,scenes,cta,musicAssetID,review,createdAt,change,invalidated}
+    public init(from decoder:Decoder)throws {
+        let c=try decoder.container(keyedBy:CodingKeys.self)
+        dependencies=try c.decodeIfPresent(DependencySnapshot.self,forKey:.dependencies);audioQuality=try c.decodeIfPresent(AudioQualityPolicy.self,forKey:.audioQuality)
+        id=try c.decode(String.self,forKey:.id);parentID=try c.decodeIfPresent(String.self,forKey:.parentID);number=try c.decode(Int.self,forKey:.number);schemaVersion=try c.decode(Int.self,forKey:.schemaVersion);toolchain=try c.decode(String.self,forKey:.toolchain)
+        product=try c.decodeIfPresent(Product.self,forKey:.product);contentContext=try c.decodeIfPresent(ContentContext.self,forKey:.contentContext);purpose=try c.decode(Purpose.self,forKey:.purpose);aspect=try c.decode(Aspect.self,forKey:.aspect);fps=try c.decode(Int.self,forKey:.fps);scenes=try c.decode([Scene].self,forKey:.scenes);cta=try c.decode(String.self,forKey:.cta);musicAssetID=try c.decodeIfPresent(String.self,forKey:.musicAssetID);review=try c.decode(Review.self,forKey:.review);createdAt=try c.decode(Date.self,forKey:.createdAt);change=try c.decode(String.self,forKey:.change);invalidated=try c.decode([String].self,forKey:.invalidated)
+        try validateContext()
+    }
     public var frames: Int { scenes.reduce(0) { $0 + $1.timelineFrames } }
     public func contentDigest() throws -> String { var r = self; r.review = Review(); return try Codec.digest(r) }
 }
@@ -126,6 +161,12 @@ public struct Project: Codable, Identifiable, Sendable {
     public var id = Codec.id(); public var workspaceID: String; public var name: String; public var revisions: [Revision]; public var comments: [Comment] = []; public var tags: [String] = []; public var series = ""; public var batchID: String?; public var archived = false
     public init(workspaceID: String, name: String, revision: Revision) { self.workspaceID = workspaceID; self.name = name; self.revisions = [revision] }
     public var current: Revision { revisions[revisions.count - 1] }
+    private enum CodingKeys:String,CodingKey {case id,workspaceID,name,revisions,comments,tags,series,batchID,archived}
+    public init(from decoder:Decoder)throws {
+        let c=try decoder.container(keyedBy:CodingKeys.self)
+        id=try c.decode(String.self,forKey:.id);workspaceID=try c.decode(String.self,forKey:.workspaceID);name=try c.decode(String.self,forKey:.name);revisions=try c.decode([Revision].self,forKey:.revisions);comments=try c.decode([Comment].self,forKey:.comments);tags=try c.decode([String].self,forKey:.tags);series=try c.decode(String.self,forKey:.series);batchID=try c.decodeIfPresent(String.self,forKey:.batchID);archived=try c.decode(Bool.self,forKey:.archived)
+        guard !workspaceID.isEmpty,!revisions.isEmpty,revisions.allSatisfy({$0.workspaceID==workspaceID}) else{throw VideoError.permission("工程版本不属于同一真实工作区")}
+    }
 }
 public struct Topic: Codable, Identifiable, Sendable {
     public var batchID:String?

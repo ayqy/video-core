@@ -28,7 +28,7 @@ public struct Database: Codable, Sendable {
         guard schema == 1 else { throw VideoError.unavailable("工程主版本不支持，请保留原文件") }
         let ws = Set(workspaces.map(\.id)); guard ws.count == workspaces.count else { throw VideoError.invalid("工作区ID重复") }
         for p in products { guard ws.contains(p.workspaceID) else { throw VideoError.invalid("产品工作区缺失") }; try p.validate(); try DependencyRules.validateMappings(product:p,assets:assets,evidence:evidence) }
-        for p in projects { guard ws.contains(p.workspaceID), !p.revisions.isEmpty else { throw VideoError.invalid("项目工作区或版本缺失") }; for r in p.revisions { try r.audioQuality?.validate();guard r.schemaVersion == 1, r.product.workspaceID == p.workspaceID, !r.scenes.isEmpty, r.fps == 30 else { throw VideoError.invalid("工程IR不完整或版本不兼容") }; for s in r.scenes { try s.validate(assets: assets.filter { $0.workspaceID == p.workspaceID }) } } }
+        for p in projects { guard ws.contains(p.workspaceID), !p.revisions.isEmpty else { throw VideoError.invalid("项目工作区或版本缺失") }; for r in p.revisions { try r.validateContext();try r.audioQuality?.validate();guard (1...2).contains(r.schemaVersion), r.workspaceID == p.workspaceID, (!r.scenes.isEmpty || r.contentContext != nil), r.fps == 30 else { throw VideoError.invalid("工程IR不完整或版本不兼容") }; for s in r.scenes { try s.validate(assets: assets.filter { $0.workspaceID == p.workspaceID }) } } }
         for o in orders { try o.validate() }; for m in metrics {try m.validate()}; try Finance.validateAttribution(attributions)
         guard Set(orders.map(\.id)).count == orders.count, Set(metrics.map(\.id)).count == metrics.count, Set(cash.map(\.id)).count == cash.count, Set(expenses.map(\.id)).count == expenses.count else { throw VideoError.invalid("订单、指标或账目ID重复") }
         for x in expenses { guard x.hours >= 0, x.money == nil || x.money!.amount >= 0, x.allocation.values.allSatisfy({ $0 >= 0 }), x.allocation.values.reduce(0,+) <= 1 else { throw VideoError.invalid("工时、成本与分摊比例不合法") } }
@@ -170,7 +170,7 @@ public final class Repository: @unchecked Sendable {
         return replacements.count
     }
     private static func validateArtifactBinding(_ job:Job,revision:Revision)throws {
-        guard job.workspaceID==revision.product.workspaceID,job.revisionID==revision.id,job.digest == (try revision.contentDigest()),
+        guard job.workspaceID==revision.workspaceID,job.revisionID==revision.id,job.digest == (try revision.contentDigest()),
               job.quote.projectID==job.projectID,job.quote.revisionID==job.revisionID,job.quote.digest==job.digest,
               !job.artifacts.isEmpty,Set(job.artifacts.map(\.id)).count==job.artifacts.count else{throw VideoError.review("原任务、冻结版本、报价或产物绑定不一致")}
     }

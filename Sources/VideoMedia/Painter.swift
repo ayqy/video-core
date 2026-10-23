@@ -75,7 +75,7 @@ public enum ScenePainter {
         }
         if separateBody { try checkedText(s.body,in:overlay.mediaBody,size:portrait ? 26:25,color:"E2E8F0",context:c,fontName:s.fontName ?? "PingFangSC-Medium") }
         try LayerPainter.draw(scene:s,sourceFrame:mapped,aspect:revision.aspect,images:layerImages,context:c,fontName:s.fontName ?? "PingFangSC-Medium")
-        if s.showPrice { let price = try revision.product.price(at:revision.createdAt); try checkedText(price.money.display,in:overlay.price,size:40,color:"A5F3FC",context:c,fontName:s.fontName ?? "PingFangSC-Medium") }
+        if s.showPrice { guard let product=revision.product else{throw VideoError.review("没有关联产品事实，不能绘制产品价格")};let price = try product.price(at:revision.createdAt); try checkedText(price.money.display,in:overlay.price,size:40,color:"A5F3FC",context:c,fontName:s.fontName ?? "PingFangSC-Medium") }
         if let caption = s.captions.first(where: { $0.startFrame <= mapped && $0.endFrame > mapped }) { c.setFillColor(color("000000",alpha:0.75)); c.fill(overlay.captionBackground); try checkedText(caption.text,in:overlay.captionText,size:28,color:"FFFFFF",context:c,fontName:s.fontName ?? "PingFangSC-Medium") }
         if index==revision.scenes.count-1 {
             try checkedText(revision.cta,in:overlay.cta,size:portrait ? 19:18,color:"A5F3FC",context:c,fontName:s.fontName ?? "PingFangSC-Medium")

@@ -28,7 +28,7 @@ public struct BudgetPolicy: Codable, Sendable {
 }
 public enum JobRules {
     public static func submit(workspaceID: String, project: Project, quote: Quote, requestKey: String, existing: [Job], budget: BudgetPolicy, now: Date = Date()) throws -> Job {
-        guard project.workspaceID==workspaceID,project.current.product.workspaceID==workspaceID else{throw VideoError.permission("任务、工程和产品必须属于同一工作区")}
+        guard project.workspaceID==workspaceID,project.current.workspaceID==workspaceID else{throw VideoError.permission("任务、工程和产品必须属于同一工作区")}
         let digest = try project.current.contentDigest()
         if let old = existing.first(where: { $0.workspaceID == workspaceID && $0.requestKey == requestKey }) { guard old.projectID == project.id, old.digest == digest, old.quote.id == quote.id else { throw VideoError.conflict("同幂等键已绑定不同输入或报价") }; return old }
         guard !requestKey.isEmpty, quote.confirmed, quote.expiresAt > now, quote.projectID == project.id, quote.revisionID == project.current.id, quote.digest == digest, quote.attempts > 0, quote.upper.amount >= 0 else { throw VideoError.review("报价过期、未确认或与当前版本不一致，请重新核对") }

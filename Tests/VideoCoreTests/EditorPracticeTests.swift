@@ -13,12 +13,12 @@ final class EditorPracticeTests:XCTestCase {
         XCTAssertTrue(EditorPracticeRules.allows(project:project,assets:[source]))
     }
     func testEditableExampleFlagCannotAuthorizeARealProduct() throws {
-        var(project,source)=try fixture();project.revisions[0].product.checkout="https://example.org/real-product";project.revisions[0].product.isExample=true
+        var(project,source)=try fixture();project.revisions[0].product!.checkout="https://example.org/real-product";project.revisions[0].product!.isExample=true
         XCTAssertFalse(EditorPracticeRules.allows(project:project,assets:[source]))
     }
     func testPracticeStopsWhenItsProductFactsBecomeCommercialOrItsCTAChanges() throws {
         let(original,source)=try fixture();var cases:[Project]=[]
-        var project=original;var revision=project.current;revision.id=Codec.id();revision.product.prices[0].money=Money(99);project.revisions.append(revision);cases.append(project)
+        var project=original;var revision=project.current;revision.id=Codec.id();revision.product!.prices[0].money=Money(99);project.revisions.append(revision);cases.append(project)
         project=original;revision=project.current;revision.id=Codec.id();revision.purpose = .course;project.revisions.append(revision);cases.append(project)
         project=original;revision=project.current;revision.id=Codec.id();revision.cta="购买真实商品";project.revisions.append(revision);cases.append(project)
         for value in cases{XCTAssertFalse(EditorPracticeRules.allows(project:value,assets:[source]))}
@@ -43,8 +43,8 @@ final class EditorPracticeTests:XCTestCase {
         }
     }
     func testTagsDoNotTurnPracticeIntoPaidRightsOrInvalidateIt() throws {
-        var(project,source)=try fixture();project.revisions[0].product.tags=["练习分类"];project.tags=["首次操作"]
+        var(project,source)=try fixture();project.revisions[0].product!.tags=["练习分类"];project.tags=["首次操作"]
         XCTAssertTrue(EditorPracticeRules.allows(project:project,assets:[source]))
-        project.revisions[0].product.isExample=false;XCTAssertFalse(EditorPracticeRules.allows(project:project,assets:[source]))
+        project.revisions[0].product!.isExample=false;XCTAssertFalse(EditorPracticeRules.allows(project:project,assets:[source]))
     }
 }

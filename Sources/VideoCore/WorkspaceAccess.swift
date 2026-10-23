@@ -110,7 +110,7 @@ public enum WorkspaceAccessRules {
         if scoped {
             products=[];assets=[];evidence=[]
             for (_,revision) in permitted {
-                if !products.contains(where:{$0.id==revision.product.id}) {products.append(revision.product)}
+                if let product=revision.product,!products.contains(where:{$0.id==product.id}) {products.append(product)}
                 let snapshot=try scopedSnapshot(revision,in:database,workspaceID:workspace.id)
                 for record in snapshot?.records ?? [] {
                     if let value=record.asset,!assets.contains(where:{$0.id==value.id}) {assets.append(value)}
@@ -139,15 +139,17 @@ public enum WorkspaceAccessRules {
         var revision=original
         revision.dependencies=snapshot
         let mappingIDs=Set(revision.scenes.flatMap{$0.courseMappingIDs ?? []})
-        revision.product.courseMappings=revision.product.courseMappings?.filter{mappingIDs.contains($0.id)}
+        if var product=revision.product {product.courseMappings=product.courseMappings?.filter{mappingIDs.contains($0.id)};revision.product=product}
+        if var context=revision.contentContext {context.courseMappings=context.courseMappings?.filter{mappingIDs.contains($0.id)};revision.contentContext=context}
         let assets=(snapshot?.records ?? []).compactMap(\.asset),evidence=(snapshot?.records ?? []).compactMap(\.evidence)
-        revision.product.assetIDs=assets.map(\.id)
+        revision.product?.assetIDs=assets.map(\.id)
+        revision.contentContext?.assetIDs=assets.map(\.id)
         let artifacts=database.jobs.filter{$0.workspaceID==access.workspaceID && $0.projectID==projectID && $0.revisionID==revisionID}.flatMap{job in job.artifacts.map{ScopedArtifact(id:job.id+":"+$0.sha256,jobID:job.id,mime:$0.mime,sha256:$0.sha256,bytes:$0.bytes)}}
         return ScopedRevision(projectID:project.id,projectName:project.name,revision:revision,comments:project.comments.filter{$0.revisionID==revisionID},assets:assets,evidence:evidence,artifacts:artifacts,legacyMaterialsUnfrozen:original.dependencies == nil)
     }
     private static func scopedSnapshot(_ revision:Revision,in database:Database,workspaceID:String) throws -> DependencySnapshot? {
         guard let stored=revision.dependencies else{return try? DependencyRules.freeze(revision:revision,assets:database.assets,evidence:database.evidence)}
-        guard stored.version==1,stored.workspaceID==workspaceID,stored.productID==revision.product.id else{throw VideoError.permission("版本来源快照的工作区或产品归属不符")}
+        guard stored.version==revision.schemaVersion,stored.workspaceID==workspaceID,stored.productID==revision.product?.id,stored.contentContextID==revision.contentContext?.id else{throw VideoError.permission("版本来源快照的工作区或产品归属不符")}
         let assets=stored.records.compactMap(\.asset),evidence=stored.records.compactMap(\.evidence)
         guard assets.allSatisfy({$0.workspaceID==workspaceID}),evidence.allSatisfy({$0.workspaceID==workspaceID}) else{throw VideoError.permission("版本来源快照包含其他工作区材料，已拒绝共享")}
         // Rebuild the reachable graph from frozen values, excluding injected/unreferenced records.

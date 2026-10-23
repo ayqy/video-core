@@ -43,7 +43,7 @@ final class BatchTests: XCTestCase {
         let result = try XCTUnwrap(db.topicBatches?.first); XCTAssertEqual(result.items[0].budget, batch.items[0].budget); XCTAssertEqual(result.items[0].history?.first?.product, batch.items[0].productSnapshot); XCTAssertEqual(result.items[0].revisionID, projects[0].current.id); XCTAssertEqual(result.items[1].revisionID, batch.items[1].revisionID)
     }
     func testAudienceChangeCannotMasqueradeAsSameComparisonCondition() throws {
-        var (db, batch, projects) = try fixture(); projects[0].revisions[0].product.audience = "不同目标受众"; db.projects = projects; db.products[0] = projects[0].current.product; db.projects[0].revisions[0].dependencies = try DependencyRules.freeze(revision: db.projects[0].current, assets: [], evidence: [], now: now)
+        var (db, batch, projects) = try fixture(); projects[0].revisions[0].product!.audience = "不同目标受众"; db.projects = projects; db.products[0] = projects[0].current.product!; db.projects[0].revisions[0].dependencies = try DependencyRules.freeze(revision: db.projects[0].current, assets: [], evidence: [], now: now)
         XCTAssertThrowsError(try db.acceptBatchRevision(batchID: batch.id, itemID: batch.items[0].id, now: now))
     }
 }

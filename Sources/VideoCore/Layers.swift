@@ -40,7 +40,7 @@ public struct RevisionDifference: Identifiable, Sendable {
     public static func compare(_ old:Revision,_ new:Revision)->[RevisionDifference] {
         var rows:[RevisionDifference]=[]
         func add(_ id:String,_ label:String,_ a:String,_ b:String) { if a != b { rows.append(.init(id:id,scope:label,before:a,after:b)) } }
-        add("product","产品事实",old.product.name+" · "+old.product.prices.map{$0.money.display}.joined(separator:","),new.product.name+" · "+new.product.prices.map{$0.money.display}.joined(separator:","))
+        add("product","产品事实",old.product.map{$0.name+" · "+$0.prices.map{$0.money.display}.joined(separator:",")} ?? old.contentName,new.product.map{$0.name+" · "+$0.prices.map{$0.money.display}.joined(separator:",")} ?? new.contentName)
         add("aspect","画幅",old.aspect.rawValue,new.aspect.rawValue);add("cta","CTA",old.cta,new.cta);add("music","配乐",old.musicAssetID ?? "无",new.musicAssetID ?? "无")
         for id in Set(old.scenes.map(\.id)+new.scenes.map(\.id)).sorted() {
             let a=old.scenes.first{$0.id==id},b=new.scenes.first{$0.id==id}

@@ -78,7 +78,7 @@ final class WorkspaceAccessTests:XCTestCase {
     private func historyFixture() throws -> (Database,Workspace,Project,WorkspaceAccessContext) {
         var(database,workspace,project,_)=try fixture()
         project.revisions[0].scenes[0].body="PRIVATE_HISTORY_NOT_GRANTED"
-        project.revisions[0].product.name="PRIVATE_HISTORICAL_PRODUCT"
+        project.revisions[0].product!.name="PRIVATE_HISTORICAL_PRODUCT"
         project.revisions[1].scenes[0].body="当前获准编辑的版本"
         workspace.grants=[Grant(principal:"editor",role:.collaborator,projectIDs:[project.id],revisionIDs:[project.current.id],expiresAt:Date().addingTimeInterval(3600))]
         database.workspaces[0]=workspace;database.projects[0]=project
@@ -117,7 +117,7 @@ final class WorkspaceAccessTests:XCTestCase {
         let repository=try Repository(root:root);try repository.transaction{$0=database}
         let restored=try repository.applyScopedEdits(projectID:project.id,baseRevision:project.current.id,operations:[.restore(project.revisions[0].id)],message:"恢复明确授权来源",access:access)
         XCTAssertEqual(restored.scenes[0].body,"PRIVATE_HISTORY_NOT_GRANTED")
-        XCTAssertEqual(restored.product.name,"PRIVATE_HISTORICAL_PRODUCT")
+        XCTAssertEqual(restored.product!.name,"PRIVATE_HISTORICAL_PRODUCT")
         XCTAssertEqual(restored.parentID,project.current.id);XCTAssertEqual(restored.number,3)
         XCTAssertEqual(try repository.read().projects[0].revisions.count,3)
     }
@@ -127,7 +127,7 @@ final class WorkspaceAccessTests:XCTestCase {
         let repository=try Repository(root:root);try repository.transaction{$0=database}
         let restored=try repository.applyScopedEdits(projectID:project.id,baseRevision:project.current.id,operations:[.restore(project.revisions[0].id)],message:"作者恢复历史",access:WorkspaceAccessContext(workspaceID:workspace.id,principal:workspace.owner))
         XCTAssertEqual(restored.scenes[0].body,project.revisions[0].scenes[0].body)
-        XCTAssertEqual(restored.product.name,project.revisions[0].product.name)
+        XCTAssertEqual(restored.product!.name,project.revisions[0].product!.name)
         XCTAssertFalse(restored.review.complete)
     }
     func testKeywordTagStatusAndImportedTimeFiltersUseActualRecordDates() throws {

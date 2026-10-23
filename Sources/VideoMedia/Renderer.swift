@@ -9,6 +9,8 @@ public final class MediaRenderer: @unchecked Sendable {
     public let modules:RenderModuleRegistry?
     public init(modules:RenderModuleRegistry?=nil) { self.modules=modules }
     public func render(revision r: Revision, repository: Repository, output: URL, progress: @escaping @Sendable (Double) throws -> Void = { _ in }) async throws -> RenderResult {
+        try r.validateContext()
+        guard !r.scenes.isEmpty,r.frames>0,r.frames<=54000 else{throw VideoError.review("工程尚无可制作内容或时长超出范围，请添加真实片段后重试")}
         try ManagedInstallRules.authorizeWrite(repositoryRoot:repository.root)
         let start = Date(); let db = try repository.read()
         // Verify every actual dependency, including layer images, voices, music and rights documents.
@@ -58,7 +60,7 @@ public final class MediaRenderer: @unchecked Sendable {
             let at=CMTime(value:Int64(cursor),timescale:Int32(r.fps)); let span=CMTime(value:Int64(s.timelineFrames-s.pauseFrames),timescale:Int32(r.fps))
             if !s.muted {
                 for cue in s.classicArtwork?.audioCues ?? [] where cue.gain>0 {
-                    guard let asset=database.assets.first(where:{$0.id==cue.assetID && $0.workspaceID==r.product.workspaceID}) else{throw VideoError.notFound("场景游戏录音已缺失")}
+                    guard let asset=database.assets.first(where:{$0.id==cue.assetID && $0.workspaceID==r.workspaceID}) else{throw VideoError.notFound("场景游戏录音已缺失")}
                     let offset=try Self.sceneAudioTime(frames:cue.startFrame,fps:r.fps,speed:s.speed)
                     let length=try Self.sceneAudioTime(frames:cue.durationFrames,fps:r.fps,speed:s.speed)
                     let parameter=try await addAudio(repository.assetURL(asset),to:composition,at:CMTimeAdd(at,offset),sourceStart:.zero,sourceFrames:cue.durationFrames,targetDuration:length,fps:r.fps,gain:Float(cue.gain),preservePitch:s.preservePitch)
@@ -110,7 +112,8 @@ public final class MediaRenderer: @unchecked Sendable {
     }
     private static func silence(to url:URL,seconds:Double) throws { let format=AVAudioFormat(standardFormatWithSampleRate:48000,channels:1)!; let file=try AVAudioFile(forWriting:url,settings:format.settings); let buffer=AVAudioPCMBuffer(pcmFormat:format,frameCapacity:48000)!; buffer.frameLength=48000; memset(buffer.floatChannelData![0],0,48000*MemoryLayout<Float>.size); var remaining=Int(ceil(seconds*48000)); while remaining>0 { buffer.frameLength=AVAudioFrameCount(min(remaining,48000)); try file.write(from:buffer); remaining -= Int(buffer.frameLength) } }
     public static func publicationNotes(_ r:Revision,audio:AudioDiagnostics) throws -> String {
-        var lines=[r.product.name,r.cta,"","用途："+r.purpose.rawValue,"AI辅助制作，发布前核对平台AI/商业标签、版权、CTA和账号权限。","SKU："+r.product.sku,"已有承接页："+r.product.checkout,"受众："+r.product.audience,"学习任务："+r.product.task,"内容范围："+r.product.scope,"版本："+r.id,"IR/schema：\(r.schemaVersion)；工具链：\(r.toolchain)","摘要："+(try r.contentDigest()),"混音实测：峰值 \(audio.peakDBFS) dBFS；未加权RMS \(audio.rmsDBFS) dBFS（不是LUFS）","当前文件为待看听预览；人工审核与真实发布状态在工程中另记。","此包未自动发布。"]
+        var lines=[r.contentName,r.cta,"","用途："+r.purpose.rawValue,"AI辅助制作，发布前核对平台AI/商业标签、版权、CTA和账号权限。","版本："+r.id,"IR/schema：\(r.schemaVersion)；工具链：\(r.toolchain)","摘要："+(try r.contentDigest()),"混音实测：峰值 \(audio.peakDBFS) dBFS；未加权RMS \(audio.rmsDBFS) dBFS（不是LUFS）","当前文件为待看听预览；人工审核与真实发布状态在工程中另记。","此包未自动发布。"]
+        if let product=r.product {lines += ["SKU："+product.sku,"已有承接页："+product.checkout,"受众："+product.audience,"学习任务："+product.task,"内容范围："+product.scope]}
         if let loudness=audio.loudness {
             lines.append("响度算法："+loudness.method)
             lines.append("真峰值为标准四倍FIR估计，骤起/骤停等边界可能与其他重采样器存在差异；检测不替代人工完整听审。")

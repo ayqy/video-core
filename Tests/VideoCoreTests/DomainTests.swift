@@ -51,7 +51,7 @@ final class DomainTests:XCTestCase {
     }
     func testApprovalBindsAllFrozenContentAndStalePrice() throws {
         var p=try project(); let digest=try p.current.contentDigest(); p.revisions[0].review.digest=digest; p.revisions[0].review.text=true; XCTAssertEqual(try p.current.contentDigest(),digest)
-        var db=Database(); db.products=[p.current.product]; var updated=p.current.product; updated.name="内容范围已变化"; db.products=[updated]; let issues=try Quality.inspect(p.current,database:db,requireReview:false); XCTAssertTrue(issues.contains{$0.id=="stale_facts"})
+        var db=Database(); db.products=[p.current.product!]; var updated=p.current.product!; updated.name="内容范围已变化"; db.products=[updated]; let issues=try Quality.inspect(p.current,database:db,requireReview:false); XCTAssertTrue(issues.contains{$0.id=="stale_facts"})
     }
     func testIdempotentJobAndUnknownCostBudget() throws {
         let p=try project(); let q=Quote(projectID:p.id,revisionID:p.current.id,digest:try p.current.contentDigest(),upper:Money(30),unit:"CNY",provider:"remote",expiresAt:Date().addingTimeInterval(1000),confirmed:true)
@@ -105,7 +105,7 @@ final class DomainTests:XCTestCase {
         let source=root(),destination=root(),badDestination=root();defer{try? FileManager.default.removeItem(at:source);try? FileManager.default.removeItem(at:destination);try? FileManager.default.removeItem(at:badDestination)}
         let repo=try Repository(root:source);let w=Workspace(name:"完整恢复",owner:"o");let p=try project(w.id);let q=Quote(projectID:p.id,revisionID:p.current.id,digest:try p.current.contentDigest(),upper:Money(0),unit:"CNY",provider:"native",expiresAt:Date().addingTimeInterval(60),confirmed:true);var job=Job(workspaceID:w.id,projectID:p.id,revisionID:p.current.id,digest:try p.current.contentDigest(),requestKey:"backup",quote:q)
         let original=Data((0..<65536).map{UInt8($0%256)}),path=source.appendingPathComponent("exports/\(job.id)/payload.bin");try FileManager.default.createDirectory(at:path.deletingLastPathComponent(),withIntermediateDirectories:true);try original.write(to:path);job.artifacts=[Artifact(path:path.path,mime:"application/octet-stream",bytes:original.count,sha256:Codec.hash(original),revision:p.current.id)]
-        try repo.transaction{$0.workspaces.append(w);$0.products.append(p.current.product);$0.projects.append(p);$0.jobs.append(job)}
+        try repo.transaction{$0.workspaces.append(w);$0.products.append(p.current.product!);$0.projects.append(p);$0.jobs.append(job)}
         let backup=try repo.backup();let restored=try Repository.restore(backup,to:destination);let artifact=try XCTUnwrap(restored.read().jobs.first?.artifacts.first);XCTAssertTrue(artifact.path.hasPrefix(destination.path+"/exports/"));XCTAssertEqual(try Data(contentsOf:URL(fileURLWithPath:artifact.path)),original)
         var corrupt=try PropertyListDecoder().decode(Repository.Backup.self,from:backup);corrupt.exports=[:];XCTAssertThrowsError(try Repository.restore(PropertyListEncoder().encode(corrupt),to:badDestination));XCTAssertFalse(FileManager.default.fileExists(atPath:badDestination.path))
     }
@@ -115,7 +115,7 @@ final class DomainTests:XCTestCase {
         XCTAssertThrowsError(try ImportRules.metrics("platform,content_id,as_of,views,definition,cumulative\n平台,c,2026-10-01,10,累计播放,maybe\n",workspaceID:"w"))
     }
     func testMarketingClaimsNeedTheActualApprovedSentenceIncludingCaptions() throws {
-        var p=try project();var db=Database();db.products=[p.current.product]
+        var p=try project();var db=Database();db.products=[p.current.product!]
         let claim="已帮助100位学员完成操作"
         p.revisions[0].scenes[0].captions=[Caption(text:claim,startFrame:0,endFrame:100,confirmed:true)]
         var proof=Evidence(workspaceID:"w",title:"真实记录",source:"客户核对表",claim:"已帮助1位学员完成操作",owner:"作者",commercialAllowed:true,verified:true)
@@ -305,7 +305,7 @@ final class RenderedPriceFreshnessTests:XCTestCase {
         revision.review.text=true;revision.review.rights=true;revision.review.fullPreview=true;revision.review.sound=true;revision.review.captions=true;revision.review.digest=try revision.contentDigest();revision.review.reviewer="owner";revision.review.at=revision.createdAt
         return revision
     }
-    private func issues(_ revision:Revision,at:Date?=nil,review:Bool=true)throws->[QualityIssue] {var database=Database();database.products=[revision.product];return try Quality.inspect(revision,database:database,requireReview:review,now:at ?? now,enforceBrandDelivery:false)}
+    private func issues(_ revision:Revision,at:Date?=nil,review:Bool=true)throws->[QualityIssue] {var database=Database();database.products=[revision.product!];return try Quality.inspect(revision,database:database,requireReview:review,now:at ?? now,enforceBrandDelivery:false)}
     func testUnchangedProductAndApprovedOldRevisionAreBlockedAfterScheduledPriceChange()throws {
         let revision=try fixture(),before=try Codec.data(revision)
         XCTAssertTrue(revision.review.complete);XCTAssertTrue(try issues(revision,at:revision.createdAt).isEmpty)
@@ -317,7 +317,7 @@ final class RenderedPriceFreshnessTests:XCTestCase {
     }
     func testNewPriceRecordWithSameMoneyDoesNotInvalidateVisiblePrice()throws {
         let revision=try fixture(nextAmount:99)
-        XCTAssertNotEqual(revision.product.prices[0].id,revision.product.prices[1].id)
+        XCTAssertNotEqual(revision.product!.prices[0].id,revision.product!.prices[1].id)
         XCTAssertFalse(try issues(revision).contains{$0.id=="stale_rendered_price"})
     }
     func testNewRevisionAtCurrentPricePassesFreshnessButStillNeedsItsOwnReview()throws {

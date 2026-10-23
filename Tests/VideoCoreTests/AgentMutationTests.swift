@@ -80,7 +80,7 @@ final class AgentMutationTests:XCTestCase {
     private func historyFixture(sourceGrant:Bool=false)throws->(Repository,Workspace,Project,Data) {
         let(repo,w,p)=try fixture()
         var old=Revision(product:p,purpose:.education,aspect:.portrait,scenes:[Scene(title:"历史",body:"PRIVATE_UNGRANTED_HISTORY")],cta:p.checkout)
-        old.product.name="PRIVATE_HISTORICAL_PRODUCT"
+        old.product!.name="PRIVATE_HISTORICAL_PRODUCT"
         var current=old;current.id=Codec.id();current.parentID=old.id;current.number=2;current.scenes[0].body="当前获准编辑内容";current.product=p
         var project=Project(workspaceID:w.id,name:"指定版本工程",revision:old);project.revisions.append(current)
         try repo.transaction {database in
@@ -126,7 +126,7 @@ final class AgentMutationTests:XCTestCase {
             XCTAssertEqual(try Codec.data(repo.read()),before)
             let result=try repo.performAgentMutation(command:"edit apply",data:input,principal:principal,requestID:"valid-restore")
             let restored=try XCTUnwrap(repo.read().projects.first?.current)
-            XCTAssertEqual(restored.scenes[0].body,"PRIVATE_UNGRANTED_HISTORY");XCTAssertEqual(restored.product.name,"PRIVATE_HISTORICAL_PRODUCT")
+            XCTAssertEqual(restored.scenes[0].body,"PRIVATE_UNGRANTED_HISTORY");XCTAssertEqual(restored.product!.name,"PRIVATE_HISTORICAL_PRODUCT")
             XCTAssertEqual(restored.parentID,project.current.id);XCTAssertFalse(restored.review.complete)
             XCTAssertEqual(result,try repo.performAgentMutation(command:"edit apply",data:input,principal:principal,requestID:"valid-restore"))
             XCTAssertEqual(try repo.read().projects[0].revisions.count,3)

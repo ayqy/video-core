@@ -7,7 +7,7 @@ final class SimulationRecordingTests: XCTestCase {
         return Revision(product: product, purpose: .education, aspect: .landscape, scenes: [scene], cta: "亲手复现规则")
     }
     private func issues(_ revision: Revision, requireReview: Bool = false) throws -> [QualityIssue] {
-        var database = Database(); database.products = [revision.product]
+        var database = Database(); database.products = [revision.product!]
         return try Quality.inspect(revision, database: database, requireReview: requireReview)
     }
     private func recordedScene(confirmed: Bool = true) throws -> Scene {
@@ -20,7 +20,7 @@ final class SimulationRecordingTests: XCTestCase {
     }
     private func apply(_ operations: [Edit], scene: Scene) throws -> Project {
         let before = revision(scene: scene)
-        return try Editor.apply(operations, to: Project(workspaceID: before.product.workspaceID, name: "规则项目", revision: before), baseRevision: before.id, assets: [], message: "显式规则编辑")
+        return try Editor.apply(operations, to: Project(workspaceID: before.product!.workspaceID, name: "规则项目", revision: before), baseRevision: before.id, assets: [], message: "显式规则编辑")
     }
     func testLegacyUnrecordedSimulationRemainsEditableButNeedsRecordingBeforeProduction() throws {
         let original = Scene(kind: .simulation, title: "规则", body: "事件依次改变状态")
@@ -29,7 +29,7 @@ final class SimulationRecordingTests: XCTestCase {
         let object = try XCTUnwrap(JSONSerialization.jsonObject(with: Codec.data(original)) as? [String: Any])
         XCTAssertNil(object["simulationRecording"]); XCTAssertNil(object["simulationRecordingConfirmed"])
         let before = revision(scene: decoded)
-        let project = Project(workspaceID: before.product.workspaceID, name: "旧工程", revision: before)
+        let project = Project(workspaceID: before.product!.workspaceID, name: "旧工程", revision: before)
         var changed = decoded; changed.simulation.unit = "件"
         let edited = try Editor.apply([.replaceScene(decoded.id, changed)], to: project, baseRevision: before.id, assets: [], message: "修改规则单位")
         XCTAssertTrue(try issues(edited.current).contains { $0.id == decoded.id + "simulation_recording" })

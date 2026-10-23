@@ -25,7 +25,7 @@ public enum NativeAgent {
                 let database=try repository.read()
                 let spaces=database.workspaces.filter{$0.owner==principal}.map{workspace in AgentValue.object(["workspace_id":.string(workspace.id),"name":.string(workspace.name),"products":.array(database.products.filter{$0.workspaceID==workspace.id && !$0.archived}.map{.object(["product_id":.string($0.id),"sku":.string($0.sku),"name":.string($0.name)])})])}
                 let schemas:[AgentValue]=try commands.map{.object(["command":AgentValue.string($0),"input_schema":try nativeSchema($0)])}
-                return envelope(request:request,state:"ready",result:.object(["native_commands":.array(schemas),"workspaces":.array(spaces),"execution":.string("iOS AppIntents；本机设备认证与本地所有者范围；不调用付费服务、购买或发布"),"core_schema_version":.string(AgentContract.version)]))
+                return envelope(request:request,state:"ready",result:.object(["native_commands":.array(schemas),"workspaces":.array(spaces),"execution":.string("iOS AppIntents；本机设备认证与本地所有者范围；不调用付费服务、购买或发布"),"core_schema_version":.string(AgentContract.version),"ir_schema_versions":.array([.number(1),.number(2)])]))
             }
             let workspaceID=text("workspace_id")
             if command=="script create" {

@@ -93,7 +93,7 @@ public enum CloudProposalRules {
     /// products intentionally omit unrelated assets, so a full-project digest is different.
     public static func edits(_ proposal:CloudStoryboardProposal,envelope:CloudReviewEnvelope,localScope:ScopedRevision,project:Project,now:Date=Date())throws->[Edit] {
         try validate(proposal,envelope:envelope,now:now)
-        guard project.id==envelope.scope.projectID,project.workspaceID==envelope.scope.revision.product.workspaceID,project.current.id==proposal.revisionID,localScope.projectID==project.id,localScope.revision.id==proposal.revisionID,try localScope.revision.contentDigest()==proposal.revisionDigest else{throw VideoError.conflict("本机工程已更新或不属于所审版本；请比较新旧版本并重新发起提案，未覆盖现有修改")}
+        guard project.id==envelope.scope.projectID,project.workspaceID==envelope.scope.revision.workspaceID,project.current.id==proposal.revisionID,localScope.projectID==project.id,localScope.revision.id==proposal.revisionID,try localScope.revision.contentDigest()==proposal.revisionDigest else{throw VideoError.conflict("本机工程已更新或不属于所审版本；请比较新旧版本并重新发起提案，未覆盖现有修改")}
         return try operations(proposal,envelope:envelope)
     }
     private static func operations(_ proposal:CloudStoryboardProposal,envelope:CloudReviewEnvelope)throws->[Edit] {
@@ -108,12 +108,12 @@ public enum CloudProposalRules {
     /// This never applies the edit again and does not accept a coincidental current draft.
     public static func committedRevision(_ proposal:CloudStoryboardProposal,envelope:CloudReviewEnvelope,localScope:ScopedRevision,project:Project,now:Date=Date())throws->CloudProposalAppliedRevision? {
         try validate(proposal,envelope:envelope,now:now)
-        guard project.id==envelope.scope.projectID,project.workspaceID==envelope.scope.revision.product.workspaceID,localScope.projectID==project.id,localScope.revision.id==proposal.revisionID,try localScope.revision.contentDigest()==proposal.revisionDigest,let base=project.revisions.first(where:{$0.id==proposal.revisionID}) else{throw VideoError.conflict("原始提案版本或本机工程不匹配，不能补记接收回执")}
+        guard project.id==envelope.scope.projectID,project.workspaceID==envelope.scope.revision.workspaceID,localScope.projectID==project.id,localScope.revision.id==proposal.revisionID,try localScope.revision.contentDigest()==proposal.revisionDigest,let base=project.revisions.first(where:{$0.id==proposal.revisionID}) else{throw VideoError.conflict("原始提案版本或本机工程不匹配，不能补记接收回执")}
         let marker=try changeMessage(proposal)
         guard let committed=project.revisions.first(where:{$0.parentID==base.id && $0.change==marker}) else{return nil}
         var original=project;original.revisions=[base]
         let expected=try Editor.apply(operations(proposal,envelope:envelope),to:original,baseRevision:base.id,assets:envelope.scope.assets,message:marker).current
-        guard committed.scenes==expected.scenes,try Codec.digest(committed.product)==Codec.digest(base.product),committed.cta==base.cta,committed.aspect==base.aspect,committed.purpose==base.purpose,committed.musicAssetID==base.musicAssetID,try Codec.digest(committed.audioQuality)==Codec.digest(base.audioQuality) else{throw VideoError.conflict("本机接收记录与提案内容不符，未补记云端回执")}
+        guard committed.scenes==expected.scenes,committed.schemaVersion==base.schemaVersion,try Codec.digest(committed.product)==Codec.digest(base.product),committed.contentContext==base.contentContext,committed.cta==base.cta,committed.aspect==base.aspect,committed.purpose==base.purpose,committed.musicAssetID==base.musicAssetID,try Codec.digest(committed.audioQuality)==Codec.digest(base.audioQuality) else{throw VideoError.conflict("本机接收记录与提案内容不符，未补记云端回执")}
         return CloudProposalAppliedRevision(revisionID:committed.id,revisionDigest:try committed.contentDigest())
     }
     public static func validateReceipt(_ receipt:CloudProposalReceipt,proposal:CloudStoryboardProposal,ownerID:String,now:Date=Date())throws {

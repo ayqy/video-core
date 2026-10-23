@@ -33,7 +33,7 @@ final class CloudProposalTests:XCTestCase {
         let updated=try Editor.apply(operations,to:project,baseRevision:proposal.revisionID,assets:[],message:try CloudProposalRules.changeMessage(proposal))
         XCTAssertEqual(updated.revisions.count,2);XCTAssertEqual(updated.current.scenes.map(\.id),project.current.scenes.reversed().map(\.id))
         XCTAssertEqual(updated.current.scenes[0],project.current.scenes[1]);XCTAssertEqual(updated.current.scenes[1].title,proposal.change.title)
-        XCTAssertEqual(try Codec.digest(updated.current.product),try Codec.digest(project.current.product));XCTAssertEqual(updated.current.cta,project.current.cta)
+        XCTAssertEqual(try Codec.digest(updated.current.product!),try Codec.digest(project.current.product!));XCTAssertEqual(updated.current.cta,project.current.cta)
         XCTAssertEqual(updated.current.scenes[1].assetID,project.current.scenes[0].assetID);XCTAssertEqual(updated.current.scenes[1].evidenceIDs,project.current.scenes[0].evidenceIDs)
         XCTAssertFalse(updated.current.review.complete)
     }
@@ -59,7 +59,7 @@ final class CloudProposalTests:XCTestCase {
         let(envelope,scope,project,proposal)=try fixture()
         let changed=try Editor.apply([.cta("本机作者已更新")],to:project,baseRevision:project.current.id,assets:[],message:"本地并行修改")
         XCTAssertThrowsError(try CloudProposalRules.edits(proposal,envelope:envelope,localScope:scope,project:changed,now:now))
-        var another=scope;another.revision.product.prices[0].money=Money(200)
+        var another=scope;another.revision.product!.prices[0].money=Money(200)
         XCTAssertThrowsError(try CloudProposalRules.edits(proposal,envelope:envelope,localScope:another,project:project,now:now))
         var cross=project;cross.workspaceID="different-customer"
         XCTAssertThrowsError(try CloudProposalRules.edits(proposal,envelope:envelope,localScope:scope,project:cross,now:now))
@@ -77,7 +77,7 @@ final class CloudProposalTests:XCTestCase {
         var(envelope,scope,project,proposal)=try fixture()
         var evidence=Evidence(workspaceID:project.workspaceID,title:"隔离声音规则许可",source:"isolated-rules-source",claim:"本规则夹具音轨",owner:"测试权利人",commercialAllowed:false,uploadConsent:true,verified:true);evidence.checkedAt=now
         var voice=Asset(workspaceID:project.workspaceID,name:"isolated-rules-voice",hash:String(repeating:"a",count:64),ext:"wav",bytes:1,mediaType:"audio",durationFrames:150);voice.evidenceID=evidence.id
-        var base=project.current;base.scenes[0].voice=VoiceTake(assetID:voice.id,textDigest:try base.scenes[0].speechDigest(),durationFrames:150,method:"isolated-rule",listened:true);base.scenes[0].captions=[Caption(text:"原字幕",startFrame:0,endFrame:90,confirmed:true)];base.product.assetIDs=[voice.id];base.dependencies=try DependencyRules.freeze(revision:base,assets:[voice],evidence:[evidence],now:now)
+        var base=project.current;base.scenes[0].voice=VoiceTake(assetID:voice.id,textDigest:try base.scenes[0].speechDigest(),durationFrames:150,method:"isolated-rule",listened:true);base.scenes[0].captions=[Caption(text:"原字幕",startFrame:0,endFrame:90,confirmed:true)];base.product!.assetIDs=[voice.id];base.dependencies=try DependencyRules.freeze(revision:base,assets:[voice],evidence:[evidence],now:now)
         project.revisions=[base];scope.revision=base;scope.assets=[voice];scope.evidence=[evidence]
         envelope=try CloudReviewRules.prepare(scope:scope,preview:scope.artifacts[0],role:.collaborator,expiresAt:now.addingTimeInterval(3600),now:now)
         proposal.revisionDigest=envelope.revisionDigest;proposal.sceneDigest=try Codec.digest(base.scenes[0])
@@ -95,6 +95,22 @@ final class CloudProposalTests:XCTestCase {
         XCTAssertEqual(receipt.revisionID,saved.current.id);XCTAssertEqual(receipt.revisionDigest,try saved.current.contentDigest());XCTAssertEqual(saved.revisions.count,2)
         saved.revisions[1].scenes[0].body="额外伪改"
         XCTAssertThrowsError(try CloudProposalRules.committedRevision(proposal,envelope:envelope,localScope:scope,project:saved,now:now))
+    }
+    func testOrdinaryCommittedProposalCannotAlsoChangeContentContextOrSchema()throws {
+        var(envelope,scope,project,proposal)=try fixture()
+        let base=try Planner.create(workspaceID:project.workspaceID,name:"普通教学工程",scenes:project.current.scenes)
+        project.revisions=[base];scope.revision=base
+        scope.revision.dependencies=try DependencyRules.freeze(revision:base,assets:[],evidence:[],now:now)
+        project.revisions=[scope.revision]
+        envelope=try CloudReviewRules.prepare(scope:scope,preview:scope.artifacts[0],role:.collaborator,expiresAt:now.addingTimeInterval(3600),now:now)
+        proposal.revisionID=base.id;proposal.revisionDigest=envelope.revisionDigest
+        let operations=try CloudProposalRules.edits(proposal,envelope:envelope,localScope:scope,project:project,now:now)
+        let saved=try Editor.apply(operations,to:project,baseRevision:base.id,assets:[],message:try CloudProposalRules.changeMessage(proposal))
+        XCTAssertNotNil(try CloudProposalRules.committedRevision(proposal,envelope:envelope,localScope:scope,project:saved,now:now))
+        var tampered=saved;tampered.revisions[1].contentContext?.name="未审核的其他内容"
+        XCTAssertThrowsError(try CloudProposalRules.committedRevision(proposal,envelope:envelope,localScope:scope,project:tampered,now:now))
+        tampered=saved;tampered.revisions[1].schemaVersion=1
+        XCTAssertThrowsError(try CloudProposalRules.committedRevision(proposal,envelope:envelope,localScope:scope,project:tampered,now:now))
     }
     func testProposalChangedAfterDiffDisplayRequiresExplicitReviewAgain()throws {
         let(_,_,_,proposal)=try fixture();let viewed=try Codec.digest(proposal)

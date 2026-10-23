@@ -1,59 +1,15 @@
 <!doctype html>
-<html lang="zh-CN">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="知幕 iOS 隐私说明：本机资料、系统安全凭据、用户主动选择的生成服务、私有 iCloud 审稿与删除边界。">
-  <meta name="referrer" content="no-referrer">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; base-uri 'none'; form-action 'none'">
-  <title>隐私说明 · 知幕</title>
-  <link rel="stylesheet" href="site.css">
-</head>
-<body>
-  <a class="skip" href="#main">跳到正文</a>
-  <header class="site-header"><div class="container header-inner"><a class="brand" href="index.html" aria-label="知幕首页"><span class="brand-mark" aria-hidden="true">知</span><span>知幕<small>ZHIMU · iOS</small></span></a><nav aria-label="主导航"><a href="index.html">产品</a><a href="support.html">使用支持</a><a href="privacy.html" aria-current="page">隐私</a><a href="terms.html">许可与费用</a></nav></div></header>
-  <main class="container article" id="main">
-    <p class="eyebrow">资料、选择与访问边界</p>
-    <h1>知幕隐私说明</h1>
-    <div class="status">适用版本：知幕 iOS 1.0.0。本说明涵盖本机资料、你选择的外部生成服务、私有 iCloud 审稿及数据管理边界。</div>
-    <p>知幕用于把你自己的课程资料、脚本、图片和视频编排成作品，并记录相关经营数据。当前实现没有发布者自建的工程接收服务器，也没有内置广告或第三方分析 SDK。没有配置外部服务时，资料整理、原生渲染和本地备份可以在设备上完成。</p>
-    <div class="contents"><p>本页内容</p><ul><li><a href="#local">本机资料与凭据</a></li><li><a href="#generation">可选的外部生成服务</a></li><li><a href="#cloud-review">私有 iCloud 审稿与删除</a></li><li><a href="#choices">保留、备份与联系</a></li></ul></div>
-    <section id="local">
-      <h2>本机资料与凭据</h2>
-      <p>项目、不可变版本、来源许可、素材和经营记录保存在应用本机目录中。导入订单时，原始订单和买家身份会转换为本地盐化引用；这不是对任意输入内容匿名性的承诺。自由文本仍可能包含个人或商业信息，请在导入、分享及备份前核对。</p>
-      <p>第三方服务凭据保存在系统 Keychain，工程只保存非敏感引用。凭据不会随正常项目、云审稿资料或完整备份导出。系统安全存储、设备备份及购买由 Apple 按其政策处理。</p>
-      <p>卸载应用不应被视为已经删除第三方云端内容、撤销第三方令牌或取消订阅。</p>
-    </section>
-    <section id="generation">
-      <h2>由你选择的外部生成服务</h2>
-      <p>只有你配置自己的服务账户、确认上传范围并提交操作后，应用才直接联系相应服务。文本模型请求包含当前产品资料、已允许上传的证据和创作说明；百度 AI 成片请求包含本次文字及你填写的公开图片、视频地址。应用不会把本地订单库或整个工作区自动交给模型。</p>
-      <p>创作文字属于用户内容，公开图片或视频地址对应的媒体由服务商访问并用于制作视频。这些数据用于提供生成功能，请求会关联你选择的服务账户，不能视为匿名传输。自带账户和主动选传不表示服务商不保留数据。</p>
-      <p>当前文本模型及百度生成接口不上传本机原始录音文件、完整订单库、经营账本、Apple 购买明细或设备广告标识。你在通用创作文字中自行填写的内容仍可能包含个人信息，请只提供完成本次生成所需的内容。</p>
-      <p>服务商会收到请求所需的数据、授权凭据及常规网络信息，并可能按所选账户的合同保留输入、任务或结果。知幕没有统一的服务商保留期限，也不能替服务商保证不训练或立即删除。百度现有适配合同的任务与结果链接通常保留七天；链接期限不等于服务商已经物理删除全部数据。</p>
-      <p>使用前请核对服务商当前条款、上传权利、费用和删除方式。取消本地制作不等于取消远端任务或获得退款。本应用实现不把这些资料用于跨应用广告定向、广告衡量或数据经纪分享，也没有相关追踪 SDK。</p>
-    </section>
-    <section id="cloud-review">
-      <h2>可选的私有 iCloud 审稿</h2>
-      <p>作者明确发起审稿时，应用将指定版本的必要描述、引用来源和一份 MP4 预览放入作者的 CloudKit 私有分区，再通过私有共享授权给所邀请的 iCloud 参与者。评论、局部修改提案和接收回执保存在该授权层级中。</p>
-      <p>送审不包含完整经营数据库、订单或服务凭据，也不上传本机原素材文件；所选预览中可能包含声音和画面，并包含作者明确送审的文字。每次送审前需核对所选版本、来源许可和云端上传范围。</p>
-      <p>访问权限依据 Apple 返回的实际参与者身份核验。容器内的用户记录引用用于区分作者和协作者，不会作为公开联系方式。发布者没有使用公共 CloudKit 数据库收集全体用户工程。你自己的 iCloud 内容和 Apple 系统处理的数据，应与发布者或外部生成服务实际可访问的数据分别理解。</p>
-      <p>这三种操作含义不同：</p>
-      <div class="table-wrap" tabindex="0" aria-label="三种审稿管理操作的区别">
-        <table><thead><tr><th scope="col">操作</th><th scope="col">影响</th><th scope="col">保留内容</th></tr></thead><tbody>
-          <tr><th scope="row">作者撤销共享</th><td>停止受邀者后续访问此份共享。</td><td>作者的云端审稿副本、本地原素材、工程和备份仍保留。</td></tr>
-          <tr><th scope="row">作者删除云端审稿</th><td>删除所选审稿的云端脚本、预览、批注、提案、接收回执和共享；仅在 CloudKit 完整确认后移除本机入口。</td><td>其他审稿、本地原素材、工程和备份保留。网络或确认失败时，入口保留供重试，共享可能已经停止。</td></tr>
-          <tr><th scope="row">仅移除本机入口</th><td>清理这台设备的审稿入口和本应用临时预览。</td><td>不会撤销共享，也不表示云端内容已经删除。</td></tr>
-        </tbody></table>
-      </div>
-      <p>到期或无法核验权限时，本应用会停止该审稿页的后续授权读取和播放；应用中的到期限制不能代替作者撤销 CloudKit 共享。已经被另存的文件或他人持有的副本无法远程收回。作者如需删除云端副本，请在移除本机入口前完成云端删除，并查看处理结果。</p>
-    </section>
-    <section id="choices">
-      <h2>选择、保留与联系</h2>
-      <p>你可以跳过外部生成和 iCloud 审稿，停止发起新上传，或在相应服务商处撤销凭据。原素材、历史项目、已有导出与完整备份不会因软件权益到期或退款而被扣押。</p>
-      <p>备份和导出由你选择保存及分享位置，收件人或所选云盘可能保留其副本。完整备份不包含模型凭据；恢复后如需使用外部服务，需要重新核对本机安全配置。<a href="support.html#backup">查看备份与恢复步骤</a>。</p>
-      <p>普通支持可联系 <a href="mailto:panicmonkey@163.com">panicmonkey@163.com</a>，主题注明“知幕支持”。请仅发送问题描述、版本及经过检查的必要图片，不要发送密码、令牌、原始买家信息或不必要的客户资料。此联系方式复用发布者现有公开应用支持渠道；发布者不会要求你通过邮件提供服务凭据。</p>
-    </section>
-  </main>
-  <footer class="site-footer"><div class="container"><div class="footer-links"><a href="index.html">产品</a><a href="support.html">使用支持</a><a href="terms.html">许可、费用与服务</a></div><p>知幕 iOS · 课程与知识内容制作。</p></div></footer>
-</body>
-</html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="本机素材、工程、外部模型、协作和凭据的处理边界。"><meta name="referrer" content="no-referrer">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; base-uri 'none'; form-action 'none'">
+<title>知幕 · 隐私说明</title><link rel="stylesheet" href="site.css"></head>
+<body><a class="skip" href="#main">跳到正文</a>
+<header class="site-header"><div class="container header-inner"><a class="brand" href="index.html" aria-label="知幕首页"><span class="brand-mark" aria-hidden="true">知</span><span>知幕<small>ZHIMU · MAC</small></span></a><nav aria-label="主导航"><a href="index.html">产品</a><a href="support.html">使用支持</a><a href="privacy.html" aria-current="page">隐私</a><a href="terms.html">许可与费用</a></nav></div></header>
+<main class="container" id="main">
+<h1>隐私说明</h1><div class="status">适用于Mac视频生产工具及共享免费CLI的产品方向。Mac App尚未正式发行；当前安装版本的实际能力与授权范围分别核对。</div>
+<section id="local"><h2>本机工程和素材</h2><p>工程版本、素材、引用和使用许可默认保存在本机工作区。普通剪辑不需要销售订单或买家信息；营收管理不属于App功能。历史工程的数据不会因范围修订而自动删除。</p><p>自由文本、画面和声音仍可能包含个人或商业信息，导入、生成、分享和备份前请核对。</p></section>
+<section id="models"><h2>外部生成服务</h2><p>只有配置账户、核对上传范围并发起请求后，工具才联系对应服务。请求包含本次必要的创作说明和明确允许上传的资料，不自动上传整个工作区。</p><p>凭据仅通过本机安全引用或宿主安全配置使用，不写入模型提示、普通工程、预览或错误正文。外部服务按自身条款处理收到的内容，提交前检查其费用、隐私与许可。</p></section>
+<section id="cloud-review"><h2>协作与预览</h2><p>仅交付获准的项目版本、预览和批注。预览可能包含声音、图像及作者明确送审的文字；不包含完整数据库或服务凭据。其他项目和版本不会因一次分享自动开放。</p><p>不同协作渠道有各自的撤销和保留行为。删除本机入口、撤销在线访问、删除远端数据与删除对方已下载的副本不同，不能相互替代；当前Mac尚未完成的连接器不宣称可用。</p></section>
+<section id="backup"><h2>导出、备份与清理</h2><p>导出由你选择保存位置；完整备份保留数据库、源素材及许可和版本引用，排除模型凭据。清理缓存不会代替删除工程。恢复时重新绑定本机服务引用，并核对原始文件哈希。</p><p>你可自行管理本机文件和撤销授权。软件权益过期不扣押原素材与历史工程。</p></section>
+<section><h2>网站与支持</h2><p>本站为静态支持页，无登录、购买表单或应用遥测脚本；托管服务可能按其政策处理访问日志。主动发送支持邮件时只提供必要信息，不发送密码或令牌。</p><p>联系 <a href="mailto:panicmonkey@163.com">panicmonkey@163.com</a>。</p></section></main>
+<footer class="site-footer"><div class="container"><div class="footer-links"><a href="support.html">使用支持</a><a href="privacy.html">隐私说明</a><a href="terms.html">许可与费用</a></div><p>知幕 · Mac视频剪辑与生产。</p></div></footer></body></html>

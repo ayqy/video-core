@@ -31,7 +31,7 @@ enum VisualClipCache {
         let fontID=(CTFontCopyPostScriptName(font) as String)+Codec.hash(table)
         var moduleIdentity:String?
         if RenderModuleRegistry.capability(for:scene.kind) != nil {guard let modules else{throw VideoError.unavailable("需要独立高级模块与有效权益")};let status=try modules.validate(kind:scene.kind);moduleIdentity=status.pluginID+status.version+status.implementationDigest}
-        return try Codec.digest(Key(version:version+revision.toolchain,os:ProcessInfo.processInfo.operatingSystemVersionString,font:fontID,scene:scene,purpose:revision.purpose,aspect:revision.aspect,fps:revision.fps,index:index,sceneCount:revision.scenes.count,startFrame:revision.scenes.prefix(index).reduce(0){$0+$1.timelineFrames},price:scene.showPrice ? try revision.product.price(at:revision.createdAt):nil,cta:index==revision.scenes.count-1 ? revision.cta:nil,sourceHash:database.assets.first{$0.id==scene.assetID}?.hash,layerHashes:Dictionary(uniqueKeysWithValues:database.assets.filter { a in scene.layers?.contains(where:{$0.assetID==a.id})==true }.map{($0.id,$0.hash)}),moduleIdentity:moduleIdentity,artworkIdentity:try ClassicArtworkMedia.fingerprint(scene:scene,database:database)))
+        return try Codec.digest(Key(version:version+revision.toolchain,os:ProcessInfo.processInfo.operatingSystemVersionString,font:fontID,scene:scene,purpose:revision.purpose,aspect:revision.aspect,fps:revision.fps,index:index,sceneCount:revision.scenes.count,startFrame:revision.scenes.prefix(index).reduce(0){$0+$1.timelineFrames},price:scene.showPrice ? try revision.product?.price(at:revision.createdAt):nil,cta:index==revision.scenes.count-1 ? revision.cta:nil,sourceHash:database.assets.first{$0.id==scene.assetID}?.hash,layerHashes:Dictionary(uniqueKeysWithValues:database.assets.filter { a in scene.layers?.contains(where:{$0.assetID==a.id})==true }.map{($0.id,$0.hash)}),moduleIdentity:moduleIdentity,artworkIdentity:try ClassicArtworkMedia.fingerprint(scene:scene,database:database)))
     }
     static func compose(revision r: Revision, repository: Repository, database db: Database, output: URL,modules:RenderModuleRegistry?, progress: @escaping @Sendable (Double) throws -> Void) async throws -> Int {
         let directory=repository.root.appendingPathComponent("cache/visuals")
@@ -42,7 +42,7 @@ enum VisualClipCache {
         for (index,scene) in r.scenes.enumerated() {
             try Task.checkCancellation()
             if let aid=scene.assetID,let asset=db.assets.first(where:{$0.id==aid}) { let data=try Data(contentsOf:repository.assetURL(asset)); guard data.count==asset.bytes,Codec.hash(data)==asset.hash else { throw VideoError.invalid("源素材摘要不符，拒绝复用缓存") } }
-            _ = try ClassicArtworkMedia.load(scene:scene,workspaceID:r.product.workspaceID,repository:repository,database:db,commercial:r.purpose != .education)
+            _ = try ClassicArtworkMedia.load(scene:scene,workspaceID:r.workspaceID,repository:repository,database:db,commercial:r.purpose != .education)
             let key=try fingerprint(revision:r,index:index,database:db,modules:modules)
             let clip=directory.appendingPathComponent(key+".mp4"), metadata=directory.appendingPathComponent(key+".plist")
             var valid=false
@@ -76,7 +76,7 @@ enum VisualClipCache {
         let adaptor=AVAssetWriterInputPixelBufferAdaptor(assetWriterInput:input,sourcePixelBufferAttributes:[kCVPixelBufferPixelFormatTypeKey as String:kCVPixelFormatType_32ARGB,kCVPixelBufferWidthKey as String:r.aspect.width,kCVPixelBufferHeightKey as String:r.aspect.height,kCVPixelBufferCGImageCompatibilityKey as String:true,kCVPixelBufferCGBitmapContextCompatibilityKey as String:true])
         guard writer.canAdd(input) else { throw VideoError.unavailable("当前设备不支持H.264输出") };writer.add(input);guard writer.startWriting() else { throw VideoError.unavailable("画面编码无法启动") };writer.startSession(atSourceTime:.zero)
         var generator:AVAssetImageGenerator?, picture:CGImage?
-        let resources=try ClassicArtworkMedia.load(scene:scene,workspaceID:r.product.workspaceID,repository:repository,database:db,commercial:r.purpose != .education)
+        let resources=try ClassicArtworkMedia.load(scene:scene,workspaceID:r.workspaceID,repository:repository,database:db,commercial:r.purpose != .education)
         var layerImages:[String:CGImage]=[:]
         for layer in scene.layers ?? [] { if let id=layer.assetID,let a=db.assets.first(where:{$0.id==id}),let source=CGImageSourceCreateWithURL(repository.assetURL(a) as CFURL,nil),let image=CGImageSourceCreateImageAtIndex(source,0,nil){layerImages[id]=image} }
         if let aid=scene.assetID, let asset=db.assets.first(where:{$0.id==aid}) {

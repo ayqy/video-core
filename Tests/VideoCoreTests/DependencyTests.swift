@@ -85,7 +85,7 @@ final class DependencyTests: XCTestCase {
         json.removeValue(forKey:"dependencies")
         var p=try XCTUnwrap(json["product"] as? [String:Any]);p.removeValue(forKey:"courseMappings");json["product"]=p
         let decoded=try Codec.decoder().decode(Revision.self,from:JSONSerialization.data(withJSONObject:json))
-        XCTAssertNil(decoded.dependencies);XCTAssertNil(decoded.product.courseMappings);XCTAssertNil(decoded.scenes[0].courseMappingIDs)
+        XCTAssertNil(decoded.dependencies);XCTAssertNil(decoded.product!.courseMappings);XCTAssertNil(decoded.scenes[0].courseMappingIDs)
     }
     func testSourceEditPreservesHistoryAndSkipsUnrelatedPagesAndWorkspace() throws {
         let(product,asset,evidence,mapping)=try fixtures()

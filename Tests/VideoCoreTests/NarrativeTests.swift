@@ -118,11 +118,11 @@ final class FontRightsTests:XCTestCase {
     }
     func testActualFontRightsAllowStyleAndQualityWithoutClaimingInstallation()throws {
         let evidence=rights();try StyleKit(workspaceID:"w",name:"已核授权",fontName:font,evidenceIDs:[evidence.id]).validate(assets:[],evidence:[evidence],commercial:true,now:now)
-        var revision=revision();revision.scenes[0].fontName=font;revision.scenes[0].evidenceIDs=[evidence.id];var database=Database();database.evidence=[evidence];database.products=[revision.product]
+        var revision=revision();revision.scenes[0].fontName=font;revision.scenes[0].evidenceIDs=[evidence.id];var database=Database();database.evidence=[evidence];database.products=[revision.product!]
         XCTAssertFalse(try Quality.inspect(revision,database:database,requireReview:false,now:now).contains{$0.id.hasSuffix("font_rights")})
     }
     func testDirectSceneFontCannotBypassStyleRightsAndNilUsesStableMedium()throws {
-        var revision=revision();var database=Database();let evidence=rights();database.evidence=[evidence];database.products=[revision.product]
+        var revision=revision();var database=Database();let evidence=rights();database.evidence=[evidence];database.products=[revision.product!]
         XCTAssertFalse(try Quality.inspect(revision,database:database,requireReview:false,now:now).contains{$0.id.hasSuffix("font_rights")})
         revision.scenes[0].fontName=font
         XCTAssertTrue(try Quality.inspect(revision,database:database,requireReview:false,now:now).contains{$0.id==revision.scenes[0].id+"font_rights"})
