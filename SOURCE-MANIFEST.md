@@ -2,14 +2,13 @@
 
 VideoFree source export · package_free.py · version 1
 
-- 来源默认提交：`f520155a9a5a8f6e3e506259382961045a4e9c2d`（已推送；所有显式发行源文件与该默认提交逐文件核对一致）。
+生成时间：2026-10-23 16:04:33 北京时间
 
-生成时间：2026-10-23 13:37:34 北京时间
-
-- 源码与必要元数据：147个文件；1511180字节（不含本清单）。
-- 整体内容指纹：`d5947b4c7f14245ce5c266d47da096886794fd1cf29055467fcbd5bc6adbea99`。
+- 源码与必要元数据：147个文件；1520120字节（不含本清单）。
+- 整体内容指纹：`7e22cf2dd36721d309acd42f8d5e4b12c3e55818a1db2b1814e35df3ba772778`。
 - 来源：受控原始工程中的逐文件白名单；Package.swift来自Distribution/Free/Package.swift模板，README由发行脚本生成。
 - 本包不含.git，不可作为新业务checkout；本清单生成过程不执行构建、设备验收、签名安装或公共上传，各阶段以独立证据为准。
+- 来源交付提交（源版本标识）：`9281025dc1805f0856935d66425de8710a045530`。
 - 排除：App、VideoGame、VideoCartoon、Premium、高级实现运行时测试、私有仓库地址、凭据、客户数据、缓存、日志及媒体过程产物。
 - 已检查：路径与普通文本文件类型、符号/硬链接拒绝、免费源码闭源import、已知凭据形态和仓库URL。模式检查不能证明任意自由文本绝无敏感信息，仍需发行审查。
 - 固定测试例外：PublicationTests的凭据拒绝测试包含一条已按SHA-256精确审核的合成字符串；仅该匹配允许，其余测试与生产源码适用同一检查。
@@ -38,7 +37,7 @@ VideoFree source export · package_free.py · version 1
 | 347257a3cd5bcb0e501506a29ab4dc2892a46d2560a111a8d779b124e594ebb9 | 60 | Sources/CZlib/module.modulemap |
 | 80324eed37fb3c06611102a5ed598bb3d60aa818eeb6f848068e359677a07ea7 | 18 | Sources/CZlib/shim.h |
 | f91009e63ad2cd947bb9a9e20acc909478e7ef5374aadc08c23654f5d8894029 | 15306 | Sources/VideoCLI/FiniteWorker.swift |
-| 0d1d68d6b894fe37559b80b51d011a2f369e0b725f16cf90eefbdc0b06a2d6b9 | 26157 | Sources/VideoCLI/VideoCLI.swift |
+| d6814d749544cda739fea3957504c8be0f4ba2bfe9ab10d657af3b32d8e6da4d | 26466 | Sources/VideoCLI/VideoCLI.swift |
 | 9e32bb073a8fa08b21e6e01dde228bae7fa566d4532c658f1a9c6f13270fc273 | 20398 | Sources/VideoCore/AgentContract.swift |
 | bf2f7ad7ef600774a301f579dd95b966a0702127595ca53e0ae7f55b91a2ded3 | 2784 | Sources/VideoCore/AgentJobAccess.swift |
 | 8bf2579a1f2466e15406fcad08bcbbc615b82cd2242a0f2db10aef489e805fbc | 20489 | Sources/VideoCore/AgentMutation.swift |
@@ -87,7 +86,7 @@ VideoFree source export · package_free.py · version 1
 | 00967cfa2271cce35d16419d6065ef787a2a301ca7b77aa92215b519c86af3b6 | 28268 | Sources/VideoCore/Storage.swift |
 | 8e7174e54a4fab84ab55261d3a914fc2775e59adcca7ebb0b64c82d52f58a6f5 | 20135 | Sources/VideoCore/Teaching.swift |
 | eedd110e80735e0534e55dfcc0233723ab35e2fd41ce240b77a2b728c08e51c4 | 11179 | Sources/VideoCore/TeachingBatch.swift |
-| 6b27d6ef86805333a47b5503501091ff2e04f742b22cece188301f3a32ae209d | 25183 | Sources/VideoCore/WorkspaceAccess.swift |
+| 7121ad27352879f52316887ec87d9b806024faf64d2352017a459210363375a1 | 26694 | Sources/VideoCore/WorkspaceAccess.swift |
 | e7dd8743febbec2cfdc92e4656c3dcb1fbd54f8eb2a7b71e9863b371b0fcb6a3 | 11050 | Sources/VideoInstall/VideoInstall.swift |
 | ea4dc3e512b818726ea6fd7d350e697ef234e337bafff6e34d8af40720d9cc54 | 14314 | Sources/VideoMedia/BaiduVideoProvider.swift |
 | e38eb6246bcfe8b0d4436c6a88397cf49afcb21928addcf57ce3c71b490f1055 | 20919 | Sources/VideoMedia/BubbleBuiltinAssets.swift |
@@ -153,7 +152,7 @@ VideoFree source export · package_free.py · version 1
 | 251d6da78644401bb4dafca5bfda69ac65f49abfaf6dd2e93485be29da7e6909 | 11539 | Tests/VideoCoreTests/SimulationRecordingTests.swift |
 | c927d9faea68877b494d6fbac3aa5f76001c427ff5de168208d5e049036ec918 | 7072 | Tests/VideoCoreTests/SpeechTests.swift |
 | d9c73a0cf74c764280d45920b0e7a4f073143c94c4035b335917aaf2d355d2bf | 15186 | Tests/VideoCoreTests/TeachingTests.swift |
-| 80b364ef5fab62b80af8ca80b608e8a085a8a4643f40a20b3d6dd3f78c4880a3 | 17673 | Tests/VideoCoreTests/WorkspaceAccessTests.swift |
+| 7ba0ca151fe677d9a3e081af45a3e9c0cbc725c82549e6b7b8193ef2cfbb8a3e | 24793 | Tests/VideoCoreTests/WorkspaceAccessTests.swift |
 | 69a1c1dde465f45b51620943a9dd3c9240537e51fe861897a7528cd6c3c194ed | 5331 | Tests/VideoMediaTests/AudioMixMediaTests.swift |
 | 0207a9002bb7aef610449bd354ee6c50034a84f81d1a261ea8846a9bb864aada | 1906 | Tests/VideoMediaTests/BaiduVideoProviderTests.swift |
 | 04c765d5be6d04f06db5752c8b0beef1dad8cda87a0be1193be63fa17318f8da | 4089 | Tests/VideoMediaTests/BubbleArtworkMediaTests.swift |

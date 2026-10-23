@@ -2,6 +2,89 @@ import XCTest
 @testable import VideoCore
 
 final class WorkspaceAccessTests:XCTestCase {
+    func testDefaultLocalIdentityCanBackUpMixedReservedOwnerLabelsWithoutRewritingThem() throws {
+        let workspaces=[Workspace(name:"新空间",owner:LocalWorkspaceIdentity.canonical),Workspace(name:"旧Mac空间",owner:LocalWorkspaceIdentity.legacyMac)]
+        let principal=LocalWorkspaceIdentity.principal(workspaceID:nil,in:workspaces)
+        XCTAssertTrue(LocalWorkspaceIdentity.canBackUp(workspaces:workspaces,principal:principal,usingDefaultIdentity:true))
+        XCTAssertEqual(workspaces.map(\.owner),[LocalWorkspaceIdentity.canonical,LocalWorkspaceIdentity.legacyMac])
+    }
+    func testExplicitLocalPrincipalsCannotBackUpMixedReservedOwnerLabels() throws {
+        let workspaces=[Workspace(name:"新空间",owner:LocalWorkspaceIdentity.canonical),Workspace(name:"旧Mac空间",owner:LocalWorkspaceIdentity.legacyMac)]
+        for principal in [LocalWorkspaceIdentity.canonical,LocalWorkspaceIdentity.legacyMac] {
+            XCTAssertFalse(LocalWorkspaceIdentity.canBackUp(workspaces:workspaces,principal:principal,usingDefaultIdentity:false))
+        }
+    }
+    func testBackupDoesNotTreatReviewerGrantAsWholeLibraryOwnership() throws {
+        var workspaces=[Workspace(name:"新空间",owner:LocalWorkspaceIdentity.canonical),Workspace(name:"旧Mac空间",owner:LocalWorkspaceIdentity.legacyMac)]
+        for index in workspaces.indices {
+            workspaces[index].grants=[Grant(principal:"reviewer",role:.reviewer,projectIDs:[],revisionIDs:[],expiresAt:Date().addingTimeInterval(60))]
+        }
+        XCTAssertFalse(LocalWorkspaceIdentity.canBackUp(workspaces:workspaces,principal:"reviewer",usingDefaultIdentity:false))
+    }
+    func testDefaultBackupRejectsForeignEmptyAndSimilarOwnerLabelsInMixedLibraries() throws {
+        let locals=[Workspace(name:"新空间",owner:LocalWorkspaceIdentity.canonical),Workspace(name:"旧Mac空间",owner:LocalWorkspaceIdentity.legacyMac)]
+        for owner in ["foreign-owner","","local-owner ","mac-local-owner ","Mac-local-owner","local_owner"] {
+            let workspaces=locals+[Workspace(name:"其他空间",owner:owner)]
+            let principal=LocalWorkspaceIdentity.principal(workspaceID:nil,in:workspaces)
+            XCTAssertFalse(LocalWorkspaceIdentity.canBackUp(workspaces:workspaces,principal:principal,usingDefaultIdentity:true),owner)
+        }
+    }
+    func testSingleOwnerBackupKeepsDefaultAndExplicitExactOwnershipCompatibility() throws {
+        for owner in [LocalWorkspaceIdentity.canonical,LocalWorkspaceIdentity.legacyMac] {
+            let workspaces=[Workspace(name:"单一本机身份",owner:owner)]
+            let principal=LocalWorkspaceIdentity.principal(workspaceID:nil,in:workspaces)
+            XCTAssertTrue(LocalWorkspaceIdentity.canBackUp(workspaces:workspaces,principal:principal,usingDefaultIdentity:true))
+            XCTAssertTrue(LocalWorkspaceIdentity.canBackUp(workspaces:workspaces,principal:owner,usingDefaultIdentity:false))
+            XCTAssertFalse(LocalWorkspaceIdentity.canBackUp(workspaces:workspaces,principal:"reviewer",usingDefaultIdentity:false))
+        }
+        let foreign=[Workspace(name:"显式其他身份",owner:"foreign-owner")]
+        XCTAssertFalse(LocalWorkspaceIdentity.canBackUp(workspaces:foreign,principal:LocalWorkspaceIdentity.canonical,usingDefaultIdentity:true))
+        XCTAssertTrue(LocalWorkspaceIdentity.canBackUp(workspaces:foreign,principal:"foreign-owner",usingDefaultIdentity:false))
+    }
+    func testLocalClientsShareCanonicalIdentityAndPreserveLegacyMacWithoutMigration() throws {
+        let canonical=Workspace(name:"CLI原空间",owner:"local-owner")
+        let legacy=Workspace(name:"旧Mac原空间",owner:"mac-local-owner")
+        XCTAssertEqual(LocalWorkspaceIdentity.principal(for:nil),"local-owner")
+        for workspace in [canonical,legacy] {
+            let principal=LocalWorkspaceIdentity.principal(for:workspace)
+            XCTAssertEqual(principal,workspace.owner)
+            XCTAssertEqual(LocalWorkspaceIdentity.principal(workspaceID:workspace.id,in:[canonical,legacy]),principal)
+            var database=Database();database.workspaces=[workspace]
+            XCTAssertEqual(try WorkspaceAccessRules.validate(WorkspaceAccessContext(workspaceID:workspace.id,principal:principal),in:database).id,workspace.id)
+            XCTAssertTrue(database.workspaces[0].grants.isEmpty)
+        }
+        XCTAssertEqual(LocalWorkspaceIdentity.principal(workspaceID:nil,in:[legacy]),"mac-local-owner")
+        XCTAssertEqual(LocalWorkspaceIdentity.principal(workspaceID:nil,in:[canonical,legacy]),"local-owner")
+        XCTAssertEqual(LocalWorkspaceIdentity.principal(workspaceID:nil,in:[]),"local-owner")
+    }
+    func testLocalIdentityDoesNotAdoptArbitraryOwnerOrGrantByPossession() throws {
+        for owner in ["different-owner","remote-user","", "LOCAL-OWNER","mac-local-owner-other"] {
+            let workspace=Workspace(name:"他人的空间",owner:owner)
+            XCTAssertEqual(LocalWorkspaceIdentity.principal(for:workspace),"local-owner")
+            XCTAssertEqual(LocalWorkspaceIdentity.principal(workspaceID:nil,in:[workspace]),"local-owner")
+            var database=Database();database.workspaces=[workspace]
+            XCTAssertThrowsError(try WorkspaceAccessRules.validate(WorkspaceAccessContext(workspaceID:workspace.id,principal:LocalWorkspaceIdentity.principal(for:workspace)),in:database))
+        }
+    }
+    func testCreatingNewWorkspaceDoesNotInheritLegacyIdentityOrDifferFromDryRun() {
+        let old=Workspace(name:"旧Mac空间",owner:LocalWorkspaceIdentity.legacyMac)
+        let actual=LocalWorkspaceIdentity.principal(workspaceID:nil,in:[old],creatingWorkspace:true)
+        let dryRun=LocalWorkspaceIdentity.principal(workspaceID:nil,in:[],creatingWorkspace:true)
+        XCTAssertEqual(actual,LocalWorkspaceIdentity.canonical)
+        XCTAssertEqual(actual,dryRun)
+        XCTAssertEqual(old.owner,LocalWorkspaceIdentity.legacyMac)
+    }
+    func testCanonicalLocalGrantKeepsExactRevisionRevocationAndExpiryChecks() throws {
+        var(database,workspace,project,_)=try fixture()
+        workspace.grants=[Grant(principal:LocalWorkspaceIdentity.canonical,role:.reviewer,projectIDs:[project.id],revisionIDs:[project.revisions[0].id],expiresAt:Date().addingTimeInterval(60))]
+        database.workspaces[0]=workspace
+        let access=WorkspaceAccessContext(workspaceID:workspace.id,principal:LocalWorkspaceIdentity.principal(for:workspace))
+        _=try WorkspaceAccessRules.readModel(projectID:project.id,revisionID:project.revisions[0].id,access:access,in:database)
+        XCTAssertThrowsError(try WorkspaceAccessRules.readModel(projectID:project.id,revisionID:project.current.id,access:access,in:database))
+        XCTAssertThrowsError(try WorkspaceAccessRules.readModel(projectID:project.id,revisionID:project.revisions[0].id,access:access,in:database,now:Date().addingTimeInterval(120)))
+        database.workspaces[0].grants[0].revoked=true
+        XCTAssertThrowsError(try WorkspaceAccessRules.readModel(projectID:project.id,revisionID:project.revisions[0].id,access:access,in:database))
+    }
     private func fixture() throws -> (Database,Workspace,Project,WorkspaceAccessContext) {
         var database=Database()
         var workspace=Workspace(name:"客户甲",owner:"author")

@@ -1,5 +1,33 @@
 import Foundation
 
+/// Local filesystem clients share reserved owner labels. These labels never
+/// authenticate a CloudKit user or promote an arbitrary imported owner.
+public enum LocalWorkspaceIdentity {
+    public static let canonical = "local-owner"
+    public static let legacyMac = "mac-local-owner"
+
+    public static func principal(for workspace: Workspace?) -> String {
+        workspace?.owner == legacyMac ? legacyMac : canonical
+    }
+
+    public static func principal(workspaceID: String?, in workspaces: [Workspace], creatingWorkspace: Bool = false) -> String {
+        if creatingWorkspace { return canonical }
+        if let workspaceID { return principal(for: workspaces.first { $0.id == workspaceID }) }
+        // Whole-library legacy operations remain possible without rewriting
+        // historical owners. Mixed or foreign ownership still passes through
+        // the existing command's exact owner/grant checks.
+        return !workspaces.isEmpty && workspaces.allSatisfy { $0.owner == legacyMac } ? legacyMac : canonical
+    }
+
+    /// Only an implicit local CLI identity may treat the two reserved labels as
+    /// aliases for whole-library backup. Explicit callers retain exact ownership.
+    public static func canBackUp(workspaces: [Workspace], principal: String, usingDefaultIdentity: Bool) -> Bool {
+        workspaces.allSatisfy { workspace in
+            workspace.owner == principal || (usingDefaultIdentity && (workspace.owner == canonical || workspace.owner == legacyMac))
+        }
+    }
+}
+
 /// A trusted caller must bind principal to an authenticated identity before using this context remotely.
 /// The iOS owner can inspect these scopes locally; entering a name is not authentication.
 public struct WorkspaceAccessContext: Codable, Sendable {
