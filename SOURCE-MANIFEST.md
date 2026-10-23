@@ -2,10 +2,10 @@
 
 VideoFree source export · package_free.py · version 1
 
-生成时间：2026-10-24 01:17:45 北京时间
+生成时间：2026-10-24 02:08:28 北京时间
 
-- 源码与必要元数据：162个文件；1814584字节（不含本清单）。
-- 整体内容指纹：`0946cfff2207c98379b9e25a471b43c3a5702a9a54cf91e1b6d820c9594c2c83`。
+- 源码与必要元数据：162个文件；1816248字节（不含本清单）。
+- 整体内容指纹：`19051bae19ce1a384cba51f12c9358c9d5f421a8b28f1eae5e26517346254674`。
 - 来源：受控原始工程中的逐文件白名单；Package.swift来自Distribution/Free/Package.swift模板，README由发行脚本生成。
 - 本包不含.git，不可作为新业务checkout；本清单生成过程不执行构建、设备验收、签名安装或公共上传，各阶段以独立证据为准。
 - 排除：App、VideoGame、VideoCartoon、Premium、高级实现运行时测试、私有仓库地址、凭据、客户数据、缓存、日志及媒体过程产物。
@@ -22,7 +22,7 @@ VideoFree source export · package_free.py · version 1
 | 36bdcf361abca71ae28992a3d5fd2f1c658738f9ba954a21ddb41fc7516b7ceb | 6332 | Integrations/discover.py |
 | f17393a51167b7998ad0e18817bc65c7bf74d750fa57f0d2b727d1ab9cfeda0f | 15088 | Integrations/install.py |
 | 939464f9a5015d84776c047eef0aca64144833cce61e479e00d97386f7f082ea | 3328 | Integrations/package.py |
-| 4cd70564763d503575b97527073b0aa0a5015f270295fb3a851b4cf9cdb56678 | 22000 | Integrations/qwen_stream.py |
+| 3e478ba610b679256643c5afaf2ecae5b6e37fa3eb8ae97e83310f11598b1fd4 | 22280 | Integrations/qwen_stream.py |
 | cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30 | 11358 | Integrations/skills/video/LICENSE |
 | 1dbab07b005a071618dc75a2e3cd3b68fccfba4c235d4818238a18cdbfcdb052 | 358 | Integrations/skills/video/NOTICE |
 | 42b59aa8c603a12a46c3fbda7023eed4f66ffa41116ad0efa68efc740ba1aec0 | 3711 | Integrations/skills/video/SKILL.md |
@@ -31,7 +31,7 @@ VideoFree source export · package_free.py · version 1
 | e946dabe26ce07466bd5b90f544d2e439fab7d9174b08ad579b93d45dd9696ac | 36297 | Integrations/test_codex_broker.py |
 | 5d50cb7495c049143596ec4a1235c106c3ee97f2eeb743f3eced474e6ed70582 | 6580 | Integrations/test_codex_events.py |
 | a6be5192e921223a3bd3a5c0b0750d80c2abfac439bc2bedb5282f65ba85fca6 | 8905 | Integrations/test_discover.py |
-| cbd818a14d00697c5deaa5a3db116639f82e1d6ed8fe92f1c6c432da8ff74309 | 18669 | Integrations/test_qwen_stream.py |
+| 2555cb1376f88cec25f753c4e96b10f8040b5c227194abc417be026523e59cd0 | 20053 | Integrations/test_qwen_stream.py |
 | cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30 | 11358 | LICENSE |
 | c369f09e50d62d1a1c8eff1500888667ff7a192d0fdc7b32d39c800dfa1e9721 | 1597 | NOTICE |
 | e3dae895ffcaa4ce4470f1dc9d63eee5071f829d63cfe227360c3dabfbdd0d91 | 1213 | Package.swift |

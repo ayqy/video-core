@@ -251,6 +251,9 @@ def create_isolated_settings(directory: Path, home: Path, runtime: Path, *, mode
     home.mkdir(parents=True)
     runtime.mkdir(parents=True)
     settings = {
+        # Qwen Code 0.17.0 otherwise adds this metadata on first load, which
+        # correctly invalidates a caller's pin of the unversioned input file.
+        "$version": 4,
         "model": {"name": model},
         "modelProviders": {"openai": [{"id": model, "baseUrl": "https://api.deepseek.com", "envKey": env_key}]},
         "security": {"auth": {"selectedType": "openai"}},
@@ -409,7 +412,8 @@ def run_qwen(prompt: str, policy: ExactPolicy | PinnedPolicy, home: Path, runtim
             raise ValueError("缺少有限的严格宿主配置")
         settings = json.loads(config_path.read_text(encoding="utf-8"))
         if (not isinstance(settings, dict) or
-                set(settings) != {"model", "modelProviders", "security", "permissions", "tools", "telemetry"} or
+                set(settings) != {"$version", "model", "modelProviders", "security", "permissions", "tools", "telemetry"} or
+                type(settings.get("$version")) is not int or settings["$version"] != 4 or
                 settings.get("permissions") != _strict_permissions(policy) or
                 settings.get("tools") != {"core": _strict_tools(policy)} or
                 (root / ".qwen" / "settings.json").exists()):

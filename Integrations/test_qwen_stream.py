@@ -93,6 +93,8 @@ class QwenStreamTests(unittest.TestCase):
         home, runtime = self.root / "qwen-home", self.root / "runtime"
         create_isolated_settings(self.root, home, runtime)
         settings = json.loads((home / "settings.json").read_text())
+        self.assertIs(type(settings["$version"]), int)
+        self.assertEqual(settings["$version"], 4)
         self.assertEqual(settings["permissions"], {"ask": ["Bash", "Edit"], "allow": ["Skill(video)"]})
         self.assertEqual(settings["modelProviders"]["openai"][0]["envKey"], "DEEPSEEK_API_KEY")
         with self.assertRaises(ValueError):
@@ -327,6 +329,28 @@ class PinnedQwenPolicyTests(unittest.TestCase):
                 else:
                     (self.root / ".qwen").mkdir()
                     (self.root / ".qwen" / "settings.json").write_text("{}")
+                config.write_text(json.dumps(settings))
+                with patch("qwen_stream.consume") as local_contract:
+                    with self.assertRaises(ValueError):
+                        run_qwen("must not start", policy, home, runtime)
+                    local_contract.assert_not_called()
+
+    def testStrictRunRejectsMissingWrongVersionAndUnknownMetadataBeforeAnyProcess(self):
+        variants = (("missing", None), ("null", None), ("old", 3), ("future", 5),
+                    ("boolean", True), ("floating", 4.0), ("string", "4"), ("unknown", 4))
+        for variant, version in variants:
+            with self.subTest(variant=variant):
+                policy = self.policy(allow_skill=True)
+                home, runtime = self.root / ("home-version-" + variant), self.root / ("runtime-version-" + variant)
+                create_isolated_settings(self.root, home, runtime, strict_policy=policy)
+                config = home / "settings.json"
+                settings = json.loads(config.read_text())
+                if variant == "missing":
+                    del settings["$version"]
+                else:
+                    settings["$version"] = version
+                if variant == "unknown":
+                    settings["unreviewed"] = True
                 config.write_text(json.dumps(settings))
                 with patch("qwen_stream.consume") as local_contract:
                     with self.assertRaises(ValueError):
