@@ -72,6 +72,10 @@ Claude的3-turn/0.10美元上限会话与缩减后的1-turn/0.01美元上限探�
 
 普通本地制作可显式选用`codex_production.py`的`LocalProductionPolicy`，再交给同一`run_codex`消费。调用者先审定最多32个有序`LocalStep`、输入模板、源文件和实际CLI的`FilePin`，指定新的本地工作区及恢复目录；模型只能提交下一步名称、固定cwd和完整计划摘要，不能提交命令行、JSON内容、ID或路径。`ResultBinding`仅将先前经过严格校验的原生回执字段绑定到审定模板；每个写步骤先预检再实际执行，逐次核对退出状态及业务封套。
 
+Codex 0.159.2 的模型目录 `tool_mode` 优先于功能开关。若所选模型声明 `code_mode_only`，仅关闭主机功能仍会拒绝调用。需要 Direct 消费时，调用者可显式传 `run_codex(..., model_catalog=FilePin(目录绝对路径, SHA256))`；只注入官方启动级 `model_catalog_json` 参数，没有任意额外 argv。调用者须先审定同一模型的完整元数据，只改变 `tool_mode` 为 `direct` 并记录原/新摘要；目录放临时工作区，不修改全局配置或认证、不启用 Code Mode 主机。入口核规范普通文件、单模型/Direct 结构和512 KiB上限，启动与调用期反复核pin；线程必须回读同一模型，文件变更即停止。未传该参数时行为保持不变。[官方模式优先顺序](https://github.com/openai/codex/blob/rust-v0.159.2/codex-rs/core/src/tools/mod.rs#L68)、[启动目录配置](https://github.com/openai/codex/blob/rust-v0.159.2/codex-rs/core/config.schema.json#L7411)。
+
+`account/updated` 仅按该版本两个 nullable 枚举字段验证，不保留账户值或授予认证/执行许可。`turn/moderationMetadata` 只接受当前 thread/turn 的完整三字段结构，内部 metadata 仅核有界合法JSON且不保留、不解释；其他未知通知仍拒绝。进程清理保留每次 TERM/KILL 的实际结果；仅当本次已请求 TERM、KILL 被拒且 leader 已实际reap，才对该owned进程组查询一次 signal 0。只有独立 ESRCH 证明组已不存在才能通过，EPERM、存在或未知仍失败，不能凭leader退出猜后代已结束。
+
 本地契约支持普通工程、源文件导入、编辑、原生零元报价与制作、原任务取消/查询，以及本计划生成并核过哈希的含源备份恢复。同步worker仅处理原生任务ID且`query_remote=false`，不启动后台worker；恢复只写新目录。旧工作区、付费报价、供应商或账户操作、删除、人审授权、任意Shell及外部恢复路径均不开放。该接口没有授予高级模块权益，也不会将needs_review改为人工已审核。
 
 构造发现命令时，`FilePin`必须同时绑定实际Python解释器、`discover.py`及实际CLI二进制；预检另绑定输入原件。调用者显式执行`run_codex(prompt, policy, seconds=90)`才会在MCP前置门通过后启动一个有限模型回合；导入和离线规则不启动宿主。`probe_mcp_isolation(policy)`只进行本地配置、初始化和库存检查，永不发送`thread/start`或`turn/start`，即使库存门通过也不将业务`passed`标为真。配置探针和工具子进程使用最小环境，不继承供应商凭据。每个预期动态调用都必须真实完成且CLI回执通过；零工具、未完成、拒绝、超时和清理失败均不能标成功。模型成功也不替代版本、产物及权限的独立用户链回读。

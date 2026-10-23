@@ -248,3 +248,124 @@ final class ClassicSceneEditingTests:XCTestCase {
         XCTAssertThrowsError(try ClassicSceneEditing.reusingVisualCharacter(projectID:project.id,revisionID:project.current.id,sceneID:source.id,to:locked,access:WorkspaceAccessContext(workspaceID:"w",principal:"actual-owner"),database:database,commercial:false))
     }
 }
+
+final class KnowledgeSoundTests:XCTestCase {
+    private func scene()throws->Scene {
+        var s=Scene(kind:.simulation,title:"公共品",body:"实际选择与后果",durationFrames:180)
+        s.simulation.knowledge=KnowledgeSimulation(knowledgeLabel:"公共品",participants:[
+            .init(id:"a",name:"甲",strategy:.contribute),.init(id:"b",name:"乙",strategy:.freeRide)
+        ],rounds:1,threshold:1)
+        s.simulationRecording=try SimulationReplay.record(scene:s)
+        return s
+    }
+    private func tableScene()throws->Scene {
+        var s=try scene()
+        s.simulation.knowledge=KnowledgeSimulation(knowledgeLabel:"交易条件",participants:[
+            .init(id:"a",name:"甲",strategy:.contribute,initialResources:4),.init(id:"b",name:"乙",strategy:.contribute,initialResources:4)
+        ],rounds:1,ruleTable:KnowledgeRuleTable(
+            actions:[.init(id:"act",label:"提交",cost:1,pose:.act)],
+            states:[.init(id:"open",label:"待定"),.init(id:"closed",label:"达成",pose:.celebrate)],
+            plans:["a","b"].map{.init(actorID:$0,initialStateID:"open",defaultActionID:"act")},
+            rules:[.init(id:"match",label:"双方提交后",conditions:[.init(kind:.actionCount,actionID:"act",minimum:2,maximum:2)],effects:[.transfer(from:nil,to:"a",amount:1),.setState(actorID:"a",stateID:"closed")])]))
+        s.simulationRecording=try SimulationReplay.record(scene:s)
+        return s
+    }
+    func testPublicGoodsOnlyActualContributionsAndSettledBenefitsProduceMoments()throws {
+        let s=try scene(), moments=try ClassicSceneEditing.knowledgeSoundMoments(scene:s)
+        XCTAssertEqual(moments.map(\.kind),[.action,.outcome]);XCTAssertEqual(moments.map(\.sourceTick),[2,5])
+        XCTAssertEqual(moments.map(\.sceneFrame),[60,150])
+        XCTAssertTrue(moments[0].summary.contains("甲"));XCTAssertFalse(moments[0].summary.contains("乙"))
+        XCTAssertFalse(s.simulationRecordingConfirmed ?? false)
+        var constrained=s;constrained.simulation.knowledge?.participants[0].initialResources=0
+        constrained.simulationRecording=try SimulationReplay.record(scene:constrained)
+        let blocked=try ClassicSceneEditing.knowledgeSoundMoments(scene:constrained)
+        XCTAssertEqual(blocked.map(\.kind),[.constrained]);XCTAssertEqual(blocked.map(\.sceneFrame),[30])
+    }
+    func testTableEffectsAreSoundMomentsOnlyWhenActuallySettled()throws {
+        var s=try tableScene()
+        let moments=try ClassicSceneEditing.knowledgeSoundMoments(scene:s)
+        XCTAssertEqual(moments.map(\.sceneFrame),[60,150]);XCTAssertTrue(moments[1].summary.contains("实际转移1项"))
+        s.simulation.knowledge?.ruleTable?.rules[0].conditions=[.init(kind:.actionCount,actionID:"act",minimum:0,maximum:0)]
+        s.simulationRecording=try SimulationReplay.record(scene:s)
+        XCTAssertEqual(try ClassicSceneEditing.knowledgeSoundMoments(scene:s).map(\.kind),[.action],"规则声明不是实际命中或资金/状态后果")
+    }
+    func testMatrixPayoutUsesSettlementAndNotEarlyBalanceOrPublicGoodPhase()throws {
+        var s=try scene()
+        s.simulation.knowledge=KnowledgeSimulation(knowledgeLabel:"博弈",participants:[
+            .init(id:"a",name:"甲",strategy:.contribute,initialResources:20,matrixStrategy:.alwaysFirst),
+            .init(id:"b",name:"乙",strategy:.contribute,initialResources:20,matrixStrategy:.alwaysSecond)
+        ],rounds:1,payoffMatrix:.prisonersDilemma())
+        s.simulationRecording=try SimulationReplay.record(scene:s)
+        let moments=try ClassicSceneEditing.knowledgeSoundMoments(scene:s)
+        XCTAssertEqual(moments.map(\.sourceTick),[2,5]);XCTAssertTrue(moments[1].summary.contains("乙：实际收益7"))
+    }
+    func testWindowRetimingUsesFirstActualVisibleFrameOfEachEvent()throws {
+        var s=try scene();s.durationFrames=240
+        s.simulationPresentation=SimulationPresentation(sourceStartFrame:60,sourceEndFrame:180,presentationFrames:240)
+        s.simulationRecording=try SimulationReplay.record(scene:s)
+        let moments=try ClassicSceneEditing.knowledgeSoundMoments(scene:s)
+        XCTAssertEqual(moments.map(\.sceneFrame),[0,181])
+        for m in moments {
+            XCTAssertEqual(try s.renderSimulationSourceFrame(atTimelineFrame:m.sceneFrame)/30,m.sourceTick)
+            if m.sceneFrame>0 {XCTAssertLessThan(try s.renderSimulationSourceFrame(atTimelineFrame:m.sceneFrame-1),m.sourceTick*30)}
+        }
+        s.simulationPresentation=SimulationPresentation(sourceStartFrame:61,sourceEndFrame:180,presentationFrames:240)
+        s.simulationRecording=try SimulationReplay.record(scene:s)
+        XCTAssertEqual(try ClassicSceneEditing.knowledgeSoundMoments(scene:s).map(\.kind),[.outcome],"切在行动开始之后不能在切口重放行动声")
+    }
+    func testSplitDoesNotDuplicateSoundOnsetAndPauseDoesNotReplaySettlement()throws {
+        let s=try scene(), p=Project(workspaceID:"w",name:"声音分镜",revision:Revision(contentContext:ContentContext(workspaceID:"w",name:"分镜"),aspect:.landscape,scenes:[s]))
+        let split=try Editor.apply([.splitScene(s.id,61)],to:p,baseRevision:p.current.id,assets:[],message:"保真实源事件")
+        var moments:[KnowledgeSoundMoment]=[]
+        for var cut in split.current.scenes {cut.simulationRecording=try SimulationReplay.record(scene:cut);moments += try ClassicSceneEditing.knowledgeSoundMoments(scene:cut)}
+        XCTAssertEqual(moments.map(\.kind),[.action,.outcome]);XCTAssertEqual(moments.map(\.sceneFrame),[60,89])
+        var legacy=s;legacy.pauseFrames=180;legacy.simulation.knowledge?.rounds=2;legacy.simulationRecording=try SimulationReplay.record(scene:legacy)
+        XCTAssertEqual(legacy.simulationRecording?.throughTick,11)
+        XCTAssertThrowsError(try ClassicSceneEditing.knowledgeSoundMoments(scene:legacy),"旧式停顿推进的新一轮事件不能静默漏掉")
+        var paused=s;paused.pauseFrames=120;paused.simulationPresentation=SimulationPresentation(sourceStartFrame:0,sourceEndFrame:180,presentationFrames:180);paused.simulationRecording=try SimulationReplay.record(scene:paused)
+        XCTAssertEqual(try ClassicSceneEditing.knowledgeSoundMoments(scene:paused).map(\.sceneFrame),[60,150])
+    }
+    func testChangedModelOrUnrecordedTimingCannotReuseOldSoundSelection()throws {
+        let s=try scene(), old=try XCTUnwrap(ClassicSceneEditing.knowledgeSoundMoments(scene:s).first)
+        var changed=s;changed.simulation.seed += 1
+        XCTAssertThrowsError(try ClassicSceneEditing.knowledgeSoundMoments(scene:changed))
+        changed.simulationRecording=try SimulationReplay.record(scene:changed)
+        XCTAssertFalse(try ClassicSceneEditing.knowledgeSoundMoments(scene:changed).contains(old))
+        var fast=s;fast.speed=2
+        XCTAssertThrowsError(try ClassicSceneEditing.knowledgeSoundMoments(scene:fast))
+        var skipped=s;skipped.durationFrames=2;skipped.simulationPresentation=SimulationPresentation(sourceStartFrame:0,sourceEndFrame:180,presentationFrames:2)
+        skipped.simulationRecording=try SimulationReplay.record(scene:skipped)
+        XCTAssertThrowsError(try ClassicSceneEditing.knowledgeSoundMoments(scene:skipped),"不能把未显示的行动声移到结算帧")
+    }
+    private func audioFixture(_ s:Scene,frames:Int)throws->(Scene,[Asset],[Evidence]) {
+        var image=Asset(workspaceID:"w",name:"derived.png",hash:String(repeating:"a",count:64),ext:"png",bytes:10,mediaType:"image")
+        let imageProof=Evidence(workspaceID:"w",title:"图块原件",source:"isolated-image",claim:"具体原件",owner:"原作者",commercialAllowed:false,verified:true);image.evidenceID=imageProof.id
+        var audio=Asset(workspaceID:"w",name:"original.wav",hash:String(repeating:"b",count:64),ext:"wav",bytes:10,mediaType:"audio",durationFrames:frames)
+        let audioProof=Evidence(workspaceID:"w",title:"原音",source:"isolated-audio",claim:"具体原音",owner:"原作者",commercialAllowed:false,verified:true);audio.evidenceID=audioProof.id
+        let assets=[image,audio],evidence=[imageProof,audioProof]
+        var scene=s
+        let source=try ClassicSceneEditing.source(assetID:image.id,assets:assets,evidence:evidence,workspaceID:"w")
+        let roles=["hero","floor","knowledge_backdrop","obstacle","hero_idle","hero_walk","hero_contribute","hero_success","hero_blocked"]
+        scene.classicArtwork=ClassicArtwork(gameplay:.platformer,sprites:roles.map{ClassicSprite(role:$0,assetID:image.id)},sources:[source])
+        return(scene,assets,evidence)
+    }
+    func testApplyingMomentKeepsWholeSourceAndNeverGrantsListeningOrRights()throws {
+        let (s,assets,evidence)=try audioFixture(scene(),frames:10),moment=try XCTUnwrap(ClassicSceneEditing.knowledgeSoundMoments(scene:s).first)
+        let result=try ClassicSceneEditing.addingKnowledgeCue(moment,assetID:assets[1].id,gain:0.25,to:s,assets:assets,evidence:evidence,workspaceID:"w")
+        let cue=try XCTUnwrap(result.classicArtwork?.audioCues.first)
+        XCTAssertEqual(cue.startFrame,60);XCTAssertEqual(cue.durationFrames,10);XCTAssertEqual(cue.gain,0.25);XCTAssertEqual(cue.use,.effect);XCTAssertFalse(cue.listened)
+        XCTAssertEqual(result.simulationRecording,s.simulationRecording);XCTAssertEqual(result.durationFrames,180)
+        XCTAssertEqual(s.classicArtwork?.audioCues.count,0)
+        XCTAssertThrowsError(try ClassicArtworkRules.validateRights(scene:result,workspaceID:"w",assets:assets,evidence:evidence,commercial:true))
+        XCTAssertThrowsError(try ClassicSceneEditing.addingKnowledgeCue(moment,assetID:assets[1].id,gain:0.25,to:s,assets:assets,evidence:[],workspaceID:"w"))
+    }
+    func testLongCueAndStaleMomentRejectWithoutMovingEventOrExtending()throws {
+        let (s,assets,evidence)=try audioFixture(scene(),frames:31),moment=try XCTUnwrap(ClassicSceneEditing.knowledgeSoundMoments(scene:s).last)
+        XCTAssertThrowsError(try ClassicSceneEditing.addingKnowledgeCue(moment,assetID:assets[1].id,gain:0.3,to:s,assets:assets,evidence:evidence,workspaceID:"w"))
+        XCTAssertEqual(s.durationFrames,180);XCTAssertEqual(s.classicArtwork?.audioCues.count,0)
+        var changed=s;changed.simulation.seed += 1;changed.simulationRecording=try SimulationReplay.record(scene:changed)
+        XCTAssertThrowsError(try ClassicSceneEditing.addingKnowledgeCue(moment,assetID:assets[1].id,gain:0.3,to:changed,assets:assets,evidence:evidence,workspaceID:"w"))
+        var locked=s;locked.locked=true
+        XCTAssertThrowsError(try ClassicSceneEditing.addingKnowledgeCue(try XCTUnwrap(ClassicSceneEditing.knowledgeSoundMoments(scene:s).first),assetID:assets[1].id,gain:0.3,to:locked,assets:assets,evidence:evidence,workspaceID:"w"))
+    }
+}

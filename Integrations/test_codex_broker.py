@@ -14,7 +14,8 @@ from unittest.mock import patch
 
 from codex_broker import (Broker, Command, FilePin, Policy, TOOL, _consume, _stop, execute, run_codex,
                           server_arguments, thread_parameters, _OFFICIAL_NOTIFICATIONS, _NOTIFICATION_ENUM_SHA256,
-                          _project_mcp, _mcp_projection, isolate_mcp, probe_mcp_isolation)
+                          _project_mcp, _mcp_projection, isolate_mcp, probe_mcp_isolation,
+                          _verified_model_catalog)
 from codex_events import ProtocolError
 
 
@@ -81,6 +82,95 @@ class BrokerTests(unittest.TestCase):
     def pin(self, path):
         return FilePin(path, hashlib.sha256(path.read_bytes()).hexdigest())
 
+    def catalog(self, **changes):
+        value = {"models": [{"slug": "test-model", "display_name": "Test model",
+                 "supported_reasoning_levels": [], "shell_type": "disabled", "visibility": "list",
+                 "supported_in_api": True, "priority": 1, "tool_mode": "direct", **changes}]}
+        path = self.root / "reviewed-model-catalog.json"
+        path.write_text(json.dumps(value))
+        return self.pin(path)
+
+    def test_pinned_catalog_adds_only_dedicated_process_startup_override(self):
+        pin = self.catalog()
+        args = server_arguments(model_catalog=pin)
+        base = server_arguments()
+        flag = "model_catalog_json=" + json.dumps(str(pin.path))
+        self.assertEqual(args.count(flag), 1)
+        copy = args.copy()
+        index = copy.index(flag)
+        self.assertEqual(copy[index-1], "-c")
+        del copy[index-1:index+1]
+        self.assertEqual(copy, base)
+        self.assertEqual(_verified_model_catalog(pin), "test-model")
+        self.assertIn("features.code_mode_host=false", args)
+
+    def test_model_catalog_requires_pin_and_refuses_changed_symlink_or_oversize_file(self):
+        pin = self.catalog()
+        with self.assertRaises(ProtocolError):
+            server_arguments(model_catalog=pin.path)
+        pin.path.write_text(pin.path.read_text()+" ")
+        with self.assertRaises(ValueError):
+            server_arguments(model_catalog=pin)
+        pin.path.write_bytes(b"x"*(512*1024+1))
+        oversized_pin = self.pin(pin.path)
+        with patch.object(FilePin, "verify") as verify:
+            with self.assertRaises(ProtocolError):
+                server_arguments(model_catalog=oversized_pin)
+            verify.assert_not_called()
+        target = self.root / "catalog-link.json"
+        target.symlink_to(pin.path)
+        with self.assertRaises(ValueError):
+            server_arguments(model_catalog=FilePin(target, self.pin(pin.path).sha256))
+
+    def test_model_catalog_refuses_multiple_models_wrong_metadata_and_extra_envelope(self):
+        for change in ({"tool_mode": "code_mode_only"}, {"slug": "other/tool"}, {"priority": True},
+                       {"supported_in_api": "true"}, {"supported_reasoning_levels": {}}, {"shell_type": "shell"}):
+            with self.assertRaises(ProtocolError):
+                _verified_model_catalog(self.catalog(**change))
+        for value in ({"models": []}, {"models": [{}, {}]}, {"models": [{}], "extra": True},
+                      {"models": [{"slug": "only-partial"}]}):
+            pin = self.catalog()
+            pin.path.write_text(json.dumps(value))
+            with self.assertRaises(ProtocolError):
+                _verified_model_catalog(self.pin(pin.path))
+
+    def test_model_catalog_changed_during_call_is_refused_before_any_execution(self):
+        pin = self.catalog()
+        broker = Broker(Policy((self.command(),)), "bounded task", deadline=time.monotonic()+5, model_catalog=pin)
+        pin.path.write_text(pin.path.read_text()+" ")
+        with patch("codex_broker.execute") as run:
+            with self.assertRaises(ValueError):
+                broker.receive({"id": 1, "result": {}})
+            run.assert_not_called()
+        self.assertEqual(broker.policy.used, 0)
+
+    def test_catalog_model_must_be_acknowledged_before_turn_starts(self):
+        for model in (None, "other-model", "test-model"):
+            broker = Broker(Policy((self.command(),)), "bounded task", deadline=time.monotonic()+5,
+                            model_catalog=self.catalog())
+            broker.receive({"id": 1, "result": {}})
+            broker.receive({"id": 4, "result": {"data": [], "nextCursor": None}})
+            result = {"thread": {"id": "thread-one"}, "cwd": str(self.root), "approvalPolicy": "on-request",
+                      "sandbox": {"type": "readOnly"}, "runtimeWorkspaceRoots": [], "model": model}
+            if model != "test-model":
+                with self.assertRaises(ProtocolError):
+                    broker.receive({"id": 2, "result": result})
+                self.assertEqual(broker.policy.used, 0)
+                self.assertFalse(broker.summary()["catalog_model_acknowledged"])
+            else:
+                response = broker.receive({"id": 2, "result": result})
+                self.assertEqual(response[0]["method"], "turn/start")
+                self.assertTrue(broker.summary()["catalog_model_acknowledged"])
+
+    def test_pinned_catalog_is_preserved_through_both_mcp_inventory_projections(self):
+        pin = self.catalog()
+        with patch("codex_broker._mcp_projection", side_effect=[{}, {}]) as probe:
+            args, names = isolate_mcp("official-codex", self.root, deadline=time.monotonic()+5, model_catalog=pin)
+        self.assertEqual(names, frozenset())
+        expected = "model_catalog_json=" + json.dumps(str(pin.path))
+        self.assertIn(expected, args)
+        self.assertTrue(all(expected in call.args[0] for call in probe.call_args_list))
+
     def command(self):
         return Command("discover", (str(self.python), str(self.discover), "--binary", str(self.binary)), self.root,
                        tuple(self.pin(p) for p in (self.python, self.discover, self.binary)), "discovery")
@@ -142,6 +232,84 @@ class BrokerTests(unittest.TestCase):
             self.assertFalse(summary["passed"])
             self.assertEqual(summary["unsupported_notifications"][0]["official_method"], "remoteControl/status/changed")
             self.assertNotIn("private", json.dumps(summary))
+
+    def test_account_status_notification_is_passive_not_authentication_or_execution(self):
+        broker = self.active()
+        before = (broker.phase, broker.policy.used, broker.turn_id, tuple(broker.calls))
+        with patch("codex_broker.execute") as run:
+            for params in ({"authMode": "chatgpt", "planType": "plus"},
+                           {"authMode": None, "planType": None}):
+                self.assertEqual(broker.receive({"method": "account/updated", "params": params}), [])
+            run.assert_not_called()
+        self.assertEqual(before, (broker.phase, broker.policy.used, broker.turn_id, tuple(broker.calls)))
+        summary = broker.summary()
+        self.assertFalse(summary["passed"])
+        self.assertEqual(summary["native_approvals_accepted"], 0)
+        self.assertEqual(summary["event_types"]["account/updated"], 2)
+        self.assertNotIn("chatgpt", json.dumps(summary))
+        self.assertNotIn("plus", json.dumps(summary))
+
+    def test_invalid_account_status_remains_rejected_without_retaining_account_data(self):
+        for params in ({}, {"authMode": "chatgpt", "planType": "plus", "email": "private-value"},
+                       {"authMode": "private-value", "planType": None},
+                       {"authMode": None, "planType": {"private-value": True}}):
+            broker = self.active()
+            with patch("codex_broker.execute") as run:
+                with self.assertRaises(ProtocolError):
+                    broker.receive({"method": "account/updated", "params": params})
+                run.assert_not_called()
+            summary = broker.summary()
+            self.assertEqual(summary["unsupported_notifications"], [{"official_method": "account/updated"}])
+            self.assertNotIn("private-value", json.dumps(summary))
+
+    def test_account_status_request_is_never_an_authorization_grant(self):
+        broker = self.active()
+        with patch("codex_broker.execute") as run:
+            reply = broker.receive({"id": 19, "method": "account/updated",
+                                    "params": {"authMode": "chatgpt", "planType": "plus"}})
+            run.assert_not_called()
+        self.assertEqual(reply[0]["error"]["code"], -32601)
+        self.assertEqual(broker.terminal, "denied")
+        self.assertFalse(broker.summary()["passed"])
+
+    def test_current_turn_moderation_status_is_opaque_and_does_not_execute(self):
+        broker = self.active()
+        before = (broker.phase, broker.policy.used, broker.turn_id, tuple(broker.calls))
+        with patch("codex_broker.execute") as run:
+            self.assertEqual(broker.receive({"method": "turn/moderationMetadata", "params": {
+                "threadId": "thread-one", "turnId": "turn-one", "metadata": {"private-value": "opaque"}}}), [])
+            run.assert_not_called()
+        self.assertEqual(before, (broker.phase, broker.policy.used, broker.turn_id, tuple(broker.calls)))
+        summary = broker.summary()
+        self.assertFalse(summary["passed"])
+        self.assertEqual(summary["event_types"]["turn/moderationMetadata"], 1)
+        self.assertEqual(summary["native_approvals_accepted"], 0)
+        self.assertNotIn("private-value", json.dumps(summary))
+
+    def test_foreign_incomplete_extra_and_out_of_turn_moderation_are_refused(self):
+        valid = {"threadId": "thread-one", "turnId": "turn-one", "metadata": {}}
+        for params in ({}, dict(valid, threadId="other"), dict(valid, turnId="other"),
+                       dict(valid, unexpected="private-value"), dict(valid, metadata=float("nan"))):
+            broker = self.active()
+            with self.assertRaises(ProtocolError):
+                broker.receive({"method": "turn/moderationMetadata", "params": params})
+            self.assertFalse(broker.summary()["passed"])
+            self.assertNotIn("private-value", json.dumps(broker.summary()))
+        broker = Broker(Policy((self.command(),)), "bounded task", deadline=time.monotonic()+5)
+        with self.assertRaises(ProtocolError):
+            broker.receive({"method": "turn/moderationMetadata", "params": valid})
+        broker = self.active()
+        broker.terminal = "completed"
+        with self.assertRaises(ProtocolError):
+            broker.receive({"method": "turn/moderationMetadata", "params": valid})
+
+    def test_moderation_notification_with_request_id_is_still_denied(self):
+        broker = self.active()
+        reply = broker.receive({"id": 20, "method": "turn/moderationMetadata", "params": {
+            "threadId": "thread-one", "turnId": "turn-one", "metadata": {"authorized": True}}})
+        self.assertEqual(reply[0]["error"]["code"], -32601)
+        self.assertEqual(broker.terminal, "denied")
+        self.assertEqual(broker.policy.used, 0)
 
     def test_configuration_and_security_warnings_are_not_blindly_ignored(self):
         for method in ("warning", "configWarning", "guardianWarning"):
@@ -396,13 +564,60 @@ class BrokerTests(unittest.TestCase):
         # Deterministically verify refusal reporting and independent leader reap.
         # This branch is a protocol/unit substitute, not a live strong-kill claim.
         process = unittest.mock.Mock(pid=123)
-        with patch("codex_broker.os.killpg", side_effect=[None, PermissionError()]) as kill, \
+        with patch("codex_broker.os.killpg", side_effect=[None, PermissionError(), PermissionError()]) as kill, \
                 patch("codex_broker.time.sleep"):
             cleanup = _stop(process)
-        self.assertEqual(kill.call_args_list, [unittest.mock.call(123, signal.SIGTERM), unittest.mock.call(123, signal.SIGKILL)])
+        self.assertEqual(kill.call_args_list, [unittest.mock.call(123, signal.SIGTERM),
+                        unittest.mock.call(123, signal.SIGKILL), unittest.mock.call(123, 0)])
         process.wait.assert_called_once_with(timeout=1)
         self.assertFalse(cleanup["passed"])
         self.assertEqual(cleanup["kill"], "permission_denied")
+        self.assertEqual(cleanup["post_reap_group"], "permission_denied")
+
+    def test_owned_group_absence_after_reap_preserves_initial_refusal(self):
+        process = unittest.mock.Mock(pid=123)
+        with patch("codex_broker.os.killpg", side_effect=[None, PermissionError(), ProcessLookupError()]) as kill, \
+                patch("codex_broker.time.sleep"):
+            cleanup = _stop(process)
+        self.assertTrue(cleanup["passed"])
+        self.assertEqual(cleanup["kill"], "permission_denied")
+        self.assertEqual(cleanup["post_reap_group"], "absent")
+        self.assertEqual(kill.call_args_list, [unittest.mock.call(123, signal.SIGTERM),
+                        unittest.mock.call(123, signal.SIGKILL), unittest.mock.call(123, 0)])
+        process.wait.assert_called_once_with(timeout=1)
+
+    def test_reaped_leader_does_not_make_existing_unknown_or_denied_group_pass(self):
+        for probe, status in ((None, "present"), (PermissionError(), "permission_denied"),
+                              (OSError(), "probe_failed")):
+            process = unittest.mock.Mock(pid=123)
+            with patch("codex_broker.os.killpg", side_effect=[None, PermissionError(), probe]), \
+                    patch("codex_broker.time.sleep"):
+                cleanup = _stop(process)
+            self.assertFalse(cleanup["passed"])
+            self.assertTrue(cleanup["leader_reaped"])
+            self.assertEqual(cleanup["post_reap_group"], status)
+
+    def test_absence_probe_requires_owned_term_and_actual_leader_reap(self):
+        for term, wait_error in ((PermissionError(), None),
+                                 (None, subprocess.TimeoutExpired("owned", 1)), (None, OSError())):
+            process = unittest.mock.Mock(pid=123)
+            process.wait.side_effect = wait_error
+            with patch("codex_broker.os.killpg", side_effect=[term, PermissionError()]) as kill, \
+                    patch("codex_broker.time.sleep"):
+                cleanup = _stop(process)
+            self.assertFalse(cleanup["passed"])
+            self.assertNotIn("post_reap_group", cleanup)
+            self.assertEqual(kill.call_count, 2)
+
+    def test_actual_owned_group_termination_is_independently_absent_after_reap(self):
+        process = subprocess.Popen([str(self.python), "-c", "import time;time.sleep(30)"],
+                                   start_new_session=True, stdin=subprocess.DEVNULL,
+                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        cleanup = _stop(process)
+        self.assertTrue(cleanup["leader_reaped"])
+        self.assertTrue(cleanup["passed"], cleanup)
+        if cleanup["kill"] == "permission_denied":
+            self.assertEqual(cleanup["post_reap_group"], "absent")
 
     def test_offline_peer_end_to_end_dynamic_execution(self):
         p = Policy((self.command(),))

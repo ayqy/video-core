@@ -21,7 +21,8 @@ import subprocess
 import sys
 import time
 
-from codex_events import JsonLines, ProtocolError, parse_object, safe_error
+from codex_events import (JsonLines, ProtocolError, is_account_status_notification,
+                          is_turn_moderation_status, parse_object, safe_error)
 
 
 VERSION = "codex-cli 0.159.2"
@@ -90,6 +91,8 @@ def _notification_diagnostic(method, params) -> dict:
 def _informational_notification(method, params) -> bool:
     if not isinstance(method, str) or not isinstance(params, dict):
         return False
+    if method == "account/updated":
+        return is_account_status_notification(params)
     if method in _INFORMATIONAL_NOTIFICATIONS:
         return True
     # A disabled status is a startup observation, not a remote execution grant.
@@ -129,6 +132,47 @@ class FilePin:
     def verify(self):
         if not re.fullmatch(r"[a-f0-9]{64}", self.sha256) or _file_digest(self.path) != self.sha256:
             raise ValueError("file_pin_mismatch")
+
+
+def _verified_model_catalog(pin: FilePin | None) -> str | None:
+    """A caller-reviewed single-model Direct catalog, never arbitrary CLI options."""
+    if pin is None:
+        return None
+    if not isinstance(pin, FilePin):
+        raise ProtocolError("model_catalog_file_pin_required")
+    path = _path(pin.path)
+    info = path.stat()
+    if not path.is_file() or info.st_nlink != 1:
+        raise ProtocolError("model_catalog_regular_file_required")
+    if not 1 <= info.st_size <= 512 * 1024:
+        raise ProtocolError("model_catalog_byte_bound")
+    pin.verify()
+    with path.open("rb") as stream:
+        data = stream.read(512 * 1024 + 1)
+    if not 1 <= len(data) <= 512 * 1024:
+        raise ProtocolError("model_catalog_byte_bound")
+    value = parse_object(data)
+    models = value.get("models")
+    if set(value) != {"models"} or not isinstance(models, list) or len(models) != 1:
+        raise ProtocolError("model_catalog_single_model_required")
+    model = models[0]
+    required = {"slug", "display_name", "supported_reasoning_levels", "shell_type",
+                "visibility", "supported_in_api", "priority", "tool_mode"}
+    if (not isinstance(model, dict) or not required <= set(model) or
+            not isinstance(model["slug"], str) or
+            re.fullmatch(r"[A-Za-z0-9._-]{1,100}", model["slug"]) is None or
+            not isinstance(model["display_name"], str) or not 0 < len(model["display_name"]) <= 256 or
+            not isinstance(model["supported_reasoning_levels"], list) or
+            len(model["supported_reasoning_levels"]) > 32 or
+            model["shell_type"] not in ("unified_exec", "disabled") or
+            model["visibility"] not in ("list", "hide", "none") or
+            type(model["supported_in_api"]) is not bool or type(model["priority"]) is not int or
+            model["tool_mode"] != "direct"):
+        raise ProtocolError("model_catalog_metadata_shape")
+    if not 1 <= path.stat().st_size <= 512 * 1024:
+        raise ProtocolError("model_catalog_byte_bound")
+    pin.verify()
+    return model["slug"]
 
 
 @dataclass(frozen=True)
@@ -219,7 +263,7 @@ def _stop(process):
             result[name] = "signal_failed"
         if name == "term":
             # A leader wait is not a grace period for its surviving descendants.
-            # No signal-0/ps probe, unrelated PID, or alternate kill executable.
+            # No unrelated PID, process scan, or alternate kill executable.
             time.sleep(.2)
     # Always attempt to reap the leader, independently of either signal result.
     try:
@@ -227,8 +271,23 @@ def _stop(process):
         result["leader_reaped"] = True
     except (subprocess.TimeoutExpired, OSError):
         pass
+    # Darwin can refuse KILL while the exited leader is still unreaped. Reaping
+    # alone proves nothing about descendants: only an independent ESRCH from
+    # this exact owned group proves absence. Existing, EPERM, and unknown stay
+    # failed, and the original KILL refusal is retained in the receipt.
+    if result["leader_reaped"] and result["term"] == "requested" and result["kill"] == "permission_denied":
+        try:
+            os.killpg(process.pid, 0)
+            result["post_reap_group"] = "present"
+        except ProcessLookupError:
+            result["post_reap_group"] = "absent"
+        except PermissionError:
+            result["post_reap_group"] = "permission_denied"
+        except OSError:
+            result["post_reap_group"] = "probe_failed"
     result["passed"] = (result["leader_reaped"] and
-                        all(result[name] in ("requested", "group_absent") for name in ("term", "kill")))
+                        (all(result[name] in ("requested", "group_absent") for name in ("term", "kill")) or
+                         result.get("post_reap_group") == "absent"))
     return result
 
 
@@ -325,7 +384,7 @@ def _mcp_names(names) -> frozenset[str]:
     return frozenset(names)
 
 
-def server_arguments(executable: str = "codex", *, disabled_mcp_names=()) -> list[str]:
+def server_arguments(executable: str = "codex", *, disabled_mcp_names=(), model_catalog: FilePin | None = None) -> list[str]:
     args = [executable]
     for feature in _DISABLED_FEATURES:
         args += ["-c", f"features.{feature}=false"]
@@ -333,6 +392,9 @@ def server_arguments(executable: str = "codex", *, disabled_mcp_names=()) -> lis
     # clear them. Explicitly disable every discovered key for this invocation.
     for name in sorted(_mcp_names(disabled_mcp_names)):
         args += ["-c", f"mcp_servers.{name}.enabled=false"]
+    if model_catalog is not None:
+        _verified_model_catalog(model_catalog)
+        args += ["-c", "model_catalog_json=" + json.dumps(str(model_catalog.path))]
     args += ["-c", 'web_search="disabled"',
              "-c", 'history.persistence="none"', "-c", "analytics.enabled=false",
              "app-server", "--stdio"]
@@ -412,15 +474,18 @@ def _mcp_projection(arguments: list[str], directory: Path, *, deadline: float) -
             raise error
 
 
-def isolate_mcp(executable: str, directory: Path, *, deadline: float) -> tuple[list[str], frozenset[str]]:
+def isolate_mcp(executable: str, directory: Path, *, deadline: float,
+                model_catalog: FilePin | None = None) -> tuple[list[str], frozenset[str]]:
     """No global writes: discover keys, override each, and verify exact readback."""
-    arguments = server_arguments(executable)
+    options = {} if model_catalog is None else {"model_catalog": model_catalog}
+    arguments = server_arguments(executable, **options)
     before = _mcp_projection(arguments[:-2] + ["mcp", "list", "--json"], directory, deadline=deadline)
     names = _mcp_names(tuple(before))
-    arguments = server_arguments(executable, disabled_mcp_names=names)
+    arguments = server_arguments(executable, disabled_mcp_names=names, **options)
     after = _mcp_projection(arguments[:-2] + ["mcp", "list", "--json"], directory, deadline=deadline)
     if set(after) != names or any(value is not False for value in after.values()):
         raise ProtocolError("mcp_configuration_not_isolated")
+    _verified_model_catalog(model_catalog)
     return arguments, names
 
 
@@ -461,12 +526,16 @@ def thread_parameters(policy: Policy) -> dict:
 class Broker:
     """One initialized thread and one finite turn. All other requests fail closed."""
 
-    def __init__(self, policy: Policy, prompt: str, *, deadline: float, disabled_mcp_names=(), initialize_only=False):
+    def __init__(self, policy: Policy, prompt: str, *, deadline: float, disabled_mcp_names=(), initialize_only=False,
+                 model_catalog: FilePin | None = None):
         if not isinstance(prompt, str) or not 0 < len(prompt.encode()) <= 65536:
             raise ValueError("bounded_nonempty_prompt_required")
         if policy.used:
             raise ValueError("fresh_policy_required")
         self.policy, self.prompt, self.deadline = policy, prompt, deadline
+        self.model_catalog = model_catalog
+        self.expected_catalog_model = _verified_model_catalog(model_catalog)
+        self.catalog_model_acknowledged = False
         self.disabled_mcp_names = _mcp_names(disabled_mcp_names)
         self.initialize_only = initialize_only
         self.mcp_inventory_verified = False
@@ -499,6 +568,7 @@ class Broker:
         self.turn_id = identity
 
     def receive(self, message: dict) -> list[dict]:
+        _verified_model_catalog(self.model_catalog)
         method, identity = message.get("method"), message.get("id")
         params = message.get("params", {})
         if identity is None and isinstance(method, str) and method in _OFFICIAL_NOTIFICATIONS:
@@ -531,6 +601,9 @@ class Broker:
                 self.phase = "thread"
                 return [self.request(2, "thread/start", thread_parameters(self.policy))]
             if identity == 2 and self.phase == "thread":
+                if self.expected_catalog_model is not None and result.get("model") != self.expected_catalog_model:
+                    raise ProtocolError("catalog_model_not_acknowledged")
+                self.catalog_model_acknowledged = self.expected_catalog_model is not None
                 thread = result.get("thread", {})
                 self.thread_id = thread.get("id")
                 if (not isinstance(self.thread_id, str) or not self.thread_id or len(self.thread_id) > 128 or
@@ -551,6 +624,12 @@ class Broker:
             raise ProtocolError("invalid_method")
         if not isinstance(params, dict):
             raise ProtocolError("invalid_params")
+        if identity is None and method == "turn/moderationMetadata":
+            if (self.phase != "turn" or not is_turn_moderation_status(
+                    params, thread_id=self.thread_id, turn_id=self.turn_id)):
+                self._reject_notification(method, params)
+                raise ProtocolError("invalid_turn_moderation_status")
+            return []
         if identity is not None:
             if type(identity) not in (int, str) or isinstance(identity, str) and len(identity) > 128:
                 raise ProtocolError("invalid_request_id")
@@ -650,7 +729,7 @@ class Broker:
                   not self.errors and not self.denials and self.policy.used == len(self.policy.commands) and
                   len(self.executions) == len(self.calls) == len(self.items) == len(self.completed_items) == len(self.policy.commands) and
                   all(r["passed"] for r in self.executions))
-        return {"passed": passed, "status": self.terminal or "ended_without_turn", "errors": self.errors,
+        result = {"passed": passed, "status": self.terminal or "ended_without_turn", "errors": self.errors,
                 "denials": self.denials, "executions": self.executions, "event_types": self.event_types,
                 "command_cleanup_failures": self.command_cleanup_failures,
                 "unsupported_notifications": self.unsupported_notifications,
@@ -659,15 +738,19 @@ class Broker:
                 "mcp_inventory_verified": self.mcp_inventory_verified, "mcp_disabled_count": len(self.disabled_mcp_names),
                 "initialize_only": self.initialize_only,
                 "native_approvals_accepted": 0}
+        if self.model_catalog is not None:
+            result["catalog_model_acknowledged"] = self.catalog_model_acknowledged
+        return result
 
 
 def _consume(arguments: list[str], prompt: str, policy: Policy, *, seconds: float,
-             disabled_mcp_names=(), initialize_only=False) -> dict:
+             disabled_mcp_names=(), initialize_only=False, model_catalog: FilePin | None = None) -> dict:
     if not 0 < seconds <= 120:
         raise ValueError("one_to_120_seconds_required")
     started = time.monotonic()
     broker = Broker(policy, prompt, deadline=started + seconds, disabled_mcp_names=disabled_mcp_names,
-                    initialize_only=initialize_only)
+                    initialize_only=initialize_only, model_catalog=model_catalog)
+    _verified_model_catalog(model_catalog)
     process = subprocess.Popen(arguments, cwd=policy.directory, stdin=subprocess.PIPE,
                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
     selector = selectors.DefaultSelector()
@@ -688,6 +771,7 @@ def _consume(arguments: list[str], prompt: str, policy: Policy, *, seconds: floa
     queue(broker.initialize())
     try:
         while selector.get_map() and (not broker.terminal or outgoing):
+            _verified_model_catalog(model_catalog)
             remaining = broker.deadline - time.monotonic()
             if remaining <= 0:
                 broker.terminal = "hard_deadline"
@@ -713,6 +797,7 @@ def _consume(arguments: list[str], prompt: str, policy: Policy, *, seconds: floa
                         queue(response)
                 if not data and not broker.terminal:
                     broker.terminal = "ended_without_turn"
+        _verified_model_catalog(model_catalog)
     except (ValueError, OSError, subprocess.SubprocessError) as error:
         broker.errors.append({"source": "client", "protocol_code": str(error) if isinstance(error, ProtocolError) else type(error).__name__})
         broker.terminal = "client_failed"
@@ -731,14 +816,17 @@ def _consume(arguments: list[str], prompt: str, policy: Policy, *, seconds: floa
     return summary
 
 
-def run_codex(prompt: str, policy: Policy, *, seconds: float = 90, executable: str = "codex") -> dict:
+def run_codex(prompt: str, policy: Policy, *, seconds: float = 90, executable: str = "codex",
+              model_catalog: FilePin | None = None) -> dict:
     """Explicit online entry. Local MCP configuration gates precede app-server."""
     if not 0 < seconds <= 120:
         raise ValueError("one_to_120_seconds_required")
     deadline = time.monotonic() + seconds
+    _verified_model_catalog(model_catalog)
     _verify_version(executable, timeout=min(10, seconds))
-    arguments, names = isolate_mcp(executable, policy.directory, deadline=deadline)
-    return _consume(arguments, prompt, policy, seconds=deadline - time.monotonic(), disabled_mcp_names=names)
+    options = {} if model_catalog is None else {"model_catalog": model_catalog}
+    arguments, names = isolate_mcp(executable, policy.directory, deadline=deadline, **options)
+    return _consume(arguments, prompt, policy, seconds=deadline - time.monotonic(), disabled_mcp_names=names, **options)
 
 
 def _verify_version(executable: str, *, timeout: float):

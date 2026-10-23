@@ -101,3 +101,97 @@ public enum ClassicSceneEditing {
         return scene
     }
 }
+
+/// A transient observation of the current recording, never an approval or an
+/// instruction to synthesize a sound. Existing source/listening checks still apply.
+public struct KnowledgeSoundMoment: Equatable, Identifiable, Sendable {
+    public enum Kind: String, Sendable { case constrained = "行动受限", action = "实际行动", outcome = "实际后果" }
+    public let id: String
+    public let kind: Kind
+    public let round: Int
+    public let sourceTick: Int
+    public let sceneFrame: Int
+    public let summary: String
+    public let recordingDigest: String
+}
+
+public extension ClassicSceneEditing {
+    /// Observe actual decisions, debits and settled effects; do not predict from
+    /// rule declarations, balance sign, sprite pose or the knowledge's name.
+    static func knowledgeSoundMoments(scene: Scene, fps: Int = 30) throws -> [KnowledgeSoundMoment] {
+        guard scene.kind == .simulation, let model=scene.simulation.knowledge, scene.speed == 1 else {
+            throw VideoError.review("轨迹音效定位需要1倍速的知识仿真镜头；其他镜头可手动加入原音")
+        }
+        guard scene.pauseFrames == 0 || scene.simulationPresentation != nil else {
+            throw VideoError.review("旧式停顿可能继续推进仿真，请先设置明确源窗口并重新录制，再定位声音事件")
+        }
+        try SimulationReplay.verify(scene:scene,fps:fps,requireConfirmation:false)
+        guard let recording=scene.simulationRecording, let trace=recording.knowledgeTrace else {
+            throw VideoError.review("请先按当前模型和时轴实际录制知识轨迹")
+        }
+        let digest=try Codec.digest(recording)
+        let first=try scene.renderSimulationSourceFrame(atTimelineFrame:0)
+        let last=try scene.renderSimulationSourceFrame(atTimelineFrame:scene.durationFrames-1)
+        let names=Dictionary(uniqueKeysWithValues:model.participants.map{($0.id,$0.name)})
+        var moments:[KnowledgeSoundMoment]=[]
+        for event in trace.events {
+            let target=event.tick*fps
+            // A cut that begins inside a phase does not replay its earlier onset.
+            guard target >= first, target <= last else { continue }
+            let kind:KnowledgeSoundMoment.Kind, summary:String
+            switch event.phase {
+            case .decision:
+                let constrained=event.actors.filter{$0.choice == .constrained}
+                guard !constrained.isEmpty else { continue }
+                kind = .constrained
+                summary=constrained.map{names[$0.id] ?? $0.id}.joined(separator:"、")+"：资源不足，未执行"
+            case .contribution:
+                let active=event.actors.filter{actor in
+                    if model.isRuleTable { return actor.executedActionID != nil }
+                    return actor.cost>0 || actor.contribution>0
+                }
+                guard !active.isEmpty else { continue }
+                kind = .action
+                summary=active.map{actor in
+                    let action=actor.executedActionID.flatMap{id in model.ruleTable?.actions.first{$0.id==id}?.label}
+                    return (names[actor.id] ?? actor.id)+"："+(action ?? "实际行动")+"，扣费\(actor.cost)"
+                }.joined(separator:"；")
+            case .settlement:
+                if model.isRuleTable {
+                    guard let result=event.ruleExecution,
+                          result.transfers.contains(where:{$0.amount>0}) || result.stateChanges.contains(where:{$0.beforeStateID != $0.afterStateID}) else { continue }
+                    summary="实际转移\(result.transfers.filter{$0.amount>0}.count)项；状态改变\(result.stateChanges.filter{$0.beforeStateID != $0.afterStateID}.count)项"
+                } else {
+                    guard event.actors.contains(where:{$0.benefit>0 || $0.passed}) else { continue }
+                    summary=event.actors.map{(names[$0.id] ?? $0.id)+"：实际收益\($0.benefit)"}.joined(separator:"；")
+                }
+                kind = .outcome
+            default: continue
+            }
+            var lower=0,upper=scene.durationFrames-1
+            while lower<upper {
+                let middle=lower+(upper-lower)/2
+                if try scene.renderSimulationSourceFrame(atTimelineFrame:middle)<target {lower=middle+1}else{upper=middle}
+            }
+            guard try scene.renderSimulationSourceFrame(atTimelineFrame:lower)/fps == event.tick else {
+                throw VideoError.review("展示窗口跳过了真实声音事件，请延长展示并重新录制，不会把声音移到另一个阶段")
+            }
+            moments.append(KnowledgeSoundMoment(id:"\(event.round):\(event.tick):\(kind.rawValue)",kind:kind,round:event.round,sourceTick:event.tick,sceneFrame:lower,summary:summary,recordingDigest:digest))
+        }
+        return moments
+    }
+
+    /// Re-read the current recording before applying a UI selection. Extending a
+    /// shot changes the source mapping, so alignment never silently retimes it.
+    static func addingKnowledgeCue(_ moment:KnowledgeSoundMoment,assetID:String,gain:Double,to scene:Scene,
+                                   assets:[Asset],evidence:[Evidence],workspaceID:String,fps:Int=30)throws->Scene {
+        guard try knowledgeSoundMoments(scene:scene,fps:fps).contains(moment) else {
+            throw VideoError.conflict("所选声音事件已变化，请按当前模型重新录制并选择")
+        }
+        guard let frames=assets.first(where:{$0.id==assetID && $0.workspaceID==workspaceID && $0.mediaType=="audio"})?.durationFrames,
+              frames>0,frames<=scene.durationFrames-moment.sceneFrame else {
+            throw VideoError.review("完整原音超出此事件后的镜头时长；请先延长展示、重新录制再定位，不会截断或移动事件")
+        }
+        return try addingCue(assetID:assetID,startFrame:moment.sceneFrame,gain:gain,use:.effect,extendScene:false,to:scene,assets:assets,evidence:evidence,workspaceID:workspaceID)
+    }
+}

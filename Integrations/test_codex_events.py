@@ -2,7 +2,8 @@ import hashlib
 import json
 import unittest
 
-from codex_events import ExecAudit, JsonLines, ProtocolError, safe_error
+from codex_events import (ExecAudit, JsonLines, ProtocolError, is_account_status_notification,
+                          is_turn_moderation_status, safe_error)
 
 
 def event(kind, **values):
@@ -15,6 +16,54 @@ def command(kind, *, identity="c1", text="video schema", status="completed", exi
 
 
 class EventTests(unittest.TestCase):
+    def test_moderation_status_accepts_only_current_bound_complete_json_shape(self):
+        for metadata in (None, True, 12, 0.25, "opaque", [], {}, {"presentation": "inline"},
+                         {"private": [None, False, {"opaque": "not-retained"}]}):
+            self.assertTrue(is_turn_moderation_status(
+                {"threadId": "thread", "turnId": "turn", "metadata": metadata},
+                thread_id="thread", turn_id="turn"))
+        valid = {"threadId": "thread", "turnId": "turn", "metadata": {}}
+        for patch in ({"threadId": "other"}, {"turnId": "other"}, {"extra": "private"}):
+            self.assertFalse(is_turn_moderation_status(dict(valid, **patch), thread_id="thread", turn_id="turn"))
+        for removed in valid:
+            value = dict(valid)
+            del value[removed]
+            self.assertFalse(is_turn_moderation_status(value, thread_id="thread", turn_id="turn"))
+        for thread, turn in ((None, "turn"), ("thread", None), ("", "turn"), ("thread", "")):
+            self.assertFalse(is_turn_moderation_status(valid, thread_id=thread, turn_id=turn))
+
+    def test_moderation_json_values_have_no_executable_or_unbounded_python_shape(self):
+        deep = None
+        for _ in range(18):
+            deep = [deep]
+        for metadata in (object(), (), {1: "invalid-key"}, float("inf"), float("nan"),
+                         "x"*65537, [None]*257, deep, [[None]*256]*5, "\ud800"):
+            self.assertFalse(is_turn_moderation_status(
+                {"threadId": "thread", "turnId": "turn", "metadata": metadata},
+                thread_id="thread", turn_id="turn"))
+
+    def test_pinned_account_status_enum_and_null_shapes_only(self):
+        modes = (None, "apikey", "chatgpt", "chatgptAuthTokens", "headers", "agentIdentity",
+                 "personalAccessToken", "bedrockApiKey", "bedrockAccessKeys")
+        plans = (None, "free", "go", "plus", "pro", "prolite", "promax", "team",
+                 "self_serve_business_prolite", "self_serve_business_usage_based", "business",
+                 "ent26", "enterprise_cbp_automation", "enterprise_cbp_usage_based", "enterprise",
+                 "edu", "edu_plus", "edu_pro", "unknown")
+        for mode in modes:
+            for plan in plans:
+                self.assertIs(is_account_status_notification({"authMode": mode, "planType": plan}), True)
+
+    def test_account_status_unknown_values_fields_and_wrong_types_refused(self):
+        for params in (None, [], {}, {"authMode": None}, {"planType": None},
+                       {"authMode": None, "planType": None, "authorized": True},
+                       {"authMode": "unknown-mode", "planType": None},
+                       {"authMode": None, "planType": "future-plan"}):
+            self.assertIs(is_account_status_notification(params), False)
+        for key in ("authMode", "planType"):
+            for value in (True, False, 0, 1.0, [], {}, "", "private-value", "chatgpt\n"):
+                params = {"authMode": None, "planType": None, key: value}
+                self.assertIs(is_account_status_notification(params), False)
+
     def audit(self, commands=("video schema",)):
         a = ExecAudit(commands)
         a.add(event("thread.started", thread_id="thread"))

@@ -9,11 +9,73 @@ from __future__ import annotations
 from collections import Counter
 import hashlib
 import json
+import math
 import re
 
 
 class ProtocolError(ValueError):
     """A safe, locally generated protocol diagnostic, never a server message."""
+
+
+# Codex rust-v0.159.2: app-server-protocol v2/account.rs AccountUpdatedNotification,
+# common.rs AuthMode, and protocol/account.rs PlanType. This is a status shape,
+# not an authentication result or an authorization grant. Never retain its values.
+_ACCOUNT_AUTH_MODES = frozenset((
+    "apikey", "chatgpt", "chatgptAuthTokens", "headers", "agentIdentity",
+    "personalAccessToken", "bedrockApiKey", "bedrockAccessKeys",
+))
+_ACCOUNT_PLAN_TYPES = frozenset((
+    "free", "go", "plus", "pro", "prolite", "promax", "team",
+    "self_serve_business_prolite", "self_serve_business_usage_based", "business",
+    "ent26", "enterprise_cbp_automation", "enterprise_cbp_usage_based",
+    "enterprise", "edu", "edu_plus", "edu_pro", "unknown",
+))
+
+
+def is_account_status_notification(params) -> bool:
+    """Recognize only the pinned two-field status; do not return account data."""
+    if not isinstance(params, dict) or set(params) != {"authMode", "planType"}:
+        return False
+    for key, values in (("authMode", _ACCOUNT_AUTH_MODES), ("planType", _ACCOUNT_PLAN_TYPES)):
+        value = params[key]
+        if value is not None and (not isinstance(value, str) or value not in values):
+            return False
+    return True
+
+
+def is_turn_moderation_status(params, *, thread_id, turn_id) -> bool:
+    """Validate pinned identity-bound JsonValue status without retaining contents."""
+    # rust-v0.159.2 app-server-protocol v2/model.rs:193. The nested metadata is
+    # opaque JsonValue, not a permission, execution request, or settings update.
+    if (not isinstance(params, dict) or set(params) != {"threadId", "turnId", "metadata"} or
+            not isinstance(thread_id, str) or not 0 < len(thread_id) <= 128 or
+            not isinstance(turn_id, str) or not 0 < len(turn_id) <= 128 or
+            params["threadId"] != thread_id or params["turnId"] != turn_id):
+        return False
+    nodes = [0]
+
+    def bounded_json(value, depth=0):
+        nodes[0] += 1
+        if depth > 16 or nodes[0] > 1024:
+            return False
+        if value is None or type(value) in (bool, int):
+            return True
+        if type(value) is float:
+            return math.isfinite(value)
+        if isinstance(value, str):
+            return len(value.encode("utf-8")) <= 65536
+        if isinstance(value, list):
+            return len(value) <= 256 and all(bounded_json(item, depth+1) for item in value)
+        if isinstance(value, dict):
+            return len(value) <= 256 and all(isinstance(key, str) and
+                bounded_json(key, depth+1) and bounded_json(item, depth+1) for key, item in value.items())
+        return False
+
+    try:
+        return bounded_json(params["metadata"]) and len(json.dumps(
+            params["metadata"], ensure_ascii=False, allow_nan=False).encode("utf-8")) <= 65536
+    except (ValueError, UnicodeError, RecursionError):
+        return False
 
 
 def _object(pairs):
