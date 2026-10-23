@@ -1,6 +1,36 @@
 import Foundation
 
 public enum LearningExample {
+    public static let contentProjectName = "时间轴剪辑练习（自带说明）"
+    public static let contentSourceName = "时间轴剪辑练习-自带说明.txt"
+    public static let contentSourceText = "从时间轴开始\n镜头按顺序组成作品。选中一个镜头，可以修改文字、位置与时长。\n\n让改动有据可查\n应用修改后会保存新版本。观看倍率仅影响预览；修改镜头速度才会改变成片时轴。"
+
+    /// A normal schema-2 walkthrough bound to the actual, fixed built-in source.
+    /// The caller ingests these UTF-8 bytes into CAS and saves this project atomically.
+    public static func contentProject(workspaceID:String,asset:Asset)throws->Project {
+        guard matchesContentSource(asset,workspaceID:workspaceID) else {
+            throw VideoError.permission("普通剪辑练习须绑定本工作区的固定自带说明原件、文本和摘要")
+        }
+        var context=ContentContext(workspaceID:workspaceID,name:contentProjectName)
+        context.assetIDs=[asset.id]
+        let first=Scene(title:"从时间轴开始",body:"镜头按顺序组成作品。选中一个镜头，可以修改文字、位置与时长。",durationFrames:120)
+        let second=Scene(title:"让改动有据可查",body:"应用修改后会保存新版本。观看倍率仅影响预览；修改镜头速度才会改变成片时轴。",durationFrames:150)
+        var revision=Revision(contentContext:context,purpose:.education,aspect:.landscape,scenes:[first,second],change:"用户主动创建自带说明剪辑练习")
+        revision.dependencies=try DependencyRules.freeze(revision:revision,assets:[asset],evidence:[])
+        return Project(workspaceID:workspaceID,name:contentProjectName,revision:revision)
+    }
+    static func matchesContentSource(_ asset:Asset,workspaceID:String)->Bool {
+        let bytes=Data(contentSourceText.utf8)
+        guard !workspaceID.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty,
+              !asset.id.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty,
+              asset.workspaceID==workspaceID,asset.hash==Codec.hash(bytes),asset.bytes==bytes.count,
+              asset.mediaType=="text",asset.ext=="txt",asset.durationFrames==nil,
+              asset.generatedSource==nil,asset.evidenceID==nil,asset.pages.count==1,
+              let page=asset.pages.first,page.number==1,page.text==contentSourceText,
+              page.notes.isEmpty,!page.requiresOCR else{return false}
+        return true
+    }
+
     /// An explicitly requested tutorial, never inserted into a user's real business workspace.
     public static func project(workspaceID:String,asset:Asset)throws->Project {
         guard asset.workspaceID==workspaceID else {throw VideoError.permission("示例来源工作区不符")}
