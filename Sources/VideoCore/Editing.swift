@@ -50,7 +50,12 @@ public enum Editor {
                 guard frame > 0, frame < original.durationFrames else { throw VideoError.invalid("拆分点必须位于片段内部") }
                 guard original.voice == nil else { throw VideoError.review("有配音的片段请先解除配音并重新录制两段，避免截断句子") }
                 guard !(original.layers ?? []).contains(where:{$0.locked}) else { throw VideoError.permission("请先解锁元素，再拆分场景") }
+                try ClassicArtworkRules.validate(scene:original,assets:assets)
+                let audioCues=original.classicArtwork?.audioCues ?? []
+                guard !audioCues.contains(where:{$0.startFrame<frame && $0.durationFrames>frame-$0.startFrame}) else { throw VideoError.review("拆分点穿过游戏音效或原录音提示，请调整拆分点或先移除该声音；不会自动截断原音") }
                 var a = original, b = original; a.durationFrames = frame; b.id = Codec.id(); b.durationFrames = original.durationFrames - frame; b.sourceStartFrame += frame; a.sourceEndFrame = original.sourceStartFrame + frame
+                a.classicArtwork?.audioCues=audioCues.filter{$0.startFrame<frame}.map { cue in var copy=cue;copy.listened=false;return copy }
+                b.classicArtwork?.audioCues=audioCues.filter{$0.startFrame>=frame}.map { cue in var copy=cue;copy.startFrame-=frame;copy.listened=false;return copy }
                 if original.kind == .simulation { a.simulationRecordingConfirmed = false; b.simulationRecordingConfirmed = false; revision.invalidated += ["拆分后的规则录制与复核"] }
                 a.layers=(original.layers ?? []).filter{$0.startFrame<frame}.map { layer in var x=layer;x.endFrame=min(x.endFrame,frame);x.keyframes=x.keyframes.filter{$0.frame<x.endFrame};if !layer.keyframes.isEmpty{let point=layer.layout(at:x.endFrame-1);x.keyframes.removeAll{$0.frame==x.endFrame-1};x.keyframes.append(Keyframe(frame:x.endFrame-1,x:point.x,y:point.y,scale:point.scale))};return x }
                 b.layers=(original.layers ?? []).filter{$0.endFrame>frame}.map { layer in var x=layer;x.id=Codec.id();x.startFrame=max(0,x.startFrame-frame);x.endFrame-=frame;x.keyframes=x.keyframes.filter{$0.frame>=frame}.map{key in var k=key;k.id=Codec.id();k.frame-=frame;return k};let point=layer.layout(at:frame+x.startFrame);x.x=point.x;x.y=point.y;if !layer.keyframes.isEmpty && !x.keyframes.contains(where:{$0.frame==x.startFrame}){x.keyframes.append(Keyframe(frame:x.startFrame,x:point.x,y:point.y,scale:point.scale))};return x }

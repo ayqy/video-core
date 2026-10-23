@@ -2,10 +2,10 @@
 
 VideoFree source export · package_free.py · version 1
 
-生成时间：2026-10-23 22:33:47 北京时间
+生成时间：2026-10-23 23:17:57 北京时间
 
-- 源码与必要元数据：165个文件；1799043字节（不含本清单）。
-- 整体内容指纹：`250144909e8f7d4c3c918717e42204ae701f32cc24ce650ea65b403de2dfa3cf`。
+- 源码与必要元数据：167个文件；1828372字节（不含本清单）。
+- 整体内容指纹：`017352469a6915281fb1ad20501028ce030ade1476f3004a45b3a1ab37a44a96`。
 - 来源：受控原始工程中的逐文件白名单；Package.swift来自Distribution/Free/Package.swift模板，README由发行脚本生成。
 - 本包不含.git，不可作为新业务checkout；本清单生成过程不执行构建、设备验收、签名安装或公共上传，各阶段以独立证据为准。
 - 排除：App、VideoGame、VideoCartoon、Premium、高级实现运行时测试、私有仓库地址、凭据、客户数据、缓存、日志及媒体过程产物。
@@ -19,7 +19,7 @@ VideoFree source export · package_free.py · version 1
 | e84bf34e9d75233ae83412a628a278b9bb3df3558522eceb9f32f4f4f59b2387 | 2626 | Integrations/check_package.py |
 | 0e35cb4712386dc3e47a79f6f2fb47f216e73745a0e7a9f02b9de6def1b84da6 | 39356 | Integrations/codex_broker.py |
 | 5e72abc0b3f2593d764f09337ebdd4708e0f3e1c8dbac10ff0a904e78eb35e4a | 9613 | Integrations/codex_events.py |
-| abafee4069a7a58ae79d7e180340fce80d9d51bfcfe50a49847c25da16a266d2 | 2149 | Integrations/discover.py |
+| 36bdcf361abca71ae28992a3d5fd2f1c658738f9ba954a21ddb41fc7516b7ceb | 6332 | Integrations/discover.py |
 | 858674ea372ba1e4fabe4918cafa10f165ac1645b1f14707da251bc1902eea96 | 6974 | Integrations/install.py |
 | ab412944919610199d5d486789b0b3c4de3b7cb92c4c546fe8aaafe29c435ec1 | 4031 | Integrations/package.py |
 | 9f5fd384c9e1f1045d7e64869e9d1acd41184d90939add4b5fa90f0420bdf41a | 10472 | Integrations/qwen_stream.py |
@@ -30,11 +30,12 @@ VideoFree source export · package_free.py · version 1
 | af117d681ee814036da2a294494d020b16173b46ff38c884a68c5ce89da9775e | 3274 | Integrations/skills/video/references/protocol.md |
 | e946dabe26ce07466bd5b90f544d2e439fab7d9174b08ad579b93d45dd9696ac | 36297 | Integrations/test_codex_broker.py |
 | 5d50cb7495c049143596ec4a1235c106c3ee97f2eeb743f3eced474e6ed70582 | 6580 | Integrations/test_codex_events.py |
+| a6be5192e921223a3bd3a5c0b0750d80c2abfac439bc2bedb5282f65ba85fca6 | 8905 | Integrations/test_discover.py |
 | bf5529e22ddf0a9c4742b3a274d5398ac31114d587b0abe8a76850d5d45743b0 | 5236 | Integrations/test_qwen_stream.py |
 | cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30 | 11358 | LICENSE |
 | c369f09e50d62d1a1c8eff1500888667ff7a192d0fdc7b32d39c800dfa1e9721 | 1597 | NOTICE |
 | e3dae895ffcaa4ce4470f1dc9d63eee5071f829d63cfe227360c3dabfbdd0d91 | 1213 | Package.swift |
-| 98f5ccef24767ddaf28b50d5b597f2049b1e179d383903e1fd942893d085a5b9 | 2370 | README.md |
+| f9b6fcb4ae3b5ae32f894065d29530dfaeb4cb6d49fd8bb898f09aaa83ff6762 | 2579 | README.md |
 | bbfe59a972a3e8e09e347c04bc22c0eacd2544881af8a4b6068bfc30b38466e8 | 80 | Sources/CSQLite/module.modulemap |
 | b052d8e561e942f97b503033ecd2eaa2b35213bdbf374983efe9e68eabdfc024 | 21 | Sources/CSQLite/shim.h |
 | 347257a3cd5bcb0e501506a29ab4dc2892a46d2560a111a8d779b124e594ebb9 | 60 | Sources/CZlib/module.modulemap |
@@ -60,7 +61,7 @@ VideoFree source export · package_free.py · version 1
 | e9b64ac1623ddede8f3e28ec11cf5a7a70ac64358d5592e43fb52a6131fb03ca | 32976 | Sources/VideoCore/CommercialReports.swift |
 | 17137a461b816b17ea4da94e59f6ee299b3e7dd53992b985a04e98df0e21e9a5 | 4217 | Sources/VideoCore/ContentAssetMatching.swift |
 | 80b4a15fb501e5f2f522ba831d9c0af79ed9b5d7879fc4f62e5258186724a597 | 20194 | Sources/VideoCore/Dependencies.swift |
-| c15f7176efc9c4708cd3326908d8171118ec6acf5d44af23c89878cdcf95d6ec | 27085 | Sources/VideoCore/Editing.swift |
+| 06191476390324aa21982ae354002c15f9694c45287a69cd18c867bc6b97cc75 | 27806 | Sources/VideoCore/Editing.swift |
 | 2812b4b5a76d74c216cdf19af91de902ff2808edc0d2750bbc4a38cf71043c9f | 5735 | Sources/VideoCore/EditorPracticeRules.swift |
 | ff72243377a23f6732d56c34e50d291d82e60d1a71ada1878d9ee2e7c5f641b6 | 12517 | Sources/VideoCore/Finance.swift |
 | 9e5b2b47e55fdcf7b1495a61e0df94e9b9bb2e915bbb147ebb829585e84d148b | 6424 | Sources/VideoCore/H264Rules.swift |
@@ -101,6 +102,7 @@ VideoFree source export · package_free.py · version 1
 | 892115c808c3acbd9f15465f3cdb0fe7604f66ec0b8b9d19f319a5d6cf820f27 | 2327 | Sources/VideoMedia/CloudReviewPresentationLease.swift |
 | 451de62ae66ce51bc390deb9d210ca46de5ca66e5bb52b4572a6e5e792e141a2 | 4904 | Sources/VideoMedia/CoursePreview.swift |
 | a3c1ff6981dd81b2a97fee7cff2489fc9edb2381904ee46ebad18e9b6562dc91 | 4662 | Sources/VideoMedia/Diagnostics.swift |
+| 2cc5c350d0d668b11eae86262a3538fa64d1900acfa127c5068741d0edcc3c77 | 9702 | Sources/VideoMedia/DinoBuiltinAssets.swift |
 | 2eafa759e4f2e1a94a5ecb866f39784b13363f7a5cfcacb60b125cf5e2fa12bd | 13316 | Sources/VideoMedia/FamiliarBuiltinAssets.swift |
 | 78eab44c664d354ecf71559b09af166acca4d9ee2c46786e9449fe9d2c8799cf | 9759 | Sources/VideoMedia/Importer.swift |
 | 6a44c3423c3414547f8cd78bc171a95e5789a8c8fab8b7ec0a8efe23f6c21fc3 | 2494 | Sources/VideoMedia/LayerPainter.swift |
@@ -136,7 +138,7 @@ VideoFree source export · package_free.py · version 1
 | 07169ed97856c4c968d69ac395cb8890131fcffb2048c05d9251d290f9083aff | 7467 | Tests/VideoCoreTests/BatchTests.swift |
 | 84bf0bbbf07c6dfb4a679f9754c238253b53237018d8519be541453f48c70e40 | 11156 | Tests/VideoCoreTests/BrandDeliveryTests.swift |
 | c19dd668a235f222bb68d631b9d6dbe34fa53619e9eb4d1003a0709f78347e4f | 7220 | Tests/VideoCoreTests/ClassicArtworkTests.swift |
-| 5aec27550faada7563e560480b707ba74dd6288e8ceff73854c6e13ccf89a9ff | 18492 | Tests/VideoCoreTests/ClassicSceneEditingTests.swift |
+| 65b2a7339936736067aca1eacb17979354f1b98335c7876ac6326b814ad7012e | 24101 | Tests/VideoCoreTests/ClassicSceneEditingTests.swift |
 | 2e39493e88ecc1c19df5e5e273a6f139be3ff1ffcdf6b19840cbee2248ba6542 | 15901 | Tests/VideoCoreTests/CloudProposalTests.swift |
 | d7faff10e36e4c68b85d79a46a4523848071a3be9671c9442331e5c9eb60c6da | 8138 | Tests/VideoCoreTests/CloudReviewTests.swift |
 | f18fda57b514d19653ff1ac7ce621f4022be6868fb8b385b2cb5884e698c447a | 17786 | Tests/VideoCoreTests/CohortFinanceTests.swift |

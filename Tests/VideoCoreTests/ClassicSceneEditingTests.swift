@@ -51,6 +51,59 @@ final class ClassicSceneEditingTests:XCTestCase {
         XCTAssertFalse(extended.classicArtwork?.audioCues.first?.listened ?? true)
         XCTAssertEqual(extended.simulationRecordingConfirmed,false)
     }
+    func testSplitKeepsWholeAudioCuesOnTheirOwnSideAndRetimesTheRight()throws {
+        var (assets,evidence)=fixture();assets[2].durationFrames=30
+        var scene=try characterScene(assets:assets,evidence:evidence);scene.durationFrames=240
+        scene.classicArtwork?.sources.append(try ClassicSceneEditing.source(assetID:assets[2].id,assets:assets,evidence:evidence,workspaceID:"w"))
+        let cues=[ClassicAudioCue(assetID:assets[2].id,startFrame:10,durationFrames:30,gain:0.2,use:.effect,listened:true),
+                  ClassicAudioCue(assetID:assets[2].id,startFrame:90,durationFrames:30,gain:0.4,use:.prompt,listened:true),
+                  ClassicAudioCue(assetID:assets[2].id,startFrame:120,durationFrames:30,gain:0.3,use:.prompt,listened:true),
+                  ClassicAudioCue(assetID:assets[2].id,startFrame:180,durationFrames:30,gain:0.5,use:.effect,listened:true)]
+        scene.classicArtwork?.audioCues=cues
+        scene.captions=[Caption(text:"拆分前后字幕重新核对",startFrame:90,endFrame:150,confirmed:true)]
+        var (_,project)=versionDatabase(scene:scene,assets:assets,evidence:evidence)
+        project.revisions[0].review.text=true;project.revisions[0].review.rights=true;project.revisions[0].review.fullPreview=true;project.revisions[0].review.sound=true;project.revisions[0].review.captions=true;project.revisions[0].review.digest="original-review"
+        let before=try Codec.data(project),originalRevision=project.current
+        let changed=try Editor.apply([.splitScene(scene.id,120)],to:project,baseRevision:originalRevision.id,assets:assets,message:"在完整原音之间拆分")
+        XCTAssertEqual(changed.current.scenes.map(\.durationFrames),[120,120])
+        let left=try XCTUnwrap(changed.current.scenes[0].classicArtwork),right=try XCTUnwrap(changed.current.scenes[1].classicArtwork)
+        XCTAssertEqual(left.audioCues.map(\.id),Array(cues.prefix(2)).map(\.id));XCTAssertEqual(right.audioCues.map(\.id),Array(cues.suffix(2)).map(\.id))
+        XCTAssertEqual(left.audioCues.map(\.startFrame),[10,90]);XCTAssertEqual(right.audioCues.map(\.startFrame),[0,60])
+        for (index,cue) in (left.audioCues+right.audioCues).enumerated() {
+            XCTAssertEqual(cue.assetID,cues[index].assetID);XCTAssertEqual(cue.durationFrames,30);XCTAssertEqual(cue.gain,cues[index].gain);XCTAssertEqual(cue.use,cues[index].use);XCTAssertFalse(cue.listened)
+        }
+        XCTAssertEqual(left.sources,scene.classicArtwork?.sources);XCTAssertEqual(right.sources,scene.classicArtwork?.sources)
+        XCTAssertEqual(left.sprites,scene.classicArtwork?.sprites);XCTAssertEqual(right.sprites,scene.classicArtwork?.sprites)
+        XCTAssertEqual(changed.current.scenes[0].captions[0].endFrame,120);XCTAssertEqual(changed.current.scenes[1].captions[0].startFrame,0);XCTAssertEqual(changed.current.scenes[1].captions[0].endFrame,30)
+        XCTAssertFalse(changed.current.scenes[0].captions[0].confirmed);XCTAssertFalse(changed.current.scenes[1].captions[0].confirmed)
+        XCTAssertFalse(changed.current.review.sound);XCTAssertFalse(changed.current.review.fullPreview);XCTAssertFalse(changed.current.review.captions);XCTAssertNil(changed.current.review.digest)
+        XCTAssertTrue(changed.current.invalidated.contains("声音确认"));XCTAssertTrue(changed.revisions[0].review.complete)
+        XCTAssertEqual(changed.revisions[0].scenes[0],scene);XCTAssertEqual(try Codec.data(project),before)
+        for value in changed.current.scenes {try value.validate(assets:assets)}
+    }
+    func testSplitRejectsAnyCueCrossingTheBoundaryWithoutTruncationEvenWhenSilent()throws {
+        var (assets,evidence)=fixture();assets[2].durationFrames=30
+        var source=try characterScene(assets:assets,evidence:evidence);source.durationFrames=240
+        source.classicArtwork?.sources.append(try ClassicSceneEditing.source(assetID:assets[2].id,assets:assets,evidence:evidence,workspaceID:"w"))
+        for use in ClassicAudioCue.Use.allCases {for gain in [0.0,0.35] {for muted in [false,true] {
+            var scene=source;scene.muted=muted
+            scene.classicArtwork?.audioCues=[ClassicAudioCue(assetID:assets[2].id,startFrame:105,durationFrames:30,gain:gain,use:use,listened:true)]
+            let (_,project)=versionDatabase(scene:scene,assets:assets,evidence:evidence),before=try Codec.data(project)
+            try scene.validate(assets:assets)
+            XCTAssertThrowsError(try Editor.apply([.splitScene(scene.id,120)],to:project,baseRevision:project.current.id,assets:assets,message:"不得截断原音")) { error in
+                XCTAssertEqual((error as? VideoError)?.code,"needs_review")
+                XCTAssertTrue(error.localizedDescription.contains("不会自动截断原音"))
+            }
+            XCTAssertEqual(try Codec.data(project),before)
+        }}}
+    }
+    func testSplitRejectsMalformedCueBeforeFrameArithmetic()throws {
+        let (assets,evidence)=fixture();var scene=try characterScene(assets:assets,evidence:evidence)
+        scene.classicArtwork?.sources.append(try ClassicSceneEditing.source(assetID:assets[2].id,assets:assets,evidence:evidence,workspaceID:"w"))
+        scene.classicArtwork?.audioCues=[ClassicAudioCue(assetID:assets[2].id,startFrame:Int.max,durationFrames:120)]
+        let (_,project)=versionDatabase(scene:scene,assets:assets,evidence:evidence)
+        XCTAssertThrowsError(try Editor.apply([.splitScene(scene.id,60)],to:project,baseRevision:project.current.id,assets:assets,message:"拒绝无效音效位置")) {error in XCTAssertEqual((error as? VideoError)?.code,"invalid_input")}
+    }
     func testSameTickClampingUsesTheSameCausalInputOrderInSDKAndRecording()throws {
         var simulation=Simulation();simulation.initial=5;simulation.capacity=10;simulation.unit="箱"
         var first=RuleEvent(tick:1,delta:20,label:"先增加");first.id="z-first"
