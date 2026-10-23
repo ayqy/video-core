@@ -10,7 +10,7 @@
 | Claude | Claude Code shell；其他界面按实际运行面 | `.claude/skills/video` | 同源Skill安装通过；有界真实会话仅返回init后超时，没有模型响应或video工具调用证据；插件/市场审核未执行 |
 | Gemini | Gemini CLI shell | `.gemini/skills/video` | Gemini CLI 0.50.0离线发现video [Enabled]；0.50.0及隔离安装的官方0.65.0真实会话均被现有认证的IneligibleTierError拒绝，未执行video工具 |
 | Grok | Grok Build shell | `.grok/skills/video` | Grok Build 1.0.67离线发现video；真实有限会话返回Not signed in，未执行video工具 |
-| DeepSeek | 已配置DeepSeek provider的Qwen Code或Codex工具宿主 | Qwen使用`.qwen/skills/video`；Codex使用其实际技能目录 | 本轮Qwen Code 0.17.0→官方DeepSeek API已返回`deepseek-flash`真实模型会话、video Skill成功事件和40命令原生schema调用；doctor对尚无数据库的目录返回unavailable，不计工程业务链通过，不虚构DeepSeek网页shell或独立Skill市场 |
+| DeepSeek | 已配置DeepSeek provider的Qwen Code或Codex工具宿主 | Qwen使用`.qwen/skills/video`；Codex使用其实际技能目录 | Qwen Code 0.17.0→官方DeepSeek API的最新有限普通链已实际通过：video Skill与两条有序固定Shell完整许可，普通剪辑、真实音轨、渲染及含源恢复均有独立产物回读。不是高级样片、五生态全验或独立Skill市场上架 |
 
 安装示例：`python3 Integrations/install.py --host codex --destination <项目>/.agents/skills/video`。目标不覆盖已有修改；重复安装同一内容会验证通过，内容不同则保留原文件并报错。`--dry-run`只校验，`--verify`核对现有安装。`--host deepseek-codex`与`--host deepseek-qwen`只标识实际工具宿主，不改provider或读取API Key。Qwen项目安装示例：`python3 Integrations/install.py --host deepseek-qwen --destination <项目>/.qwen/skills/video`。
 
@@ -54,6 +54,8 @@ Claude的3-turn/0.10美元上限会话与缩减后的1-turn/0.01美元上限探�
 
 需要固定有限链时使用`PinnedPolicy(directory, commands=(...), pins=(FilePin(绝对路径, SHA256), ...))`，每个命令仅执行一次且须按顺序完成。调用者先固定审查过的解释器、二进制、脚本、Skill及输入原件，再将同一`strict_policy`传给`create_isolated_settings`；`run_qwen`核对实际工具和许可配置后才启动。严格模式不暴露文件写工具，只有显式`allow_skill=True`才允许video Skill，并逐次询问。原生工具开始、许可和完成事件由消费器本身核对，不能仅靠调用方额外callback补审；拒绝、未完成、文件变化或顺序不符不标许可链完成。
 
+原生Shell可选的`timeout`只接受严格整数1—120000毫秒，不接受布尔、浮点、字符串或未知字段，也不延长消费端父进程的硬期限；其余精确命令、目录、顺序和许可生命周期检查保持。
+
 文件pin在许可前和完成时核对，不能消除原生宿主从检查到启动之间的全部文件竞争。`policy_complete`只表示许可与工具生命周期一致，仍须独立核CLI退出码、结构化业务回执、实际版本和产物；模型返回success不等于制作成功。
 
 消费方通过`run_qwen(..., seconds=45)`给出父进程硬预算，最多300秒。到期只终止本次创建的进程组，不依赖原生`max-wall-time`及时结束；Exact默认最多30工具调用，Pinned进一步按明确命令数加可选Skill收紧，两种模式均保留36轮上限。函数只返回内存事件、许可决定和安全状态，不保存原始流。`result/success`不是业务验收：还需逐项核验CLI结构化`ok/error`、实际工程版本、备份恢复和独立回读；超过轮数的会话保持其原退出状态，后续只读重开单独记账。
@@ -76,4 +78,10 @@ Claude的3-turn/0.10美元上限会话与缩减后的1-turn/0.01美元上限探�
 
 2026-10-23（北京时间）Codex 0.159.2消费同源Skill，使用普通ContentContext而无Product创建工程并保存两版90/240帧，真实H.264/AAC成片与四件产物保持needs_review。第一次有限制作会话在控制器硬截止前完成备份，但没有原生退出/turn完成回执，因此不算一次完整成功。第二次针对原备份的有限恢复会话65.994秒正常exit0、turn.completed，五个命令全部exit0；独立读回源/恢复均一工作区、零Product、一项目、两版本、同一job，330帧/11秒1280×720 H.264 30fps/AAC 48kHz，四件字节与哈希相同。工程语义仅恢复事务代数与绝对目录变化，人工审核未代勾。该证据绑定当次服务构建CLI，后续源变更与新版发行仍需验证受影响链。
 
-宿主目录的安装/更新/回滚已核逐文件同源与篡改拒绝；Claude原生plugin validate和Gemini原生技能发现是格式/发现证据，不能替代模型业务执行。Grok仍为Not signed in，DeepSeek历史成功依赖其原有安全环境，当前新环境未复现；不提取凭据或虚构账户可用性。
+宿主目录的安装/更新/回滚已核逐文件同源与篡改拒绝；Claude原生plugin validate和Gemini原生技能发现是格式/发现证据，不能替代模型业务执行。Grok仍为Not signed in；DeepSeek的最新有限普通业务在隔离Qwen宿主、原生envKey与固定许可下已复现，边界见下文，不推定其他生态认证可用。
+
+### 最新免费CLI的DeepSeek有限业务
+
+2026-10-24（北京时间），最新公开免费CLI经正常`run_qwen`完成一次Qwen→DeepSeek链，Skill一次和固定Shell两次均有相同工具ID的许可/结果，26项文件pin未变。业务包含20次非dry调用、另列11次预检，以及单独一次schema发现；原/恢复同一工程、版本、job和源WAV，四产物逐项一致，实际H.264/AAC文件可解码。人工审核和字幕确认保持false，任务为needs_review。
+
+此结果只证明该固定宿主和普通两秒回归链，不代表完整知识旁白、高级受信模块、人工看听、五生态全验、商店安装或市场贡献。模型返回success本身不能替代业务回执与独立产物回读；配置迁移及timeout未知字段的旧失败仍保留，不改写为历史成功。

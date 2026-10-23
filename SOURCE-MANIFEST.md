@@ -2,11 +2,12 @@
 
 VideoFree source export · package_free.py · version 1
 
-生成时间：2026-10-24 03:17:21 北京时间
+生成时间：2026-10-24 03:34:05 北京时间
 
-- 源码与必要元数据：164个文件；1888071字节（不含本清单）。
-- 整体内容指纹：`ced56e228e5ce1e664cb4a006f70f9b88de05884a2605d9c2a65efa01d7360d1`。
+- 源码与必要元数据：164个文件；1889176字节（不含本清单）。
+- 整体内容指纹：`c93e56ba2e6f60775bdb257756eb29ed7a223b95cf4191541e0c470d65e082f2`。
 - 来源：受控原始工程中的逐文件白名单；Package.swift来自Distribution/Free/Package.swift模板，README由发行脚本生成。
+- 冻结来源提交：`c0c01792f6f654316bc94b76bff1c0fafdfc14c2`；本次仅公开集成说明的真实调用结果更正。
 - 本包不含.git，不可作为新业务checkout；本清单生成过程不执行构建、设备验收、签名安装或公共上传，各阶段以独立证据为准。
 - 排除：App、VideoGame、VideoCartoon、Premium、高级实现运行时测试、私有仓库地址、凭据、客户数据、缓存、日志及媒体过程产物。
 - 已检查：路径与普通文本文件类型、符号/硬链接拒绝、免费源码闭源import、已知凭据形态和仓库URL。模式检查不能证明任意自由文本绝无敏感信息，仍需发行审查。
@@ -14,7 +15,7 @@ VideoFree source export · package_free.py · version 1
 
 | SHA-256 | 字节数 | 包内路径 / 原工程来源 |
 |---|---:|---|
-| d2b43ff95567bc40a6ac5933777219cd11a75450e68d41e1538aaa27c991d2ec | 16662 | Integrations/README.md |
+| f17f71956045fb3e388fbe1c73d88f236d3c93ce66d1817d6df24d2b7d6ee5c3 | 17767 | Integrations/README.md |
 | be0a15cd8fcb9b33fe92f2898a9ee53aa20f9722b368abd19e0a7a5ef924bc42 | 18066 | Integrations/check_install.py |
 | 78de5093a0969aa261d580b270f7ce5ae9c25d8de493afbd9f993bbc2d41219a | 4076 | Integrations/check_package.py |
 | 0e35cb4712386dc3e47a79f6f2fb47f216e73745a0e7a9f02b9de6def1b84da6 | 39356 | Integrations/codex_broker.py |
