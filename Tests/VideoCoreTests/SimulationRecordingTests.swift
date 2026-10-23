@@ -155,4 +155,85 @@ final class SimulationRecordingTests: XCTestCase {
         XCTAssertThrowsError(try apply([.recordSimulation(scene.id)], scene: scene))
         XCTAssertThrowsError(try apply([.confirmSimulationRecording(scene.id)], scene: scene))
     }
+    func testReadOnlyReplayPreservesSameTickOrderAndDoesNotGrantReview() throws {
+        let scene = try recordedScene(confirmed: false)
+        let before = try Codec.data(scene)
+        let preceding = try SimulationReplay.replay(scene: scene, timelineFrame: 29)
+        XCTAssertEqual(preceding.state.value, 5); XCTAssertTrue(preceding.transitions.isEmpty)
+        let event = try SimulationReplay.replay(scene: scene, timelineFrame: 30)
+        XCTAssertEqual(event.timelineFrame, 30); XCTAssertEqual(event.sourceFrame, 30)
+        XCTAssertEqual(event.state.value, 7); XCTAssertEqual(event.state.unit, "件")
+        XCTAssertEqual(event.transitions.map(\.label), ["加入", "移除"])
+        XCTAssertEqual(event.transitions.map(\.after), [10, 7])
+        XCTAssertEqual(event.transitions.map(\.clippedDelta), [15, 0])
+        XCTAssertEqual(event.state, try SimulationReplay.frameState(simulation: scene.simulation, frame: 30))
+        XCTAssertEqual(try Codec.data(scene), before)
+        XCTAssertEqual(scene.simulationRecordingConfirmed, false)
+        XCTAssertThrowsError(try SimulationReplay.verify(scene: scene))
+        XCTAssertFalse(revision(scene: scene).review.complete)
+    }
+    func testReplayAfterPersistingUsesExactSeededFrameStates() throws {
+        let scene = try recordedScene()
+        let reopened = try Codec.decoder().decode(Scene.self, from: Codec.data(scene))
+        for frame in [0, 29, 30, 31, 149, 150, 179] {
+            let first = try SimulationReplay.replay(scene: scene, timelineFrame: frame)
+            XCTAssertEqual(first, try SimulationReplay.replay(scene: reopened, timelineFrame: frame))
+            XCTAssertEqual(first, try SimulationReplay.replay(scene: scene, timelineFrame: frame))
+        }
+    }
+    func testReplayAndEventSeekUseActualSpeedAndPauseMapping() throws {
+        var scene = try recordedScene(confirmed: false)
+        scene.speed = 0.5; scene.pauseFrames = 30
+        scene.simulation.events.append(RuleEvent(tick: 6, delta: -2, label: "停顿区间事件"))
+        scene.simulationRecording = try SimulationReplay.record(scene: scene)
+        XCTAssertEqual(scene.timelineFrames, 390)
+        let frame = try SimulationReplay.replayFrame(scene: scene, tick: 6)
+        XCTAssertEqual(frame, 360)
+        XCTAssertEqual(try SimulationReplay.replay(scene: scene, timelineFrame: frame - 1).state.value, 9)
+        let event = try SimulationReplay.replay(scene: scene, timelineFrame: frame)
+        XCTAssertEqual(event.sourceFrame, 180); XCTAssertEqual(event.state.value, 7)
+        XCTAssertEqual(event.transitions.map(\.label), ["停顿区间事件"])
+        let end = try SimulationReplay.replay(scene: scene, timelineFrame: scene.timelineFrames - 1)
+        XCTAssertEqual(end.sourceFrame, scene.renderSourceFrame(atTimelineFrame: 389))
+        XCTAssertEqual(end.state.value, scene.simulationRecording?.finalState)
+    }
+    func testFastReplaySeeksFirstActuallyVisibleEventFrame() throws {
+        var scene = Scene(kind: .simulation, title: "快速规则", body: "实际输出的尾部事件", durationFrames: 31)
+        scene.speed = 4; scene.pauseFrames = 1
+        scene.simulation.events = [RuleEvent(tick: 1, delta: 5, label: "尾部")]
+        scene.simulationRecording = try SimulationReplay.record(scene: scene)
+        XCTAssertEqual(try SimulationReplay.replayFrame(scene: scene, tick: 1), 8)
+        let end = try SimulationReplay.replay(scene: scene, timelineFrame: 8)
+        XCTAssertEqual(end.sourceFrame, 32); XCTAssertEqual(end.state.value, 105)
+        XCTAssertEqual(end.transitions.map(\.label), ["尾部"])
+        XCTAssertThrowsError(try SimulationReplay.replay(scene: scene, timelineFrame: 9))
+    }
+    func testReplayRejectsUnrecordedStaleAndTamperedTraces() throws {
+        let original = try recordedScene()
+        for index in 0..<6 {
+            var scene = original
+            switch index {
+            case 0: scene.simulationRecording = nil
+            case 1: scene.simulation.seed += 1
+            case 2: scene.speed = 2
+            case 3: scene.pauseFrames += 1
+            case 4: scene.durationFrames += 1
+            default: scene.simulationRecording?.transitions[0].after = 0
+            }
+            XCTAssertThrowsError(try SimulationReplay.replay(scene: scene, timelineFrame: 0))
+            XCTAssertThrowsError(try SimulationReplay.replayFrame(scene: scene, tick: 0))
+        }
+        XCTAssertThrowsError(try SimulationReplay.replay(scene: original, timelineFrame: 0, fps: 31))
+    }
+    func testReplayAndEventSeekRejectBoundsWithoutClampingToAnotherResult() throws {
+        let scene = try recordedScene()
+        for frame in [-1, scene.timelineFrames, Int.max] {
+            XCTAssertThrowsError(try SimulationReplay.replay(scene: scene, timelineFrame: frame))
+        }
+        for tick in [-1, 6, Int.max] {
+            XCTAssertThrowsError(try SimulationReplay.replayFrame(scene: scene, tick: tick))
+        }
+        XCTAssertEqual(try SimulationReplay.replayFrame(scene: scene, tick: 0), 0)
+        XCTAssertEqual(try SimulationReplay.replayFrame(scene: scene, tick: 5), 150)
+    }
 }

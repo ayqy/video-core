@@ -1,6 +1,62 @@
 import Foundation
 
 public enum ClassicSceneEditing {
+    /// Binds an existing, actually derived image region to a named expression.
+    /// Source records and current rights are rechecked; this does not create artwork or grant rights.
+    public static func settingExpressionSprite(_ sprite:ClassicSprite,to original:Scene,assets:[Asset],evidence:[Evidence],workspaceID:String,commercial:Bool,now:Date=Date())throws->Scene {
+        let reserved:Set<String>=["hero","crate","wall","floor","backdrop","coin"]
+        guard !original.locked,[SceneKind.simulation,.cartoon].contains(original.kind),
+              var artwork=original.classicArtwork,artwork.derivation == .qStyle,
+              var profile=original.characterProfile,!profile.original else{throw VideoError.permission("请先选择未锁定且绑定真实Q版来源的角色镜头")}
+        let role=sprite.role.trimmingCharacters(in:.whitespacesAndNewlines)
+        guard role==sprite.role,!role.isEmpty,role.count<=40,!role.unicodeScalars.contains(where:{CharacterSet.controlCharacters.contains($0)}),!reserved.contains(role),
+              artwork.sprites.contains(where:{$0.assetID==sprite.assetID}),
+              let image=assets.first(where:{$0.id==sprite.assetID && $0.workspaceID==workspaceID && $0.mediaType.hasPrefix("image")}),
+              !assets.contains(where:{artwork.originalAssetIDs.contains($0.id) && $0.hash==image.hash}) else{throw VideoError.review("表情须使用已有实际Q版派生图块和明确名称，不能覆盖基础图块或把下载原件改标签当作派生")}
+        let source=try self.source(assetID:image.id,assets:assets,evidence:evidence,workspaceID:workspaceID)
+        if let previous=artwork.sources.first(where:{$0.assetID==image.id}) {
+            guard previous.hash==source.hash,previous.evidenceID==source.evidenceID,previous.source==source.source,previous.owner==source.owner else{throw VideoError.conflict("此图集的来源关联已变化，请核对后重新绑定")}
+        }else{artwork.sources.append(source)}
+        artwork.sprites.removeAll{$0.role==role};artwork.sprites.append(sprite)
+        if !profile.expressions.contains(role){profile.expressions.append(role)}
+        guard !profile.expressions.isEmpty,profile.expressions.count<=20 else{throw VideoError.invalid("角色表情须保留1至20项")}
+        profile.evidenceIDs=Array(Set(profile.evidenceIDs+[source.evidenceID])).sorted()
+        var scene=try binding(artwork,character:original.character,to:original,assets:assets,evidence:evidence,workspaceID:workspaceID,requireQStyle:true)
+        scene.characterProfile=profile;scene.emotion=role
+        try ClassicArtworkRules.validateRights(scene:scene,workspaceID:workspaceID,assets:assets,evidence:evidence,commercial:commercial,now:now)
+        return scene
+    }
+    /// Existing project/revision/scene identities are the versioned character store.
+    /// Read authorization is checked before looking up the source; no source approvals or audio are copied.
+    public static func reusingVisualCharacter(projectID:String,revisionID:String,sceneID:String,to original:Scene,access:WorkspaceAccessContext,database:Database,commercial:Bool,now:Date=Date())throws->Scene {
+        let (project,revision)=try WorkspaceAccessRules.revision(projectID:projectID,revisionID:revisionID,access:access,in:database,now:now)
+        guard let source=revision.scenes.first(where:{$0.id==sceneID}),[SceneKind.simulation,.cartoon].contains(source.kind),
+              var artwork=source.classicArtwork,artwork.derivation == .qStyle,
+              var profile=source.characterProfile,!profile.original,
+              !profile.name.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty,
+              !profile.actions.isEmpty,!profile.expressions.isEmpty,profile.actions.count<=20,profile.expressions.count<=20,
+              (profile.actions+profile.expressions).allSatisfy({!$0.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty}) else{throw VideoError.review("所选历史镜头没有完整的实际Q版角色图块、动作和表情")}
+        // Carry only visual source records. Target audio retains its own exact source and listening state.
+        let visualIDs=Set(artwork.sprites.map(\.assetID)+artwork.originalAssetIDs)
+        artwork.sources=artwork.sources.filter{visualIDs.contains($0.assetID)}
+        artwork.audioCues=original.classicArtwork?.audioCues ?? []
+        for cue in artwork.audioCues {
+            guard let record=original.classicArtwork?.sources.first(where:{$0.assetID==cue.assetID}) else{throw VideoError.permission("目标声音的具体来源缺失，未替换角色")}
+            if let other=artwork.sources.first(where:{$0.assetID==record.assetID}){guard other==record else{throw VideoError.conflict("复用角色与目标声音的来源记录冲突")}}
+            else{artwork.sources.append(record)}
+        }
+        artwork.transformation += "\n角色快照复用自项目 "+project.id+" / revision "+revision.id+" / scene "+source.id+"；仅复制图块、表情与动作，不转移原镜头录音或审核。"
+        profile.voiceAssetID=original.characterProfile?.voiceAssetID;profile.evidenceIDs=artwork.evidenceIDs.sorted()
+        if let voiceID=profile.voiceAssetID {
+            guard let voice=database.assets.first(where:{$0.id==voiceID && $0.workspaceID==access.workspaceID && $0.mediaType=="audio"}),
+                  let proof=database.evidence.first(where:{$0.id==voice.evidenceID && $0.workspaceID==access.workspaceID}),proof.usable(commercial:commercial,now:now) else{throw VideoError.permission("目标原有角色声音缺少当前用途的有效来源授权")}
+            profile.evidenceIDs=Array(Set(profile.evidenceIDs+[proof.id])).sorted()
+        }
+        var scene=try binding(artwork,character:source.character,to:original,assets:database.assets,evidence:database.evidence,workspaceID:access.workspaceID,requireQStyle:true)
+        scene.characterProfile=profile;scene.emotion=source.emotion
+        try ClassicArtworkRules.validateRights(scene:scene,workspaceID:access.workspaceID,assets:database.assets,evidence:database.evidence,commercial:commercial,now:now)
+        return scene
+    }
     public static func binding(_ artwork:ClassicArtwork,character:String,to original:Scene,assets:[Asset],evidence:[Evidence],workspaceID:String,requireQStyle:Bool=false)throws->Scene {
         guard !original.locked,[SceneKind.simulation,.cartoon].contains(original.kind),!character.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty else{throw VideoError.permission("请先解锁实际规则/角色镜头并选择已知角色")}
         guard !requireQStyle || artwork.derivation == .qStyle else{throw VideoError.review("下载原件尚未完成实际Q版派生，不能用于新高级成片；请保留原件并绑定真实处理产物")}

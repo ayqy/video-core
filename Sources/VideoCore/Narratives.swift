@@ -197,7 +197,34 @@ public struct RuleTrace: Codable, Equatable, Sendable {
 }
 public struct RuleParticle: Codable, Equatable, Sendable { public var x: Double; public var y: Double; public var phase: Double }
 public struct RuleFrameState: Codable, Equatable, Sendable { public var value: Int; public var capacity: Int; public var unit: String; public var tick: Int; public var activeEvents: [String]; public var particles: [RuleParticle] }
+/// A read-only review of a recorded scene at the same timeline mapping used by rendering.
+/// Sampling or playing this value never grants recording confirmation or whole-video approval.
+public struct RuleReplaySample: Equatable, Sendable {
+    public var timelineFrame: Int; public var sourceFrame: Int
+    public var state: RuleFrameState; public var transitions: [RuleTransition]
+}
 public enum SimulationReplay {
+    public static func replay(scene: Scene, timelineFrame: Int, fps: Int = 30) throws -> RuleReplaySample {
+        try verify(scene: scene, fps: fps, requireConfirmation: false)
+        guard timelineFrame >= 0, timelineFrame < scene.timelineFrames else { throw VideoError.invalid("重放帧超出当前镜头时轴") }
+        let sourceFrame = scene.renderSourceFrame(atTimelineFrame: timelineFrame)
+        let state = try frameState(simulation: scene.simulation, frame: sourceFrame, fps: fps)
+        let transitions = scene.simulationRecording?.transitions.filter { $0.tick == state.tick } ?? []
+        return RuleReplaySample(timelineFrame: timelineFrame, sourceFrame: sourceFrame, state: state, transitions: transitions)
+    }
+    /// Finds the first actual output frame of a visible tick, including changed speed and pause mapping.
+    public static func replayFrame(scene: Scene, tick: Int, fps: Int = 30) throws -> Int {
+        try verify(scene: scene, fps: fps, requireConfirmation: false)
+        guard tick >= 0, let recording = scene.simulationRecording, tick <= recording.throughTick else { throw VideoError.invalid("此规则刻度不在当前录制可见范围") }
+        let target = tick * fps
+        var lower = 0, upper = scene.timelineFrames - 1
+        while lower < upper {
+            let middle = lower + (upper - lower) / 2
+            if scene.renderSourceFrame(atTimelineFrame: middle) < target { lower = middle + 1 } else { upper = middle }
+        }
+        guard scene.renderSourceFrame(atTimelineFrame: lower) / fps == tick else { throw VideoError.review("此刻度未出现在实际输出帧中") }
+        return lower
+    }
     /// A scene recording includes every visible tick. Events after the last visible tick
     /// must be moved or the scene extended; they are never silently dropped from a recording.
     public static func record(scene: Scene, fps: Int = 30) throws -> RuleTrace {

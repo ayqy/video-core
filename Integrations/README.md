@@ -6,7 +6,7 @@
 
 | 生态 | 本地宿主路由 | 安装目标（用户选定项目内） | 实测边界 |
 |---|---|---|---|
-| ChatGPT/Codex | Codex shell；聊天界面另需认证连接器 | `.agents/skills/video`或宿主已配置技能目录 | Codex 0.159.2已发现同源Skill并实际执行普通内容项目链；第一次制作会话到控制器硬截止，第二次独立恢复会话65.994秒正常exit0/turn.completed，五命令成功，备份四产物与版本逐哈希相同；不冒称单次完整成功或五生态通过 |
+| ChatGPT/Codex | Codex原生工具宿主；聊天界面另需认证连接器 | `.agents/skills/video`或宿主已配置技能目录 | 历史制作/恢复成功只绑定原CLI；较新CLI的两次会话均未实际调用工具。当前提供版本绑定的客户端动态工具桥，离线协议与前置许可规则已核；真实模型调用和完整用户链分别记录，不由历史结果推定 |
 | Claude | Claude Code shell；其他界面按实际运行面 | `.claude/skills/video` | 同源Skill安装通过；有界真实会话仅返回init后超时，没有模型响应或video工具调用证据；插件/市场审核未执行 |
 | Gemini | Gemini CLI shell | `.gemini/skills/video` | Gemini CLI 0.50.0离线发现video [Enabled]；0.50.0及隔离安装的官方0.65.0真实会话均被现有认证的IneligibleTierError拒绝，未执行video工具 |
 | Grok | Grok Build shell | `.grok/skills/video` | Grok Build 1.0.67离线发现video；真实有限会话返回Not signed in，未执行video工具 |
@@ -50,7 +50,17 @@ Claude的3-turn/0.10美元上限会话与缩减后的1-turn/0.01美元上限探�
 
 消费方通过`run_qwen(..., seconds=45)`给出父进程硬预算，最多300秒。到期只终止本次创建的进程组，不依赖原生`max-wall-time`及时结束；同时保留30工具调用、36轮的原生有限上限。函数只返回内存事件、许可决定和安全状态，不保存原始流。`result/success`不是业务验收：还需逐项核验CLI结构化`ok/error`、实际工程版本、备份恢复和独立回读；超过轮数的会话保持其原退出状态，后续只读重开单独记账。
 
-调用CLI前使用现有`discover.py --binary <video>`取得40命令目录的实际摘要，避免将重复嵌套的完整schema塞进模型上下文。需要枚举值时以真实schema为准：例如非商业草稿的`purpose="非商业教学"`、`aspect="9:16"`、`kind="图文讲解"`，Swift case名称和近义词不是机器协议值。
+调用CLI前使用现有`discover.py --binary <video>`取得当前命令目录的实际摘要，避免将重复嵌套的完整schema塞进模型上下文。需要枚举值时以真实schema为准：例如非商业草稿的`purpose="非商业教学"`、`aspect="9:16"`、`kind="图文讲解"`，Swift case名称和近义词不是机器协议值。
+
+### Codex受控动态工具
+
+`codex_events.py`只核验有界事件流、完整命令生命周期和失败状态。`exec --json`的`command_execution`开始事件发生于进程启动之后，因此事件比对白名单只能用于事后审计，不能当作执行前许可。旧控制器未保留错误正文，原失败不能补写为认证失败；新摘要仅保留错误消息哈希、有限协议码及明确标注的模式推断，不输出原始错误或会话文本。
+
+`codex_broker.py`针对已核本机协议的Codex 0.159.2，在精确业务cwd内用官方`mcp list`只在内存提取实际名称与enabled状态，再为每个安全名称加本次调用专用的`enabled=false`覆盖，并二次读回名称集一致、全部禁用。空的`mcp_servers={}`会递归合并已有配置，不能清空MCP，因此不作为隔离依据。初始化后还须通过官方`mcpServerStatus/list`：名称集须与已禁用配置完全一致，工具、资源、资源模板为空，没有握手信息、工具错误、活动状态或分页。MCP启动/执行通知继续拒绝；未知安全字段、复杂名称和任何不一致都在`thread/start`之前停止，不改全局配置或认证。
+
+库存门通过后，`thread/start`和`turn/start`明确关闭宿主环境及工作区根，禁用原生命令、补丁和网络搜索；只注册客户端动态工具。所有原生执行/文件权限请求均拒绝。客户端的`Policy`只接受事先审定的`Command`完整argv、规范绝对cwd和文件SHA-256，每次执行前重新核对，不能由模型增加参数或改变目录。仅支持实际schema发现和明确的CLI `--dry-run`；不开放购买、提交制作、文件写入或任意Shell入口。
+
+构造发现命令时，`FilePin`必须同时绑定实际Python解释器、`discover.py`及实际CLI二进制；预检另绑定输入原件。调用者显式执行`run_codex(prompt, policy, seconds=90)`才会在MCP前置门通过后启动一个有限模型回合；导入和离线规则不启动宿主。`probe_mcp_isolation(policy)`只进行本地配置、初始化和库存检查，永不发送`thread/start`或`turn/start`，即使库存门通过也不将业务`passed`标为真。配置探针和工具子进程使用最小环境，不继承供应商凭据。每个预期动态调用都必须真实完成且CLI回执通过；零工具、未完成、拒绝、超时和清理失败均不能标成功。模型成功也不替代版本、产物及权限的独立用户链回读。
 
 许可及超时规则可运行`python3 -m unittest discover -s Integrations -p test_qwen_stream.py`；这些本地协议规则不冒充真实模型、账户或用户链证据。
 

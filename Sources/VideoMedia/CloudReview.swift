@@ -175,35 +175,53 @@ enum CloudReviewDeletionRules {
     public func accept(_ metadata:CKShare.Metadata) async {
         let id=metadata.share.recordID.recordName
         guard !acceptedInFlight.contains(id) else{return};acceptedInFlight.insert(id);defer{acceptedInFlight.remove(id)}
+        var epoch=invalidation,actor=accountID
         do {
             let container=try await connect()
+            epoch=invalidation;actor=accountID
+            try checkSession(epoch:epoch,actor:actor)
             guard metadata.containerIdentifier==container.containerIdentifier,let root=metadata.hierarchicalRootRecordID,metadata.share.recordID.recordName != CKRecordNameZoneWideShare,metadata.share.publicPermission == .none else {throw VideoError.permission("邀请不是此应用的指定版本私有共享，拒绝整库或公开共享")}
             let share:CKShare
             if metadata.participantStatus == .accepted || metadata.participantRole == .owner {share=metadata.share}
-            else {let results=try await container.accept([metadata]);guard let result=results[metadata] else{throw VideoError.unavailable("CloudKit 未确认接受结果")};share=try result.get()}
+            else {let results=try await container.accept([metadata]);try checkSession(epoch:epoch,actor:actor);guard let result=results[metadata] else{throw VideoError.unavailable("CloudKit 未确认接受结果")};share=try result.get()}
             let acceptedRoot=CKRecord.ID(recordName:root.recordName,zoneID:share.recordID.zoneID)
             var location=try location(root:acceptedRoot,share:share.recordID,container:container,owned:metadata.participantRole == .owner)
             if let existing=locations.first(where:{$0.id==location.id}) {location=existing}
             // Fetch server-authorized records before persisting the address or showing any preview.
             let session=try await read(location)
+            try checkSession(epoch:epoch,actor:actor)
             location.revisionID=session.envelope.scope.revision.id;location.revisionDigest=session.envelope.revisionDigest;location.payloadDigest=try Codec.digest(session.envelope)
             save(location);lastError=nil
-        } catch {lastError=message(error);invalidate()}
+        } catch {
+            // An old invitation must not close or overwrite a newly connected account.
+            guard epoch==invalidation,actor==accountID else{return}
+            lastError=message(error);invalidate()
+        }
     }
     public func accept(url:URL) async {
+        var epoch=invalidation,actor=accountID
         do {
             guard url.scheme?.lowercased()=="https",["icloud.com","www.icloud.com"].contains(url.host?.lowercased() ?? ""),url.user==nil,url.password==nil,url.path.hasPrefix("/share/") else {throw VideoError.invalid("仅接受 Apple iCloud 的私有共享邀请链接")}
-            let container=try await connect(),metadata=try await container.shareMetadata(for:url)
+            let container=try await connect()
+            epoch=invalidation;actor=accountID
+            let metadata=try await container.shareMetadata(for:url)
+            try checkSession(epoch:epoch,actor:actor)
             await accept(metadata)
-        } catch {lastError=message(error);invalidate()}
+        } catch {
+            guard epoch==invalidation,actor==accountID else{return}
+            lastError=message(error);invalidate()
+        }
     }
     public func read(_ location:CloudReviewLocation) async throws -> CloudReviewSession {
+        var epoch=invalidation,actor=accountID
         do {
             guard !deletingLocations.contains(location.id) else{throw VideoError.unavailable("此份云端审稿正在删除，已停止读取")}
-            let container=try await connect();try checkAddress(location,container:container)
-            let epoch=invalidation
+            let container=try await connect()
+            epoch=invalidation;actor=accountID
+            try checkSession(epoch:epoch,actor:actor);try checkAddress(location,container:container)
             let database=location.owned ? container.privateCloudDatabase:container.sharedCloudDatabase
             let records=try await fetch([location.recordID,location.shareID],database:database,desiredKeys:["payloadDigest","expiresAt"])
+            try checkSession(epoch:epoch,actor:actor)
             guard var root=records[location.recordID],let share=records[location.shareID] as? CKShare,root.recordType==rootType,root.parent==nil,root.share?.recordID==share.recordID,let payloadDigest=root["payloadDigest"] as? String else{throw VideoError.permission("指定共享版本缺失或结构不符，停止预览")}
             try authorize(root:root,share:share,owned:location.owned)
             let envelope:CloudReviewEnvelope,local:URL
@@ -211,6 +229,9 @@ enum CloudReviewDeletionRules {
                 envelope=cached.envelope;local=cached.previewURL
             } else {
                 let full=try await fetch([location.recordID],database:database)
+                // Account invalidation purges the old cache. Never recreate it
+                // from an in-flight download belonging to that old session.
+                try checkSession(epoch:epoch,actor:actor)
                 guard let complete=full[location.recordID],complete.recordChangeTag==root.recordChangeTag,let payloadAsset=complete["payload"] as? CKAsset,let payloadURL=payloadAsset.fileURL,let previewAsset=complete["preview"] as? CKAsset,let remoteURL=previewAsset.fileURL else{throw VideoError.permission("指定版本下载时发生变化或预览缺失")}
                 root=complete;try authorize(root:root,share:share,owned:location.owned)
                 let data=try Data(contentsOf:payloadURL,options:.mappedIfSafe)
@@ -227,22 +248,31 @@ enum CloudReviewDeletionRules {
             guard location.revisionID.map({$0==envelope.scope.revision.id}) ?? true,location.revisionDigest.map({$0==envelope.revisionDigest}) ?? true,location.payloadDigest.map({$0==payloadDigest}) ?? true else{throw VideoError.conflict("作者送审内容或授权已变化，旧邀请不能替换已接收版本；请要求新版本邀请")}
             guard envelope.id==root.recordID.recordName,let expiry=root["expiresAt"] as? Date,abs(expiry.timeIntervalSince(envelope.expiresAt))<1 else{throw VideoError.permission("送审版本标识或授权期限与云记录不符")}
             let annotations=try await comments(root:root,share:share,envelope:envelope,database:database,owned:location.owned)
+            try checkSession(epoch:epoch,actor:actor)
             let proposals=try await storyboardProposals(root:root,share:share,envelope:envelope,database:database,owned:location.owned)
+            try checkSession(epoch:epoch,actor:actor)
             let receipts=try await proposalReceipts(root:root,share:share,proposals:proposals,database:database,owned:location.owned)
+            try checkSession(epoch:epoch,actor:actor)
             // A participant could revoke access while downloading. Check again before issuing a short playback lease.
             let latest=try await fetch([location.recordID,location.shareID],database:database,desiredKeys:["payloadDigest","expiresAt"])
+            try checkSession(epoch:epoch,actor:actor)
             guard let checkedRoot=latest[location.recordID],let checkedShare=latest[location.shareID] as? CKShare,checkedRoot.recordChangeTag==root.recordChangeTag else{throw VideoError.permission("审稿读取期间版本或权限发生变化，请重试")}
             try authorize(root:checkedRoot,share:checkedShare,owned:location.owned)
             try CloudReviewRules.validate(envelope)
             try checkAddress(location,container:container)
-            guard epoch==invalidation else{throw VideoError.permission("读取期间账户、授权或缓存状态变化，停止预览并重新核验")}
+            try checkSession(epoch:epoch,actor:actor)
             try Task.checkCancellation()
             versions[location.id]=CachedVersion(changeTag:root.recordChangeTag,payloadDigest:payloadDigest,envelope:envelope,previewURL:local)
             lastError=nil
             let activeProposals=proposals.filter{proposal in activeWriter(authorID:proposal.authorID,share:checkedShare,owned:location.owned)}
             let activeIDs=Set(activeProposals.map(\.id))
             return CloudReviewSession(envelope:envelope,annotations:annotations,proposals:activeProposals,proposalReceipts:receipts.filter{activeIDs.contains($0.proposalID)},previewURL:local,canComment:checkedShare.currentUserParticipant?.permission == .readWrite || checkedShare.currentUserParticipant?.role == .owner,authorizedUntil:min(envelope.expiresAt,Date().addingTimeInterval(10)),share:checkedShare)
-        } catch {clearCache(location);throw VideoError.permission(message(error))}
+        } catch {
+            // A stale read may report its own failure, but cannot evict a cache
+            // belonging to a later account or a fresh authorization generation.
+            if epoch==invalidation,actor==accountID {lastError=message(error);clearCache(location)}
+            throw VideoError.permission(message(error))
+        }
     }
     public func append(location:CloudReviewLocation,sceneID:String?,frame:Int,element:String,text:String) async throws {
         let session=try await read(location)
@@ -491,6 +521,10 @@ enum CloudReviewDeletionRules {
         return output
     }
     private func canonical(_ id:CKRecord.ID,owned:Bool)->String {if owned && id.recordName==CKCurrentUserDefaultName,let accountID{return accountID.recordName};return id.recordName}
+    private func checkSession(epoch:Int,actor:CKRecord.ID?) throws {
+        guard let actor,epoch==invalidation,accountID==actor else{throw VideoError.permission("读取期间账户、授权或缓存状态变化，停止预览并重新核验")}
+        try Task.checkCancellation()
+    }
     private func opaque(_ id:CKRecord.ID)->String {Codec.hash(Data(id.recordName.utf8))}
     private func location(root:CKRecord.ID,share:CKRecord.ID,container:CKContainer,owned:Bool) throws -> CloudReviewLocation {
         guard let accountID,let identifier=container.containerIdentifier else{throw VideoError.permission("实际 iCloud 身份未核验")}
