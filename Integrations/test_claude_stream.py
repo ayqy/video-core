@@ -45,6 +45,13 @@ if mode=='wrong-directory':session['cwd']+='-other'
 if mode=='extra-tools':session['tools'].append('Read')
 if mode=='mcp':session['mcp_servers']=[{'name':'other','status':'connected'}]
 if mode=='bypass':session['permissionMode']='bypassPermissions'
+if mode=='no-betas':del session['betas']
+if mode=='betas-valid':session['betas']=['context-1m-2025-08-07']
+invalid_betas={'betas-null':None,'betas-string':'private-beta-not-to-export',
+ 'betas-object':{'private-beta-not-to-export':True},'betas-bool':True,'betas-number':1,
+ 'betas-nested':[[]],'betas-nonstring':[1],'betas-empty-string':[''],
+ 'betas-long-string':['x'*129],'betas-too-many':['beta']*33}
+if mode in invalid_betas:session['betas']=invalid_betas[mode]
 if mode=='session-extra':session['fast_mode_state']='private-value-not-to-export'
 if mode=='session-missing':del session['agents']
 if mode=='session-agents':session['agents']={'private-value-not-to-export':True}
@@ -179,6 +186,26 @@ class ClaudeStreamTests(unittest.TestCase):
                 else:
                     self.assertEqual(event['init']['shapes']['agents'],{'type':'null'})
                 self.assertNotIn('private-value-not-to-export',json.dumps(result))
+
+    def testOptionalBetasMissingOrFiniteStringsCompleteButMalformedMetadataCannot(self):
+        for mode in ('no-betas','betas-valid'):
+            with self.subTest(mode=mode):
+                result=self.run_peer(mode)
+                self.assertTrue(result['execution_complete'])
+                self.assertEqual(result['diagnostics']['refusal'],None)
+                self.assertEqual(result['decisions'],[{'tool_use_id':'tool-0','allowed':True}])
+        for mode in ('betas-null','betas-string','betas-object','betas-bool','betas-number',
+                     'betas-nested','betas-nonstring','betas-empty-string','betas-long-string','betas-too-many'):
+            with self.subTest(mode=mode):
+                result=self.run_peer(mode)
+                refusal=result['diagnostics']['refusal']
+                self.assertEqual(refusal['reason'],'unreviewed_native_session_configuration')
+                self.assertTrue(refusal['event']['init']['checks']['fields_exact'])
+                self.assertFalse(refusal['event']['init']['checks']['betas_valid'])
+                self.assertFalse(result['execution_complete'])
+                self.assertEqual(result['decisions'],[])
+                self.assertTrue(result['cleanup']['passed'])
+                self.assertNotIn('private-beta-not-to-export',json.dumps(result))
 
     def testUnknownEventSubtypeAndFieldExposeOnlyFiniteClassificationAndHashes(self):
         result=self.run_peer('hostile-event')

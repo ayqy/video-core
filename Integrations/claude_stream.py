@@ -49,6 +49,20 @@ def _bounded(value):
     return visit(value)
 
 
+def _optional_betas_valid(event):
+    # Claude Code 2.1.3 omits this JSON property when no SDK betas are set.
+    # Metadata cannot grant tools/permissions; present values still have bounds.
+    if "betas" not in event:
+        return True
+    values = event["betas"]
+    if not isinstance(values, list) or len(values) > 32:
+        return False
+    try:
+        return all(_text(value, 128) for value in values)
+    except UnicodeError:
+        return False
+
+
 # Diagnostic data is a separate bounded projection, never an exception/transcript
 # serializer. These names/codes are authored locally; unknown strings leave only
 # a digest. In particular, initialization identity/source values are not copied.
@@ -119,12 +133,13 @@ def _diagnostic_fields(value):
 def _diagnostic_init(event, native):
     required = {
         "type", "subtype", "cwd", "session_id", "tools", "mcp_servers", "model",
-        "permissionMode", "slash_commands", "betas", "claude_code_version", "output_style",
+        "permissionMode", "slash_commands", "claude_code_version", "output_style",
         "agents", "skills", "plugins", "uuid", "apiKeySource"}
     def strings_match(value, expected):
         return isinstance(value, list) and all(type(x) is str for x in value) and set(value) == expected
     checks = {
-        "fields_exact": set(event) == required, "first_session": native.session is None,
+        "fields_exact": set(event) - {"betas"} == required,
+        "betas_valid": _optional_betas_valid(event), "first_session": native.session is None,
         "cwd_match": event.get("cwd") == str(native.policy.directory),
         "session_id_valid": type(event.get("session_id")) is str and
             0 < len(event["session_id"].encode("utf-8", errors="surrogatepass")) <= 128 and
@@ -138,7 +153,7 @@ def _diagnostic_init(event, native):
                                                    if native.policy.allow_skill else []),
     }
     shapes = {}
-    for name in ("cwd", "session_id", "tools", "mcp_servers", "permissionMode", "agents", "skills", "plugins"):
+    for name in ("cwd", "session_id", "tools", "mcp_servers", "permissionMode", "agents", "skills", "plugins", "betas"):
         value = event.get(name)
         shapes[name] = {"type": _diagnostic_type(value)}
         if isinstance(value, (list, dict)):
@@ -249,10 +264,10 @@ class _NativePolicy:
             subtype = event.get("subtype")
             if subtype == "init":
                 required = {"type", "subtype", "cwd", "session_id", "tools", "mcp_servers", "model",
-                    "permissionMode", "slash_commands", "apiKeySource", "betas", "claude_code_version",
+                    "permissionMode", "slash_commands", "apiKeySource", "claude_code_version",
                     "output_style", "agents", "skills", "plugins", "uuid"}
                 expected_tools = {"Bash"} | ({"Skill"} if self.policy.allow_skill else set())
-                if (set(event) != required or self.session is not None or
+                if (set(event) - {"betas"} != required or not _optional_betas_valid(event) or self.session is not None or
                         event["cwd"] != str(self.policy.directory) or not _text(event["session_id"], 128) or
                         not isinstance(event["tools"], list) or set(event["tools"]) != expected_tools or
                         event["mcp_servers"] != [] or event["permissionMode"] != "default" or

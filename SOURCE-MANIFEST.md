@@ -2,10 +2,10 @@
 
 VideoFree source export · package_free.py · version 1
 
-生成时间：2026-10-24 09:32:44 北京时间
+生成时间：2026-10-24 09:41:40 北京时间
 
-- 源码与必要元数据：178个文件；2221202字节（不含本清单）。
-- 整体内容指纹：`d60b92dfb7095d5ce620162e0e46b5e81b10ea2e836f9b99bdc5b8e2db4347c3`。
+- 源码与必要元数据：178个文件；2223560字节（不含本清单）。
+- 整体内容指纹：`bee78f78151d295c09ba981006bc8ef140c3c6f4462d6c9ba2054a6cf8191eef`。
 - 来源：受控原始工程中的逐文件白名单；Package.swift来自Distribution/Free/Package.swift模板，README由发行脚本生成。
 - 本包不含.git，不可作为新业务checkout；本清单生成过程不执行构建、设备验收、签名安装或公共上传，各阶段以独立证据为准。
 - 排除：App、VideoGame、VideoCartoon、Premium、高级实现运行时测试、私有仓库地址、凭据、客户数据、缓存、日志及媒体过程产物。
@@ -17,7 +17,7 @@ VideoFree source export · package_free.py · version 1
 | ca621fbfd699ba7c4da47e21719bccb60d69438840cf8051aa1db3584c437d11 | 22280 | Integrations/README.md |
 | be0a15cd8fcb9b33fe92f2898a9ee53aa20f9722b368abd19e0a7a5ef924bc42 | 18066 | Integrations/check_install.py |
 | 78de5093a0969aa261d580b270f7ce5ae9c25d8de493afbd9f993bbc2d41219a | 4076 | Integrations/check_package.py |
-| 96a03c5665941acad4142aba8ba4ea1569484de9586caf382c0292a0c0e810b9 | 31155 | Integrations/claude_stream.py |
+| 96d91e78df74f1823568785cf2a98969386b6535e64d0401dfa6a7f54272761c | 31720 | Integrations/claude_stream.py |
 | b6fe5ad68017449028201df317621a6c2b8c5d51c3a05054a2f328cbd4d2cdf4 | 45189 | Integrations/codex_broker.py |
 | 7ecc56e44b3df5afd221e617549ae8f3f9a1d9847b72ac572fa2f2c0d2ae5ca2 | 12512 | Integrations/codex_events.py |
 | 4f85610d4869c90544fd51f8cdbcf1355bc5f01d16dd6e363d2952623cd9cf70 | 35650 | Integrations/codex_production.py |
@@ -30,7 +30,7 @@ VideoFree source export · package_free.py · version 1
 | 9efa96b4155e0201e65c85913250aa14f69d7cef9f7657c379e7ddc11b84fddd | 4013 | Integrations/skills/video/SKILL.md |
 | 80f697b67421db6f559e8ba99e92a01734018dca974979cee5f169e0f6f871e4 | 308 | Integrations/skills/video/agents/openai.yaml |
 | af117d681ee814036da2a294494d020b16173b46ff38c884a68c5ce89da9775e | 3274 | Integrations/skills/video/references/protocol.md |
-| 1c352169a850f8b2c4bdf94dfddce29452e979601d3fc6f7f4f9bfc190b4d444 | 24529 | Integrations/test_claude_stream.py |
+| 49b801aeb2feea55a7a3ac9642cce1f923fa48ce6e17e2546c75f3cbd21c4b46 | 26322 | Integrations/test_claude_stream.py |
 | f7a91aff7b83517aa151115f97188a286b55d66ddafb445046af5642e3127c3a | 48877 | Integrations/test_codex_broker.py |
 | 863aeaab77ca998dd2f928a8e0feeac9cf21b6aaf61bd5dd25bea1f9decfa771 | 9771 | Integrations/test_codex_events.py |
 | 16943ac9bffed6b9b6479f8c3331cded57455612b3167d90878eee3a4abf8484 | 24254 | Integrations/test_codex_production.py |
