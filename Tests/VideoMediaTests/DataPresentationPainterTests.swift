@@ -1,5 +1,6 @@
 import XCTest
 import CoreGraphics
+import CoreText
 import VideoCore
 @testable import VideoMedia
 
@@ -34,6 +35,104 @@ final class DataPresentationPainterTests: XCTestCase {
         let directory=URL(fileURLWithPath:path,isDirectory:true)
         try FileManager.default.createDirectory(at:directory,withIntermediateDirectories:true)
         try ScenePainter.png(image).write(to:directory.appendingPathComponent(name))
+    }
+    func paperRevision(code: Bool = false, paper: PaperPresentation = .init()) -> Revision {
+        var result=revision(code:code)
+        result.scenes[0].paperPresentation=paper
+        result.scenes[0].title=""
+        result.scenes[0].body=""
+        result.cta=""
+        result.scenes[0].layers?[0].y=343.0/720.0
+        result.scenes[0].layers?[0].height=342.0/720.0
+        return result
+    }
+    func pixel(_ image:CGImage,x:CGFloat,y:CGFloat) throws -> [UInt8] {
+        let crop=try XCTUnwrap(image.cropping(to:CGRect(x:x,y:CGFloat(image.height)-y-1,width:1,height:1)))
+        let context=try XCTUnwrap(CGContext(data:nil,width:1,height:1,bitsPerComponent:8,bytesPerRow:4,space:CGColorSpace(name:CGColorSpace.sRGB)!,bitmapInfo:CGImageAlphaInfo.premultipliedLast.rawValue))
+        context.draw(crop,in:CGRect(x:0,y:0,width:1,height:1))
+        let bytes=try XCTUnwrap(context.data).assumingMemoryBound(to:UInt8.self)
+        return Array(UnsafeBufferPointer(start:bytes,count:3))
+    }
+    func referencePixel(_ hex:String,overlay:String?=nil,alpha:CGFloat=1)throws->[UInt8] {
+        // Hex-authored CGColor uses Device RGB. Let CoreGraphics perform its
+        // actual conversion/blending into the painter's sRGB output space;
+        // the numeric source components are not output sRGB byte values.
+        let context=try XCTUnwrap(CGContext(data:nil,width:1,height:1,bitsPerComponent:8,bytesPerRow:4,space:CGColorSpace(name:CGColorSpace.sRGB)!,bitmapInfo:CGImageAlphaInfo.premultipliedLast.rawValue))
+        func sourceColor(_ value:String,opacity:CGFloat)->CGColor {
+            let rgb=UInt32(value,radix:16)!
+            return CGColor(red:CGFloat((rgb>>16)&255)/255,green:CGFloat((rgb>>8)&255)/255,blue:CGFloat(rgb&255)/255,alpha:opacity)
+        }
+        let rect=CGRect(x:0,y:0,width:1,height:1)
+        context.setFillColor(sourceColor(hex,opacity:1));context.fill(rect)
+        if let overlay {context.setFillColor(sourceColor(overlay,opacity:alpha));context.fill(rect)}
+        let bytes=try XCTUnwrap(context.data).assumingMemoryBound(to:UInt8.self)
+        return Array(UnsafeBufferPointer(start:bytes,count:3))
+    }
+    func assertPixel(_ actual:[UInt8],equals expected:[UInt8],_ message:String="",file:StaticString=#filePath,line:UInt=#line) {
+        XCTAssertEqual(actual.count,3,file:file,line:line)
+        XCTAssertEqual(expected.count,3,file:file,line:line)
+        for (a,b) in zip(actual,expected) {XCTAssertLessThanOrEqual(abs(Int(a)-Int(b)),1,message,file:file,line:line)}
+    }
+    func testPaperChartUsesAuthoredPaperInkAndSeriesColors() throws {
+        let standard=try ScenePainter.image(revision:paperRevision(),frame:0)
+        assertPixel(try pixel(standard,x:82,y:208),equals:try referencePixel("FFF9EF"))
+        let paper=PaperPresentation(paperColor:"EAF2DD",inkColor:"371B45")
+        let custom=paperRevision(paper:paper)
+        let first=try ScenePainter.image(revision:custom,frame:0)
+        let next=try ScenePainter.image(revision:custom,frame:60)
+        assertPixel(try pixel(first,x:82,y:208),equals:try referencePixel("EAF2DD"))
+        // These are inside the first authored bar, clear of numeric labels.
+        assertPixel(try pixel(first,x:300,y:365),equals:try referencePixel("38BDF8"))
+        assertPixel(try pixel(next,x:300,y:365),equals:try referencePixel("EAF2DD"),"数值下降必须改变实际柱端，不能只更换文字或纸面颜色")
+        let rgba=try XCTUnwrap(first.dataProvider?.data)
+        let bytes=CFDataGetBytePtr(rgba)!
+        let ink=try referencePixel("371B45")
+        var solidInk=0
+        for row in 0..<first.height {for column in 0..<first.width {
+            let i=row*first.bytesPerRow+column*4
+            if zip([bytes[i],bytes[i+1],bytes[i+2]],ink).allSatisfy({abs(Int($0.0)-Int($0.1))<=1}) {solidInk+=1}
+        }}
+        XCTAssertGreaterThan(solidInk,100,"图表标题、刻度与标签应使用作者指定的深墨色")
+    }
+    func testPaperCodeHighlightFollowsAuthoredTimingWithReadableInkWash() throws {
+        let revision=paperRevision(code:true)
+        let first=try ScenePainter.image(revision:revision,frame:0)
+        let next=try ScenePainter.image(revision:revision,frame:60)
+        // Right-hand whitespace within line one and line three. The highlight
+        // is a subdued ink wash; actual text remains fully opaque ink.
+        let highlighted=try pixel(first,x:1188,y:450)
+        assertPixel(try pixel(next,x:1188,y:450),equals:try referencePixel("FFF9EF"))
+        assertPixel(try pixel(first,x:1188,y:270),equals:try referencePixel("FFF9EF"))
+        assertPixel(try pixel(next,x:1188,y:270),equals:highlighted)
+        assertPixel(highlighted,equals:try referencePixel("FFF9EF",overlay:"243638",alpha:0.12))
+    }
+    func testOrdinaryDataAndCodeKeepLegacyDarkPanels() throws {
+        let chart=try ScenePainter.image(revision:revision(),frame:0)
+        assertPixel(try pixel(chart,x:82,y:296),equals:try referencePixel("111C31"))
+        let code=try ScenePainter.image(revision:revision(code:true),frame:0)
+        assertPixel(try pixel(code,x:82,y:296),equals:try referencePixel("111C31"))
+        assertPixel(try pixel(code,x:1188,y:500),equals:try referencePixel("244A61"))
+    }
+    func testCacheInvalidatesOldPaperDataWithoutDiscardingOtherSceneCaches() throws {
+        // Reconstruct the prior production key from this empty-source fixture.
+        // This checks the actual fingerprint path, not just a version helper.
+        func previousKey(_ revision:Revision)throws->String {
+            var scene=revision.scenes[0]
+            scene.voice=nil;scene.speechPlan=nil;scene.voiceGain=1;scene.sourceGain=0;scene.musicGain=0;scene.muted=false
+            scene.evidenceIDs=[];scene.courseMappingIDs=nil;scene.narrativeSources=nil;scene.locked=false
+            scene.narration=scene.narration.isEmpty ? "":"speech"
+            let font=CTFontCreateWithName("PingFangSC-Medium" as CFString,32,nil)
+            let table=CTFontCopyTable(font,0x68656164,[]) as Data? ?? Data()
+            return try Codec.digest(VisualClipCache.Key(version:"native-scene-cache-10"+revision.toolchain,os:ProcessInfo.processInfo.operatingSystemVersionString,font:(CTFontCopyPostScriptName(font) as String)+Codec.hash(table),scene:scene,purpose:revision.purpose,aspect:revision.aspect,fps:revision.fps,index:0,sceneCount:1,startFrame:0,price:nil,cta:revision.cta,sourceHash:nil,layerHashes:[:],moduleIdentity:nil,artworkIdentity:nil))
+        }
+        for code in [false,true] {
+            let ordinary=revision(code:code)
+            XCTAssertEqual(try previousKey(ordinary),try VisualClipCache.fingerprint(revision:ordinary,index:0,database:Database(),modules:nil))
+            let paper=paperRevision(code:code)
+            XCTAssertNotEqual(try previousKey(paper),try VisualClipCache.fingerprint(revision:paper,index:0,database:Database(),modules:nil),"旧纸面暗板缓存不能被新绘制语义复用")
+        }
+        var drawing=paperRevision();drawing.scenes[0].layers=[]
+        XCTAssertEqual(try previousKey(drawing),try VisualClipCache.fingerprint(revision:drawing,index:0,database:Database(),modules:nil))
     }
     func testActualValuesMoveBarEndsWithoutChangingWidth() throws {
         let rect=CGRect(x:80,y:294,width:1120,height:316)
@@ -96,12 +195,14 @@ final class DataPresentationPainterTests: XCTestCase {
         print("完整制作视觉时轴：5场景/1604帧逐帧绘制通过；声音与人工审核不在此规则内")
     }
     func testUnreadableOrUnsafeDataRegionFailsInsteadOfClippingText() throws {
-        var r=revision();r.scenes[0].layers?[0].width=0.1
-        XCTAssertThrowsError(try ScenePainter.image(revision:r,frame:0))
-        r=revision();r.scenes[0].layers?[0].x=0
-        XCTAssertThrowsError(try ScenePainter.image(revision:r,frame:0))
-        r=revision(code:true);r.scenes[0].layers?[0].height=0.06
-        XCTAssertThrowsError(try ScenePainter.image(revision:r,frame:0))
+        for paper in [Optional<PaperPresentation>.none,.some(.init())] {
+            var r=revision();r.scenes[0].paperPresentation=paper;r.scenes[0].layers?[0].width=0.1
+            XCTAssertThrowsError(try ScenePainter.image(revision:r,frame:0))
+            r=revision();r.scenes[0].paperPresentation=paper;r.scenes[0].layers?[0].x=0
+            XCTAssertThrowsError(try ScenePainter.image(revision:r,frame:0))
+            r=revision(code:true);r.scenes[0].paperPresentation=paper;r.scenes[0].layers?[0].height=0.06
+            XCTAssertThrowsError(try ScenePainter.image(revision:r,frame:0))
+        }
     }
     func testDisplayedCodeIsNotExecutedAndPublicSamplingCannotTrap() throws {
         let directory=URL(fileURLWithPath:FileManager.default.currentDirectoryPath,isDirectory:true).appendingPathComponent(".data-display-"+Codec.id(),isDirectory:true)
@@ -114,6 +215,9 @@ final class DataPresentationPainterTests: XCTestCase {
         r.scenes[0].title="代码"
         r.scenes[0].layers?[0].dataPresentation?.code?.lines=["rm -f \"\(directory.lastPathComponent)/owned.txt\""]
         r.scenes[0].layers?[0].dataPresentation?.code?.highlights=[]
+        _=try ScenePainter.image(revision:r,frame:0)
+        XCTAssertEqual(try Data(contentsOf:sentinel),original)
+        r.scenes[0].paperPresentation = .init()
         _=try ScenePainter.image(revision:r,frame:0)
         XCTAssertEqual(try Data(contentsOf:sentinel),original)
         for frame in [Int.min,-1,Int.max] {

@@ -30,7 +30,7 @@ enum LayerPainter {
                 let setter=CTFramesetterCreateWithAttributedString(string),frame=CTFramesetterCreateFrame(setter,CFRange(location:0,length:0),CGPath(rect:rect,transform:nil),nil)
                 guard (CTFontCopyPostScriptName(font) as String)==fontName,TextGlyphInspection.hasSupportedGlyphs(frame),CTFrameGetVisibleStringRange(frame).length==string.length else { throw VideoError.review("文字元素超出区域，请扩大元素或拆分文案") };c.textMatrix = .identity;CTFrameDraw(frame,c)
             case .chart,.code:
-                try DataPresentationPainter.draw(layer:layer,sourceFrame:frame,rect:rect,context:c,fontName:fontName)
+                try DataPresentationPainter.draw(layer:layer,sourceFrame:frame,rect:rect,context:c,fontName:fontName,paperPresentation:scene.paperPresentation)
             }
         }
     }
