@@ -47,12 +47,15 @@ public struct SpeechPlan: Codable, Equatable, Sendable {
               dictionary.allSatisfy({ !$0.term.isEmpty && !$0.pronunciation.isEmpty && $0.term.utf16.count <= 100 && $0.pronunciation.utf16.count <= 200 }) else {
             throw VideoError.invalid("术语词典包含重复、空项或过长内容")
         }
+        let sourceCount = source.utf16.count, normalizedCount = normalized.utf16.count
         var previousSource = 0, previousNormalized = 0
         for m in mappings {
-            guard m.sourceStart >= previousSource, m.sourceLength > 0,
-                  m.sourceStart + m.sourceLength <= source.utf16.count,
-                  m.normalizedStart >= previousNormalized, m.normalizedLength > 0,
-                  m.normalizedStart + m.normalizedLength <= normalized.utf16.count else {
+            // Offsets are untrusted Codable Int values. Bound each start before
+            // subtracting, so even Int.max lengths are rejected without addition.
+            guard m.sourceStart >= previousSource, m.sourceStart <= sourceCount,
+                  m.sourceLength > 0, m.sourceLength <= sourceCount - m.sourceStart,
+                  m.normalizedStart >= previousNormalized, m.normalizedStart <= normalizedCount,
+                  m.normalizedLength > 0, m.normalizedLength <= normalizedCount - m.normalizedStart else {
                 throw VideoError.invalid("TN映射越界或顺序错误，请重新规范化")
             }
             previousSource = m.sourceStart + m.sourceLength

@@ -2,6 +2,49 @@ import XCTest
 @testable import VideoCore
 
 final class SpeechTests: XCTestCase {
+    func testUntrustedMappingIntegerExtremesAreRejectedAsInvalidInput() throws {
+        let invalid = [
+            SpeechMapping(sourceStart: .max, sourceLength: 1, normalizedStart: 0, normalizedLength: 1, kind: "manual"),
+            SpeechMapping(sourceStart: 1, sourceLength: .max, normalizedStart: 0, normalizedLength: 1, kind: "manual"),
+            SpeechMapping(sourceStart: 0, sourceLength: 1, normalizedStart: .max, normalizedLength: 1, kind: "manual"),
+            SpeechMapping(sourceStart: 0, sourceLength: 1, normalizedStart: 1, normalizedLength: .max, kind: "manual"),
+            SpeechMapping(sourceStart: .min, sourceLength: 1, normalizedStart: 0, normalizedLength: 1, kind: "manual"),
+            SpeechMapping(sourceStart: 0, sourceLength: .min, normalizedStart: 0, normalizedLength: 1, kind: "manual"),
+            SpeechMapping(sourceStart: 0, sourceLength: 1, normalizedStart: .min, normalizedLength: 1, kind: "manual"),
+            SpeechMapping(sourceStart: 0, sourceLength: 1, normalizedStart: 0, normalizedLength: .min, kind: "manual")]
+        for mapping in invalid {
+            // Exercise the same Codable integer domain as an untrusted plan on
+            // the normal CLI, rather than narrowing it to small UI offsets.
+            let input = SpeechPlan(source: "甲乙", normalized: "甲乙", mappings: [mapping])
+            let decoded = try Codec.decoder().decode(SpeechPlan.self, from: Codec.data(input))
+            XCTAssertThrowsError(try decoded.validate()) { error in
+                XCTAssertEqual((error as? VideoError)?.exitCode, 2, "极端映射须正常拒绝，不能溢出终止进程")
+            }
+        }
+    }
+    func testMappingExactUTF16EndsRemainValidWhileOverrunAndReorderingFail() throws {
+        let exact = [SpeechMapping(sourceStart: 0, sourceLength: 1, normalizedStart: 0, normalizedLength: 1, kind: "literal"),
+                     SpeechMapping(sourceStart: 1, sourceLength: 2, normalizedStart: 1, normalizedLength: 2, kind: "literal"),
+                     SpeechMapping(sourceStart: 3, sourceLength: 1, normalizedStart: 3, normalizedLength: 1, kind: "literal")]
+        let input = SpeechPlan(source: "甲😀乙", normalized: "丁😀戊", mappings: exact)
+        XCTAssertEqual(input.source.utf16.count, 4); XCTAssertEqual(input.normalized.utf16.count, 4)
+        try input.validate()
+        var bad = input; bad.mappings[2].sourceLength = 2
+        XCTAssertThrowsError(try bad.validate())
+        bad = input; bad.mappings[2].normalizedLength = 2
+        XCTAssertThrowsError(try bad.validate())
+        bad = input; bad.mappings[2].sourceStart = 2
+        XCTAssertThrowsError(try bad.validate())
+        bad = input; bad.mappings[2].normalizedStart = 2
+        XCTAssertThrowsError(try bad.validate())
+        bad = input; bad.mappings[2].sourceLength = 0
+        XCTAssertThrowsError(try bad.validate())
+        bad = input; bad.mappings[2].normalizedLength = 0
+        XCTAssertThrowsError(try bad.validate())
+        let longest = SpeechPlan(source: String(repeating: "甲", count: 4000), normalized: String(repeating: "乙", count: 8000),
+            mappings: [SpeechMapping(sourceStart: 0, sourceLength: 4000, normalizedStart: 0, normalizedLength: 8000, kind: "manual_document")])
+        try longest.validate()
+    }
     func testChineseNormalizationPreservesSourceAndAuditableMapping() throws {
         let text = "2026-10-22，AI课￥99.50，增长12.5%，预算10001。"
         let plan = try ChineseSpeech.normalize(text, dictionary: [SpeechTerm("AI", "人工智能")])

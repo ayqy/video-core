@@ -13,6 +13,11 @@ public enum AgentPreview {
         func project()throws->Project { let p=try database.project(projectID ?? "");guard p.workspaceID==w.id else {throw VideoError.permission("项目不属于所选工作区")};return p }
         func job()throws->Job { guard let j=database.jobs.first(where:{$0.id==text("job_id") && $0.workspaceID==w.id})else{throw VideoError.notFound("任务不属于所选工作区")};return j }
         switch command {
+        case "speech synthesize","speech attach":
+            let request=try Codec.decoder().decode(SpeechProjectRequest.self,from:data)
+            _=try SpeechProjectRules.prepare(request,database:database,principal:principal)
+            if let id=request.assetID {guard let a=database.assets.first(where:{$0.id==id && $0.workspaceID==w.id}),let e=database.evidence.first(where:{$0.id==a.evidenceID && $0.workspaceID==w.id && $0.assetID==a.id}),e.usable(commercial:try project().current.purpose != .education),a.mediaType=="audio",(a.durationFrames ?? 0)>0 else {throw VideoError.permission("已导入的真实音轨或适用权利未就绪")}}
+            return .string("确认稿、精确版本、镜头锁定及写权限检查通过；未生成音频、写CAS或改工程。声音库存由本机入口另行核对，听审和声音权利仍待人工核对")
         case "baidu submit":
             guard let profile=database.providers.first(where:{$0.id==text("profile_id")}) else{throw VideoError.notFound("已有百度配置不存在")};var copy=database;_ = try BaiduVideoRules.prepare(database:&copy,workspaceID:w.id,projectID:text("project_id"),profile:profile,input:decode("baidu_input",BaiduVideoInput.self),quote:decode("quote",Quote.self),requestID:text("request_id"),principal:principal);try copy.validate();return .string("已核固定合同、上传同意、输入摘要、原任务回执与预算；未读取凭据或发起收费请求")
         case "baidu query","baidu collect":

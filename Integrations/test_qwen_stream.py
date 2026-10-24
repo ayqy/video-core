@@ -3,6 +3,9 @@ from pathlib import Path
 import hashlib
 import json
 import os
+import selectors
+import signal
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -52,11 +55,75 @@ class QwenStreamTests(unittest.TestCase):
         self.assertEqual(result["status"], "native_result")
         self.assertEqual(result["exit_code"], 0)
         self.assertEqual(result["decisions"], [{"tool_use_id": "call-one", "allowed": True}])
+        self.assertTrue(result["cleanup"]["passed"])
+        self.assertTrue(result["execution_complete"])
 
     def testFullCommandEqualityRejectsAdditionalArgumentAtNativeGate(self):
         result = consume(self.peer("deny"), "bounded input", self.policy, seconds=3)
         self.assertEqual(result["decisions"], [{"tool_use_id": "call-one", "allowed": False}])
         self.assertEqual(result["exit_code"], 0)
+        self.assertFalse(result["execution_complete"])
+
+    def testCleanupFailureNeverBecomesSuccessfulExecution(self):
+        failed = {"term": "requested", "kill": "permission_denied", "leader_reaped": True,
+                  "post_reap_group": "permission_denied", "passed": False}
+        with patch("qwen_stream._terminate_group", return_value=failed):
+            result = consume(self.peer("allow"), "bounded input", self.policy, seconds=3)
+        self.assertEqual(result["status"], "native_result")
+        self.assertEqual(result["exit_code"], 0)
+        self.assertFalse(result["cleanup"]["passed"])
+        self.assertFalse(result["execution_complete"])
+
+    def testCleanupUsesExistingOwnedGroupProofWithoutInventingAnotherPolicy(self):
+        from qwen_stream import _terminate_group
+        process = unittest.mock.Mock(pid=123)
+        expected = {"term": "requested", "kill": "permission_denied", "leader_reaped": True,
+                    "post_reap_group": "absent", "passed": True}
+        with patch("codex_broker._stop", return_value=expected) as stop:
+            self.assertEqual(_terminate_group(process), expected)
+        stop.assert_called_once_with(process)
+
+    def testExitedLeaderWithTermIgnoringDescendantDoesNotEscapeOwnedGroupCleanup(self):
+        child = self.root / "descendant.py"
+        ready = self.root / "ready"
+        child.write_text("import signal,time,pathlib\nsignal.signal(signal.SIGTERM,signal.SIG_IGN)\n"
+                         "pathlib.Path("+repr(str(ready))+").write_text('ready')\ntime.sleep(30)\n")
+        leader = self.root / "leader.py"
+        leader.write_text("import subprocess,sys,time,pathlib\nsubprocess.Popen([sys.executable,"
+                          +repr(str(child))+"])\nend=time.monotonic()+2\n"
+                          "while not pathlib.Path("+repr(str(ready))+").exists() and time.monotonic()<end:time.sleep(.01)\n")
+        captured = []
+        real_popen = subprocess.Popen
+
+        def owned(*args, **kwargs):
+            process = real_popen(*args, **kwargs)
+            captured.append((process, os.dup(process.stdout.fileno())))
+            process.wait(timeout=3)
+            self.assertTrue(ready.exists())
+            return process
+
+        try:
+            with patch("qwen_stream.subprocess.Popen", side_effect=owned):
+                result = consume([sys.executable, str(leader)], "no host init", self.policy, seconds=.5)
+            self.assertEqual(result["status"], "hard_deadline")
+            self.assertFalse(result["execution_complete"])
+            self.assertTrue(result["cleanup"]["passed"])
+            process, descriptor = captured[0]
+            self.assertEqual(process.returncode, 0)
+            watcher = selectors.DefaultSelector()
+            try:
+                watcher.register(descriptor, selectors.EVENT_READ)
+                self.assertTrue(watcher.select(2), "owned descendant still holds the pipe")
+                self.assertEqual(os.read(descriptor, 1), b"")
+            finally:
+                watcher.close()
+        finally:
+            for process, descriptor in captured:
+                os.close(descriptor)
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except (ProcessLookupError, PermissionError):
+                    pass
 
     def testMissingPermissionCapabilityRefusesToSendUserTask(self):
         with self.assertRaisesRegex(ValueError, "SDK许可通道"):
@@ -190,6 +257,16 @@ class PinnedQwenPolicyTests(unittest.TestCase):
                 self.assertEqual(result["exit_code"], 0)
                 self.assertTrue(result["policy_complete"])
                 self.assertEqual([d["allowed"] for d in result["decisions"]], [True, True])
+
+    def testCompletePinnedToolLifecycleStillRequiresActualGroupCleanup(self):
+        failed = {"term": "requested", "kill": "permission_denied", "leader_reaped": True,
+                  "post_reap_group": "permission_denied", "passed": False}
+        with patch("qwen_stream._terminate_group", return_value=failed):
+            result = consume(self.peer("ordered"), "test protocol only", self.policy(), seconds=3)
+        self.assertEqual(result["status"], "native_result")
+        self.assertEqual(result["exit_code"], 0)
+        self.assertFalse(result["policy_complete"])
+        self.assertFalse(result["execution_complete"])
 
     def testReverseRepeatedUnknownAndErrorResultsCannotReportPolicyComplete(self):
         for mode in ("reverse", "repeat", "unknown-result", "error", "empty"):

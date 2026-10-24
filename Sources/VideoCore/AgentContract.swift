@@ -61,6 +61,10 @@ public enum AgentContract {
         AgentCommand("projects list", required: ["workspace_id"]),
         AgentCommand("projects create",required:["workspace_id","name"],optional:["aspect","scenes"],writes:true,idempotency:"atomic_database_request_receipt"),
         AgentCommand("script create", required: ["workspace_id", "knowledge", "demonstration", "hook"], optional: ["product_id", "name", "purpose", "aspect", "kind", "evidence_ids"], writes: true, idempotency: "atomic_database_request_receipt"),
+        AgentCommand("speech voices", permission: .discovery),
+        AgentCommand("speech normalize", required:["text"],optional:["dictionary"],permission:.discovery),
+        AgentCommand("speech attach",required:["workspace_id","project_id","scene_id","base_revision","asset_id","speech_plan","request_id"],optional:["extend_scene","timeout_seconds"],permission:.projectWrite,writes:true,idempotency:"confirmed_imported_audio_atomic_revision_receipt"),
+        AgentCommand("speech synthesize",required:["workspace_id","project_id","scene_id","base_revision","speech_plan","request_id"],optional:["extend_scene","timeout_seconds"],permission:.projectWrite,writes:true,idempotency:"confirmed_input_atomic_revision_receipt_local_speech"),
         AgentCommand("edit apply", required: ["workspace_id", "project_id", "base_revision", "edits"], optional: ["text"], permission: .projectWrite, writes: true, idempotency: "atomic_database_request_receipt"),
         AgentCommand("review record", required: ["workspace_id", "project_id", "base_revision", "review"], permission: .projectReview, writes: true, idempotency: "atomic_database_request_receipt"),
         AgentCommand("render estimate", required: ["workspace_id", "project_id"], optional: ["estimate", "text"], permission: .projectRead),
@@ -92,8 +96,8 @@ public enum AgentContract {
         AgentCommand("cash record", required: ["workspace_id", "cash"], writes: true, idempotency: "atomic_database_request_receipt")
     ]
     private static let common = ["principal", "request_id"]
-    private static let objectFields: Set<String> = ["product", "evidence", "review", "quote", "budget", "publication", "sale", "deal", "expense", "cash", "baseline", "estimate", "billing_record", "baidu_input"]
-    private static let arrayFields: Set<String> = ["evidence_ids", "edits", "orders", "metrics", "job_ids", "scenes"]
+    private static let objectFields: Set<String> = ["speech_plan", "product", "evidence", "review", "quote", "budget", "publication", "sale", "deal", "expense", "cash", "baseline", "estimate", "billing_record", "baidu_input"]
+    private static let arrayFields: Set<String> = ["evidence_ids", "edits", "orders", "metrics", "job_ids", "scenes", "dictionary"]
     public static func describe(_ command: String) throws -> AgentCommand {
         guard let descriptor = commands.first(where: { $0.name == command }) else { throw VideoError.invalid("未知命令，请用schema发现受支持命令") }; return descriptor
     }
@@ -118,8 +122,8 @@ public enum AgentContract {
                 if key == "evidence_ids" || key == "job_ids" { guard values.allSatisfy({ $0.string != nil && !($0.string?.isEmpty ?? true) }) else { throw VideoError.invalid(key+"须为非空字符串数组") } }
                 else { guard values.allSatisfy({ $0.object != nil }) else { throw VideoError.invalid(key + "须为对象数组") } }
             } else if ["max_jobs","timeout_seconds"].contains(key) {
-                guard case .number(let n)=value,n==Decimal(NSDecimalNumber(decimal:n).intValue),(key=="max_jobs" ? Decimal(1)...Decimal(25):Decimal(5)...Decimal(3600)).contains(n) else{throw VideoError.invalid(key+"须为范围内整数")}
-            } else if ["resume_interrupted","query_remote"].contains(key) {
+                guard case .number(let n)=value,n==Decimal(NSDecimalNumber(decimal:n).intValue),(key=="max_jobs" ? Decimal(1)...Decimal(25):Decimal(5)...Decimal(command.hasPrefix("speech ") ? 900:3600)).contains(n) else{throw VideoError.invalid(key+"须为范围内整数")}
+            } else if ["resume_interrupted","query_remote","extend_scene"].contains(key) {
                 guard case .boolean = value else{throw VideoError.invalid(key+"须为布尔值")}
             } else {
                 guard let text = value.string, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw VideoError.invalid(key + "须为非空字符串") }
@@ -173,8 +177,8 @@ public enum AgentContract {
         for field in fields {
             var shape: [String: AgentValue]
             if let type=AgentSchemas.fieldTypes[field] {shape=AgentSchemas.shape(type).object ?? [:]}
-            else if ["max_jobs","timeout_seconds"].contains(field) {shape=["type":.string("integer"),"minimum":.number(field=="max_jobs" ? 1:5),"maximum":.number(field=="max_jobs" ? 25:3600),"default":.number(field=="max_jobs" ? 5:300)]}
-            else if ["resume_interrupted","query_remote"].contains(field) {shape=["type":.string("boolean"),"default":.boolean(false)]}
+            else if ["max_jobs","timeout_seconds"].contains(field) {shape=["type":.string("integer"),"minimum":.number(field=="max_jobs" ? 1:5),"maximum":.number(field=="max_jobs" ? 25:(command.hasPrefix("speech ") ? 900:3600)),"default":.number(field=="max_jobs" ? 5:(command.hasPrefix("speech ") ? 180:300))]}
+            else if ["resume_interrupted","query_remote","extend_scene"].contains(field) {shape=["type":.string("boolean"),"default":.boolean(false)]}
             else {shape=["type":.string("string"),"minLength":.number(1)]}
             if field == "purpose" { shape["enum"] = .array(Purpose.allCases.map { .string($0.rawValue) }) }
             if field == "aspect" { shape["enum"] = .array(Aspect.allCases.map { .string($0.rawValue) }) }

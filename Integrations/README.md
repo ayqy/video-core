@@ -50,6 +50,8 @@ Claude的3-turn/0.10美元上限会话与缩减后的1-turn/0.01美元上限探�
 
 `qwen_stream.py`提供有限的原生stream-json消费包装。运行依赖Python 3与PATH中的原生Qwen CLI，消费端直接启动Qwen。Qwen Code 0.17.0按第一条消息选择模式：直接发送用户消息会关闭SDK控制服务；工具需要询问时，消费端便收不到`can_use_tool`。包装先发送`control_request/initialize`，确认回执声明`can_handle_can_use_tool=true`后才发用户任务，并保持stdin至原生result。未确认许可能力时不执行任务。
 
+宿主完成还须核`execution_complete`和`cleanup.passed`；严格固定链另须`policy_complete`。清理复用本项目相同的owned进程组证明，保留TERM/KILL实际结果；leader退出不足以证明后代已结束。拒绝、超时、仍存活或无法证明消失的进程组均不能计成功。模型工具调用数、客户端原生CLI步骤数和写前预检次数分别报告，不能将一条固定生产脚本内的多步CLI说成多次模型工具调用。
+
 调用方使用`create_isolated_settings`在当前工作区内创建新的独立`QWEN_HOME`和运行目录；只传已有环境变量的名称，由原生Qwen消费凭据，不迁移全局设置。兼容的`ExactPolicy`仅核精确Shell成员、工作目录及显式允许的JSON文件，不提供命令顺序或文件身份保证。原生`Bash(pattern)`包含前缀匹配，不能当成完整命令相等；PreToolUse异常时可能放行，也不作为独立强制门禁。
 
 需要固定有限链时使用`PinnedPolicy(directory, commands=(...), pins=(FilePin(绝对路径, SHA256), ...))`，每个命令仅执行一次且须按顺序完成。调用者先固定审查过的解释器、二进制、脚本、Skill及输入原件，再将同一`strict_policy`传给`create_isolated_settings`；`run_qwen`核对实际工具和许可配置后才启动。严格模式不暴露文件写工具，只有显式`allow_skill=True`才允许video Skill，并逐次询问。原生工具开始、许可和完成事件由消费器本身核对，不能仅靠调用方额外callback补审；拒绝、未完成、文件变化或顺序不符不标许可链完成。
@@ -81,6 +83,14 @@ Codex 0.159.2 的模型目录 `tool_mode` 优先于功能开关。若所选模�
 构造发现命令时，`FilePin`必须同时绑定实际Python解释器、`discover.py`及实际CLI二进制；预检另绑定输入原件。调用者显式执行`run_codex(prompt, policy, seconds=90)`才会在MCP前置门通过后启动一个有限模型回合；导入和离线规则不启动宿主。`probe_mcp_isolation(policy)`只进行本地配置、初始化和库存检查，永不发送`thread/start`或`turn/start`，即使库存门通过也不将业务`passed`标为真。配置探针和工具子进程使用最小环境，不继承供应商凭据。每个预期动态调用都必须真实完成且CLI回执通过；零工具、未完成、拒绝、超时和清理失败均不能标成功。模型成功也不替代版本、产物及权限的独立用户链回读。
 
 许可及超时规则可运行`python3 -m unittest discover -s Integrations -p test_qwen_stream.py`；这些本地协议规则不冒充真实模型、账户或用户链证据。
+
+### Claude原生SDK许可交接
+
+`claude_stream.py`通过本机官方Claude CLI的stdio SDK初始化和`can_use_tool`消费相同的`PinnedPolicy`。仅接受审定的原生`Bash`输入，或显式本地插件的`Skill(video:video)`；允许回执返回原始`updatedInput`，不应用宿主建议的权限变更。工具ID、请求顺序、原生结果与同一session逐项绑定；未知事件、额外字段、后台执行、文件变更及清理无法证明均拒绝。初始化账户元数据与`apiKeySource`不输出，也不作为认证成功。
+
+正常入口`run_claude`不改变HOME或全局配置。解释器、官方CLI和本次配置须有文件pin，关闭用户/项目设置、MCP、Hook和会话持久化，只以`--plugin-dir`加载审定目录。带Skill时，目录只接受固定manifest与同源Skill文件，调用期持续检查完整布局及文件pin；不接受其他插件、Hook或MCP文件。初始化成功和本地规则通过不表示后端认证或模型业务已通过，真实调用必须另记证据。[官方stdio许可语义](https://github.com/anthropics/claude-agent-sdk-python/blob/main/src/claude_agent_sdk/_internal/query.py)、[显式本地插件](https://code.claude.com/docs/en/agent-sdk/plugins)。
+
+`test_claude_stream.py`使用本地协议peer核许可拒绝、输入/身份绑定、生命周期及配置变更；不联系模型或账户。
 
 ### Mac普通内容原生链的实际边界
 

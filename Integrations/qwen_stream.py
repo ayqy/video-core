@@ -14,7 +14,6 @@ import os
 from pathlib import Path
 import re
 import selectors
-import signal
 import stat
 import subprocess
 import time
@@ -271,20 +270,12 @@ def create_isolated_settings(directory: Path, home: Path, runtime: Path, *, mode
     (home / "settings.json").write_text(json.dumps(settings, ensure_ascii=False), encoding="utf-8")
 
 
-def _terminate_group(process: subprocess.Popen) -> None:
-    """Only the new process group owned by this invocation is ever signalled."""
-    try:
-        os.killpg(process.pid, signal.SIGTERM)
-    except ProcessLookupError:
-        pass
-    try:
-        process.wait(timeout=0.5)
-    except subprocess.TimeoutExpired:
-        try:
-            os.killpg(process.pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
-        process.wait(timeout=1)
+def _terminate_group(process: subprocess.Popen) -> dict:
+    """Reuse the same owned-group proof as the bounded native Codex consumer."""
+    # Import has no host/auth side effects. Leader exit alone never proves that
+    # the invocation's descendants exited; retain strict TERM/KILL/absence data.
+    from codex_broker import _stop
+    return _stop(process)
 
 
 def consume(arguments: list[str], prompt: str, policy: ExactPolicy | PinnedPolicy, *, seconds: float, on_event=None) -> dict:
@@ -309,6 +300,7 @@ def consume(arguments: list[str], prompt: str, policy: ExactPolicy | PinnedPolic
     initialized = False
     native_result = None
     status = "ended_without_result"
+    cleanup = None
 
     def send(value):
         process.stdin.write((json.dumps(value, ensure_ascii=False) + "\n").encode())
@@ -381,11 +373,13 @@ def consume(arguments: list[str], prompt: str, policy: ExactPolicy | PinnedPolic
     except _PolicyRefused:
         status = "policy_refused"
     finally:
-        _terminate_group(process)
-        selector.close()
-        for stream in (process.stdin, process.stdout, process.stderr):
-            if not stream.closed:
-                stream.close()
+        try:
+            cleanup = _terminate_group(process)
+        finally:
+            selector.close()
+            for stream in (process.stdin, process.stdout, process.stderr):
+                if not stream.closed:
+                    stream.close()
     if isinstance(policy, PinnedPolicy):
         try:
             policy._verify_pins()
@@ -394,9 +388,12 @@ def consume(arguments: list[str], prompt: str, policy: ExactPolicy | PinnedPolic
             status = "policy_refused"
     result = {"status": status, "exit_code": process.returncode, "seconds": round(time.monotonic() - started, 3),
             "initialized": initialized, "events": events, "decisions": decisions, "result": native_result,
-            "stderr_bytes": stderr_bytes, "stderr_sha256": stderr_digest.hexdigest()}
+            "stderr_bytes": stderr_bytes, "stderr_sha256": stderr_digest.hexdigest(), "cleanup": cleanup}
+    result["execution_complete"] = (status == "native_result" and initialized and process.returncode == 0 and
+        isinstance(native_result, dict) and native_result.get("subtype") == "success" and
+        native_result.get("is_error") in (None, False) and all(d["allowed"] for d in decisions) and cleanup["passed"])
     if isinstance(policy, PinnedPolicy):
-        result["policy_complete"] = policy.complete and native_result is not None and process.returncode == 0
+        result["policy_complete"] = policy.complete and result["execution_complete"]
     return result
 
 

@@ -4,7 +4,7 @@ import Foundation
 /// payloads and stored defaults (which JSONDecoder still requires). Domain rules
 /// and current permissions are evaluated separately; a schema never grants access.
 public enum AgentSchemas {
-    public static let fieldTypes:[String:String] = ["baidu_input":"BaiduVideoInput","product":"Product","evidence":"Evidence","review":"Review","quote":"Quote","budget":"BudgetPolicy","publication":"Publication","sale":"ToolSale","deal":"BrandDeal","expense":"Expense","cash":"CashEntry","baseline":"Baseline","estimate":"EstimateBreakdown","billing_record":"BillingRecord","orders":"[Order]","metrics":"[Metric]","edits":"[Edit]","scenes":"[Scene]","evidence_ids":"[s]","job_ids":"[s]"]
+    public static let fieldTypes:[String:String] = ["speech_plan":"SpeechPlan","dictionary":"[SpeechTerm]","baidu_input":"BaiduVideoInput","product":"Product","evidence":"Evidence","review":"Review","quote":"Quote","budget":"BudgetPolicy","publication":"Publication","sale":"ToolSale","deal":"BrandDeal","expense":"Expense","cash":"CashEntry","baseline":"Baseline","estimate":"EstimateBreakdown","billing_record":"BillingRecord","orders":"[Order]","metrics":"[Metric]","edits":"[Edit]","scenes":"[Scene]","evidence_ids":"[s]","job_ids":"[s]"]
     public static func shape(_ type:String)->AgentValue {
         if type.hasPrefix("["),type.hasSuffix("]") {return .object(["type":.string("array"),"items":shape(String(type.dropFirst().dropLast()))])}
         if type.hasPrefix("{"),type.hasSuffix("}") {return .object(["type":.string("object"),"additionalProperties":shape(String(type.dropFirst().dropLast()))])}

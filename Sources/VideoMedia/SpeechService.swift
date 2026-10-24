@@ -2,7 +2,7 @@ import Foundation
 import AVFoundation
 import VideoCore
 
-public struct SystemSpeechVoice: Identifiable, Equatable, Sendable {
+public struct SystemSpeechVoice: Codable, Identifiable, Equatable, Sendable {
     public var id: String; public var name: String; public var language: String; public var quality: String
     public init(id: String, name: String, language: String, quality: String) { self.id = id; self.name = name; self.language = language; self.quality = quality }
 }
@@ -101,17 +101,24 @@ private final class SpeechFileWriter: @unchecked Sendable {
         synthesizer?.stopSpeaking(at: .immediate)
         writer?.finish(.failure(CancellationError()))
     }
-    public func synthesize(plan: SpeechPlan, scene: Scene, repository: Repository, workspaceID: String) async throws -> SpeechProduction {
+    /// Inventory lookup only: no file, download, playback or synthesis.
+    public static func validateVoice(plan: SpeechPlan) throws -> SystemSpeechVoice {
         try plan.validate()
+        let voice=try selectedVoice(plan:plan)
+        guard let item=voices().first(where:{$0.id==voice.identifier}) else {throw VideoError.unavailable("所选本机中文声音不可用")}
+        return item
+    }
+    private static func selectedVoice(plan: SpeechPlan) throws -> AVSpeechSynthesisVoice {
+        guard let identifier=plan.voiceIdentifier, voices().contains(where:{$0.id==identifier}), let voice=AVSpeechSynthesisVoice(identifier:identifier),voice.identifier==identifier,!voice.voiceTraits.contains(.isPersonalVoice) else { throw VideoError.unavailable("所选声音不可用；请重新选择本机可用声音，或导入已授权配音。不会用其他语种静默替代。") }
+        guard voice.language.lowercased().hasPrefix("zh") else {throw VideoError.invalid("中文配音请选择中文系统声音")}
+        return voice
+    }
+    public func synthesize(plan: SpeechPlan, scene: Scene, repository: Repository, workspaceID: String, timeoutSeconds: Int = 900) async throws -> SpeechProduction {
+        try plan.validate()
+        guard (5...900).contains(timeoutSeconds) else {throw VideoError.invalid("配音超时须为5至900秒")}
         guard !generating else { throw VideoError.conflict("已有配音生成，请等待完成或取消") }
         guard plan.source == scene.narration, plan.confirmed else { throw VideoError.review("请核对并确认当前原文、规范稿与术语读法后生成") }
-        guard let identifier = plan.voiceIdentifier,
-              Self.voices().contains(where: { $0.id == identifier }),
-              let voice = AVSpeechSynthesisVoice(identifier: identifier), voice.identifier == identifier,
-              !voice.voiceTraits.contains(.isPersonalVoice) else {
-            throw VideoError.unavailable("所选声音不可用；请重新选择本机可用声音，或导入已授权配音。不会用其他语种静默替代。")
-        }
-        guard voice.language.lowercased().hasPrefix("zh") else { throw VideoError.invalid("中文配音请选择中文系统声音") }
+        let voice=try Self.selectedVoice(plan:plan)
         let cache = repository.root.appendingPathComponent("cache/speech", isDirectory: true)
         try FileManager.default.createDirectory(at: cache, withIntermediateDirectories: true)
         let output = cache.appendingPathComponent(Codec.id() + ".caf")
@@ -124,7 +131,7 @@ private final class SpeechFileWriter: @unchecked Sendable {
         let utterance = AVSpeechUtterance(string: plan.normalized); utterance.voice = voice; utterance.rate = Float(plan.rate)
         utterance.prefersAssistiveTechnologySettings = false
         let timeout = Task { @MainActor [weak self] in
-            do { try await Task.sleep(nanoseconds: UInt64(min(900, max(60, Double(plan.normalized.count) * 0.7 + 30))) * 1_000_000_000) }
+            do { try await Task.sleep(nanoseconds: UInt64(timeoutSeconds) * 1_000_000_000) }
             catch { return }
             self?.synthesizer?.stopSpeaking(at: .immediate)
             self?.writer?.finish(.failure(VideoError.unavailable("系统声音生成超时；原稿保留，请下载声音或导入已授权录音")))

@@ -1,4 +1,5 @@
 import Foundation
+import Dispatch
 import VideoCore
 import VideoMedia
 
@@ -22,7 +23,7 @@ private indirect enum MachineValue:Codable{
     func encode(to encoder:Encoder)throws{var c=encoder.singleValueContainer();switch self{case .string(let x):try c.encode(x);case .number(let x):try c.encode(x);case .boolean(let x):try c.encode(x);case .array(let x):try c.encode(x);case .object(let x):try c.encode(x);case .null:try c.encodeNil()}}
 }
 struct Input: Decodable {
-    var workspace_id: String?; var project_id: String?; var job_id: String?; var base_revision: String?; var name: String?; var principal: String?; var product: Product?; var product_id: String?; var knowledge: String?; var demonstration: String?; var hook: String?; var purpose: Purpose?; var aspect: Aspect?; var kind: SceneKind?; var evidence_ids: [String]?; var edits: [Edit]?; var review: Review?; var quote: Quote?; var budget: BudgetPolicy?; var request_id: String?; var text: String?; var path: String?; var orders: [Order]?; var metrics: [Metric]?; var batch_id: String?; var publication: Publication?; var evidence: Evidence?; var sale: ToolSale?; var deal: BrandDeal?; var expense: Expense?; var cash: CashEntry?; var baseline: Baseline?; var estimate: EstimateBreakdown?;var billing_record: BillingRecord?;var evidence_id:String?;var job_ids:[String]?;var max_jobs:Int?;var timeout_seconds:Int?;var resume_interrupted:Bool?;var query_remote:Bool?;var worker_id:String?;var profile_id:String?;var baidu_input:BaiduVideoInput?
+    var workspace_id: String?; var project_id: String?; var job_id: String?; var base_revision: String?; var name: String?; var principal: String?; var product: Product?; var product_id: String?; var knowledge: String?; var demonstration: String?; var hook: String?; var purpose: Purpose?; var aspect: Aspect?; var kind: SceneKind?; var evidence_ids: [String]?; var edits: [Edit]?; var review: Review?; var quote: Quote?; var budget: BudgetPolicy?; var request_id: String?; var text: String?; var path: String?; var orders: [Order]?; var metrics: [Metric]?; var batch_id: String?; var publication: Publication?; var evidence: Evidence?; var sale: ToolSale?; var deal: BrandDeal?; var expense: Expense?; var cash: CashEntry?; var baseline: Baseline?; var estimate: EstimateBreakdown?;var billing_record: BillingRecord?;var evidence_id:String?;var job_ids:[String]?;var max_jobs:Int?;var timeout_seconds:Int?;var resume_interrupted:Bool?;var query_remote:Bool?;var worker_id:String?;var profile_id:String?;var baidu_input:BaiduVideoInput?;var dictionary:[SpeechTerm]?
 }
 struct CommandSchema: Encodable {
     var schema_version = "1.0"
@@ -46,6 +47,8 @@ struct CommandSchema: Encodable {
             // AgentContract.validate above is the shared command authority. A second
             // allowlist can hide a shipped command while schema still advertises it.
             if command=="schema" { response.result=try json(AgentContract.catalog()) }
+            else if command=="speech voices" {response.result=try json(SpeechService.voices());response.cost.unknown="仅列出本机已有中文非个人声音，不下载声音，不代表商用许可"}
+            else if command=="speech normalize" {response.result=try json(ChineseSpeech.normalize(input.text ?? "",dictionary:input.dictionary ?? []));response.cost.unknown="只读规范草稿；须选择声音并确认原文、规范稿和术语读法后才能合成"}
             else if command=="capabilities" { response.result=try json(["core.project":"free/open; projects create without product; script create product_id optional; IR versions 1 legacy and 2 contentContext", "core.explain":"free/open","core.edit":"free/open","core.export":"free/open","game.simulate":"独立闭源video-advanced Host；需要实际代码/策略签名与相应权益","cartoon.animate":"独立闭源video-advanced Host；需要实际代码/策略签名与相应权益","mac.editor":"Mac桌面人工剪辑客户端；独立商店权益，预览倍速独立于成片速度"]) }
             else if command=="doctor" {
                 let snapshot:Database?
@@ -68,10 +71,23 @@ struct CommandSchema: Encodable {
                         try snapshot.validate()
                         response.result="完整备份需在实际执行时逐文件核对；本次未写文件"
                     }else{response.result=try json(AgentPreview.evaluate(command:command,data:inputData,database:snapshot,principal:input.principal ?? LocalWorkspaceIdentity.principal(workspaceID:input.workspace_id,in:snapshot.workspaces,creatingWorkspace:command=="workspaces create")))}
+                    if command=="speech synthesize" {let speechRequest=try Codec.decoder().decode(SpeechProjectRequest.self,from:inputData);_=try SpeechService.validateVoice(plan:speechRequest.plan)}
                     response.state="dry_run"
                 }
                 else {
                     let repo=try Repository(root:rootURL,readOnly:command=="jobs status"); let db=try repo.read(); let principal=input.principal ?? LocalWorkspaceIdentity.principal(workspaceID:input.workspace_id,in:db.workspaces,creatingWorkspace:command=="workspaces create")
+                    if command=="speech synthesize" || command=="speech attach" {
+                        let speechRequest=try Codec.decoder().decode(SpeechProjectRequest.self,from:inputData)
+                        let operation=Task { @MainActor in try await SpeechProjectProduction().perform(speechRequest,repository:repo,principal:principal) }
+                        let sources=[SIGINT,SIGTERM].map { number -> DispatchSourceSignal in
+                            signal(number,SIG_IGN)
+                            let source=DispatchSource.makeSignalSource(signal:number,queue:DispatchQueue.global())
+                            source.setEventHandler {operation.cancel()};source.resume();return source
+                        }
+                        defer {for source in sources {source.cancel()};signal(SIGINT,SIG_DFL);signal(SIGTERM,SIG_DFL)}
+                        let result=try await operation.value
+                        FileHandle.standardOutput.write(try Codec.data(result));FileHandle.standardOutput.write(Data("\n".utf8));return
+                    }
                     if command.hasPrefix("worker ") {let result=try await FiniteWorker.handle(command:command,data:inputData,repository:repo,principal:principal,requestID:request);FileHandle.standardOutput.write(try Codec.data(result));FileHandle.standardOutput.write(Data("\n".utf8));return}
                     if AgentMutationExecutor.commands.contains(command) {
                         let result=try repo.performAgentMutation(command:command,data:inputData,principal:principal,requestID:request)
@@ -122,7 +138,7 @@ struct CommandSchema: Encodable {
             }
             print(String(decoding:try Codec.data(response),as:UTF8.self))
         } catch {
-            let e=(error as? VideoError) ?? .invalid("操作失败，请检查输入格式、文件或本地权限；敏感内容未写入错误输出")
+            let e=(error as? VideoError) ?? (error is CancellationError ? .unavailable("配音已取消；未写入成功回执，已保存版本保留"): .invalid("操作失败，请检查输入格式、文件或本地权限；敏感内容未写入错误输出"))
             let response=Response(request_id:request,ok:false,state:e.code,error:.init(code:e.code,message:e.localizedDescription,retryable:e.exitCode==8,next_action:e.exitCode==8 ? "先查询已有任务或修复外部条件" : "更正输入或核对当前版本与权限后重试"))
             if let data=try? Codec.data(response) { print(String(decoding:data,as:UTF8.self)) }; exit(e.exitCode)
         }
