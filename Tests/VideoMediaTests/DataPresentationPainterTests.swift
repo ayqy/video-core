@@ -121,6 +121,34 @@ final class DataPresentationPainterTests: XCTestCase {
         }
     }
 
+    func testDataPanelGapDoesNotRepeatBodyButSeparateBodyStillChanges() throws {
+        var a=publicGoodsProductionRevision()
+        a.scenes[0].body=String(repeating:"甲",count:35)
+        var b=a
+        b.scenes[0].body=String(repeating:"乙",count:35)
+        let first=try ScenePainter.image(revision:a,frame:50)
+        let second=try ScenePainter.image(revision:b,frame:50)
+        let layout=ScenePainter.OverlayLayout(width:1280,height:720,showPrice:false,separateBody:true,knowledge:true)
+        func pixels(_ image:CGImage,_ canvasRect:CGRect)throws->Data {
+            let crop=try XCTUnwrap(image.cropping(to:CGRect(x:canvasRect.minX,y:CGFloat(image.height)-canvasRect.maxY,width:canvasRect.width,height:canvasRect.height)))
+            let context=try XCTUnwrap(CGContext(data:nil,width:crop.width,height:crop.height,bitsPerComponent:8,bytesPerRow:crop.width*4,space:CGColorSpace(name:CGColorSpace.sRGB)!,bitmapInfo:CGImageAlphaInfo.premultipliedLast.rawValue))
+            context.draw(crop,in:CGRect(x:0,y:0,width:crop.width,height:crop.height))
+            return Data(bytes:try XCTUnwrap(context.data),count:crop.width*crop.height*4)
+        }
+        // The real chart ends at x=640 and the code panel starts at x=660.
+        // The old placeholder body leaked between them near the stage's top.
+        let gap=CGRect(x:642,y:layout.visual.minY,width:16,height:layout.visual.height)
+        XCTAssertEqual(try pixels(first,gap),try pixels(second,gap),"数据面板中缝不能透出重复的旧占位正文")
+        XCTAssertNotEqual(try pixels(first,layout.mediaBody),try pixels(second,layout.mediaBody),"正文仍须在独立区域完整绘制，不能以删除正文掩盖问题")
+        if let path=ProcessInfo.processInfo.environment["VIDEO_DATA_GAP_FRAME_DIRECTORY"] {
+            let directory=URL(fileURLWithPath:path,isDirectory:true)
+            try FileManager.default.createDirectory(at:directory,withIntermediateDirectories:true)
+            let production=publicGoodsProductionRevision()
+            try ScenePainter.png(ScenePainter.image(revision:production,frame:50)).write(to:directory.appendingPathComponent("00-initial-resources.png"))
+            try ScenePainter.png(ScenePainter.image(revision:production,frame:838)).write(to:directory.appendingPathComponent("01-settled-payoff.png"))
+        }
+    }
+
     /// Visual fields copied from the actual five-scene normal CLI production,
     /// including all sentence captions and source-frame value/highlight times.
     /// Voice asset identifiers do not affect ScenePainter and are not embedded.

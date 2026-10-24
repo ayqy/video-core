@@ -76,7 +76,7 @@ public enum ScenePainter {
             guard let modules else { throw VideoError.unavailable("此镜头需要独立高级模块，请核对已安装模块与权益；免费图文、图片和录屏继续可用") }
             let moduleFrame = s.kind == .simulation ? try s.renderSimulationSourceFrame(atTimelineFrame:local) : mapped
             try modules.draw(scene:s,localFrame:moduleFrame,fps:revision.fps,rect:visual,context:c,resources:resources,invocation:invocation)
-        } else if media == nil {
+        } else if media == nil && !dataStage {
             c.setFillColor(color(s.color,alpha:0.14)); c.addPath(CGPath(roundedRect:visual,cornerWidth:28,cornerHeight:28,transform:nil)); c.fillPath()
             try checkedText(s.body,in:visual.insetBy(dx:28,dy:26),size:portrait ? 32:34,color:"E2E8F0",context:c,fontName:s.fontName ?? "PingFangSC-Medium")
         }
