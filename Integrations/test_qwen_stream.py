@@ -259,6 +259,137 @@ class PinnedQwenPolicyTests(unittest.TestCase):
                 self.assertEqual([d["allowed"] for d in result["decisions"]], [True, True])
                 self.assertIsNone(result["policy_rejection"])
 
+    def tail_peer(self, tail, *, final=None):
+        script = self.root / "tail-peer.py"
+        source = PINNED_PEER.replace("assert sys.stdin.readline()==''", tail)
+        if final is not None:
+            source = source.replace(
+                "print(json.dumps({'type':'result','subtype':'success','is_error':False}),flush=True)", final)
+        script.write_text(source)
+        return [sys.executable, "-B", str(script), "ordered", str(self.fixed)]
+
+    def assert_refused_stream_cleanup(self, result):
+        # A natural EOF can leave an unreaped Darwin leader for which both
+        # signals are denied. Preserve that conservative cleanup failure;
+        # refusal must still reap the leader and never become success.
+        self.assertTrue(result["cleanup"]["leader_reaped"])
+        for name in ("term", "kill"):
+            self.assertIn(result["cleanup"][name],
+                          ("requested", "group_absent", "permission_denied", "signal_failed"))
+        self.assertFalse(result["execution_complete"])
+        self.assertFalse(result["policy_complete"])
+
+    def testTruncatedJsonAtEofNeverCompletesAnOtherwiseFinishedChain(self):
+        result = consume(self.tail_peer("sys.stdout.write('{\"type\":');sys.stdout.flush()"),
+                         "local protocol only", self.policy(), seconds=3)
+        self.assertEqual(result["status"], "protocol_refused")
+        self.assertFalse(result["execution_complete"])
+        self.assertFalse(result["policy_complete"])
+        self.assertEqual(result["policy_rejection"]["reason"], "native_protocol_refused")
+        self.assert_refused_stream_cleanup(result)
+
+    def testSecondResultCannotReplaceTheFirstNativeResult(self):
+        first = "print(json.dumps({'type':'result','subtype':'success','is_error':False,'result':'first'}),flush=True)"
+        for subtype in ("success", "error_during_execution"):
+            with self.subTest(subtype=subtype):
+                tail = "print(json.dumps({'type':'result','subtype':"+repr(subtype)+",'result':'replacement'}),flush=True)"
+                result = consume(self.tail_peer(tail, final=first), "local only", self.policy(), seconds=3)
+                self.assertEqual(result["status"], "protocol_refused")
+                self.assertEqual(result["result"]["result"], "first")
+                self.assertFalse(result["execution_complete"])
+                self.assertFalse(result["policy_complete"])
+                self.assert_refused_stream_cleanup(result)
+
+    def testUnknownOrExecutableEventsAfterResultNeverReachAnotherPermission(self):
+        tails = [
+            {"type": "unexpected_native_event"},
+            {"type": "assistant", "message": {"role": "assistant", "content": [{
+                "type": "tool_use", "id": "late", "name": "run_shell_command",
+                "input": {"command": self.commands[0]}}]}},
+            {"type": "control_request", "request_id": "late", "request": {
+                "subtype": "can_use_tool", "tool_name": "run_shell_command", "tool_use_id": "late",
+                "input": {"command": self.commands[0]}}},
+            {"type": "system", "subtype": "init"},
+            {"type": "usage", "usage": {}, "request": {"subtype": "can_use_tool"}},
+            {"type": "system", "subtype": "summary", "parent_tool_use_id": "late", "data": {}},
+        ]
+        for event in tails:
+            with self.subTest(event=event):
+                result = consume(self.tail_peer("print("+repr(json.dumps(event))+",flush=True)"),
+                                 "local only", self.policy(), seconds=3)
+                self.assertEqual(result["status"], "protocol_refused")
+                self.assertFalse(result["execution_complete"])
+                self.assertFalse(result["policy_complete"])
+                self.assertEqual(len(result["decisions"]), 2)
+                self.assert_refused_stream_cleanup(result)
+
+    def testFinalUsageAndSystemSummariesAreInertAndDoNotReplaceResult(self):
+        first = "print(json.dumps({'type':'result','subtype':'success','is_error':False,'session_id':'session-one','usage':{'input_tokens':1}}),flush=True)"
+        tail = """for event in [
+ {'type':'usage','session_id':'session-one','usage':{'input_tokens':2,'output_tokens':3}},
+ {'type':'system','subtype':'summary','session_id':'session-one','parent_tool_use_id':None,'data':{'summary':'finished'}},
+ {'type':'system','subtype':'usage','session_id':'session-one','usage':{'output_tokens':3}},
+ {'type':'system','subtype':'session_end','session_id':'session-one','data':{'session_id':'session-one'}}]:
+ print(json.dumps(event),flush=True)
+"""
+        result = consume(self.tail_peer(tail, final=first), "local only", self.policy(), seconds=3)
+        self.assertTrue(result["execution_complete"])
+        self.assertTrue(result["policy_complete"])
+        self.assertEqual(result["result"]["usage"], {"input_tokens": 1})
+        self.assertEqual(len(result["decisions"]), 2)
+        self.assertEqual([e["type"] for e in result["events"][-4:]], ["usage", "system", "system", "system"])
+        self.assertTrue(result["cleanup"]["passed"])
+
+    def testTailAccountingFromAnotherSessionIsRefused(self):
+        first = "print(json.dumps({'type':'result','subtype':'success','is_error':False,'session_id':'one'}),flush=True)"
+        tail = "print(json.dumps({'type':'usage','session_id':'other','usage':{}}),flush=True)"
+        result = consume(self.tail_peer(tail, final=first), "local only", self.policy(), seconds=3)
+        self.assertEqual(result["status"], "protocol_refused")
+        self.assertFalse(result["execution_complete"])
+        self.assertFalse(result["policy_complete"])
+
+    def testCompleteResultWithoutFinalNewlineIsConsumedAtEof(self):
+        final = "sys.stdout.write(json.dumps({'type':'result','subtype':'success','is_error':False}));sys.stdout.flush()"
+        result = consume(self.tail_peer("pass", final=final), "local only", self.policy(), seconds=3)
+        self.assertEqual(result["status"], "native_result")
+        self.assertTrue(result["execution_complete"])
+        self.assertTrue(result["policy_complete"])
+        self.assertTrue(result["cleanup"]["passed"])
+
+    def testFragmentedFinalAccountingWithoutNewlineIsConsumedAtEof(self):
+        tail = """import time
+sys.stdout.write('{"type":"usage","usage":');sys.stdout.flush()
+time.sleep(.03)
+sys.stdout.write('{"output_tokens":1}}');sys.stdout.flush()
+"""
+        result = consume(self.tail_peer(tail), "local only", self.policy(), seconds=3)
+        self.assertTrue(result["execution_complete"])
+        self.assertTrue(result["policy_complete"])
+        self.assertEqual(result["events"][-1], {"type": "usage", "usage": {"output_tokens": 1}})
+
+    def testDuplicateKeysNonfiniteValuesAndNonobjectsRefuseAtTheSharedDecoder(self):
+        for raw in ('{"type":"usage","usage":{},"usage":{}}',
+                    '{"type":"usage","usage":{"output_tokens":NaN}}',
+                    '{"type":"usage","usage":{"output_tokens":Infinity}}', '[]'):
+            with self.subTest(raw=raw):
+                result = consume(self.tail_peer("sys.stdout.write("+repr(raw)+");sys.stdout.flush()"),
+                                 "local only", self.policy(), seconds=3)
+                self.assertEqual(result["status"], "protocol_refused")
+                self.assertFalse(result["execution_complete"])
+                self.assertFalse(result["policy_complete"])
+                self.assert_refused_stream_cleanup(result)
+
+    def testOversizedFrameAndTooManyEventsCannotFinishSuccessfully(self):
+        tails = ["sys.stdout.write('x'*(4*1024*1024+1));sys.stdout.flush()",
+                 "for _ in range(1001):print(json.dumps({'type':'usage','usage':{}}),flush=True)"]
+        for tail in tails:
+            with self.subTest(tail=tail):
+                result = consume(self.tail_peer(tail), "local only", self.policy(), seconds=3)
+                self.assertEqual(result["status"], "protocol_refused")
+                self.assertFalse(result["execution_complete"])
+                self.assertFalse(result["policy_complete"])
+                self.assert_refused_stream_cleanup(result)
+
     def testRejectedNativeObservationReturnsOnlyShapeAndExpectedCommandFingerprint(self):
         result = consume(self.peer("reverse"), "not retained in diagnostic", self.policy(), seconds=3)
         value = result["policy_rejection"]

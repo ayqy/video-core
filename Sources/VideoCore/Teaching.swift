@@ -145,6 +145,7 @@ public enum TeachingPlanner {
             return try composeKnowledge(input:input,plan:plan,product:product,assets:assets,evidence:evidence,template:t,style:style,series:series,vertical:vertical,now:now)
         }
         guard input.cartoonStoryboard==nil || input.grammar == .debate else { throw VideoError.invalid("角色表演计划只可用于明确的角色争论语法") }
+        try input.cartoonStoryboard?.validate(counterargument:input.counterargument,response:input.response)
         var content:[(NarrativeBeatRole,String,String)]=[(.hook,"本次要解决的问题",topic.hook),(.knowledge,"完整知识点",topic.knowledge)]
         func require(_ texts:String...)throws{guard texts.allSatisfy(nonblank) else{throw VideoError.invalid("请补齐"+input.grammar.rawValue+"所需真实输入")}}
         switch input.grammar{
@@ -173,6 +174,22 @@ public enum TeachingPlanner {
         let selectedEvidence=Set(topic.evidenceIDs+(vertical?.evidence.values.flatMap{$0} ?? []))
         // Split long inputs at Unicode character boundaries; do not drop source text or silently truncate it.
         for (role,title,text) in content{
+            if let plan=input.cartoonStoryboard,plan.version==2,let shots=plan.shots,role == .example || role == .claim {
+                let dialogueRole:CartoonTeachingRole=role == .example ? .question:.response
+                for shot in shots where shot.role == dialogueRole {
+                    var scene=Scene(kind:.cartoon,title:shot.title,body:shot.visualSummary,narration:shot.narration,durationFrames:shot.durationFrames)
+                    scene.classicArtwork=plan.artwork;scene.cartoonPerformance=shot.performance
+                    // There may be several speakers, or an ensemble beat without one.
+                    // The complete performance is authoritative; do not guess from cast order.
+                    scene.character=""
+                    scene.color=style.palette[scenes.count % style.palette.count];scene.fontName=style.fontName
+                    scene.evidenceIDs=Array(selectedEvidence.union(style.evidenceIDs).union(plan.artwork.evidenceIDs)).sorted()
+                    scene.narrativeSources=input.sources;scene.courseMappingIDs=topic.mappingIDs
+                    try scene.validate(assets:assets.filter{$0.workspaceID==workspace})
+                    scenes.append(scene);beats.append(NarrativeBeat(role:role,sceneID:scene.id,text:shot.narration,sourceIDs:input.sources.map(\.id),evidenceIDs:scene.evidenceIDs,characterID:nil))
+                }
+                continue
+            }
             let chunks=stride(from:0,to:text.count,by:160).map{start->String in
                 let a=text.index(text.startIndex,offsetBy:start),b=text.index(a,offsetBy:min(160,text.count-start));return String(text[a..<b])
             }

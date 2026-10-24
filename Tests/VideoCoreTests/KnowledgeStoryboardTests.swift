@@ -32,6 +32,25 @@ final class KnowledgeStoryboardTests:XCTestCase {
     private func compose(_ input:TeachingInput,_ assets:[Asset],_ proofs:[Evidence],_ template:NarrativeTemplate,_ style:StyleKit)throws->TeachingDocument {
         try TeachingPlanner.compose(input:input,assets:assets,evidence:proofs,template:template,style:style,now:now)
     }
+    private func explicitDebateFixture()throws->(TeachingInput,[Asset],[Evidence],NarrativeTemplate,StyleKit) {
+        var(input,assets,proofs,template,style)=try fixture()
+        let artwork=input.knowledgeStoryboard!.artwork
+        input.knowledgeStoryboard=nil;input.grammar = .debate
+        var question=try CartoonPerformance.conversation(durationFrames:90)
+        question.beats[0].speakerID="actor-b";question.beats[0].camera = .speaker
+        question.beats[0].cues[0].pose = .listen;question.beats[0].cues[1].pose = .object
+        question.beats[1].speakerID="actor-a";question.beats[1].camera = .ensemble
+        question.beats[1].cues[0].pose = .celebrate;question.beats[1].cues[1].pose = .listen
+        let shots=[
+            CartoonTeachingShot(id:"question-one",role:.question,title:"先提出疑问",visualSummary:"乙质疑，甲倾听后回应，两人走近。",narration:"不参与是不是一定更好？",durationFrames:90,performance:question),
+            CartoonTeachingShot(id:"question-two",role:.question,title:"再确认前提",visualSummary:"核对同一条已声明规则。",narration:"还要先说明适用的规则。",durationFrames:60,performance:try .conversation(durationFrames:60)),
+            CartoonTeachingShot(id:"answer",role:.response,title:"依据材料回应",visualSummary:"依次发言后一起观察结果。",narration:"先核对实际投入和结果，不能把本例推广到所有情形。",durationFrames:120,performance:try .conversation(durationFrames:120))]
+        input.counterargument=shots.filter{$0.role == .question}.map(\.narration).joined()
+        input.response=shots.filter{$0.role == .response}.map(\.narration).joined()
+        input.cartoonStoryboard=CartoonTeachingPlan(artwork:artwork,shots:shots)
+        template.beats=[TemplateBeat(role:.example,frames:30,motion:true),TemplateBeat(role:.claim,frames:45,motion:true)]
+        return(input,assets,proofs,template,style)
+    }
     func testSourceBackedKnowledgePlanCreatesActualWindowsAndOneRevisionWithoutGrantingReview()throws {
         let(i,a,e,t,s)=try fixture(),document=try compose(i,a,e,t,s)
         let shots=document.revision.scenes.filter{$0.kind == .simulation}
@@ -87,6 +106,72 @@ final class KnowledgeStoryboardTests:XCTestCase {
         XCTAssertEqual(scenes.map(\.narration),[i.counterargument,i.response]);XCTAssertTrue(scenes.allSatisfy{$0.classicArtwork==artwork && $0.voice==nil})
         for scene in scenes {try scene.cartoonPerformance!.validate(durationFrames:scene.durationFrames,sprites:artwork.sprites)}
         i.cartoonStoryboard!.actors[1].id="a";XCTAssertThrowsError(try compose(i,a,e,t,s))
+    }
+    func testExplicitDebateRetainsCompleteShotsAndHostSpeechInsteadOfApplyingTemplateTiming()throws {
+        let(input,assets,proofs,template,style)=try explicitDebateFixture()
+        let plan=try XCTUnwrap(input.cartoonStoryboard),shots=try XCTUnwrap(plan.shots)
+        let document=try compose(input,assets,proofs,template,style),scenes=document.revision.scenes.filter{$0.kind == .cartoon}
+        XCTAssertEqual(scenes.count,3)
+        XCTAssertEqual(scenes.map(\.cartoonPerformance),shots.map{Optional($0.performance)})
+        XCTAssertEqual(scenes.map(\.durationFrames),[90,60,120])
+        XCTAssertEqual(scenes.map(\.title),shots.map(\.title));XCTAssertEqual(scenes.map(\.body),shots.map(\.visualSummary))
+        XCTAssertEqual(scenes.map(\.narration),shots.map(\.narration))
+        XCTAssertEqual(scenes[0].cartoonPerformance?.beats.map(\.speakerID),["actor-b","actor-a",nil])
+        XCTAssertEqual(scenes[0].cartoonPerformance?.beats.map(\.camera),[.speaker,.ensemble,.ensemble])
+        XCTAssertTrue(scenes.allSatisfy{$0.character.isEmpty && $0.keyframes.isEmpty && $0.voice==nil && $0.captions.isEmpty})
+        XCTAssertTrue(scenes.allSatisfy{$0.classicArtwork==plan.artwork && $0.narrativeSources==input.sources})
+        XCTAssertEqual(document.beats.filter{beat in scenes.contains{$0.id==beat.sceneID}}.map(\.text),shots.map(\.narration))
+        XCTAssertFalse(document.confirmed);XCTAssertFalse(document.revision.review.complete)
+        for scene in scenes {try scene.validate(assets:assets)}
+    }
+    func testExplicitDebateRejectsDifferentSpeechMissingViewpointCastAndBrokenPerformance()throws {
+        let(original,assets,proofs,template,style)=try explicitDebateFixture()
+        var input=original;input.response+=" ";XCTAssertThrowsError(try compose(input,assets,proofs,template,style))
+        input=original;input.counterargument="新讲稿不能盲套旧表演";XCTAssertThrowsError(try compose(input,assets,proofs,template,style))
+        input=original;input.cartoonStoryboard!.shots!.removeLast();XCTAssertThrowsError(try compose(input,assets,proofs,template,style))
+        input=original;input.cartoonStoryboard!.shots![1].performance.actors[0].name="另一角色";XCTAssertThrowsError(try compose(input,assets,proofs,template,style))
+        input=original;input.cartoonStoryboard!.shots![0].durationFrames=91;XCTAssertThrowsError(try compose(input,assets,proofs,template,style))
+        input=original;input.cartoonStoryboard!.shots![0].performance.beats[1].startFrame+=1;XCTAssertThrowsError(try compose(input,assets,proofs,template,style))
+        input=original;input.cartoonStoryboard!.artwork.audioCues=[ClassicAudioCue(assetID:"old-voice",startFrame:0,durationFrames:30)];XCTAssertThrowsError(try compose(input,assets,proofs,template,style))
+        input=original;input.cartoonStoryboard!.shots![0].narration="caf\u{00E9}的写法也须保留原字。"
+        input.counterargument="cafe\u{0301}的写法也须保留原字。"+input.cartoonStoryboard!.shots![1].narration
+        XCTAssertThrowsError(try compose(input,assets,proofs,template,style))
+    }
+    func testExplicitDebateRejectsReorderedShotsDuplicateIDsAndIncompatibleModeInsteadOfFlattening()throws {
+        let(original,assets,proofs,template,style)=try explicitDebateFixture()
+        var input=original;input.cartoonStoryboard!.shots!.swapAt(1,2);XCTAssertThrowsError(try compose(input,assets,proofs,template,style))
+        input=original;input.cartoonStoryboard!.shots![1].id=input.cartoonStoryboard!.shots![0].id;XCTAssertThrowsError(try compose(input,assets,proofs,template,style))
+        input=original;input.cartoonStoryboard!.version=1;XCTAssertThrowsError(try compose(input,assets,proofs,template,style))
+        input=original;input.cartoonStoryboard!.version=3;XCTAssertThrowsError(try compose(input,assets,proofs,template,style))
+        input=original;input.grammar = .practice;input.steps=["真实步骤"];XCTAssertThrowsError(try compose(input,assets,proofs,template,style))
+        XCTAssertThrowsError(try original.cartoonStoryboard!.performance(speakerIndex:0,durationFrames:90))
+    }
+    func testCartoonPlanCodingKeepsLegacyCastOnlyBytesAndExplicitFullPerformances()throws {
+        let(input,_,_,_,_)=try explicitDebateFixture(),explicit=try XCTUnwrap(input.cartoonStoryboard)
+        let legacy=CartoonTeachingPlan(artwork:explicit.artwork,actors:explicit.actors),oldData=try Codec.data(legacy)
+        let object=try JSONSerialization.jsonObject(with:oldData) as! [String:Any]
+        XCTAssertNil(object["shots"]);XCTAssertEqual(object["version"] as? Int,1)
+        let decoded=try Codec.decoder().decode(CartoonTeachingPlan.self,from:oldData)
+        XCTAssertEqual(try Codec.data(decoded),oldData)
+        let oldPerformance=try decoded.performance(speakerIndex:1,durationFrames:90)
+        XCTAssertEqual(oldPerformance.actors,legacy.actors);XCTAssertEqual(oldPerformance.beats.count,1)
+        XCTAssertEqual(oldPerformance.beats[0].speakerID,legacy.actors[1].id);XCTAssertEqual(oldPerformance.beats[0].camera,.speaker)
+        XCTAssertEqual(oldPerformance.beats[0].startFrame,0);XCTAssertEqual(oldPerformance.beats[0].endFrame,90)
+        XCTAssertEqual(oldPerformance.beats[0].cues.map(\.pose),[.listen,.speak])
+        let data=try Codec.data(explicit),newDecoded=try Codec.decoder().decode(CartoonTeachingPlan.self,from:data)
+        XCTAssertEqual(try Codec.data(newDecoded),data);XCTAssertEqual(newDecoded.version,2)
+        XCTAssertEqual(newDecoded.shots,explicit.shots)
+        try newDecoded.validate(counterargument:input.counterargument,response:input.response)
+    }
+    func testExplicitCartoonHumanRewriteRetainsPerformanceAndRecordsTheHostNarrationChange()throws {
+        let(input,assets,proofs,template,style)=try explicitDebateFixture()
+        var document=try compose(input,assets,proofs,template,style)
+        let original=try XCTUnwrap(document.revision.scenes.first{$0.kind == .cartoon})
+        try document.rewrite(sceneID:original.id,text:"先说明本例规则，再讨论是否参与。",author:"实际作者",reason:"明确前提并重新核对动作",assets:assets,now:now)
+        let changed=try XCTUnwrap(document.revision.scenes.first{$0.id==original.id})
+        XCTAssertEqual(changed.body,original.body);XCTAssertEqual(changed.cartoonPerformance,original.cartoonPerformance)
+        XCTAssertEqual(document.rewrites.last?.before,original.narration);XCTAssertEqual(document.rewrites.last?.after,changed.narration)
+        XCTAssertFalse(document.confirmed);XCTAssertFalse(changed.narration==original.narration)
     }
     func testStructuredNarrationRewritePreservesScreenSummaryAndRecordsActualOldSpeech()throws {
         let(i,a,e,t,s)=try fixture();var document=try compose(i,a,e,t,s)

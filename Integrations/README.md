@@ -98,6 +98,8 @@ Codex 0.159.2 的模型目录 `tool_mode` 优先于功能开关。若所选模�
 
 构造发现命令时，`FilePin`必须同时绑定实际Python解释器、`discover.py`及实际CLI二进制；预检另绑定输入原件。调用者显式执行`run_codex(prompt, policy, seconds=90)`才会在MCP前置门通过后启动一个有限模型回合；导入和离线规则不启动宿主。`probe_mcp_isolation(policy)`只进行本地配置、初始化和库存检查，永不发送`thread/start`或`turn/start`，即使库存门通过也不将业务`passed`标为真。配置探针和工具子进程使用最小环境，不继承供应商凭据。每个预期动态调用都必须真实完成且CLI回执通过；零工具、未完成、拒绝、超时和清理失败均不能标成功。模型成功也不替代版本、产物及权限的独立用户链回读。
 
+Qwen终态由共用有界JSONL解析器核对完整EOF、重复键、非有限常量和唯一result；首个result之后只兼容合法的惰性usage或system摘要，不能覆盖终态或取得新工具许可。协议拒绝仍执行原owned进程组清理；完整业务回执与实际清理均通过后才报告成功。
+
 许可及超时规则可运行`python3 -m unittest discover -s Integrations -p test_qwen_stream.py`；这些本地协议规则不冒充真实模型、账户或用户链证据。
 
 ### Claude原生SDK许可交接

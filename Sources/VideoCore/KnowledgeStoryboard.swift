@@ -58,15 +58,61 @@ public struct KnowledgeStoryboardPlan: Codable, Sendable {
     }
 }
 
-/// The existing debate grammar can opt into an actual, previously bound cast.
-/// It never invents a geometric character or grants rights to the selected art.
+public enum CartoonTeachingRole: String, Codable, Sendable {
+    case question, response
+}
+
+/// An author-selected shot retains the complete visual performance. Spoken
+/// text belongs to the Host and is bound to the corresponding teaching input.
+public struct CartoonTeachingShot: Codable, Equatable, Identifiable, Sendable {
+    public var id: String
+    public var role: CartoonTeachingRole
+    public var title: String
+    public var visualSummary: String
+    public var narration: String
+    public var durationFrames: Int
+    public var performance: CartoonPerformance
+    public init(id: String = Codec.id(), role: CartoonTeachingRole, title: String, visualSummary: String, narration: String, durationFrames: Int, performance: CartoonPerformance) {
+        self.id=id;self.role=role;self.title=title;self.visualSummary=visualSummary;self.narration=narration;self.durationFrames=durationFrames;self.performance=performance
+    }
+}
+
+/// Version 1 preserves the existing cast-only dialogue. Version 2 is an
+/// explicit sequence of complete shots; it never infers a speaker, copies old
+/// audio or grants rights to the selected artwork.
 public struct CartoonTeachingPlan: Codable, Sendable {
     public var version: Int = 1
     public var artwork: ClassicArtwork
     public var actors: [CartoonActor]
+    public var shots: [CartoonTeachingShot]?
     public init(artwork: ClassicArtwork, actors: [CartoonActor]) { self.artwork=artwork;self.actors=actors }
+    public init(artwork: ClassicArtwork, shots: [CartoonTeachingShot]) {
+        self.version=2;self.artwork=artwork;self.actors=shots.first?.performance.actors ?? [];self.shots=shots
+    }
+    public func validate(counterargument: String, response: String) throws {
+        guard artwork.derivation == .qStyle,artwork.audioCues.isEmpty else { throw VideoError.invalid("角色争论须明确选择实际Q版图集；原音效须在新分镜重新绑定") }
+        if version==1 {
+            guard shots==nil else { throw VideoError.invalid("完整角色分镜须显式使用第二版计划，不能按旧演员名单忽略表演") }
+            _=try performance(speakerIndex:0,durationFrames:1)
+            _=try performance(speakerIndex:1,durationFrames:1)
+            return
+        }
+        guard version==2,let shots,(2...96).contains(shots.count),Set(shots.map(\.id)).count==shots.count,
+              shots.first?.role == .question,shots.last?.role == .response else { throw VideoError.invalid("完整角色争论须按提问、回应顺序明确填写两种观点及独立分镜标识") }
+        var reachedResponse=false
+        for shot in shots {
+            func valid(_ value:String,_ limit:Int)->Bool { !value.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty && value.count<=limit }
+            guard valid(shot.id,80),valid(shot.title,80),valid(shot.visualSummary,180),valid(shot.narration,160),
+                  shot.performance.actors==actors else { throw VideoError.invalid("角色分镜须有完整标题、画面说明、1—160字原讲稿及相同的实际角色名单") }
+            if shot.role == .response { reachedResponse=true }
+            else if reachedResponse { throw VideoError.invalid("角色分镜须先完整提问再回应，不能重排已写表演") }
+            try shot.performance.validate(durationFrames:shot.durationFrames,sprites:artwork.sprites)
+        }
+        guard shots.filter({$0.role == .question}).map(\.narration).joined().utf8.elementsEqual(counterargument.utf8),
+              shots.filter({$0.role == .response}).map(\.narration).joined().utf8.elementsEqual(response.utf8) else { throw VideoError.conflict("角色分镜原讲稿与本次质疑、回应不一致；请明确采用原稿，或先编辑对应讲稿与表演，不能把旧表演套到新稿") }
+    }
     public func performance(speakerIndex: Int, durationFrames: Int) throws -> CartoonPerformance {
-        guard version==1,artwork.derivation == .qStyle,artwork.audioCues.isEmpty,(2...4).contains(actors.count),actors.indices.contains(speakerIndex) else { throw VideoError.invalid("角色争论须明确选择实际Q版图集和2—4名角色；原音效在新分镜重新绑定") }
+        guard version==1,shots==nil,artwork.derivation == .qStyle,artwork.audioCues.isEmpty,(2...4).contains(actors.count),actors.indices.contains(speakerIndex) else { throw VideoError.invalid("旧角色争论须明确选择实际Q版图集和2—4名角色；完整分镜不能降为单发言者") }
         let value=try CartoonPerformance.dialogue(actors:actors,speakerID:actors[speakerIndex].id,durationFrames:durationFrames)
         try value.validate(durationFrames:durationFrames,sprites:artwork.sprites)
         return value

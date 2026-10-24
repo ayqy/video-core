@@ -19,6 +19,8 @@ import subprocess
 import time
 import uuid
 
+from codex_events import JsonLines, ProtocolError
+
 
 @dataclass(frozen=True)
 class ExactPolicy:
@@ -345,7 +347,8 @@ def _policy_rejection(event, policy, *, phase, initialized):
     """
     result = {"reason": {"permission": "native_permission_refused",
                          "observation": "pinned_observer_refused",
-                         "completion_pin": "completion_pin_refused"}[phase],
+                         "completion_pin": "completion_pin_refused",
+                         "protocol": "native_protocol_refused"}[phase],
               "phase": phase, "initialized": bool(initialized), "event": _diagnostic_fields(event)}
     if isinstance(policy, PinnedPolicy):
         result["policy"] = {"command_index": policy._position,
@@ -387,6 +390,25 @@ def _policy_rejection(event, policy, *, phase, initialized):
     return result
 
 
+def _informational_tail(event: dict, native_result: dict) -> bool:
+    """Allow inert final accounting/summary messages, never another action.
+
+    The first result remains authoritative. Native usage and system summary
+    payloads are JSON data only; they cannot add permission requests, tool
+    messages or another result. Optional session identity must still match.
+    """
+    if ("session_id" in native_result and "session_id" in event and
+            event["session_id"] != native_result["session_id"]):
+        return False
+    common = {"type", "uuid", "session_id"}
+    if event.get("type") == "usage":
+        return set(event) <= common | {"usage"} and isinstance(event.get("usage"), dict)
+    return (event.get("type") == "system" and
+            event.get("subtype") in ("summary", "usage", "session_end") and
+            set(event) <= common | {"subtype", "parent_tool_use_id", "data", "usage", "summary"} and
+            event.get("parent_tool_use_id") is None)
+
+
 def consume(arguments: list[str], prompt: str, policy: ExactPolicy | PinnedPolicy, *, seconds: float, on_event=None) -> dict:
     """Return in-memory evidence. Native max-wall-time is not a timeout guarantee."""
     if not 0 < seconds <= 300:
@@ -402,10 +424,9 @@ def consume(arguments: list[str], prompt: str, policy: ExactPolicy | PinnedPolic
     selector.register(process.stderr, selectors.EVENT_READ, "err")
     initialize_id = uuid.uuid4().hex
     events, decisions = [], []
-    buffer = b""
+    json_stream = JsonLines(max_bytes=8 * 1024 * 1024, max_line=4 * 1024 * 1024, max_events=1000)
     stderr_digest = hashlib.sha256()
     stderr_bytes = 0
-    stdout_bytes = 0
     initialized = False
     native_result = None
     status = "ended_without_result"
@@ -429,28 +450,16 @@ def consume(arguments: list[str], prompt: str, policy: ExactPolicy | PinnedPolic
                 data = os.read(key.fileobj.fileno(), 65536)
                 if not data:
                     selector.unregister(key.fileobj)
-                    continue
                 if key.data == "err":
                     stderr_bytes += len(data)
                     stderr_digest.update(data)
                     continue
-                stdout_bytes += len(data)
-                if stdout_bytes > 8 * 1024 * 1024:
-                    raise ValueError("宿主事件流超过有限内存上限")
-                buffer += data
-                if len(buffer) > 4 * 1024 * 1024:
-                    raise ValueError("宿主事件超过有限消息上限")
-                while b"\n" in buffer:
-                    line, buffer = buffer.split(b"\n", 1)
-                    if not line.strip():
-                        continue
-                    event = json.loads(line)
-                    if not isinstance(event, dict):
-                        raise ValueError("宿主事件不是对象")
+                active_event = None
+                for event in json_stream.feed(data, eof=not data):
                     active_event = event
+                    if native_result is not None and not _informational_tail(event, native_result):
+                        raise ProtocolError("native_event_after_result")
                     events.append(event)
-                    if len(events) > 1000:
-                        raise ValueError("宿主事件超过有限数量上限")
                     kind = event.get("type")
                     if kind == "control_response":
                         response = event.get("response", {})
@@ -488,14 +497,19 @@ def consume(arguments: list[str], prompt: str, policy: ExactPolicy | PinnedPolic
         status = "policy_refused"
         if rejection is None:
             rejection = _policy_rejection(active_event, policy, phase="observation", initialized=initialized)
+    except ProtocolError:
+        status = "protocol_refused"
+        if isinstance(policy, PinnedPolicy):
+            policy.failed = True
+        rejection = _policy_rejection(active_event, policy, phase="protocol", initialized=initialized)
     finally:
         try:
             cleanup = _terminate_group(process)
         finally:
             selector.close()
-            for stream in (process.stdin, process.stdout, process.stderr):
-                if not stream.closed:
-                    stream.close()
+            for pipe in (process.stdin, process.stdout, process.stderr):
+                if not pipe.closed:
+                    pipe.close()
     if isinstance(policy, PinnedPolicy):
         try:
             policy._verify_pins()
@@ -508,7 +522,7 @@ def consume(arguments: list[str], prompt: str, policy: ExactPolicy | PinnedPolic
             "initialized": initialized, "events": events, "decisions": decisions, "result": native_result,
             "stderr_bytes": stderr_bytes, "stderr_sha256": stderr_digest.hexdigest(), "cleanup": cleanup,
             "policy_rejection": rejection}
-    result["execution_complete"] = (status == "native_result" and initialized and process.returncode == 0 and
+    result["execution_complete"] = (status == "native_result" and initialized and json_stream.closed and process.returncode == 0 and
         isinstance(native_result, dict) and native_result.get("subtype") == "success" and
         native_result.get("is_error") in (None, False) and all(d["allowed"] for d in decisions) and cleanup["passed"])
     if isinstance(policy, PinnedPolicy):

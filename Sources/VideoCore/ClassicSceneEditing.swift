@@ -110,6 +110,8 @@ public struct KnowledgeSoundMoment: Equatable, Identifiable, Sendable {
     public let kind: Kind
     public let round: Int
     public let sourceTick: Int
+    /// The actually displayed integer source frame, including a sub-phase handoff.
+    public let sourceFrame: Int
     public let sceneFrame: Int
     public let summary: String
     public let recordingDigest: String
@@ -125,6 +127,15 @@ public extension ClassicSceneEditing {
         guard scene.pauseFrames == 0 || scene.simulationPresentation != nil else {
             throw VideoError.review("旧式停顿可能继续推进仿真，请先设置明确源窗口并重新录制，再定位声音事件")
         }
+        if let presentation=scene.simulationPresentation,
+           scene.sourceStartFrame>0,presentation.presentationOffsetFrames==0 {
+            // A normal right split retains sourceStartFrame. Reframing that
+            // slice resets the presentation offset and discards its ancestry;
+            // the current data cannot prove whether an onset already belonged
+            // to the left shot. Existing cues remain intact, but a new automatic
+            // selection must not silently replay the event.
+            throw VideoError.review("拆分或裁切后的镜头已重新定时，原声音首次展示归属无法核对；请保留原展示偏移定位，或手动配置原音并重新听审")
+        }
         try SimulationReplay.verify(scene:scene,fps:fps,requireConfirmation:false)
         guard let recording=scene.simulationRecording, let trace=recording.knowledgeTrace else {
             throw VideoError.review("请先按当前模型和时轴实际录制知识轨迹")
@@ -134,51 +145,102 @@ public extension ClassicSceneEditing {
         let last=try scene.renderSimulationSourceFrame(atTimelineFrame:scene.durationFrames-1)
         let names=Dictionary(uniqueKeysWithValues:model.participants.map{($0.id,$0.name)})
         var moments:[KnowledgeSoundMoment]=[]
-        for event in trace.events {
-            let target=event.tick*fps
-            // A cut that begins inside a phase does not replay its earlier onset.
-            guard target >= first, target <= last else { continue }
-            let kind:KnowledgeSoundMoment.Kind, summary:String
-            switch event.phase {
-            case .decision:
-                let constrained=event.actors.filter{$0.choice == .constrained}
-                guard !constrained.isEmpty else { continue }
-                kind = .constrained
-                summary=constrained.map{names[$0.id] ?? $0.id}.joined(separator:"、")+"：资源不足，未执行"
-            case .contribution:
-                let active=event.actors.filter{actor in
-                    if model.isRuleTable { return actor.executedActionID != nil }
-                    return actor.cost>0 || actor.contribution>0
+        struct Candidate {
+            let kind:KnowledgeSoundMoment.Kind
+            let summary:String
+            let target:Int
+            let suffix:String
+            let flow:KnowledgePresentationSchedule.FlowMoment?
+        }
+        func name(_ id:String?)->String { id.flatMap{names[$0]} ?? "公共池" }
+        func firstOwnedFrame(for target:Int)throws->Int? {
+            if let presentation=scene.simulationPresentation {
+                // A retimed source frame can appear on both sides of a cut.
+                // Find its first position on the original presentation axis,
+                // then assign that position to exactly one sliced interval.
+                guard target>=presentation.sourceStartFrame,target<presentation.sourceEndFrame else {return nil}
+                let span=presentation.sourceEndFrame-presentation.sourceStartFrame-1
+                let absolute:Int
+                if span==0 {absolute=0}
+                else {
+                    let numerator=Int64(target-presentation.sourceStartFrame)*Int64(presentation.presentationFrames-1)
+                    absolute=Int((numerator+Int64(span)-1)/Int64(span))
                 }
-                guard !active.isEmpty else { continue }
-                kind = .action
-                summary=active.map{actor in
-                    let action=actor.executedActionID.flatMap{id in model.ruleTable?.actions.first{$0.id==id}?.label}
-                    return (names[actor.id] ?? actor.id)+"："+(action ?? "实际行动")+"，扣费\(actor.cost)"
-                }.joined(separator:"；")
-            case .settlement:
-                if model.isRuleTable {
-                    guard let result=event.ruleExecution,
-                          result.transfers.contains(where:{$0.amount>0}) || result.stateChanges.contains(where:{$0.beforeStateID != $0.afterStateID}) else { continue }
-                    summary="实际转移\(result.transfers.filter{$0.amount>0}.count)项；状态改变\(result.stateChanges.filter{$0.beforeStateID != $0.afterStateID}.count)项"
-                } else {
-                    guard event.actors.contains(where:{$0.benefit>0 || $0.passed}) else { continue }
-                    summary=event.actors.map{(names[$0.id] ?? $0.id)+"：实际收益\($0.benefit)"}.joined(separator:"；")
-                }
-                kind = .outcome
-            default: continue
+                guard absolute>=presentation.presentationOffsetFrames,
+                      absolute-presentation.presentationOffsetFrames<scene.durationFrames else {return nil}
+                return absolute-presentation.presentationOffsetFrames
             }
+            guard target>=first,target<=last else {return nil}
             var lower=0,upper=scene.durationFrames-1
             while lower<upper {
                 let middle=lower+(upper-lower)/2
                 if try scene.renderSimulationSourceFrame(atTimelineFrame:middle)<target {lower=middle+1}else{upper=middle}
             }
-            guard try scene.renderSimulationSourceFrame(atTimelineFrame:lower)/fps == event.tick else {
-                throw VideoError.review("展示窗口跳过了真实声音事件，请延长展示并重新录制，不会把声音移到另一个阶段")
-            }
-            moments.append(KnowledgeSoundMoment(id:"\(event.round):\(event.tick):\(kind.rawValue)",kind:kind,round:event.round,sourceTick:event.tick,sceneFrame:lower,summary:summary,recordingDigest:digest))
+            return lower
         }
-        return moments
+        for event in trace.events {
+            let onset=event.tick*fps
+            guard onset<=last,onset+fps>first else {continue}
+            let flows=try KnowledgePresentationSchedule.flowMoments(event:event,fps:fps)
+            var candidates:[Candidate]=[]
+            switch event.phase {
+            case .decision:
+                let constrained=event.actors.filter{$0.choice == .constrained}
+                guard !constrained.isEmpty else { continue }
+                candidates.append(Candidate(kind:.constrained,summary:constrained.map{names[$0.id] ?? $0.id}.joined(separator:"、")+"：资源不足，未执行",target:onset,suffix:"",flow:nil))
+            case .contribution:
+                let deposited=Set(flows.compactMap{$0.flow.sourceActorID})
+                let active=event.actors.filter{actor in
+                    if deposited.contains(actor.id) {return false}
+                    if model.isRuleTable { return actor.executedActionID != nil }
+                    return actor.cost>0 || actor.contribution>0
+                }
+                if !active.isEmpty {
+                    let summary=active.map{actor in
+                        let action=actor.executedActionID.flatMap{id in model.ruleTable?.actions.first{$0.id==id}?.label}
+                        return (names[actor.id] ?? actor.id)+"："+(action ?? "实际行动")+"，扣费\(actor.cost)"
+                    }.joined(separator:"；")
+                    candidates.append(Candidate(kind:.action,summary:summary,target:onset,suffix:"",flow:nil))
+                }
+                for flow in flows {
+                    let summary=name(flow.flow.sourceActorID)+"：实际扣费\(flow.flow.amount)\(model.resourceLabel)，交入公共池"
+                    candidates.append(Candidate(kind:.action,summary:summary,target:flow.sourceFrame,suffix:":flow:"+flow.flow.id,flow:flow))
+                }
+            case .settlement:
+                for flow in flows {
+                    let summary:String
+                    if model.isRuleTable {
+                        summary="实际转移："+name(flow.flow.sourceActorID)+"→"+name(flow.flow.destinationActorID)+"，\(flow.flow.amount)\(model.resourceLabel)"
+                    } else {
+                        summary=name(flow.flow.destinationActorID)+"：实际收益\(flow.flow.amount)，公共池已发放"
+                    }
+                    candidates.append(Candidate(kind:.outcome,summary:summary,target:flow.sourceFrame,suffix:":flow:"+flow.flow.id,flow:flow))
+                }
+                if model.isRuleTable, flows.isEmpty {
+                    guard let result=event.ruleExecution,
+                          result.stateChanges.contains(where:{$0.beforeStateID != $0.afterStateID}) else { continue }
+                    let summary="状态改变\(result.stateChanges.filter{$0.beforeStateID != $0.afterStateID}.count)项；没有实际资金转移"
+                    candidates.append(Candidate(kind:.outcome,summary:summary,target:onset,suffix:"",flow:nil))
+                } else if !model.isRuleTable, flows.isEmpty {
+                    guard event.actors.contains(where:{$0.benefit>0 || $0.passed}) else { continue }
+                    let summary=event.actors.map{(names[$0.id] ?? $0.id)+"：实际收益\($0.benefit)"}.joined(separator:"；")
+                    candidates.append(Candidate(kind:.outcome,summary:summary,target:onset,suffix:"",flow:nil))
+                }
+            default: continue
+            }
+            for candidate in candidates {
+                guard let lower=try firstOwnedFrame(for:candidate.target) else {continue}
+                let source=try scene.renderSimulationSourceFrame(atTimelineFrame:lower)
+                guard source/fps == event.tick,
+                      candidate.flow.map({$0.isVisible(atSourceFrame:source,fps:fps)}) ?? true else {
+                    throw VideoError.review("展示窗口跳过了真实声音事件或当前交接，请延长展示并重新录制，不会把声音移到另一个阶段或交接")
+                }
+                moments.append(KnowledgeSoundMoment(id:"\(event.round):\(event.tick):\(candidate.kind.rawValue)"+candidate.suffix,kind:candidate.kind,round:event.round,sourceTick:event.tick,sourceFrame:source,sceneFrame:lower,summary:candidate.summary,recordingDigest:digest))
+            }
+        }
+        // Existing stored audio cues keep their original frames and rights;
+        // this read-only candidate list never migrates or replaces them.
+        return moments.sorted{$0.sceneFrame == $1.sceneFrame ? $0.id<$1.id:$0.sceneFrame<$1.sceneFrame}
     }
 
     /// Re-read the current recording before applying a UI selection. Extending a

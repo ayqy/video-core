@@ -284,10 +284,10 @@ final class KnowledgeSoundTests:XCTestCase {
     func testTableEffectsAreSoundMomentsOnlyWhenActuallySettled()throws {
         var s=try tableScene()
         let moments=try ClassicSceneEditing.knowledgeSoundMoments(scene:s)
-        XCTAssertEqual(moments.map(\.sceneFrame),[60,150]);XCTAssertTrue(moments[1].summary.contains("实际转移1项"))
+        XCTAssertEqual(moments.map(\.sceneFrame),[68,83,165]);XCTAssertTrue(moments[2].summary.contains("实际转移：公共池→甲，1"))
         s.simulation.knowledge?.ruleTable?.rules[0].conditions=[.init(kind:.actionCount,actionID:"act",minimum:0,maximum:0)]
         s.simulationRecording=try SimulationReplay.record(scene:s)
-        XCTAssertEqual(try ClassicSceneEditing.knowledgeSoundMoments(scene:s).map(\.kind),[.action],"规则声明不是实际命中或资金/状态后果")
+        XCTAssertEqual(try ClassicSceneEditing.knowledgeSoundMoments(scene:s).map(\.kind),[.action,.action],"真实扣费仍有两项交接；规则声明不是已应用的后果")
     }
     func testMatrixPayoutUsesSettlementAndNotEarlyBalanceOrPublicGoodPhase()throws {
         var s=try scene()
@@ -297,7 +297,106 @@ final class KnowledgeSoundTests:XCTestCase {
         ],rounds:1,payoffMatrix:.prisonersDilemma())
         s.simulationRecording=try SimulationReplay.record(scene:s)
         let moments=try ClassicSceneEditing.knowledgeSoundMoments(scene:s)
-        XCTAssertEqual(moments.map(\.sourceTick),[2,5]);XCTAssertTrue(moments[1].summary.contains("乙：实际收益7"))
+        XCTAssertEqual(moments.map(\.sourceTick),[2,2,5]);XCTAssertEqual(moments.map(\.sourceFrame),[75,75,165])
+        XCTAssertTrue(moments[2].summary.contains("乙：实际收益7"))
+    }
+    func testEachAppliedTableRouteHasAStableSoundAtItsVisibleHandoffAndSplitKeepsItOnce()throws {
+        var s=try tableScene()
+        s.simulation.knowledge?.ruleTable?.rules[0].effects=[.transfer(from:nil,to:"a",amount:1),.transfer(from:nil,to:"b",amount:1)]
+        s.simulationRecording=try SimulationReplay.record(scene:s)
+        let moments=try ClassicSceneEditing.knowledgeSoundMoments(scene:s)
+        XCTAssertEqual(moments.map(\.sourceFrame),[68,83,158,173])
+        XCTAssertEqual(Set(moments.map(\.id)).count,4)
+        XCTAssertTrue(moments[2].summary.contains("公共池→甲"));XCTAssertTrue(moments[3].summary.contains("公共池→乙"))
+        let project=Project(workspaceID:"w",name:"逐项交接",revision:Revision(contentContext:ContentContext(workspaceID:"w",name:"逐项交接"),aspect:.landscape,scenes:[s]))
+        let split=try Editor.apply([.splitScene(s.id,160)],to:project,baseRevision:project.current.id,assets:[],message:"交接中切镜头")
+        var after:[KnowledgeSoundMoment]=[]
+        for var cut in split.current.scenes {
+            cut.simulationRecording=try SimulationReplay.record(scene:cut)
+            after += try ClassicSceneEditing.knowledgeSoundMoments(scene:cut)
+        }
+        XCTAssertEqual(after.map(\.id),moments.map(\.id));XCTAssertEqual(after.map(\.sourceFrame),moments.map(\.sourceFrame))
+        XCTAssertEqual(after.map(\.sceneFrame),[68,83,158,13])
+    }
+    func testRetimedWindowMapsPerRouteHandoffsAndRejectsSkippedVisibleBeat()throws {
+        var s=try tableScene();s.durationFrames=360
+        s.simulationPresentation=SimulationPresentation(sourceStartFrame:0,sourceEndFrame:180,presentationFrames:360)
+        s.simulationRecording=try SimulationReplay.record(scene:s)
+        let moments=try ClassicSceneEditing.knowledgeSoundMoments(scene:s)
+        XCTAssertEqual(moments.map(\.sourceFrame),[68,83,165])
+        for moment in moments {XCTAssertEqual(try s.renderSimulationSourceFrame(atTimelineFrame:moment.sceneFrame),moment.sourceFrame)}
+        s.durationFrames=2;s.simulationPresentation=SimulationPresentation(sourceStartFrame:60,sourceEndFrame:90,presentationFrames:2)
+        s.simulationRecording=try SimulationReplay.record(scene:s)
+        XCTAssertThrowsError(try ClassicSceneEditing.knowledgeSoundMoments(scene:s),"不能将第一项交接声音放到另一项或回位帧")
+    }
+    func testRetimedDuplicateSourceFrameBelongsOnlyToItsFirstAbsolutePresentationPosition()throws {
+        var s=try tableScene();s.durationFrames=360
+        s.simulationPresentation=SimulationPresentation(sourceStartFrame:0,sourceEndFrame:180,presentationFrames:360)
+        s.simulationRecording=try SimulationReplay.record(scene:s)
+        let original=try ClassicSceneEditing.knowledgeSoundMoments(scene:s)
+        XCTAssertEqual(original.map(\.sceneFrame),[137,167,331])
+        XCTAssertEqual(try s.renderSimulationSourceFrame(atTimelineFrame:137),68)
+        XCTAssertEqual(try s.renderSimulationSourceFrame(atTimelineFrame:138),68)
+        for boundary in [137,138,139,332] {
+            let project=Project(workspaceID:"w",name:"重定时交接",revision:Revision(contentContext:ContentContext(workspaceID:"w",name:"重定时交接"),aspect:.landscape,scenes:[s]))
+            let split=try Editor.apply([.splitScene(s.id,boundary)],to:project,baseRevision:project.current.id,assets:[],message:"保留绝对展示归属")
+            var after:[KnowledgeSoundMoment]=[],positions:[Int]=[]
+            for var cut in split.current.scenes {
+                cut.simulationRecording=try SimulationReplay.record(scene:cut)
+                let moments=try ClassicSceneEditing.knowledgeSoundMoments(scene:cut)
+                after += moments
+                positions += moments.map{$0.sceneFrame+(cut.simulationPresentation?.presentationOffsetFrames ?? 0)}
+            }
+            XCTAssertEqual(after.map(\.id),original.map(\.id));XCTAssertEqual(after.map(\.sourceFrame),original.map(\.sourceFrame))
+            XCTAssertEqual(positions,original.map(\.sceneFrame),"重复的源帧不能让左右两片各产生同一声音候选")
+        }
+    }
+    func testCompressedFirstVisibleHandoffStaysOwnedByRightCutEvenWhenItSkipsNominalSourceCenter()throws {
+        var s=try tableScene();s.durationFrames=120
+        s.simulationPresentation=SimulationPresentation(sourceStartFrame:0,sourceEndFrame:180,presentationFrames:120)
+        s.simulationRecording=try SimulationReplay.record(scene:s)
+        let original=try ClassicSceneEditing.knowledgeSoundMoments(scene:s)
+        let first=try XCTUnwrap(original.first)
+        XCTAssertGreaterThan(first.sourceFrame,68)
+        let project=Project(workspaceID:"w",name:"压缩展示",revision:Revision(contentContext:ContentContext(workspaceID:"w",name:"压缩展示"),aspect:.landscape,scenes:[s]))
+        let split=try Editor.apply([.splitScene(s.id,first.sceneFrame)],to:project,baseRevision:project.current.id,assets:[],message:"在真实首次展示处拆分")
+        var after:[KnowledgeSoundMoment]=[]
+        for var cut in split.current.scenes {cut.simulationRecording=try SimulationReplay.record(scene:cut);after += try ClassicSceneEditing.knowledgeSoundMoments(scene:cut)}
+        XCTAssertEqual(after.map(\.id),original.map(\.id));XCTAssertEqual(after.map(\.sourceFrame),original.map(\.sourceFrame))
+        XCTAssertEqual(after.first?.sceneFrame,0)
+    }
+    func testRightSplitReframingRejectsAmbiguousOnsetAncestryAndOtherSpeedsRemainExplicitlyUnsupported()throws {
+        var s=try tableScene();s.durationFrames=360
+        s.simulationPresentation=SimulationPresentation(sourceStartFrame:0,sourceEndFrame:180,presentationFrames:360)
+        s.simulationRecording=try SimulationReplay.record(scene:s)
+        let project=Project(workspaceID:"w",name:"延长右片",revision:Revision(contentContext:ContentContext(workspaceID:"w",name:"延长右片"),aspect:.landscape,scenes:[s]))
+        let split=try Editor.apply([.splitScene(s.id,138)],to:project,baseRevision:project.current.id,assets:[],message:"后续延长")
+        var right=try XCTUnwrap(split.current.scenes.last)
+        right=try StoryboardTiming.extending(scene:right,to:300)
+        right.simulationRecording=try SimulationReplay.record(scene:right)
+        XCTAssertEqual(right.simulationPresentation?.presentationOffsetFrames,0)
+        XCTAssertGreaterThan(right.sourceStartFrame,0)
+        XCTAssertThrowsError(try ClassicSceneEditing.knowledgeSoundMoments(scene:right),"现有持久字段丢失首次展示归属时必须明确拒绝，不能重复生成声音")
+        for speed in [0.5,2.0] {
+            var changed=s;changed.speed=speed
+            XCTAssertThrowsError(try ClassicSceneEditing.knowledgeSoundMoments(scene:changed))
+        }
+    }
+    func testZeroCostActionAndStateOnlyOutcomeKeepTheirActualOnsetsWithoutFakeTransfer()throws {
+        var s=try tableScene();s.simulation.knowledge?.ruleTable?.actions[0].cost=0
+        s.simulation.knowledge?.ruleTable?.rules[0].effects=[.setState(actorID:"a",stateID:"closed")]
+        s.simulationRecording=try SimulationReplay.record(scene:s)
+        let moments=try ClassicSceneEditing.knowledgeSoundMoments(scene:s)
+        XCTAssertEqual(moments.map(\.kind),[.action,.outcome]);XCTAssertEqual(moments.map(\.sourceFrame),[60,150])
+        XCTAssertTrue(moments[0].summary.contains("提交，扣费0"))
+        XCTAssertTrue(moments[1].summary.contains("没有实际资金转移"))
+    }
+    func testReadingNewScheduleLeavesExistingAudioCueFramesListeningAndRecordingBytesUnchanged()throws {
+        var(s,_,_)=try audioFixture(tableScene(),frames:5)
+        s.classicArtwork?.audioCues=[ClassicAudioCue(assetID:"previous-audio",startFrame:60,durationFrames:5,gain:0.25,listened:true)]
+        let bytes=try Codec.data(s)
+        _=try ClassicSceneEditing.knowledgeSoundMoments(scene:s)
+        XCTAssertEqual(try Codec.data(s),bytes)
     }
     func testWindowRetimingUsesFirstActualVisibleFrameOfEachEvent()throws {
         var s=try scene();s.durationFrames=240
