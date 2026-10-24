@@ -59,7 +59,8 @@ public enum AgentSchemas {
             "BrandApproval":"revisionID:s digest:s reviewer:s at:d note:s termsDigest?:s revisionsUsed?:i",
             "VerticalChecklistTemplate":"id:s name:s version:i requirements:[ChecklistRequirement]",
             "ChecklistRequirement":"id:s label:s evidenceRequired:b maximumAgeDays?:i",
-            "Scene":"id:s kind:SceneKind title:s body:s narration:s durationFrames:i assetID?:s evidenceIDs:[s] sourceStartFrame:i sourceEndFrame?:i speed:n preservePitch:b locked:b x:n y:n scale:n voiceGain:n sourceGain:n musicGain:n muted:b pauseFrames:i captions:[Caption] voice?:VoiceTake simulation:Simulation character:s emotion:s color:s showPrice:b keyframes:[Keyframe] courseMappingIDs?:[s] speechPlan?:SpeechPlan layers?:[SceneLayer] characterProfile?:CharacterProfile cartoonPerformance?:CartoonPerformance narrativeSources?:[NarrativeSource] fontName?:s classicArtwork?:ClassicArtwork classicArtworkRequired?:b simulationRecording?:RuleTrace simulationRecordingConfirmed?:b simulationPresentation?:SimulationPresentation",
+            "Scene":"id:s kind:SceneKind title:s body:s narration:s durationFrames:i assetID?:s evidenceIDs:[s] sourceStartFrame:i sourceEndFrame?:i speed:n preservePitch:b locked:b x:n y:n scale:n voiceGain:n sourceGain:n musicGain:n muted:b pauseFrames:i captions:[Caption] voice?:VoiceTake simulation:Simulation character:s emotion:s color:s showPrice:b keyframes:[Keyframe] courseMappingIDs?:[s] speechPlan?:SpeechPlan layers?:[SceneLayer] characterProfile?:CharacterProfile cartoonPerformance?:CartoonPerformance narrativeSources?:[NarrativeSource] fontName?:s classicArtwork?:ClassicArtwork classicArtworkRequired?:b simulationRecording?:RuleTrace simulationRecordingConfirmed?:b simulationPresentation?:SimulationPresentation mediaFraming?:MediaFraming",
+            "MediaFraming":"x:n y:n width:n height:n",
             "ClassicArtwork":"gameplay:ClassicGameplay sprites:[ClassicSprite] sources:[ClassicSource] derivation:ClassicDerivation transformation:s originalAssetIDs:[s] audioCues:[ClassicAudioCue]",
             "ClassicSprite":"role:s assetID:s x:n y:n width:n height:n",
             "ClassicSource":"assetID:s hash:s source:s owner:s license:s evidenceID:s",
@@ -72,7 +73,7 @@ public enum AgentSchemas {
             "SimulationPresentation":"version:i sourceStartFrame:i sourceEndFrame:i presentationFrames:i presentationOffsetFrames:i",
             "RuleTransition":"tick:i eventID:s label:s requestedDelta:i before:i after:i appliedDelta:i clippedDelta:i",
             "Keyframe":"id:s frame:i x:n y:n scale:n",
-            "SceneLayer":"id:s kind:LayerKind text:s assetID?:s x:n y:n width:n height:n color:s opacity:n startFrame:i endFrame:i locked:b keyframes:[Keyframe]",
+            "SceneLayer":"id:s kind:LayerKind text:s assetID?:s x:n y:n width:n height:n color:s opacity:n startFrame:i endFrame:i locked:b keyframes:[Keyframe] dataPresentation?:DataPresentation",
             "SpeechPlan":"source:s normalized:s dictionary:[SpeechTerm] mappings:[SpeechMapping] voiceIdentifier?:s rate:n confirmed:b notes:[s]",
             "SpeechTerm":"term:s pronunciation:s",
             "SpeechMapping":"sourceStart:i sourceLength:i normalizedStart:i normalizedLength:i kind:s",
@@ -80,6 +81,56 @@ public enum AgentSchemas {
             "NarrativeSource":"id:s assetID:s pages:[i] startFrame?:i endFrame?:i excerpt:s confirmed:b"
         ]
         var result=records.mapValues(entity)
+        let dataRecords:[String:String] = [
+            "DataPresentation":"version:i sourceOffsetFrames?:i chart?:DataChart code?:CodePresentation",
+            "DataChart":"title:s axisLabel:s minimum:n maximum:n series:[DataSeries]",
+            "DataSeries":"id:s label:s color:s keyframes:[DataValueKeyframe]",
+            "DataValueKeyframe":"frame:i value:n",
+            "CodePresentation":"title:s lines:[s] highlights:[CodeHighlight]",
+            "CodeHighlight":"startFrame:i endFrame:i line:i"
+        ]
+        for (name,declaration) in dataRecords {
+            var schema=entity(declaration).object!;schema["additionalProperties"] = .boolean(false)
+            result[name] = .object(schema)
+        }
+        var framing=result["MediaFraming"]!.object!;framing["additionalProperties"] = .boolean(false);result["MediaFraming"] = .object(framing)
+        func constraint(_ name:String,_ field:String,_ values:[String:AgentValue]) {
+            var record=result[name]!.object!,properties=record["properties"]!.object!
+            var shape=properties[field]!.object!
+            if case .array(let options)?=shape["anyOf"] {
+                shape["anyOf"] = .array(options.map { option in
+                    guard var value=option.object,value["type"]?.string != "null" else{return option}
+                    value.merge(values,uniquingKeysWith:{$1});return .object(value)
+                })
+            } else {shape.merge(values,uniquingKeysWith:{$1})}
+            properties[field] = .object(shape);record["properties"] = .object(properties);result[name] = .object(record)
+        }
+        constraint("DataPresentation","version",["const":.number(1)])
+        constraint("DataPresentation","sourceOffsetFrames",["minimum":.number(0),"maximum":.number(54000)])
+        for (name,field,count) in [("DataChart","series",8),("DataSeries","keyframes",128),("CodePresentation","lines",16)] {
+            constraint(name,field,["minItems":.number(1),"maxItems":.number(Decimal(count))])
+        }
+        constraint("CodePresentation","highlights",["maxItems":.number(64)])
+        constraint("CodePresentation","lines",["items":.object(["type":.string("string"),"maxLength":.number(120)])])
+        for field in ["minimum","maximum"] {constraint("DataChart",field,["minimum":.number(-1_000_000_000),"maximum":.number(1_000_000_000)])}
+        constraint("DataValueKeyframe","value",["minimum":.number(-1_000_000_000),"maximum":.number(1_000_000_000)])
+        for (name,field) in [("DataValueKeyframe","frame"),("CodeHighlight","startFrame"),("CodeHighlight","endFrame")] {
+            constraint(name,field,["minimum":.number(0),"maximum":.number(54000)])
+        }
+        constraint("CodeHighlight","line",["minimum":.number(0),"maximum":.number(15)])
+        for (name,field,limit) in [("DataChart","title",64),("DataChart","axisLabel",20),("DataSeries","id",64),("DataSeries","label",20),("CodePresentation","title",64)] {
+            constraint(name,field,["minLength":.number(1),"maxLength":.number(Decimal(limit))])
+        }
+        constraint("DataSeries","color",["pattern":.string("^[A-Fa-f0-9]{6}$")])
+        for field in ["x","y"] {constraint("MediaFraming",field,["minimum":.number(0),"maximum":.number(1)])}
+        for field in ["width","height"] {constraint("MediaFraming",field,["minimum":.number(Decimal(string:"0.01")!),"maximum":.number(1)])}
+        var presentation=result["DataPresentation"]!.object!
+        presentation["description"] = .string("作者给定数据/展示代码，不执行任意代码；chart与code只可选一个，且须匹配层kind。采样使用镜头源帧+sourceOffsetFrames，拆分后保原曲线。")
+        presentation["oneOf"] = .array([
+            .object(["required":.array([.string("chart")]),"properties":.object(["chart":shape("DataChart"),"code":.object(["type":.string("null")])])]),
+            .object(["required":.array([.string("code")]),"properties":.object(["code":shape("CodePresentation"),"chart":.object(["type":.string("null")])])])
+        ])
+        result["DataPresentation"] = .object(presentation)
         for (key,declaration) in CartoonPerformanceSchema.records { result[key]=entity(declaration) }
         for (key,values) in CartoonPerformanceSchema.enums { result[key] = .object(["type":.string("string"),"enum":.array(values.map(AgentValue.string))]) }
         for (key, declaration) in KnowledgeSimulationSchema.records { result[key] = entity(declaration) }

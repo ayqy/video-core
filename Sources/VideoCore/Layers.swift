@@ -1,11 +1,13 @@
 import Foundation
 
 public struct SceneLayer: Codable, Equatable, Identifiable, Sendable {
-    public enum Kind: String, Codable, CaseIterable, Sendable { case text="文字", image="图片", rectangle="色块" }
+    public enum Kind: String, Codable, CaseIterable, Sendable { case text="文字", image="图片", rectangle="色块", chart="数据图表", code="代码演示" }
     public var id=Codec.id(); public var kind:Kind; public var text:String; public var assetID:String?
     public var x:Double=0.5; public var y:Double=0.5; public var width:Double=0.5; public var height:Double=0.2
     public var color="FFFFFF"; public var opacity:Double=1; public var startFrame:Int=0; public var endFrame:Int
     public var locked=false; public var keyframes:[Keyframe]=[]
+    /// Nil remains absent in old encodings and therefore preserves old digests.
+    public var dataPresentation: DataPresentation?
     public init(kind:Kind,text:String="",assetID:String?=nil,endFrame:Int) { self.kind=kind;self.text=text;self.assetID=assetID;self.endFrame=endFrame }
     public func layout(at frame:Int)->(x:Double,y:Double,scale:Double) { var s=Scene(title:"layer",body:"");s.x=x;s.y=y;s.keyframes=keyframes;return s.layout(at:frame) }
 }
@@ -18,6 +20,10 @@ public enum LayerRules {
             guard Set(l.keyframes.map(\.frame)).count==l.keyframes.count,l.keyframes.allSatisfy({$0.frame>=l.startFrame && $0.frame<l.endFrame && (0...1).contains($0.x) && (0...1).contains($0.y) && (0.1...4).contains($0.scale)}) else { throw VideoError.invalid("元素关键帧越界或重复") }
             if l.kind == .text { guard !l.text.isEmpty,l.text.count<=180 else { throw VideoError.invalid("文字元素内容为空或过密") } }
             if l.kind == .image { guard let id=l.assetID,assets.contains(where:{$0.id==id && $0.mediaType.hasPrefix("image")}) else { throw VideoError.invalid("图片元素缺少实际图片") } }
+            if l.kind == .chart || l.kind == .code {
+                guard let data=l.dataPresentation,l.assetID == nil,l.text.isEmpty else { throw VideoError.invalid("图表/代码元素须绑定数据展示，不能隐藏图片引用或重复文字") }
+                try data.validate(kind:l.kind,endFrame:l.endFrame)
+            } else if l.dataPresentation != nil { throw VideoError.invalid("普通文字、图片、色块不接受隐藏数据展示") }
         }
     }
     public static func protectLocked(old:Scene,new:Scene) throws {

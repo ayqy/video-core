@@ -6,8 +6,10 @@ import Foundation
 
 enum LayerPainter {
     static func draw(scene:Scene,sourceFrame:Int,aspect:Aspect,images:[String:CGImage],context c:CGContext,fontName:String="PingFangSC-Medium") throws {
-        for layer in scene.layers ?? [] where layer.startFrame<=sourceFrame && layer.endFrame>sourceFrame {
-            let layout=layer.layout(at:sourceFrame);let w=Double(aspect.width),h=Double(aspect.height)
+        for layer in scene.layers ?? [] {
+            let frame=(layer.kind == .chart || layer.kind == .code) ? min(sourceFrame,max(0,scene.durationFrames-1)) : sourceFrame
+            guard layer.startFrame<=frame,layer.endFrame>frame else{continue}
+            let layout=layer.layout(at:frame);let w=Double(aspect.width),h=Double(aspect.height)
             let rect=CGRect(x:(layout.x-layer.width*layout.scale/2)*w,y:(1-layout.y-layer.height*layout.scale/2)*h,width:layer.width*layout.scale*w,height:layer.height*layout.scale*h)
             c.saveGState();defer { c.restoreGState() };c.setAlpha(layer.opacity)
             let rgb=UInt32(layer.color,radix:16) ?? 0xFFFFFF;let color=CGColor(red:CGFloat((rgb>>16)&255)/255,green:CGFloat((rgb>>8)&255)/255,blue:CGFloat(rgb&255)/255,alpha:1)
@@ -22,6 +24,8 @@ enum LayerPainter {
                 let string=NSAttributedString(string:layer.text,attributes:[.init(kCTFontAttributeName as String):font,.init(kCTForegroundColorAttributeName as String):color])
                 let setter=CTFramesetterCreateWithAttributedString(string),frame=CTFramesetterCreateFrame(setter,CFRange(location:0,length:0),CGPath(rect:rect,transform:nil),nil)
                 guard (CTFontCopyPostScriptName(font) as String)==fontName,TextGlyphInspection.hasSupportedGlyphs(frame),CTFrameGetVisibleStringRange(frame).length==string.length else { throw VideoError.review("文字元素超出区域，请扩大元素或拆分文案") };c.textMatrix = .identity;CTFrameDraw(frame,c)
+            case .chart,.code:
+                try DataPresentationPainter.draw(layer:layer,sourceFrame:frame,rect:rect,context:c,fontName:fontName)
             }
         }
     }

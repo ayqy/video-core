@@ -85,6 +85,7 @@ public struct Scene: Codable, Equatable, Identifiable, Sendable {
     public var classicArtwork: ClassicArtwork?
     public var classicArtworkRequired: Bool?
     public var fontName:String?
+    public var mediaFraming:MediaFraming?
     /// Optional for old projects. The full deterministic trace is kept even when stale,
     /// so editing never mistakes a newly calculated result for an already reviewed recording.
     public var simulationRecording: RuleTrace?
@@ -103,6 +104,15 @@ public struct Scene: Codable, Equatable, Identifiable, Sendable {
     public func validate(assets: [Asset]) throws {
         try LayerRules.validate(scene:self,assets:assets)
         try ClassicArtworkRules.validate(scene:self,assets:assets)
+        if let framing=mediaFraming {
+            try framing.validate()
+            guard kind == .image || kind == .video,
+                  let aid=assetID, let asset=assets.first(where:{$0.id==aid}),
+                  (kind == .image && (asset.mediaType == "image" || asset.mediaType.hasPrefix("image/"))) ||
+                  (kind == .video && (asset.mediaType == "video" || asset.mediaType.hasPrefix("video/"))) else {
+                throw VideoError.invalid("局部取景只能绑定实际图片或录屏源素材")
+            }
+        }
         if let presentation=simulationPresentation {
             guard kind == .simulation else { throw VideoError.invalid("只有仿真镜头可绑定规则展示窗口") }
             try presentation.validate(durationFrames:durationFrames)

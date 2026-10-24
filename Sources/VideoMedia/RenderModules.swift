@@ -24,7 +24,21 @@ public struct ModuleLicense: Codable, Equatable, Sendable {
     public init(id: String, subject: String, pluginIDs: Set<String>, issuedAt: Date, expiresAt: Date? = nil, revoked: Bool = false) {
         self.id = id; self.subject = subject; self.pluginIDs = pluginIDs; self.issuedAt = issuedAt; self.expiresAt = expiresAt; self.revoked = revoked
     }
+    /// Revocation keeps the original identity and dates, including an already expired grant.
+    /// This structural check grants no right to execute and does not create a new licence ID.
+    public func validateStructure(now: Date = Date()) throws {
+        guard !id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, id.utf8.count <= 200,
+              !subject.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, subject.utf8.count <= 200,
+              !id.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }),
+              !subject.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }),
+              !pluginIDs.isEmpty, pluginIDs.isSubset(of: ["video.game", "video.cartoon"]),
+              issuedAt.timeIntervalSince1970.isFinite, issuedAt <= now.addingTimeInterval(300),
+              expiresAt == nil || (expiresAt!.timeIntervalSince1970.isFinite && expiresAt! > issuedAt) else {
+            throw VideoError.permission("独立许可证身份、范围或日期不合法；未授予或重置权益")
+        }
+    }
     public func validate(now: Date) throws {
+        try validateStructure(now: now)
         guard !id.isEmpty, !subject.isEmpty, !pluginIDs.isEmpty, issuedAt <= now.addingTimeInterval(300),
               !revoked, expiresAt == nil || expiresAt! > now,
               expiresAt == nil || expiresAt! > issuedAt else { throw VideoError.permission("独立高级模块许可证未生效、已过期或已撤销；原素材和历史工程仍可取回") }
@@ -275,7 +289,12 @@ public final class RenderModuleRegistry: @unchecked Sendable {
     // Persistent hosts keep version floors separately. This semantic history also survives
     // unregister within this registry; it does not claim cross-process content persistence.
     private var highestPolicyDeclarations: [String: CommercialPolicy] = [:]
-    public init() {}
+    private let independentLicenseCheck: (@Sendable (ModuleLicense, Date) throws -> Void)?
+    /// The standalone Host supplies its fixed user-level revocation checker. StoreKit uses
+    /// its own verified transaction path and never receives an independent CLI entitlement.
+    public init(independentLicenseCheck: (@Sendable (ModuleLicense, Date) throws -> Void)? = nil) {
+        self.independentLicenseCheck = independentLicenseCheck
+    }
     public static func capability(for kind: SceneKind) -> String? {
         switch kind { case .simulation: return "game.simulate"; case .cartoon: return "cartoon.animate"; default: return nil }
     }
@@ -335,7 +354,9 @@ public final class RenderModuleRegistry: @unchecked Sendable {
             else {
                 guard let signedLicense else { throw VideoError.permission("需要此高级模块的独立许可证；App编辑器权益不能代替CLI插件权益") }
                 let verified = try signedLicense.verified(as: ModuleLicense.self, publicKey: publicKey)
-                try verified.validate(now: now); license = verified
+                try verified.validate(now: now)
+                try independentLicenseCheck?(verified, now)
+                license = verified
             }
         }
         let entitlementIDs = storeAccess.map { Set([$0.pluginID]) } ?? license?.pluginIDs ?? []
@@ -366,7 +387,7 @@ public final class RenderModuleRegistry: @unchecked Sendable {
         if entry.policy.access == "free" { return }
         guard entry.policy.access == "paid" else { throw VideoError.permission("此高级模块已禁用") }
         if let store = entry.storeAccess { try store.validate(now: now) }
-        else if let license = entry.license { try license.validate(now: now) }
+        else if let license = entry.license { try license.validate(now: now); try independentLicenseCheck?(license, now) }
         else { throw VideoError.permission("高级模块授权缺失") }
     }
     @discardableResult public func validate(kind: SceneKind, now: Date = Date()) throws -> RenderModuleStatus {

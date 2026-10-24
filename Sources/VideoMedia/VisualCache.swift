@@ -13,7 +13,7 @@ enum VisualClipCache {
         func cancel() { session.cancelExport() }
     }
     // Bump whenever layout/codec semantics change. Font bytes and OS are also fingerprinted.
-    static let version="native-scene-cache-6"
+    static let version="native-scene-cache-8"
     struct Key: Encodable {
         var version: String; var os: String; var font: String; var scene: Scene
         var purpose: Purpose; var aspect: Aspect; var fps: Int; var index: Int; var sceneCount: Int; var startFrame: Int

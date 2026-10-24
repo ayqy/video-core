@@ -65,13 +65,14 @@ private enum CandidateSelfTest {
         // codesign writes its identity to stderr. This data is inspected in memory only.
         return try Data(contentsOf:out)+(includeStderr ? Data(contentsOf:err):Data())
     }
-    static func envelope(_ data:Data,command:String)throws {
+    static func envelope(_ data:Data,command:String,requireIndependentRevocationABI:Bool=false)throws {
         guard let object=try JSONSerialization.jsonObject(with:data) as? [String:Any],object["ok"] as? Bool==true,object["state"] as? String=="succeeded",object["schema_version"] as? String==AgentContract.version,object["error"] is NSNull || object["error"]==nil,let result=object["result"] as? [String:Any],!result.isEmpty else{throw VideoError.unavailable("候选"+command+"未返回当前ABI的成功封套")}
         if command=="schema"{guard result["schema_version"] as? String==AgentContract.version else{throw VideoError.unavailable("候选schema主版本不兼容")}}
         if command=="doctor"{
             let database=result["database"] as? [String:Any]
             let advanced=result["repository_schema"] as? Int
             guard advanced==1 || (database?["schema"] as? Int==1 && database?["validated"] as? Bool==true && database?["read_only"] as? Bool==true) else{throw VideoError.unavailable("候选doctor未实际确认恢复后的数据库兼容性")}
+            try IndependentLicenseRevocationABI.validate(result[IndependentLicenseRevocationABI.field],required:requireIndependentRevocationABI)
         }
     }
     static func inspect(program:URL,data:URL,manifest:ManagedReleaseManifest)throws {
@@ -110,7 +111,8 @@ private enum CandidateSelfTest {
         }
         let candidate=program.appendingPathComponent(manifest.product.entrypoint)
         try envelope(run(candidate,["schema"],root:data),command:"schema")
-        try envelope(run(candidate,["doctor","--workspace",data.path],root:data),command:"doctor")
+        let requireRevocationABI = manifest.product == .advancedCLI ? try IndependentLicenseRevocationStore.production(publicKey:InstallerTrust.publicKey).hasRevocations() : false
+        try envelope(run(candidate,["doctor","--workspace",data.path],root:data),command:"doctor",requireIndependentRevocationABI:requireRevocationABI)
     }
 }
 @main private struct VideoInstall {

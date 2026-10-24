@@ -60,15 +60,18 @@ public enum ScenePainter {
         c.setFillColor(color(s.color, alpha: 0.12)); c.fillEllipse(in: CGRect(x: w*0.58,y: h*0.45,width: w*0.7,height: w*0.7))
         let margin: CGFloat = portrait ? 64 : 80
         let knowledge = s.kind == .simulation && s.simulation.knowledge != nil
-        let detailedStage = knowledge || (s.kind == .cartoon && s.cartoonPerformance != nil), wideKnowledge = detailedStage && !portrait
-        text("VIDEO  /  \(revision.purpose.rawValue)", in: CGRect(x: margin,y: wideKnowledge ? 680:h-84,width: w-margin*2,height: wideKnowledge ? 20:30), size: wideKnowledge ? 16:21, color: "A5B4FC", context: c,fontName:s.fontName ?? "PingFangSC-Medium")
-        try checkedText(s.title, in: CGRect(x: margin,y: wideKnowledge ? 628:h-(portrait ? 240:200),width: w-margin*2,height: wideKnowledge ? 48:(portrait ? 125:100)), size: wideKnowledge ? 36:(portrait ? 45:48), color: "FFFFFF", context: c,fontName:s.fontName ?? "PingFangSC-Medium")
-        let separateBody=s.kind == .simulation || s.kind == .cartoon || media != nil
+        let dataStage = (s.layers ?? []).contains { $0.kind == .chart || $0.kind == .code }
+        let detailedStage = knowledge || dataStage || (s.kind == .cartoon && s.cartoonPerformance != nil) || (media != nil && s.mediaFraming != nil), wideKnowledge = detailedStage && !portrait
+        text("VIDEO  /  \(revision.purpose.rawValue)", in: CGRect(x: margin,y: wideKnowledge ? 680:h-84,width: w-margin*2,height: wideKnowledge ? 24:30), size: wideKnowledge ? 16:21, color: "A5B4FC", context: c,fontName:s.fontName ?? "PingFangSC-Medium")
+        // PingFangSC-Medium at 36pt needs 50.4px ascent+descent. Keep a real
+        // line above the stage and below the meta label; never relax text checks.
+        try checkedText(s.title, in: CGRect(x: margin,y: wideKnowledge ? 626:h-(portrait ? 240:200),width: w-margin*2,height: wideKnowledge ? 54:(portrait ? 125:100)), size: wideKnowledge ? 36:(portrait ? 45:48), color: "FFFFFF", context: c,fontName:s.fontName ?? "PingFangSC-Medium")
+        let separateBody=s.kind == .simulation || s.kind == .cartoon || media != nil || dataStage
         let overlay=OverlayLayout(width:w,height:h,showPrice:s.showPrice,separateBody:separateBody,knowledge:detailedStage)
         let base=overlay.visual
         let layout=s.layout(at:mapped)
         let visual=CGRect(x:base.midX+CGFloat(layout.x-0.5)*base.width-base.width*CGFloat(layout.scale)/2,y:base.midY+CGFloat(layout.y-0.5)*base.height-base.height*CGFloat(layout.scale)/2,width:base.width*CGFloat(layout.scale),height:base.height*CGFloat(layout.scale))
-        if let media { c.saveGState(); c.addPath(CGPath(roundedRect: visual, cornerWidth: 28, cornerHeight: 28, transform: nil)); c.clip(); let ratio = min(visual.width/CGFloat(media.width),visual.height/CGFloat(media.height)); let rect = CGRect(x: visual.midX-CGFloat(media.width)*ratio/2,y: visual.midY-CGFloat(media.height)*ratio/2,width: CGFloat(media.width)*ratio,height: CGFloat(media.height)*ratio); c.draw(media,in: rect); c.restoreGState() }
+        if let source=media { let media=try MediaFramingRenderer.crop(source,framing:s.mediaFraming); c.saveGState(); c.addPath(CGPath(roundedRect: visual, cornerWidth: 28, cornerHeight: 28, transform: nil)); c.clip(); let ratio = min(visual.width/CGFloat(media.width),visual.height/CGFloat(media.height)); let rect = CGRect(x: visual.midX-CGFloat(media.width)*ratio/2,y: visual.midY-CGFloat(media.height)*ratio/2,width: CGFloat(media.width)*ratio,height: CGFloat(media.height)*ratio); c.draw(media,in: rect); c.restoreGState() }
         else if RenderModuleRegistry.capability(for:s.kind) != nil {
             guard let modules else { throw VideoError.unavailable("此镜头需要独立高级模块，请核对已安装模块与权益；免费图文、图片和录屏继续可用") }
             let moduleFrame = s.kind == .simulation ? try s.renderSimulationSourceFrame(atTimelineFrame:local) : mapped
