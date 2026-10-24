@@ -2,10 +2,10 @@
 
 VideoFree source export · package_free.py · version 1
 
-生成时间：2026-10-25 01:13:21 北京时间
+生成时间：2026-10-25 01:58:05 北京时间
 
-- 源码与必要元数据：206个文件；2629997字节（不含本清单）。
-- 整体内容指纹：`bbef3d9bbf9cded3c7d0fbb7409cf5ad48c5b32d6da6df7e60f8a196831ea0a4`。
+- 源码与必要元数据：206个文件；2630551字节（不含本清单）。
+- 整体内容指纹：`21f8665bcd20cd63c8857a9cce854c8b38437147209f4363264e5740141b2bb4`。
 - 来源：受控原始工程中的逐文件白名单；Package.swift来自Distribution/Free/Package.swift模板，README由发行脚本生成。
 - 本包不含.git，不可作为新业务checkout；本清单生成过程不执行构建、设备验收、签名安装或公共上传，各阶段以独立证据为准。
 - 排除：App、VideoGame、VideoCartoon、Premium、高级实现运行时测试、私有仓库地址、凭据、客户数据、缓存、日志及媒体过程产物。
@@ -51,7 +51,7 @@ VideoFree source export · package_free.py · version 1
 | 347257a3cd5bcb0e501506a29ab4dc2892a46d2560a111a8d779b124e594ebb9 | 60 | Sources/CZlib/module.modulemap |
 | 80324eed37fb3c06611102a5ed598bb3d60aa818eeb6f848068e359677a07ea7 | 18 | Sources/CZlib/shim.h |
 | f91009e63ad2cd947bb9a9e20acc909478e7ef5374aadc08c23654f5d8894029 | 15306 | Sources/VideoCLI/FiniteWorker.swift |
-| 6ce8bcf8b3cedaff9001b89e10692c1bb9b4bddfcb1e12df2093dcabfd07d18e | 29358 | Sources/VideoCLI/VideoCLI.swift |
+| 3a85917885b9d15dd38123ead2d32aaef4417eef471701846e0080942fba0c23 | 29912 | Sources/VideoCLI/VideoCLI.swift |
 | 7b3174ed085c50b618aa6c6864009ac623e7f500d90c8f4e08c8cdb7d7a0b08f | 21470 | Sources/VideoCore/AgentContract.swift |
 | bf2f7ad7ef600774a301f579dd95b966a0702127595ca53e0ae7f55b91a2ded3 | 2784 | Sources/VideoCore/AgentJobAccess.swift |
 | 8bf2579a1f2466e15406fcad08bcbbc615b82cd2242a0f2db10aef489e805fbc | 20489 | Sources/VideoCore/AgentMutation.swift |
