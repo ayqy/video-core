@@ -90,14 +90,14 @@ public enum Editor {
                 guard original.voice == nil else { throw VideoError.review("有配音的片段请先解除配音并重新录制两段，避免截断句子") }
                 guard !(original.layers ?? []).contains(where:{$0.locked}) else { throw VideoError.permission("请先解锁元素，再拆分场景") }
                 let hasEntrances=(original.layers ?? []).contains{$0.entrance != nil}
-                if hasEntrances {
+                if original.speed != 1 || hasEntrances {
                     try original.validate(assets:assets)
                     let leftFrames=max(1,Int((Double(frame)/original.speed).rounded()))
                     let rightFrames=max(1,Int((Double(original.durationFrames-frame)/original.speed).rounded()))
                     let sourceFrames=original.timelineFrames-original.pauseFrames
                     // A source split can fall between actual output samples at
                     // non-integral speeds. Reject unrepresentable phase shifts
-                    // instead of restarting or subtly retiming an entrance.
+                    // instead of adding output frames or resampling the right side.
                     let leftMatches=(0..<leftFrames).allSatisfy { local in
                         min(frame-1,original.renderSourceFrame(atTimelineFrame:local)) == min(original.durationFrames-1,original.renderSourceFrame(atTimelineFrame:local))
                     }
@@ -105,15 +105,17 @@ public enum Editor {
                         min(original.durationFrames-1,frame+original.renderSourceFrame(atTimelineFrame:local)) == min(original.durationFrames-1,original.renderSourceFrame(atTimelineFrame:leftFrames+local))
                     }
                     guard leftFrames+rightFrames == sourceFrames,leftMatches,rightMatches else {
-                        throw VideoError.review("此变速拆分不能保留图形入场的逐帧源映射，请先恢复1×速度后拆分，再分别调整速度")
+                        throw VideoError.review("此变速拆分不能保留连续的逐帧源映射，请先恢复1×速度后拆分，再分别调整速度")
                     }
                 }
                 try ClassicArtworkRules.validate(scene:original,assets:assets)
                 let audioCues=original.classicArtwork?.audioCues ?? []
                 guard !audioCues.contains(where:{$0.startFrame<frame && $0.durationFrames>frame-$0.startFrame}) else { throw VideoError.review("拆分点穿过游戏音效或原录音提示，请调整拆分点或先移除该声音；不会自动截断原音") }
                 var a = original, b = original; a.durationFrames = frame; b.id = Codec.id(); b.durationFrames = original.durationFrames - frame; b.sourceStartFrame += frame; a.sourceEndFrame = original.sourceStartFrame + frame
+                // A trailing hold belongs to the end of the original scene, not
+                // to every piece created by splitting its source interval.
+                a.pauseFrames=0
                 if original.paperPresentation != nil || hasEntrances {
-                    a.pauseFrames=0
                     revision.invalidated += ["拆分后的纸面呈现、图形入场与声音字幕重新复核"]
                 }
                 a.classicArtwork?.audioCues=audioCues.filter{$0.startFrame<frame}.map { cue in var copy=cue;copy.listened=false;return copy }
