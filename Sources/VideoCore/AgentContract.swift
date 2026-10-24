@@ -59,6 +59,7 @@ public enum AgentContract {
         AgentCommand("assets list",required:["workspace_id"]),
         AgentCommand("evidence add", required: ["workspace_id", "evidence"], writes: true, idempotency: "atomic_database_request_receipt"),
         AgentCommand("projects list", required: ["workspace_id"]),
+        AgentCommand("knowledge compare", required: ["workspace_id", "project_id", "base_revision", "scene_id", "comparison_scene_id"], permission: .projectRead),
         AgentCommand("projects create",required:["workspace_id","name"],optional:["aspect","scenes"],writes:true,idempotency:"atomic_database_request_receipt"),
         AgentCommand("script create", required: ["workspace_id", "knowledge", "demonstration", "hook"], optional: ["product_id", "name", "purpose", "aspect", "kind", "evidence_ids"], writes: true, idempotency: "atomic_database_request_receipt"),
         AgentCommand("speech voices", permission: .discovery),

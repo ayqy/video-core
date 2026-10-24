@@ -13,6 +13,20 @@ public enum AgentPreview {
         func project()throws->Project { let p=try database.project(projectID ?? "");guard p.workspaceID==w.id else {throw VideoError.permission("项目不属于所选工作区")};return p }
         func job()throws->Job { guard let j=database.jobs.first(where:{$0.id==text("job_id") && $0.workspaceID==w.id})else{throw VideoError.notFound("任务不属于所选工作区")};return j }
         switch command {
+        case "knowledge compare":
+            let p = try project()
+            guard p.current.id == text("base_revision") else { throw VideoError.conflict("知识对照目标版本已变化，请重新读取当前工程") }
+            guard let baseline = p.current.scenes.first(where: { $0.id == text("scene_id") }),
+                  let alternative = p.current.scenes.first(where: { $0.id == text("comparison_scene_id") }) else {
+                throw VideoError.notFound("知识对照的两个镜头须属于同一当前版本")
+            }
+            guard baseline.kind == .simulation, alternative.kind == .simulation,
+                  let first = baseline.simulation.knowledge, let second = alternative.simulation.knowledge else {
+                throw VideoError.invalid("知识对照需要两个实际知识仿真镜头")
+            }
+            guard baseline.simulation.seed == alternative.simulation.seed else { throw VideoError.invalid("反事实对照须显式使用相同种子，不能忽略对照镜头种子") }
+            let explanation = try KnowledgeCounterfactualExplanation.build(baseline: first, alternative: second, seed: baseline.simulation.seed)
+            return try Codec.decoder().decode(AgentValue.self, from: Codec.data(explanation))
         case "speech synthesize","speech attach":
             let request=try Codec.decoder().decode(SpeechProjectRequest.self,from:data)
             _=try SpeechProjectRules.prepare(request,database:database,principal:principal)

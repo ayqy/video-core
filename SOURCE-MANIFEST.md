@@ -2,10 +2,10 @@
 
 VideoFree source export · package_free.py · version 1
 
-生成时间：2026-10-24 12:40:31 北京时间
+生成时间：2026-10-24 13:39:18 北京时间
 
-- 源码与必要元数据：196个文件；2392313字节（不含本清单）。
-- 整体内容指纹：`8ca77f49552c2ed7c17aa000201491719cb7e579662b33d831924ea9f7a31628`。
+- 源码与必要元数据：198个文件；2416735字节（不含本清单）。
+- 整体内容指纹：`c6bd3ff52568ae18835671576b91ec44dc23da4563a61117b4a518974a8ceffe`。
 - 来源：受控原始工程中的逐文件白名单；Package.swift来自Distribution/Free/Package.swift模板，README由发行脚本生成。
 - 本包不含.git，不可作为新业务checkout；本清单生成过程不执行构建、设备验收、签名安装或公共上传，各阶段以独立证据为准。
 - 排除：App、VideoGame、VideoCartoon、Premium、高级实现运行时测试、私有仓库地址、凭据、客户数据、缓存、日志及媒体过程产物。
@@ -45,11 +45,11 @@ VideoFree source export · package_free.py · version 1
 | 347257a3cd5bcb0e501506a29ab4dc2892a46d2560a111a8d779b124e594ebb9 | 60 | Sources/CZlib/module.modulemap |
 | 80324eed37fb3c06611102a5ed598bb3d60aa818eeb6f848068e359677a07ea7 | 18 | Sources/CZlib/shim.h |
 | f91009e63ad2cd947bb9a9e20acc909478e7ef5374aadc08c23654f5d8894029 | 15306 | Sources/VideoCLI/FiniteWorker.swift |
-| b9b26cb7a123ed258a2e3c82e860aae982bfd440f99030f532a09fa0ffbb5a28 | 28924 | Sources/VideoCLI/VideoCLI.swift |
-| 22dfcdfb5a1751d368e7dd62986502351f920078218233b5e472a5a6a99dbd70 | 21307 | Sources/VideoCore/AgentContract.swift |
+| 6ce8bcf8b3cedaff9001b89e10692c1bb9b4bddfcb1e12df2093dcabfd07d18e | 29358 | Sources/VideoCLI/VideoCLI.swift |
+| 7b3174ed085c50b618aa6c6864009ac623e7f500d90c8f4e08c8cdb7d7a0b08f | 21470 | Sources/VideoCore/AgentContract.swift |
 | bf2f7ad7ef600774a301f579dd95b966a0702127595ca53e0ae7f55b91a2ded3 | 2784 | Sources/VideoCore/AgentJobAccess.swift |
 | 8bf2579a1f2466e15406fcad08bcbbc615b82cd2242a0f2db10aef489e805fbc | 20489 | Sources/VideoCore/AgentMutation.swift |
-| 16632eaed73ec90cec9e60341441d00347a79f4943610226602f816baa68abf2 | 10413 | Sources/VideoCore/AgentPreview.swift |
+| 299352c70bdbd93cea96504e1046a7f65339a47a8ea1215565a53b66d9c03549 | 11691 | Sources/VideoCore/AgentPreview.swift |
 | 61a28d75073116efb477bb9045a5c48fb3a77028c8d9536bea3a9df80838634a | 17796 | Sources/VideoCore/AgentSchemas.swift |
 | 9abfcc0fb2fe524d09107761d1471684807e723a87184e2ad3cd1793b940c55f | 3611 | Sources/VideoCore/AgentWorker.swift |
 | a4a917beec4d38f3d9c9aa6f13c83f269987305ab84a195e953a86907fadc3ac | 4979 | Sources/VideoCore/AttributionEditing.swift |
@@ -72,6 +72,7 @@ VideoFree source export · package_free.py · version 1
 | 2bfaeccf8e337bf51c8c5e053272308a17f7973c4225570324038aa724308010 | 4242 | Sources/VideoCore/ImportRules.swift |
 | aac5404f87e8cf28f21ff655a186b284e651b2612c1cbbfc4a7d35dcb2aed090 | 9523 | Sources/VideoCore/JobOperations.swift |
 | b7af7e4c3d6f63da6beb33517189d7c89f920f619ad46037628202087871a8cb | 9966 | Sources/VideoCore/Jobs.swift |
+| a33d5c6bf33727cda13e951ac7a19297f6448a8b89f3b78cf4f484058dffd426 | 6196 | Sources/VideoCore/KnowledgeCounterfactualExplanation.swift |
 | 89bdf13864d580d29ba3fbf7c0ee665e73e807f5428a8fb81611eb5c22b78dda | 32809 | Sources/VideoCore/KnowledgeRuleTable.swift |
 | 69145ad27bdcfbf17a6d995cb50bc20d0683125f68a6be70a2f46e6f102c5c15 | 38900 | Sources/VideoCore/KnowledgeSimulation.swift |
 | cf533c8a7bf42c2b67e8c956d75a6c67a43d94a7c46bc12f9e2a0d3d94d4b5f7 | 7214 | Sources/VideoCore/KnowledgeStoryboard.swift |
@@ -168,6 +169,7 @@ VideoFree source export · package_free.py · version 1
 | 3679c347b506d7431bfd4e0a9f2d08c383e9b87bd613c0d5e959b7635722240e | 13842 | Tests/VideoCoreTests/EditorPracticeTests.swift |
 | 2b62fdf4fe6d33e509688253a6e85d6293e58b5188dedfeeeb21f5a1eb335793 | 3900 | Tests/VideoCoreTests/H264RulesTests.swift |
 | e18a02e8dba8aef63d20f4a2f43f29aadb9993e3ccf111a62eaf03d7170031c4 | 11873 | Tests/VideoCoreTests/JobOperationTests.swift |
+| 8e53c4c3c252dfed343cc898580b09b2c246a27b82fe607221f653354833ad07 | 16351 | Tests/VideoCoreTests/KnowledgeCounterfactualExplanationTests.swift |
 | 78f362bac4e58371ad8c2481af3d3a519a8ff4c76778ca0ac1c97e3bbf808feb | 24476 | Tests/VideoCoreTests/KnowledgeRuleTableTests.swift |
 | d313eee0d4c1eefcdcca602fce5c17004f01f9067fbea1630a54efdf51960083 | 30593 | Tests/VideoCoreTests/KnowledgeSimulationTests.swift |
 | 99a3ce9dc4df2649462ca6ce97e95539d7c0f766bd71c1289a4b1a888054c7c3 | 13554 | Tests/VideoCoreTests/KnowledgeStoryboardTests.swift |
