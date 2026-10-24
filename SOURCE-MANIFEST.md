@@ -2,10 +2,10 @@
 
 VideoFree source export · package_free.py · version 1
 
-生成时间：2026-10-24 10:57:37 北京时间
+生成时间：2026-10-24 11:17:58 北京时间
 
-- 源码与必要元数据：188个文件；2320416字节（不含本清单）。
-- 整体内容指纹：`7723588749138c5273e2c5dd72614d6703dca2e6d5a31c304414c46e8e44aa3b`。
+- 源码与必要元数据：189个文件；2333933字节（不含本清单）。
+- 整体内容指纹：`8f22423314da0c397391a266f3075cc604635007573781834061ff1e151cb60e`。
 - 来源：受控原始工程中的逐文件白名单；Package.swift来自Distribution/Free/Package.swift模板，README由发行脚本生成。
 - 本包不含.git，不可作为新业务checkout；本清单生成过程不执行构建、设备验收、签名安装或公共上传，各阶段以独立证据为准。
 - 排除：App、VideoGame、VideoCartoon、Premium、高级实现运行时测试、私有仓库地址、凭据、客户数据、缓存、日志及媒体过程产物。
@@ -116,7 +116,7 @@ VideoFree source export · package_free.py · version 1
 | 78eab44c664d354ecf71559b09af166acca4d9ee2c46786e9449fe9d2c8799cf | 9759 | Sources/VideoMedia/Importer.swift |
 | a60210d33c6fc2b9462dd8574277cb156f55bf5a8e0b48767faadec25e406a1e | 11538 | Sources/VideoMedia/IndependentLicenseRevocation.swift |
 | e54f38a67ecc9603ae1c109cee1b34660249b05637cc85ef7378213db89f65b2 | 2780 | Sources/VideoMedia/LayerPainter.swift |
-| 81f5d6c24bb69fe8b5dd6081e10369dd75d6c97dff4f93e06747af1edbdc8e35 | 4322 | Sources/VideoMedia/LocalJobExecutor.swift |
+| 744dc297431e5eb74b738ae651142fdebe3e93c69aae8ac346cbd62a9e9bd2c8 | 8161 | Sources/VideoMedia/LocalJobExecutor.swift |
 | 1708f587453edbc4b12552b7b10b1c0fa570a37a7191b0eb1e3ca27588008207 | 1037 | Sources/VideoMedia/MediaFramingRenderer.swift |
 | 862b21c404fef16668b4f922a7e34a96f71cc3099b57b88df288992f3431a260 | 11976 | Sources/VideoMedia/Painter.swift |
 | 786fe879b7ab660b62e730089ca5b7dbf3aafdb95fdbe1d1f6c261acc26c93ce | 21332 | Sources/VideoMedia/PluginProcess.swift |
@@ -195,6 +195,7 @@ VideoFree source export · package_free.py · version 1
 | c7b7bf2aa6091f105373becd60c2dc830ed5167fc85db480b9193d60543e1db4 | 3999 | Tests/VideoMediaTests/CoursePreviewTests.swift |
 | f29c1fa39a424f92baf2bd451a563c49e70e68d75a4100fc530f7e6307dce7f0 | 18848 | Tests/VideoMediaTests/DataPresentationPainterTests.swift |
 | 09707b85484233e0d0d8102b5af22ac557004eb35df8d2e7847421695601a272 | 15896 | Tests/VideoMediaTests/IndependentLicenseRevocationTests.swift |
+| 6e6627381bc3e0bbc6ab65500e5e56b6ae6ba7f019ae5b5cd3a5b98355d9afad | 9678 | Tests/VideoMediaTests/LocalJobKeepaliveTests.swift |
 | c7e58b70577f1181d014ba4a7e15bdd276a97129afc9fb2fb7086da9ad1f86b8 | 11493 | Tests/VideoMediaTests/LoudnessMediaTests.swift |
 | 08274451bda7e16361ec64d78a2026f8a34f97007fde869c13c407f7fd66e59c | 3990 | Tests/VideoMediaTests/MediaFramingMediaTests.swift |
 | 1e0e423293fcfca12ecba28dbfbc41df38c87d74e351d386ce5ecedc2f1eb94d | 13458 | Tests/VideoMediaTests/MediaTests.swift |
