@@ -49,6 +49,148 @@ def _bounded(value):
     return visit(value)
 
 
+# Diagnostic data is a separate bounded projection, never an exception/transcript
+# serializer. These names/codes are authored locally; unknown strings leave only
+# a digest. In particular, initialization identity/source values are not copied.
+_DIAGNOSTIC_REASONS = frozenset((
+    "invalid_native_tool_input", "unreviewed_native_tool_input",
+    "invalid_native_permission_envelope", "unexpected_native_permission_request",
+    "native_event_after_result", "unreviewed_native_session_configuration",
+    "unexpected_native_status", "unexpected_native_system_event", "unexpected_native_event",
+    "native_session_changed", "invalid_native_result", "invalid_native_message",
+    "invalid_native_content_block", "invalid_native_tool_use", "invalid_native_tool_result",
+    "unexpected_native_user_text", "unexpected_native_content_block",
+    "invalid_native_initialize_envelope", "native_initialize_not_confirmed",
+    "native_stderr_byte_bound", "native_json_structure_bound",
+    "unexpected_native_control_response", "native_permission_before_session",
+    "native_event_before_initialize", "invalid_json_object", "stream_already_closed",
+    "stream_byte_bound", "stream_line_bound", "stream_event_bound",
+    "reviewed_regular_file_required", "native_dependency_pin_required",
+    "native_configuration_byte_bound", "native_settings_mismatch", "unexpected_skill_plugin",
+    "reviewed_local_skill_plugin_required", "native_plugin_layout_bound",
+    "unexpected_native_plugin_file_type", "unexpected_local_plugin_contents",
+    "unreviewed_plugin_manifest", "plugin_license_or_notice_not_same_source",
+    "invalid_file_pin", "single_regular_pinned_file_required", "file_pin_identity_changed",
+    "file_pin_mismatch", "pinned_directory_changed",
+))
+_DIAGNOSTIC_FIELDS = frozenset((
+    "type", "subtype", "cwd", "session_id", "tools", "mcp_servers", "model",
+    "permissionMode", "slash_commands", "betas", "claude_code_version", "output_style",
+    "agents", "skills", "plugins", "uuid", "status", "message", "parent_tool_use_id",
+    "error", "isSynthetic", "tool_use_result", "response", "request", "request_id",
+    "is_error", "duration_ms", "duration_api_ms", "num_turns", "result", "total_cost_usd",
+    "usage", "modelUsage", "permission_denials", "errors",
+))
+
+
+def _diagnostic_type(value):
+    return {type(None): "null", bool: "boolean", int: "integer", float: "number",
+            str: "string", list: "array", dict: "object"}.get(type(value), "other")
+
+
+def _diagnostic_name(value, allowed):
+    if type(value) is str and value in allowed:
+        return {"name": value}
+    result = {"name": "other", "type": _diagnostic_type(value)}
+    if type(value) is str:
+        result["sha256"] = hashlib.sha256(value.encode("utf-8", errors="surrogatepass")).hexdigest()
+    return result
+
+
+def _diagnostic_fields(value):
+    if not isinstance(value, dict):
+        return {"type": _diagnostic_type(value)}
+    known, unknown, unknown_count = set(), [], 0
+    for index, name in enumerate(value):
+        if index >= 256:
+            break
+        if name in _DIAGNOSTIC_FIELDS:
+            known.add(name)
+        elif name in ("apiKeySource", "tokenSource", "account"):
+            known.add("private_metadata")
+        else:
+            unknown_count += 1
+            if len(unknown) < 16:
+                unknown.append(_diagnostic_name(name, ()))
+    return {"type": "object", "count": min(len(value), 257), "known": sorted(known),
+            "unknown": unknown, "truncated": len(value) > 256 or unknown_count > 16}
+
+
+def _diagnostic_init(event, native):
+    required = {
+        "type", "subtype", "cwd", "session_id", "tools", "mcp_servers", "model",
+        "permissionMode", "slash_commands", "betas", "claude_code_version", "output_style",
+        "agents", "skills", "plugins", "uuid", "apiKeySource"}
+    def strings_match(value, expected):
+        return isinstance(value, list) and all(type(x) is str for x in value) and set(value) == expected
+    checks = {
+        "fields_exact": set(event) == required, "first_session": native.session is None,
+        "cwd_match": event.get("cwd") == str(native.policy.directory),
+        "session_id_valid": type(event.get("session_id")) is str and
+            0 < len(event["session_id"].encode("utf-8", errors="surrogatepass")) <= 128 and
+            not any(0xD800 <= ord(c) <= 0xDFFF for c in event["session_id"]),
+        "tools_match": strings_match(event.get("tools"), {"Bash"} | ({"Skill"} if native.policy.allow_skill else set())),
+        "mcp_empty": event.get("mcp_servers") == [],
+        "permission_default": event.get("permissionMode") == "default",
+        "agents_strings": isinstance(event.get("agents"), list) and all(isinstance(x, str) for x in event["agents"]),
+        "skills_match": strings_match(event.get("skills"), {"video:video"} if native.policy.allow_skill else set()),
+        "plugins_match": event.get("plugins") == ([{"name": "video", "path": str(native.skill_plugin)}]
+                                                   if native.policy.allow_skill else []),
+    }
+    shapes = {}
+    for name in ("cwd", "session_id", "tools", "mcp_servers", "permissionMode", "agents", "skills", "plugins"):
+        value = event.get(name)
+        shapes[name] = {"type": _diagnostic_type(value)}
+        if isinstance(value, (list, dict)):
+            shapes[name].update(count=min(len(value), 2049), truncated=len(value) > 2048)
+    return {"checks": checks, "shapes": shapes}
+
+
+def _diagnostic_event(event, native):
+    if not isinstance(event, dict):
+        return None
+    result = {"type": _diagnostic_name(event.get("type"),
+        ("system", "assistant", "user", "result", "control_request", "control_response")),
+        "fields": _diagnostic_fields(event)}
+    request = event.get("request")
+    response = event.get("response")
+    subtype = (request.get("subtype") if isinstance(request, dict) else
+               response.get("subtype") if isinstance(response, dict) else event.get("subtype"))
+    result["subtype"] = _diagnostic_name(subtype, ("init", "status", "success", "error", "can_use_tool"))
+    if event.get("type") == "system" and event.get("subtype") == "init":
+        result["init"] = _diagnostic_init(event, native)
+    message = event.get("message")
+    blocks = message.get("content") if isinstance(message, dict) else None
+    candidates = [request] if isinstance(request, dict) else (
+        blocks[:8] if isinstance(blocks, list) else [])
+    tools = []
+    for block in candidates:
+        if not isinstance(block, dict) or (block is not request and block.get("type") not in ("tool_use", "tool_result")):
+            continue
+        item = {"name": _diagnostic_name(block.get("tool_name", block.get("name")), ("Bash", "Skill"))}
+        for source, target in ((block.get("tool_use_id", block.get("id")), "id"),
+                               ((block.get("input") or {}).get("command")
+                                if isinstance(block.get("input"), dict) else None, "command")):
+            item[target] = _diagnostic_name(source, ())
+        tools.append(item)
+    if tools:
+        result["tools"] = tools
+    return result
+
+
+def _diagnostic_failure(error, stage, event, native):
+    category = next((name for kind, name in ((ProtocolError, "ProtocolError"),
+        (_PolicyRefused, "_PolicyRefused"), (OSError, "OSError"), (ValueError, "ValueError"),
+        (TypeError, "TypeError"), (RuntimeError, "RuntimeError")) if isinstance(error, kind)), "other")
+    reason = "pinned_policy_refused" if isinstance(error, _PolicyRefused) else "other"
+    if type(error) in (ProtocolError, ValueError) and len(error.args) == 1 and type(error.args[0]) is str:
+        code = error.args[0]
+        if len(code) <= 96 and code in _DIAGNOSTIC_REASONS:
+            reason = code
+    return {"category": category, "reason": reason, "stage": stage,
+            "event": _diagnostic_event(event, native)}
+
+
 def _input(tool, values):
     if not isinstance(values, dict):
         raise ProtocolError("invalid_native_tool_input")
@@ -224,6 +366,9 @@ def consume(arguments, prompt, policy: PinnedPolicy, *, seconds, on_event=None, 
     result = None
     status = "ended_without_result"
     failure = None
+    diagnostics = {"version": 1, "refusal": None}
+    diagnostic_event = None
+    diagnostic_stage = "initialize_send"
 
     def send(value):
         process.stdin.write((json.dumps(value, ensure_ascii=False) + "\n").encode())
@@ -246,11 +391,17 @@ def consume(arguments, prompt, policy: PinnedPolicy, *, seconds, on_event=None, 
                     if stderr_bytes > 1024*1024:
                         raise ProtocolError("native_stderr_byte_bound")
                     continue
+                diagnostic_event = None
+                diagnostic_stage = "event_decode"
                 for event in stream.feed(data, eof=not data):
+                    diagnostic_event = event
+                    diagnostic_stage = "event_bounds"
                     if not _bounded(event):
                         raise ProtocolError("native_json_structure_bound")
+                    diagnostic_stage = "configuration_verify"
                     if _verify_configuration is not None:
                         _verify_configuration()
+                    diagnostic_stage = "event_admission"
                     kind = event.get("type")
                     if kind == "control_response":
                         if initialized:
@@ -286,8 +437,8 @@ def consume(arguments, prompt, policy: PinnedPolicy, *, seconds, on_event=None, 
             except subprocess.TimeoutExpired:
                 status = "hard_deadline"
     except (ProtocolError, _PolicyRefused, OSError, ValueError, TypeError, RuntimeError) as error:
-        # Only locally authored error classes/codes leave this consumer.
-        failure = type(error).__name__
+        diagnostics["refusal"] = _diagnostic_failure(error, diagnostic_stage, diagnostic_event, native)
+        failure = diagnostics["refusal"]["category"]
         policy.failed = True
         status = "policy_refused" if isinstance(error, _PolicyRefused) else "protocol_refused"
     finally:
@@ -299,10 +450,12 @@ def consume(arguments, prompt, policy: PinnedPolicy, *, seconds, on_event=None, 
                 if not item.closed:
                     item.close()
     try:
+        diagnostic_stage = "completion_verify"
         if _verify_configuration is not None:
             _verify_configuration()
         policy._verify_pins()
-    except (ValueError, OSError):
+    except (ValueError, OSError) as error:
+        diagnostics["completion_refusal"] = _diagnostic_failure(error, diagnostic_stage, None, native)
         policy.failed = True
         status = "policy_refused"
     complete = (status == "native_result" and initialized and process.returncode == 0 and
@@ -310,7 +463,8 @@ def consume(arguments, prompt, policy: PinnedPolicy, *, seconds, on_event=None, 
         policy.complete and all(item["allowed"] for item in decisions) and cleanup["passed"])
     return {"status": status, "initialized": initialized, "exit_code": process.returncode,
         "seconds": round(time.monotonic()-started, 3), "events": events, "decisions": decisions,
-        "result": result, "failure_type": failure, "cleanup": cleanup, "execution_complete": complete,
+        "result": result, "failure_type": failure, "diagnostics": diagnostics,
+        "cleanup": cleanup, "execution_complete": complete,
         "policy_complete": complete, "event_bytes": stream.bytes, "event_sha256": stream.digest.hexdigest(),
         "stderr_bytes": stderr_bytes, "stderr_sha256": stderr.hexdigest()}
 

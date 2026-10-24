@@ -11,7 +11,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from qwen_stream import ExactPolicy, FilePin, PinnedPolicy, consume, create_isolated_settings, run_qwen
+from qwen_stream import ExactPolicy, FilePin, PinnedPolicy, _PolicyRefused, _policy_rejection, consume, create_isolated_settings, run_qwen
 
 
 PEER = '''import json,sys,time
@@ -257,6 +257,106 @@ class PinnedQwenPolicyTests(unittest.TestCase):
                 self.assertEqual(result["exit_code"], 0)
                 self.assertTrue(result["policy_complete"])
                 self.assertEqual([d["allowed"] for d in result["decisions"]], [True, True])
+                self.assertIsNone(result["policy_rejection"])
+
+    def testRejectedNativeObservationReturnsOnlyShapeAndExpectedCommandFingerprint(self):
+        result = consume(self.peer("reverse"), "not retained in diagnostic", self.policy(), seconds=3)
+        value = result["policy_rejection"]
+        self.assertEqual(value["reason"], "pinned_observer_refused")
+        self.assertEqual(value["phase"], "observation")
+        self.assertEqual(value["event_type"], {"kind": "assistant"})
+        tool = value["content_blocks"][0]["tool"]
+        self.assertEqual(tool["tool"], {"kind": "run_shell_command"})
+        self.assertEqual(tool["command_sha256"], hashlib.sha256(self.commands[1].encode()).hexdigest())
+        self.assertEqual(tool["expected_command_sha256"], hashlib.sha256(self.commands[0].encode()).hexdigest())
+        self.assertFalse(tool["command_matches_expected"])
+        self.assertFalse(result["execution_complete"])
+        self.assertFalse(result["policy_complete"])
+        self.assertTrue(result["cleanup"]["passed"])
+        self.assertNotIn(self.commands[0], json.dumps(value))
+        self.assertNotIn(self.commands[1], json.dumps(value))
+
+    def testNativePermissionRefusalIsDistinctAndContainsNoTimeoutValue(self):
+        result = consume(self.peer("timeout-permission-first", 0), "local only", self.policy(), seconds=3)
+        value = result["policy_rejection"]
+        self.assertEqual(value["reason"], "native_permission_refused")
+        self.assertEqual(value["phase"], "permission")
+        self.assertTrue(value["requested_tool"]["command_matches_expected"])
+        fields = value["requested_tool"]["input"]["fields"]
+        self.assertIn({"key": {"kind": "timeout"}, "value_type": "number"}, fields)
+        self.assertFalse(any(item["allowed"] for item in result["decisions"]))
+        self.assertFalse(result["policy_complete"])
+
+    def testCompletionPinFailureIsDistinctWithoutReusingNativeEventAsExplanation(self):
+        from qwen_stream import _terminate_group
+        def stop_and_mutate(process):
+            result = _terminate_group(process)
+            self.fixed.write_text("changed after real process cleanup")
+            return result
+        with patch("qwen_stream._terminate_group", side_effect=stop_and_mutate):
+            result = consume(self.peer("ordered"), "local only", self.policy(), seconds=3)
+        self.assertEqual(result["policy_rejection"]["phase"], "completion_pin")
+        self.assertEqual(result["policy_rejection"]["event"], {"value_type": "null"})
+        self.assertFalse(result["execution_complete"])
+        self.assertTrue(result["cleanup"]["passed"])
+
+    def testObserverExceptionTextIsNeverIncludedInTheReceipt(self):
+        sentinel = "private-observer-exception-content-do-not-render"
+        with patch.object(PinnedPolicy, "observe", side_effect=_PolicyRefused(sentinel)):
+            result = consume(self.peer("ordered"), "local only", self.policy(), seconds=3)
+        self.assertEqual(result["status"], "policy_refused")
+        self.assertEqual(result["policy_rejection"]["phase"], "observation")
+        self.assertNotIn(sentinel, json.dumps(result))
+
+    def testDiagnosticUnknownNamesKeysIdsValuesAndBodyAreHashedOrOmitted(self):
+        sentinels = ["unknown-event-private-marker", "unknown-tool-private-marker", "opaque-tool-id-private-marker",
+                     "unknown-key-private-marker", "command-value-private-marker", "directory-value-private-marker",
+                     "description-value-private-marker", "body-private-marker"]
+        event = {"type": sentinels[0], "request": {"subtype": sentinels[7], "tool_name": sentinels[1],
+            "tool_use_id": sentinels[2], "input": {sentinels[3]: sentinels[7], "command": sentinels[4],
+                "directory": sentinels[5], "description": sentinels[6]}},
+            "message": {"role": sentinels[7], "content": [{"type": "text", "text": sentinels[7]}]}}
+        value = _policy_rejection(event, self.policy(), phase="permission", initialized=True)
+        encoded = json.dumps(value, sort_keys=True)
+        for sentinel in sentinels:
+            self.assertNotIn(sentinel, encoded)
+        self.assertEqual(value["event_type"]["kind"], "other")
+        self.assertEqual(value["event_type"]["sha256"], hashlib.sha256(sentinels[0].encode()).hexdigest())
+        self.assertEqual(value["requested_tool"]["tool"]["kind"], "other")
+        self.assertEqual(value["requested_tool"]["tool_id_sha256"], hashlib.sha256(sentinels[2].encode()).hexdigest())
+        self.assertEqual(value["requested_tool"]["command_sha256"], hashlib.sha256(sentinels[4].encode()).hexdigest())
+
+    def testDiagnosticBoundsFieldAndContentProjectionWithoutCopyingValues(self):
+        values = {"unreviewed-field-"+str(i): {"private": "body"*500} for i in range(100)}
+        event = {"type": "assistant", "message": {"role": "assistant", "content": [
+            {"type": "tool_use", "name": "run_shell_command", "id": "opaque", "input": values}
+            for _ in range(100)]}}
+        value = _policy_rejection(event, self.policy(), phase="observation", initialized=True)
+        self.assertEqual(value["content_block_count"], 100)
+        self.assertEqual(value["omitted_content_blocks"], 96)
+        self.assertEqual(len(value["content_blocks"]), 4)
+        for block in value["content_blocks"]:
+            self.assertEqual(block["tool"]["input"]["field_count"], 100)
+            self.assertEqual(len(block["tool"]["input"]["fields"]), 16)
+            self.assertEqual(block["tool"]["input"]["omitted_fields"], 84)
+        self.assertLess(len(json.dumps(value)), 16000)
+        self.assertNotIn("body", json.dumps(value))
+
+    def testDiagnosticDoesNotCallStringOrReprAndHandlesEscapedSurrogates(self):
+        class Opaque:
+            def __str__(self):
+                raise AssertionError("must not render")
+            def __repr__(self):
+                raise AssertionError("must not render")
+        opaque = Opaque()
+        event = {"type": "assistant", "message": {"role": "assistant", "content": [
+            {"type": "tool_use", "name": "\ud800", "id": opaque, "input": {"description": opaque, "\ud800": opaque}}]}}
+        value = _policy_rejection(event, self.policy(), phase="observation", initialized=True)
+        tool = value["content_blocks"][0]["tool"]
+        self.assertEqual(tool["tool"]["kind"], "other")
+        self.assertEqual(len(tool["tool"]["sha256"]), 64)
+        self.assertEqual(tool["tool_id_type"], "other")
+        self.assertNotIn("\\ud800", json.dumps(value))
 
     def testCompletePinnedToolLifecycleStillRequiresActualGroupCleanup(self):
         failed = {"term": "requested", "kill": "permission_denied", "leader_reaped": True,

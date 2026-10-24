@@ -8,6 +8,7 @@ import unittest
 from unittest.mock import patch
 
 from claude_stream import _configuration, _input, _pinned_json, consume, create_isolated_settings, run_claude
+from codex_events import ProtocolError
 from qwen_stream import FilePin, PinnedPolicy
 from install import host_manifests
 import package as native_package
@@ -28,6 +29,10 @@ if mode in ('bad-init','init-extra'):time.sleep(20)
 assert json.loads(sys.stdin.readline())['type']=='user'
 if mode=='duplicate-init':emit(ack);time.sleep(20)
 if mode=='unknown':emit({'type':'unknown_action','request':{}});time.sleep(20)
+if mode=='hostile-event':
+ emit({'type':'private-event-not-to-export','subtype':'private-subtype-not-to-export',
+       'private-field-not-to-export':'private-value-not-to-export'})
+ time.sleep(20)
 if mode=='stall':time.sleep(20)
 skill=mode=='skill'
 session={'type':'system','subtype':'init','cwd':os.getcwd(),'session_id':'s-one',
@@ -40,11 +45,24 @@ if mode=='wrong-directory':session['cwd']+='-other'
 if mode=='extra-tools':session['tools'].append('Read')
 if mode=='mcp':session['mcp_servers']=[{'name':'other','status':'connected'}]
 if mode=='bypass':session['permissionMode']='bypassPermissions'
+if mode=='session-extra':session['fast_mode_state']='private-value-not-to-export'
+if mode=='session-missing':del session['agents']
+if mode=='session-agents':session['agents']={'private-value-not-to-export':True}
+if mode=='session-skills':session['skills']=['private-value-not-to-export']
+if mode=='session-plugins':session['plugins']=[{'name':'private-value-not-to-export','path':'private-path-not-to-export'}]
+if mode=='session-unhashable-tools':session['tools']=[{'private-value-not-to-export':True}]
+if mode=='hostile-init':
+ session.update(cwd='private-cwd-not-to-export',session_id='private-session-not-to-export',
+                model='private-model-output-not-to-export')
+ for n in range(200):session['private-field-not-to-export-'+str(n)]='private-value-not-to-export'
 if mode!='before-session':emit(session)
 tools=[('Skill',{'skill':'video:video'})] if skill else []
 tools += [('Bash',{'command':'rtk proxy video schema','timeout':120000,'run_in_background':False})]
 for n,(name,values) in enumerate(tools):
  tid='tool-'+str(n)
+ if mode=='hostile-tool':
+  name='private-tool-not-to-export';tid='private-tool-id-not-to-export'
+  values['command']='private-command-not-to-export'
  if mode=='extra-input':values['dangerouslyDisableSandbox']=True
  if mode=='wrong-command':values['command']+=' --unreviewed'
  if mode=='background':values['run_in_background']=True
@@ -129,6 +147,91 @@ class ClaudeStreamTests(unittest.TestCase):
         self.assertNotIn('private-email-not-to-export',encoded)
         self.assertNotIn('account',encoded)
 
+    def testRefusalDiagnosticIdentifiesExactInitCheckWithoutChangingAdmission(self):
+        expected = {'wrong-directory':'cwd_match','extra-tools':'tools_match','mcp':'mcp_empty',
+                    'bypass':'permission_default','session-agents':'agents_strings',
+                    'session-skills':'skills_match','session-plugins':'plugins_match'}
+        for mode, check in expected.items():
+            with self.subTest(mode=mode):
+                result=self.run_peer(mode)
+                refusal=result['diagnostics']['refusal']
+                self.assertEqual(refusal['reason'],'unreviewed_native_session_configuration')
+                self.assertEqual(refusal['stage'],'event_admission')
+                self.assertFalse(refusal['event']['init']['checks'][check])
+                self.assertEqual(result['decisions'],[])
+                self.assertFalse(result['execution_complete'])
+                self.assertTrue(result['cleanup']['passed'])
+                self.assertNotIn('private-value-not-to-export',json.dumps(result))
+
+    def testExtraOrMissingInitMetadataRemainsRejectedAndFieldNamesAreProjected(self):
+        for mode in ('session-extra','session-missing'):
+            with self.subTest(mode=mode):
+                result=self.run_peer(mode)
+                event=result['diagnostics']['refusal']['event']
+                self.assertFalse(event['init']['checks']['fields_exact'])
+                self.assertFalse(result['execution_complete'])
+                self.assertEqual(result['decisions'],[])
+                if mode=='session-extra':
+                    self.assertTrue(all(value for name,value in event['init']['checks'].items()
+                                        if name!='fields_exact'))
+                    self.assertEqual(event['fields']['unknown'],[{'name':'other','type':'string',
+                        'sha256':hashlib.sha256(b'fast_mode_state').hexdigest()}])
+                else:
+                    self.assertEqual(event['init']['shapes']['agents'],{'type':'null'})
+                self.assertNotIn('private-value-not-to-export',json.dumps(result))
+
+    def testUnknownEventSubtypeAndFieldExposeOnlyFiniteClassificationAndHashes(self):
+        result=self.run_peer('hostile-event')
+        refusal=result['diagnostics']['refusal']
+        self.assertEqual(refusal['reason'],'unexpected_native_event')
+        event=refusal['event']
+        for key,value in (('type','private-event-not-to-export'),('subtype','private-subtype-not-to-export')):
+            self.assertEqual(event[key],{'name':'other','type':'string',
+                'sha256':hashlib.sha256(value.encode()).hexdigest()})
+        self.assertEqual(event['fields']['unknown'],[{'name':'other','type':'string',
+            'sha256':hashlib.sha256(b'private-field-not-to-export').hexdigest()}])
+        self.assertNotIn('private-',json.dumps(result))
+        self.assertFalse(result['execution_complete'])
+
+    def testRejectedToolNameIdAndCommandAreDigestsNeverRemoteText(self):
+        result=self.run_peer('hostile-tool')
+        refusal=result['diagnostics']['refusal']
+        self.assertEqual(refusal['reason'],'unreviewed_native_tool_input')
+        tool=refusal['event']['tools'][0]
+        for key,value in (('name','private-tool-not-to-export'),('id','private-tool-id-not-to-export'),
+                          ('command','private-command-not-to-export')):
+            self.assertEqual(tool[key],{'name':'other','type':'string',
+                'sha256':hashlib.sha256(value.encode()).hexdigest()})
+        self.assertNotIn('private-',json.dumps(result))
+        self.assertEqual(result['decisions'],[])
+
+    def testDiagnosticHasBoundedFieldsShapesAndNoIdentityOrModelContents(self):
+        result=self.run_peer('hostile-init')
+        event=result['diagnostics']['refusal']['event']
+        self.assertEqual(len(event['fields']['unknown']),16)
+        self.assertTrue(event['fields']['truncated'])
+        self.assertLess(len(json.dumps(result['diagnostics'])),6000)
+        self.assertEqual(event['init']['shapes']['tools'],{'type':'array','count':1,'truncated':False})
+        self.assertNotIn('private-',json.dumps(result))
+        self.assertNotIn(str(self.root),json.dumps(result['diagnostics']))
+        malformed=self.run_peer('session-unhashable-tools')
+        self.assertEqual(malformed['failure_type'],'TypeError')
+        self.assertEqual(malformed['diagnostics']['refusal']['reason'],'other')
+        self.assertFalse(malformed['diagnostics']['refusal']['event']['init']['checks']['tools_match'])
+
+    def testUnreviewedExceptionTextAndRenderingNeverReachDiagnostics(self):
+        class UnrenderableProtocolError(ProtocolError):
+            def __str__(self):raise AssertionError('exception string must not be read')
+            def __repr__(self):raise AssertionError('exception representation must not be read')
+        def refuse():raise UnrenderableProtocolError('private-exception-not-to-export')
+        result=consume([sys.executable,str(self.script),'normal',str(self.input)],'bounded',self.policy(),
+                       seconds=3,_verify_configuration=refuse)
+        self.assertEqual(result['failure_type'],'ProtocolError')
+        self.assertEqual(result['diagnostics']['refusal']['reason'],'other')
+        self.assertEqual(result['diagnostics']['completion_refusal']['reason'],'other')
+        self.assertNotIn('private-',json.dumps(result))
+        self.assertTrue(result['cleanup']['passed'])
+
     def testNativePermissionBeforeAssistantUseStillBindsSameInput(self):
         self.assertTrue(self.run_peer('permission-first')['policy_complete'])
 
@@ -175,6 +278,8 @@ class ClaudeStreamTests(unittest.TestCase):
     def testApprovalObservedUseInputMismatchCannotAuthorizeAlteredTimeout(self):
         result=self.run_peer('mismatch')
         self.assertFalse(result['policy_complete'])
+        self.assertEqual(result['failure_type'],'_PolicyRefused')
+        self.assertEqual(result['diagnostics']['refusal']['reason'],'pinned_policy_refused')
         self.assertEqual(result['decisions'],[{'tool_use_id':'tool-0','allowed':False}])
 
     def testSuccessfulNativeResultWithoutPermissionOrWithWrongResultIdCannotComplete(self):

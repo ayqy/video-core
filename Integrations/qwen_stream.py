@@ -278,6 +278,115 @@ def _terminate_group(process: subprocess.Popen) -> dict:
     return _stop(process)
 
 
+_DIAGNOSTIC_KEYS = frozenset((
+    "type", "subtype", "request", "request_id", "response", "message", "role", "content",
+    "id", "name", "input", "tool_name", "tool_use_id", "is_error", "command", "directory",
+    "description", "timeout", "is_background", "background", "async", "skill", "file_path",
+))
+
+
+def _diagnostic_type(value):
+    if value is None:
+        return "null"
+    return {str: "string", dict: "object", list: "array", bool: "boolean",
+            int: "number", float: "number"}.get(type(value), "other")
+
+
+def _diagnostic_hash(value):
+    return hashlib.sha256(value.encode("utf-8", errors="surrogatepass")).hexdigest() if isinstance(value, str) else None
+
+
+def _diagnostic_name(value, known):
+    if isinstance(value, str) and value in known:
+        return {"kind": value}
+    result = {"kind": "other", "value_type": _diagnostic_type(value)}
+    if isinstance(value, str):
+        result["sha256"] = _diagnostic_hash(value)
+    return result
+
+
+def _diagnostic_fields(value):
+    """Only audited field names/types; arbitrary keys are never rendered."""
+    result = {"value_type": _diagnostic_type(value)}
+    if not isinstance(value, dict):
+        return result
+    fields = []
+    for index, (key, item) in enumerate(value.items()):
+        if index >= 16:
+            break
+        fields.append({"key": _diagnostic_name(key, _DIAGNOSTIC_KEYS),
+                       "value_type": _diagnostic_type(item)})
+    result.update(field_count=len(value), fields=fields, omitted_fields=max(0, len(value)-len(fields)))
+    return result
+
+
+def _diagnostic_tool(name, values, identifier, policy):
+    result = {"tool": _diagnostic_name(name, frozenset(("skill", "run_shell_command", "write_file"))),
+              "tool_id_type": _diagnostic_type(identifier), "input": _diagnostic_fields(values)}
+    if isinstance(identifier, str):
+        result["tool_id_sha256"] = _diagnostic_hash(identifier)
+    command = values.get("command") if isinstance(values, dict) else None
+    expected = (policy.commands[policy._position] if isinstance(policy, PinnedPolicy) and
+                policy._position < len(policy.commands) else None)
+    if isinstance(command, str):
+        result["command_sha256"] = _diagnostic_hash(command)
+    if isinstance(expected, str):
+        result["expected_command_sha256"] = _diagnostic_hash(expected)
+        result["command_matches_expected"] = command == expected if isinstance(command, str) else None
+    return result
+
+
+def _policy_rejection(event, policy, *, phase, initialized):
+    """Finite refusal evidence, never command/input/text/account/error values.
+
+    Hashes identify opaque names and reviewed command equality without exposing
+    their contents. This projection does not explain or authorize an unknown
+    event and does not change PinnedPolicy's existing rejection semantics.
+    """
+    result = {"reason": {"permission": "native_permission_refused",
+                         "observation": "pinned_observer_refused",
+                         "completion_pin": "completion_pin_refused"}[phase],
+              "phase": phase, "initialized": bool(initialized), "event": _diagnostic_fields(event)}
+    if isinstance(policy, PinnedPolicy):
+        result["policy"] = {"command_index": policy._position,
+            "command_count": len(policy.commands), "skill_used": policy._skill_used,
+            "pending_tool": policy._pending is not None, "observed_tools": len(policy._observed),
+            "completed_tools": len(policy._completed)}
+    if not isinstance(event, dict):
+        return result
+    result["event_type"] = _diagnostic_name(event.get("type"), frozenset((
+        "assistant", "user", "system", "result", "control_request", "control_response")))
+    if isinstance(event.get("request"), dict):
+        request = event["request"]
+        result["request"] = _diagnostic_fields(request)
+        result["requested_tool"] = _diagnostic_tool(request.get("tool_name"), request.get("input"),
+                                                     request.get("tool_use_id"), policy)
+    message = event.get("message")
+    if isinstance(message, dict):
+        result["message"] = _diagnostic_fields(message)
+        result["message_role"] = _diagnostic_name(message.get("role"), frozenset(("assistant", "user", "system")))
+        blocks = message.get("content")
+        if isinstance(blocks, list):
+            result["content_block_count"] = len(blocks)
+            result["omitted_content_blocks"] = max(0, len(blocks)-4)
+            projected = []
+            for block in blocks[:4]:
+                item = {"fields": _diagnostic_fields(block)}
+                if isinstance(block, dict):
+                    item["block_type"] = _diagnostic_name(block.get("type"), frozenset((
+                        "text", "tool_use", "tool_result", "thinking", "redacted_thinking")))
+                    if block.get("type") == "tool_use":
+                        item["tool"] = _diagnostic_tool(block.get("name"), block.get("input"), block.get("id"), policy)
+                    elif block.get("type") == "tool_result":
+                        item["tool_id_type"] = _diagnostic_type(block.get("tool_use_id"))
+                        item["tool_id_sha256"] = _diagnostic_hash(block.get("tool_use_id"))
+                        item["is_error_type"] = _diagnostic_type(block.get("is_error"))
+                        item["explicit_error"] = block.get("is_error") is True
+                projected.append(item)
+            result["content_blocks"] = projected
+    return result
+
+
 def consume(arguments: list[str], prompt: str, policy: ExactPolicy | PinnedPolicy, *, seconds: float, on_event=None) -> dict:
     """Return in-memory evidence. Native max-wall-time is not a timeout guarantee."""
     if not 0 < seconds <= 300:
@@ -301,6 +410,8 @@ def consume(arguments: list[str], prompt: str, policy: ExactPolicy | PinnedPolic
     native_result = None
     status = "ended_without_result"
     cleanup = None
+    rejection = None
+    active_event = None
 
     def send(value):
         process.stdin.write((json.dumps(value, ensure_ascii=False) + "\n").encode())
@@ -336,6 +447,7 @@ def consume(arguments: list[str], prompt: str, policy: ExactPolicy | PinnedPolic
                     event = json.loads(line)
                     if not isinstance(event, dict):
                         raise ValueError("宿主事件不是对象")
+                    active_event = event
                     events.append(event)
                     if len(events) > 1000:
                         raise ValueError("宿主事件超过有限数量上限")
@@ -355,6 +467,8 @@ def consume(arguments: list[str], prompt: str, policy: ExactPolicy | PinnedPolic
                         request = event.get("request", {})
                         allowed = initialized and policy.allows(request)
                         decisions.append({"tool_use_id": request.get("tool_use_id"), "allowed": allowed})
+                        if not allowed and rejection is None:
+                            rejection = _policy_rejection(event, policy, phase="permission", initialized=initialized)
                         send({"type": "control_response", "response": {"subtype": "success", "request_id": event["request_id"],
                               "response": {"behavior": "allow" if allowed else "deny", "message": "Only the exact authorized local action is permitted."}}})
                     elif kind == "result":
@@ -372,6 +486,8 @@ def consume(arguments: list[str], prompt: str, policy: ExactPolicy | PinnedPolic
                 status = "hard_deadline"
     except _PolicyRefused:
         status = "policy_refused"
+        if rejection is None:
+            rejection = _policy_rejection(active_event, policy, phase="observation", initialized=initialized)
     finally:
         try:
             cleanup = _terminate_group(process)
@@ -386,9 +502,12 @@ def consume(arguments: list[str], prompt: str, policy: ExactPolicy | PinnedPolic
         except (OSError, ValueError):
             policy.failed = True
             status = "policy_refused"
+            if rejection is None:
+                rejection = _policy_rejection(None, policy, phase="completion_pin", initialized=initialized)
     result = {"status": status, "exit_code": process.returncode, "seconds": round(time.monotonic() - started, 3),
             "initialized": initialized, "events": events, "decisions": decisions, "result": native_result,
-            "stderr_bytes": stderr_bytes, "stderr_sha256": stderr_digest.hexdigest(), "cleanup": cleanup}
+            "stderr_bytes": stderr_bytes, "stderr_sha256": stderr_digest.hexdigest(), "cleanup": cleanup,
+            "policy_rejection": rejection}
     result["execution_complete"] = (status == "native_result" and initialized and process.returncode == 0 and
         isinstance(native_result, dict) and native_result.get("subtype") == "success" and
         native_result.get("is_error") in (None, False) and all(d["allowed"] for d in decisions) and cleanup["passed"])
