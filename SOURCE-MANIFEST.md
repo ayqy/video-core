@@ -2,10 +2,10 @@
 
 VideoFree source export · package_free.py · version 1
 
-生成时间：2026-10-24 23:38:19 北京时间
+生成时间：2026-10-25 01:13:21 北京时间
 
-- 源码与必要元数据：206个文件；2622017字节（不含本清单）。
-- 整体内容指纹：`6709f75b0162f93fc56e3a004138def22d058395ec535f9ed25e9410fd12349a`。
+- 源码与必要元数据：206个文件；2629997字节（不含本清单）。
+- 整体内容指纹：`bbef3d9bbf9cded3c7d0fbb7409cf5ad48c5b32d6da6df7e60f8a196831ea0a4`。
 - 来源：受控原始工程中的逐文件白名单；Package.swift来自Distribution/Free/Package.swift模板，README由发行脚本生成。
 - 本包不含.git，不可作为新业务checkout；本清单生成过程不执行构建、设备验收、签名安装或公共上传，各阶段以独立证据为准。
 - 排除：App、VideoGame、VideoCartoon、Premium、高级实现运行时测试、私有仓库地址、凭据、客户数据、缓存、日志及媒体过程产物。
@@ -55,7 +55,7 @@ VideoFree source export · package_free.py · version 1
 | 7b3174ed085c50b618aa6c6864009ac623e7f500d90c8f4e08c8cdb7d7a0b08f | 21470 | Sources/VideoCore/AgentContract.swift |
 | bf2f7ad7ef600774a301f579dd95b966a0702127595ca53e0ae7f55b91a2ded3 | 2784 | Sources/VideoCore/AgentJobAccess.swift |
 | 8bf2579a1f2466e15406fcad08bcbbc615b82cd2242a0f2db10aef489e805fbc | 20489 | Sources/VideoCore/AgentMutation.swift |
-| 299352c70bdbd93cea96504e1046a7f65339a47a8ea1215565a53b66d9c03549 | 11691 | Sources/VideoCore/AgentPreview.swift |
+| 9dfaab2c9ecbb1c61b5a066203329602c2bb3e691f48aaa9765dec87d39fd648 | 12072 | Sources/VideoCore/AgentPreview.swift |
 | 61a28d75073116efb477bb9045a5c48fb3a77028c8d9536bea3a9df80838634a | 17796 | Sources/VideoCore/AgentSchemas.swift |
 | 9abfcc0fb2fe524d09107761d1471684807e723a87184e2ad3cd1793b940c55f | 3611 | Sources/VideoCore/AgentWorker.swift |
 | a4a917beec4d38f3d9c9aa6f13c83f269987305ab84a195e953a86907fadc3ac | 4979 | Sources/VideoCore/AttributionEditing.swift |
@@ -154,7 +154,7 @@ VideoFree source export · package_free.py · version 1
 | 2bfdd4935e5f4e53fb1934516db3c6d3acc1f19f346d021686a24cd9ed1e9895 | 5693 | Tests/VideoCoreTests/AgentContractTests.swift |
 | 3f5d9b81a289338a77f797ece9dd2d0fcb77a916ab24a2304ba67263bcd5fab8 | 5797 | Tests/VideoCoreTests/AgentJobAccessTests.swift |
 | f884bc9e1f7eb717eb0552011aaeda67e056d7fcabf821293efd5855b7568c82 | 14884 | Tests/VideoCoreTests/AgentMutationTests.swift |
-| ac2f463ab1d63294907721e001aa208851136547d1bff6a28e9d3efde2e6335a | 2864 | Tests/VideoCoreTests/AgentPreviewTests.swift |
+| 1f621be6ed8d70f38dd3ef93ef0e5db43cb87a8838f81f10b036196ffea12f40 | 10463 | Tests/VideoCoreTests/AgentPreviewTests.swift |
 | c2eabc7f064a3f739cd544140ea253e314e2a90d749a1643bf48458ba87a783c | 5604 | Tests/VideoCoreTests/AgentSchemasTests.swift |
 | fad7f9ba02a4649d468bc0de5e3a5404015f89fcc2eb9c971542b055459f9bea | 3838 | Tests/VideoCoreTests/AgentWorkerTests.swift |
 | bca500afc0b8b9eec905be57ff89cc82406a4196a8df7b0d2a2ae63104ffab69 | 4073 | Tests/VideoCoreTests/AttributionEditingTests.swift |

@@ -8,8 +8,14 @@ public enum AgentPreview {
         func text(_ key:String)->String { object[key]?.string ?? "" }
         func decode<T:Decodable>(_ key:String,_ type:T.Type)throws->T { guard let value=object[key] else {throw VideoError.invalid("缺少"+key)};return try Codec.decoder().decode(type,from:Codec.data(value)) }
         if command=="workspaces create" { guard !text("name").trimmingCharacters(in:.whitespacesAndNewlines).isEmpty else {throw VideoError.invalid("工作区名称为空")};return .string("仅校验新工作区名称，不创建目录或工程") }
-        let w=try database.workspace(text("workspace_id"));let projectID=text("project_id").isEmpty ? database.jobs.first{$0.id==text("job_id") && $0.workspaceID==w.id}?.projectID:text("project_id")
-        try AgentContract.authorize(command:command,workspace:w,principal:principal,projectID:projectID,revisionID:text("base_revision").isEmpty ? nil:text("base_revision"))
+        let w=try database.workspace(text("workspace_id"))
+        let originalJob=database.jobs.first{$0.id==text("job_id") && $0.workspaceID==w.id}
+        let projectID=object["project_id"]?.string ?? originalJob?.projectID
+        // Match the normal CLI's exact target without adding a caller-supplied
+        // schema field. A historical job keeps its frozen revision; permission
+        // for the current project must never authorize a different old job.
+        let revisionID=object["base_revision"]?.string ?? originalJob?.revisionID ?? database.projects.first{$0.id==projectID && $0.workspaceID==w.id}?.current.id
+        try AgentContract.authorize(command:command,workspace:w,principal:principal,projectID:projectID,revisionID:revisionID)
         func project()throws->Project { let p=try database.project(projectID ?? "");guard p.workspaceID==w.id else {throw VideoError.permission("项目不属于所选工作区")};return p }
         func job()throws->Job { guard let j=database.jobs.first(where:{$0.id==text("job_id") && $0.workspaceID==w.id})else{throw VideoError.notFound("任务不属于所选工作区")};return j }
         switch command {
