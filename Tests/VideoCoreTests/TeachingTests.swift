@@ -93,6 +93,29 @@ final class TeachingTests: XCTestCase {
         XCTAssertEqual(document.rewrites[0].before,old);XCTAssertEqual(document.rewrites[0].after,"先提出一个可核对的问题。")
         XCTAssertFalse(document.revision.review.complete)
     }
+    func testPaperRewriteKeepsShortVisualTextAndChangesOnlyCompleteNarration()throws{
+        let(i,a,e,t,s)=fixture();var document=try compose(i,a,e,t,s)
+        document.revision.scenes[0].paperPresentation=PaperPresentation(layout:.cover)
+        document.revision.scenes[0].body="先找到原文"
+        let id=document.revision.scenes[0].id,oldNarration=document.revision.scenes[0].narration
+        document.revision.scenes[0].voice=VoiceTake(assetID:"voice",textDigest:try document.revision.scenes[0].speechDigest(),durationFrames:60,method:"import",listened:true)
+        try document.rewrite(sceneID:id,text:"看似相同的摘抄，为什么会得出不同结论？",author:"作者",reason:"加入有依据的开场问题",assets:a,now:now)
+        XCTAssertEqual(document.revision.scenes[0].body,"先找到原文")
+        XCTAssertEqual(document.revision.scenes[0].narration,"看似相同的摘抄，为什么会得出不同结论？")
+        XCTAssertEqual(document.rewrites[0].before,oldNarration)
+        XCTAssertNil(document.revision.scenes[0].voice);XCTAssertFalse(document.confirmed)
+    }
+    func testPaperNarrationClaimsCannotHideBehindAShortVisualSummary()throws{
+        let(i,a,e,t,s)=fixture();var document=try compose(i,a,e,t,s)
+        document.revision.scenes[0].paperPresentation=PaperPresentation()
+        document.revision.scenes[0].body="核对依据"
+        document.revision.scenes[0].narration="保证收益，效率提升99%。"
+        document.revision.scenes[0].captions=[Caption(text:"保证收益，效率提升99%。",startFrame:0,endFrame:60)]
+        document.input.topic.evidenceIDs=[]
+        let issues=TeachingPlanner.confirmationIssues(document:document,assets:a,evidence:e,now:now)
+        XCTAssertEqual(issues.filter{$0.contains("绝对效果或收益保证")}.count,1)
+        XCTAssertEqual(issues.filter{$0.contains("效果、数值或对比主张")}.count,1)
+    }
     func testVerticalChecklistRejectsExpiredOrUncheckedFactsAndSupportsCustomItems()throws{
         let(_,_,e,_,_)=fixture()
         let requirement=ChecklistRequirement(label:"当期政策来源",maximumAgeDays:30)

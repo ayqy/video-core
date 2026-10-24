@@ -56,6 +56,10 @@ public enum ScenePainter {
         let (s, local, index) = scene(revision: revision, frame: frame)
         let mapped = s.renderSourceFrame(atTimelineFrame: local)
         c.saveGState(); defer { c.restoreGState() }
+        if s.paperPresentation != nil {
+            try PaperPresentationPainter.draw(revision:revision,scene:s,sourceFrame:mapped,isLast:index==revision.scenes.count-1,layerImages:layerImages,context:c)
+            return
+        }
         c.setFillColor(color("0B1020")); c.fill(CGRect(x: 0,y: 0,width: w,height: h))
         c.setFillColor(color(s.color, alpha: 0.12)); c.fillEllipse(in: CGRect(x: w*0.58,y: h*0.45,width: w*0.7,height: w*0.7))
         let margin: CGFloat = portrait ? 64 : 80
@@ -90,7 +94,7 @@ public enum ScenePainter {
         try checkedText("\(index+1) / \(revision.scenes.count)  ·  \(String(format:"%.1fs",Double(frame)/Double(revision.fps)))",in:overlay.footer,size:18,color:"94A3B8",context:c,fontName:s.fontName ?? "PingFangSC-Medium")
     }
     public static func png(_ image: CGImage) throws -> Data { let data = NSMutableData(); guard let target = CGImageDestinationCreateWithData(data,"public.png" as CFString,1,nil) else { throw VideoError.unavailable("无法生成封面") }; CGImageDestinationAddImage(target,image,nil); guard CGImageDestinationFinalize(target) else { throw VideoError.unavailable("保存封面失败") }; return data as Data }
-    private static func checkedText(_ value:String,in rect:CGRect,size:CGFloat,color:String,context:CGContext,fontName:String="PingFangSC-Medium") throws { guard CGRect(x:0,y:0,width:CGFloat(context.width),height:CGFloat(context.height)).contains(rect) else{throw VideoError.review("画面文字区域越出实际画布，请调整位置、缩放或拆分镜头")};let font=CTFontCreateWithName(fontName as CFString,size,nil);guard (CTFontCopyPostScriptName(font) as String)==fontName else{throw VideoError.unavailable("指定字体未安装或名称不准确，请改用可用中文系统字体")};if !text(value,in:rect,size:size,color:color,context:context,fontName:fontName) { throw VideoError.review("画面文字超出安全区或缺少实际可绘制字形，请更换字体、缩短或拆分镜头") } }
+    static func checkedText(_ value:String,in rect:CGRect,size:CGFloat,color:String,context:CGContext,fontName:String="PingFangSC-Medium") throws { guard CGRect(x:0,y:0,width:CGFloat(context.width),height:CGFloat(context.height)).contains(rect) else{throw VideoError.review("画面文字区域越出实际画布，请调整位置、缩放或拆分镜头")};let font=CTFontCreateWithName(fontName as CFString,size,nil);guard (CTFontCopyPostScriptName(font) as String)==fontName else{throw VideoError.unavailable("指定字体未安装或名称不准确，请改用可用中文系统字体")};if !text(value,in:rect,size:size,color:color,context:context,fontName:fontName) { throw VideoError.review("画面文字超出安全区或缺少实际可绘制字形，请更换字体、缩短或拆分镜头") } }
     @discardableResult private static func text(_ value:String,in rect:CGRect,size:CGFloat,color hex:String,context c:CGContext,fontName:String="PingFangSC-Medium") -> Bool {
         let font = CTFontCreateWithName(fontName as CFString,size,nil)
         let attributes: [NSAttributedString.Key:Any] = [.init(kCTFontAttributeName as String):font,.init(kCTForegroundColorAttributeName as String):color(hex)]

@@ -7,11 +7,16 @@ import Foundation
 enum LayerPainter {
     static func draw(scene:Scene,sourceFrame:Int,aspect:Aspect,images:[String:CGImage],context c:CGContext,fontName:String="PingFangSC-Medium") throws {
         for layer in scene.layers ?? [] {
-            let frame=(layer.kind == .chart || layer.kind == .code) ? min(sourceFrame,max(0,scene.durationFrames-1)) : sourceFrame
+            let frame=(layer.kind == .chart || layer.kind == .code || layer.entrance != nil) ? min(sourceFrame,max(0,scene.durationFrames-1)) : sourceFrame
             guard layer.startFrame<=frame,layer.endFrame>frame else{continue}
             let layout=layer.layout(at:frame);let w=Double(aspect.width),h=Double(aspect.height)
             let rect=CGRect(x:(layout.x-layer.width*layout.scale/2)*w,y:(1-layout.y-layer.height*layout.scale/2)*h,width:layer.width*layout.scale*w,height:layer.height*layout.scale*h)
-            c.saveGState();defer { c.restoreGState() };c.setAlpha(layer.opacity)
+            c.saveGState();defer { c.restoreGState() }
+            let progress=try layer.entrance?.progress(at:frame) ?? 1
+            c.setAlpha(layer.opacity * (layer.entrance?.kind == .fade ? progress:1))
+            if layer.entrance?.kind == .revealLeft {
+                c.clip(to:CGRect(x:rect.minX,y:rect.minY,width:rect.width*progress,height:rect.height))
+            }
             let rgb=UInt32(layer.color,radix:16) ?? 0xFFFFFF;let color=CGColor(red:CGFloat((rgb>>16)&255)/255,green:CGFloat((rgb>>8)&255)/255,blue:CGFloat(rgb&255)/255,alpha:1)
             switch layer.kind {
             case .rectangle:c.setFillColor(color);c.fill(rect)

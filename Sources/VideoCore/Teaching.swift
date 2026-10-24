@@ -114,7 +114,7 @@ public struct TeachingDocument: Codable, Identifiable, Sendable {
               let index=revision.scenes.firstIndex(where:{$0.id==sceneID}), let beat=beats.firstIndex(where:{$0.sceneID==sceneID}) else {
             throw VideoError.invalid("改写须有场景、1至180字文案、真实作者和理由")
         }
-        let structured=revision.scenes[index].simulationPresentation != nil || revision.scenes[index].cartoonPerformance != nil
+        let structured=revision.scenes[index].simulationPresentation != nil || revision.scenes[index].cartoonPerformance != nil || revision.scenes[index].paperPresentation != nil
         let old=structured ? revision.scenes[index].narration:revision.scenes[index].body
         var scene=revision.scenes[index];if !structured{scene.body=text};scene.narration=text
         let project=Project(workspaceID:workspaceID,name:input.topic.name,revision:revision)
@@ -265,7 +265,10 @@ public enum TeachingPlanner {
             do{let price=try currentProduct.price(at:now);if !price.verified{issues.append("当前价格未核实")}}catch{issues.append("当前价格缺失、过期或重叠")}
         }
         if let vertical=document.vertical{issues += vertical.reviewIssues(evidence:evidence,commercial:document.revision.purpose != .education,now:now)}
-        let words=document.revision.scenes.filter{!$0.body.isEmpty}.map(\.body).joined(separator:"\n")
+        // A concise visual summary never removes the complete spoken claim from
+        // fact review. Emit each issue once even when the same words also occur
+        // in a caption or an ordinary legacy body.
+        let words=document.revision.scenes.flatMap{[$0.title,$0.body,$0.narration]+$0.captions.map(\.text)}.filter{!$0.isEmpty}.joined(separator:"\n")
         let guarantees=["保证收益","稳赚","保过","百分百有效","100%有效","无风险收益","包治","保证治愈"]
         if guarantees.contains(where:words.contains){issues.append("文案含无法确认的绝对效果或收益保证，请改写为有边界的事实")}
         let proofRoles:Set<NarrativeBeatRole>=[.claim,.knowledge,.demonstration]

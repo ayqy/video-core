@@ -59,7 +59,7 @@ public enum AgentSchemas {
             "BrandApproval":"revisionID:s digest:s reviewer:s at:d note:s termsDigest?:s revisionsUsed?:i",
             "VerticalChecklistTemplate":"id:s name:s version:i requirements:[ChecklistRequirement]",
             "ChecklistRequirement":"id:s label:s evidenceRequired:b maximumAgeDays?:i",
-            "Scene":"id:s kind:SceneKind title:s body:s narration:s durationFrames:i assetID?:s evidenceIDs:[s] sourceStartFrame:i sourceEndFrame?:i speed:n preservePitch:b locked:b x:n y:n scale:n voiceGain:n sourceGain:n musicGain:n muted:b pauseFrames:i captions:[Caption] voice?:VoiceTake simulation:Simulation character:s emotion:s color:s showPrice:b keyframes:[Keyframe] courseMappingIDs?:[s] speechPlan?:SpeechPlan layers?:[SceneLayer] characterProfile?:CharacterProfile cartoonPerformance?:CartoonPerformance narrativeSources?:[NarrativeSource] fontName?:s classicArtwork?:ClassicArtwork classicArtworkRequired?:b simulationRecording?:RuleTrace simulationRecordingConfirmed?:b simulationPresentation?:SimulationPresentation mediaFraming?:MediaFraming",
+            "Scene":"id:s kind:SceneKind title:s body:s narration:s durationFrames:i assetID?:s evidenceIDs:[s] sourceStartFrame:i sourceEndFrame?:i speed:n preservePitch:b locked:b x:n y:n scale:n voiceGain:n sourceGain:n musicGain:n muted:b pauseFrames:i captions:[Caption] voice?:VoiceTake simulation:Simulation character:s emotion:s color:s showPrice:b keyframes:[Keyframe] courseMappingIDs?:[s] speechPlan?:SpeechPlan layers?:[SceneLayer] characterProfile?:CharacterProfile cartoonPerformance?:CartoonPerformance narrativeSources?:[NarrativeSource] fontName?:s classicArtwork?:ClassicArtwork classicArtworkRequired?:b simulationRecording?:RuleTrace simulationRecordingConfirmed?:b simulationPresentation?:SimulationPresentation mediaFraming?:MediaFraming paperPresentation?:PaperPresentation",
             "MediaFraming":"x:n y:n width:n height:n",
             "ClassicArtwork":"gameplay:ClassicGameplay sprites:[ClassicSprite] sources:[ClassicSource] derivation:ClassicDerivation transformation:s originalAssetIDs:[s] audioCues:[ClassicAudioCue]",
             "ClassicSprite":"role:s assetID:s x:n y:n width:n height:n",
@@ -73,7 +73,7 @@ public enum AgentSchemas {
             "SimulationPresentation":"version:i sourceStartFrame:i sourceEndFrame:i presentationFrames:i presentationOffsetFrames:i",
             "RuleTransition":"tick:i eventID:s label:s requestedDelta:i before:i after:i appliedDelta:i clippedDelta:i",
             "Keyframe":"id:s frame:i x:n y:n scale:n",
-            "SceneLayer":"id:s kind:LayerKind text:s assetID?:s x:n y:n width:n height:n color:s opacity:n startFrame:i endFrame:i locked:b keyframes:[Keyframe] dataPresentation?:DataPresentation",
+            "SceneLayer":"id:s kind:LayerKind text:s assetID?:s x:n y:n width:n height:n color:s opacity:n startFrame:i endFrame:i locked:b keyframes:[Keyframe] dataPresentation?:DataPresentation entrance?:LayerEntrance",
             "SpeechPlan":"source:s normalized:s dictionary:[SpeechTerm] mappings:[SpeechMapping] voiceIdentifier?:s rate:n confirmed:b notes:[s]",
             "SpeechTerm":"term:s pronunciation:s",
             "SpeechMapping":"sourceStart:i sourceLength:i normalizedStart:i normalizedLength:i kind:s",
@@ -82,6 +82,8 @@ public enum AgentSchemas {
         ]
         var result=records.mapValues(entity)
         let dataRecords:[String:String] = [
+            "PaperPresentation":"version:i layout:PaperLayout paperColor:s inkColor:s",
+            "LayerEntrance":"version:i kind:LayerEntranceKind startFrame:i endFrame:i sourceOffsetFrames?:i",
             "DataPresentation":"version:i sourceOffsetFrames?:i chart?:DataChart code?:CodePresentation",
             "DataChart":"title:s axisLabel:s minimum:n maximum:n series:[DataSeries]",
             "DataSeries":"id:s label:s color:s keyframes:[DataValueKeyframe]",
@@ -106,6 +108,12 @@ public enum AgentSchemas {
             properties[field] = .object(shape);record["properties"] = .object(properties);result[name] = .object(record)
         }
         constraint("DataPresentation","version",["const":.number(1)])
+        constraint("PaperPresentation","version",["const":.number(1)])
+        for color in ["paperColor","inkColor"] {constraint("PaperPresentation",color,["pattern":.string("^[A-Fa-f0-9]{6}$"),"minLength":.number(6),"maxLength":.number(6)])}
+        constraint("LayerEntrance","version",["const":.number(1)])
+        constraint("LayerEntrance","startFrame",["minimum":.number(0),"maximum":.number(53999)])
+        constraint("LayerEntrance","endFrame",["minimum":.number(1),"maximum":.number(54000)])
+        constraint("LayerEntrance","sourceOffsetFrames",["minimum":.number(0),"maximum":.number(54000)])
         constraint("DataPresentation","sourceOffsetFrames",["minimum":.number(0),"maximum":.number(54000)])
         for (name,field,count) in [("DataChart","series",8),("DataSeries","keyframes",128),("CodePresentation","lines",16)] {
             constraint(name,field,["minItems":.number(1),"maxItems":.number(Decimal(count))])
@@ -135,7 +143,7 @@ public enum AgentSchemas {
         for (key,values) in CartoonPerformanceSchema.enums { result[key] = .object(["type":.string("string"),"enum":.array(values.map(AgentValue.string))]) }
         for (key, declaration) in KnowledgeSimulationSchema.records { result[key] = entity(declaration) }
         for (key, values) in KnowledgeSimulationSchema.enums { result[key] = .object(["type": .string("string"), "enum": .array(values.map(AgentValue.string))]) }
-        let enums:[String:[String]]=["Purpose":Purpose.allCases.map(\.rawValue),"SceneKind":SceneKind.allCases.map(\.rawValue),"Aspect":Aspect.allCases.map(\.rawValue),"RangeKind":CourseMapping.RangeKind.allCases.map(\.rawValue),"CustomerKind":CustomerKind.allCases.map(\.rawValue),"RevenueKind":RevenueKind.allCases.map(\.rawValue),"Settlement":Settlement.allCases.map(\.rawValue),"AuthorizationScope":AuthorizationScope.allCases.map(\.rawValue),"LayerKind":SceneLayer.Kind.allCases.map(\.rawValue),"CharacterSilhouette":CharacterSilhouette.allCases.map(\.rawValue),"BaiduSegmentKind":["text","image","video"],"BillingKind":["charge","refundRequested","refundReceived"],"ClassicGameplay":ClassicGameplay.allCases.map(\.rawValue),"ClassicDerivation":ClassicArtwork.Derivation.allCases.map(\.rawValue),"ClassicAudioUse":ClassicAudioCue.Use.allCases.map(\.rawValue)]
+        let enums:[String:[String]]=["Purpose":Purpose.allCases.map(\.rawValue),"SceneKind":SceneKind.allCases.map(\.rawValue),"Aspect":Aspect.allCases.map(\.rawValue),"RangeKind":CourseMapping.RangeKind.allCases.map(\.rawValue),"CustomerKind":CustomerKind.allCases.map(\.rawValue),"RevenueKind":RevenueKind.allCases.map(\.rawValue),"Settlement":Settlement.allCases.map(\.rawValue),"AuthorizationScope":AuthorizationScope.allCases.map(\.rawValue),"LayerKind":SceneLayer.Kind.allCases.map(\.rawValue),"PaperLayout":PaperPresentation.Layout.allCases.map(\.rawValue),"LayerEntranceKind":LayerEntrance.Kind.allCases.map(\.rawValue),"CharacterSilhouette":CharacterSilhouette.allCases.map(\.rawValue),"BaiduSegmentKind":["text","image","video"],"BillingKind":["charge","refundRequested","refundReceived"],"ClassicGameplay":ClassicGameplay.allCases.map(\.rawValue),"ClassicDerivation":ClassicArtwork.Derivation.allCases.map(\.rawValue),"ClassicAudioUse":ClassicAudioCue.Use.allCases.map(\.rawValue)]
         for (key,values) in enums{result[key] = .object(["type":.string("string"),"enum":.array(values.map(AgentValue.string))])}
         let edits:[String:String] = ["insertScene":"_0:Scene _1:i","replaceScene":"_0:s _1:Scene","removeScene":"_0:s","moveScene":"_0:s _1:i","splitScene":"_0:s _1:i","lockScene":"_0:s _1:b","aspect":"_0:Aspect","cta":"_0:s","music":"_0?:s","audioQuality":"_0?:AudioQualityPolicy","productionBrief":"_0?:ProductionBrief","purpose":"_0:Purpose","restore":"_0:s","lockLayer":"_0:s _1:s _2:b","recordSimulation":"_0:s","confirmSimulationRecording":"_0:s"]
         result["Edit"] = .object(["oneOf":.array(edits.keys.sorted().map{key in .object(["type":.string("object"),"required":.array([.string(key)]),"properties":.object([key:entity(edits[key]!)]),"additionalProperties":.boolean(false)])})])

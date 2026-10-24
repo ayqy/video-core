@@ -8,6 +8,8 @@ public struct SceneLayer: Codable, Equatable, Identifiable, Sendable {
     public var locked=false; public var keyframes:[Keyframe]=[]
     /// Nil remains absent in old encodings and therefore preserves old digests.
     public var dataPresentation: DataPresentation?
+    /// Optional source-timed entrance; nil preserves the original layer encoding.
+    public var entrance: LayerEntrance?
     public init(kind:Kind,text:String="",assetID:String?=nil,endFrame:Int) { self.kind=kind;self.text=text;self.assetID=assetID;self.endFrame=endFrame }
     public func layout(at frame:Int)->(x:Double,y:Double,scale:Double) { var s=Scene(title:"layer",body:"");s.x=x;s.y=y;s.keyframes=keyframes;return s.layout(at:frame) }
 }
@@ -18,6 +20,7 @@ public enum LayerRules {
         for l in layers {
             guard (0...1).contains(l.x),(0...1).contains(l.y),(0.01...1).contains(l.width),(0.01...1).contains(l.height),(0...1).contains(l.opacity),l.startFrame>=0,l.endFrame>l.startFrame,l.endFrame<=scene.durationFrames,l.color.range(of:"^[A-Fa-f0-9]{6}$",options:.regularExpression) != nil else { throw VideoError.invalid("元素尺寸、位置、颜色、透明度或时间区间无效") }
             guard Set(l.keyframes.map(\.frame)).count==l.keyframes.count,l.keyframes.allSatisfy({$0.frame>=l.startFrame && $0.frame<l.endFrame && (0...1).contains($0.x) && (0...1).contains($0.y) && (0.1...4).contains($0.scale)}) else { throw VideoError.invalid("元素关键帧越界或重复") }
+            try l.entrance?.validate(endFrame:l.endFrame)
             if l.kind == .text { guard !l.text.isEmpty,l.text.count<=180 else { throw VideoError.invalid("文字元素内容为空或过密") } }
             if l.kind == .image { guard let id=l.assetID,assets.contains(where:{$0.id==id && $0.mediaType.hasPrefix("image")}) else { throw VideoError.invalid("图片元素缺少实际图片") } }
             if l.kind == .chart || l.kind == .code {
@@ -46,6 +49,7 @@ public struct RevisionDifference: Identifiable, Sendable {
     public static func compare(_ old:Revision,_ new:Revision)->[RevisionDifference] {
         var rows:[RevisionDifference]=[]
         func add(_ id:String,_ label:String,_ a:String,_ b:String) { if a != b { rows.append(.init(id:id,scope:label,before:a,after:b)) } }
+        func paper(_ value:PaperPresentation?)->String {guard let value else{return "原版式"};return (value.layout == .cover ? "封面":"纸面讲解")+" · v\(value.version) · 纸色 #"+value.paperColor+" · 墨色 #"+value.inkColor}
         add("product","产品事实",old.product.map{$0.name+" · "+$0.prices.map{$0.money.display}.joined(separator:",")} ?? old.contentName,new.product.map{$0.name+" · "+$0.prices.map{$0.money.display}.joined(separator:",")} ?? new.contentName)
         func briefText(_ value:ProductionBrief?)->String {guard let value else{return "未设置"};return [value.objective,value.intendedUse,value.modifications,value.aiDisclosure,value.commercialDisclosure,value.restrictions,value.permittedUntil.map(BeijingTime.string) ?? "按原授权期限",value.approvalRequired ? "需指定版审稿":"作者审核"].joined(separator:" · ")}
         add("purpose","用途",old.purpose.rawValue,new.purpose.rawValue);add("brief","制作Brief",briefText(old.productionBrief),briefText(new.productionBrief))
@@ -55,6 +59,7 @@ public struct RevisionDifference: Identifiable, Sendable {
             guard let a,let b else { rows.append(.init(id:id,scope:"场景",before:a?.title ?? "未存在",after:b?.title ?? "已移除"));continue }
             add(id+"order","场景位置",String(old.scenes.firstIndex{$0.id==id}!),String(new.scenes.firstIndex{$0.id==id}!))
             add(id+"title","标题",a.title,b.title);add(id+"body","正文",a.body,b.body);add(id+"speech","旁白",a.narration,b.narration)
+            add(id+"paper","纸面呈现",paper(a.paperPresentation),paper(b.paperPresentation))
             add(id+"time","时长/速度","\(a.durationFrames)帧 / \(a.speed)×","\(b.durationFrames)帧 / \(b.speed)×")
             add(id+"asset","素材",a.assetID ?? "无",b.assetID ?? "无")
             if a.layers != b.layers { rows.append(.init(id:id+"layers",scope:"元素层",before:(a.layers ?? []).map{$0.kind.rawValue+":"+$0.text}.joined(separator:"\n"),after:(b.layers ?? []).map{$0.kind.rawValue+":"+$0.text}.joined(separator:"\n"))) }

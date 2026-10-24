@@ -86,6 +86,8 @@ public struct Scene: Codable, Equatable, Identifiable, Sendable {
     public var classicArtworkRequired: Bool?
     public var fontName:String?
     public var mediaFraming:MediaFraming?
+    /// Absent in old encodings. Ordinary paper/cover shots use the shared layer IR.
+    public var paperPresentation:PaperPresentation?
     /// Optional for old projects. The full deterministic trace is kept even when stale,
     /// so editing never mistakes a newly calculated result for an already reviewed recording.
     public var simulationRecording: RuleTrace?
@@ -102,6 +104,10 @@ public struct Scene: Codable, Equatable, Identifiable, Sendable {
         let keys=keyframes.sorted{$0.frame<$1.frame};guard let first=keys.first else{return(x,y,scale)};if frame<=first.frame{return(first.x,first.y,first.scale)};guard let next=keys.firstIndex(where:{$0.frame>=frame})else{let k=keys.last!;return(k.x,k.y,k.scale)};let a=keys[next-1],b=keys[next];let p=Double(frame-a.frame)/Double(b.frame-a.frame);return(a.x+(b.x-a.x)*p,a.y+(b.y-a.y)*p,a.scale+(b.scale-a.scale)*p)
     }
     public func validate(assets: [Asset]) throws {
+        if let paper=paperPresentation {
+            guard kind == .explanation else { throw VideoError.invalid("纸面与封面呈现只能用于普通讲解镜头") }
+            try paper.validate()
+        }
         try LayerRules.validate(scene:self,assets:assets)
         try ClassicArtworkRules.validate(scene:self,assets:assets)
         if let framing=mediaFraming {
