@@ -2,10 +2,10 @@
 
 VideoFree source export · package_free.py · version 1
 
-生成时间：2026-10-24 13:39:18 北京时间
+生成时间：2026-10-24 14:17:31 北京时间
 
-- 源码与必要元数据：198个文件；2416735字节（不含本清单）。
-- 整体内容指纹：`c6bd3ff52568ae18835671576b91ec44dc23da4563a61117b4a518974a8ceffe`。
+- 源码与必要元数据：204个文件；2515816字节（不含本清单）。
+- 整体内容指纹：`5c38353484763416bfd31b29110715659e5b427f0b3796c9af363750c9554389`。
 - 来源：受控原始工程中的逐文件白名单；Package.swift来自Distribution/Free/Package.swift模板，README由发行脚本生成。
 - 本包不含.git，不可作为新业务checkout；本清单生成过程不执行构建、设备验收、签名安装或公共上传，各阶段以独立证据为准。
 - 排除：App、VideoGame、VideoCartoon、Premium、高级实现运行时测试、私有仓库地址、凭据、客户数据、缓存、日志及媒体过程产物。
@@ -14,27 +14,33 @@ VideoFree source export · package_free.py · version 1
 
 | SHA-256 | 字节数 | 包内路径 / 原工程来源 |
 |---|---:|---|
-| ca621fbfd699ba7c4da47e21719bccb60d69438840cf8051aa1db3584c437d11 | 22280 | Integrations/README.md |
+| cad5342f3e956a78e38593c02efcfb6a165e63b758aa6f526e0ae3d6aa8930f3 | 28339 | Integrations/README.md |
+| 2ff174ec064ca614f24e8ba67ae5c7042a2caa883af162bafd27a8a4520d5ed7 | 26522 | Integrations/asset_reuse.py |
 | be0a15cd8fcb9b33fe92f2898a9ee53aa20f9722b368abd19e0a7a5ef924bc42 | 18066 | Integrations/check_install.py |
 | 78de5093a0969aa261d580b270f7ce5ae9c25d8de493afbd9f993bbc2d41219a | 4076 | Integrations/check_package.py |
 | 96d91e78df74f1823568785cf2a98969386b6535e64d0401dfa6a7f54272761c | 31720 | Integrations/claude_stream.py |
 | b6fe5ad68017449028201df317621a6c2b8c5d51c3a05054a2f328cbd4d2cdf4 | 45189 | Integrations/codex_broker.py |
 | 7ecc56e44b3df5afd221e617549ae8f3f9a1d9847b72ac572fa2f2c0d2ae5ca2 | 12512 | Integrations/codex_events.py |
-| 4f85610d4869c90544fd51f8cdbcf1355bc5f01d16dd6e363d2952623cd9cf70 | 35650 | Integrations/codex_production.py |
+| 2134f040a74486b5195f1760cf841d93abce9fa561ebdd62fa94bac1ab7c2763 | 38010 | Integrations/codex_production.py |
 | 36bdcf361abca71ae28992a3d5fd2f1c658738f9ba954a21ddb41fc7516b7ceb | 6332 | Integrations/discover.py |
 | f17393a51167b7998ad0e18817bc65c7bf74d750fa57f0d2b727d1ab9cfeda0f | 15088 | Integrations/install.py |
 | 939464f9a5015d84776c047eef0aca64144833cce61e479e00d97386f7f082ea | 3328 | Integrations/package.py |
+| dc9835697ac4f3491c29cecd309bd4430b29196137c96b032f4fa310dad0b6c8 | 11371 | Integrations/pencil_production.py |
+| e52450d73342e5a84f4a3c51051886c69df0ebb9dce685cc31e26791353c9211 | 19716 | Integrations/production_motion.py |
 | 9ecb9d7640588d9146fd9204ba74b78f69dbe485461ec0e3f703cd980059a846 | 28991 | Integrations/qwen_stream.py |
 | cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30 | 11358 | Integrations/skills/video/LICENSE |
 | 1dbab07b005a071618dc75a2e3cd3b68fccfba4c235d4818238a18cdbfcdb052 | 358 | Integrations/skills/video/NOTICE |
 | 9efa96b4155e0201e65c85913250aa14f69d7cef9f7657c379e7ddc11b84fddd | 4013 | Integrations/skills/video/SKILL.md |
 | 80f697b67421db6f559e8ba99e92a01734018dca974979cee5f169e0f6f871e4 | 308 | Integrations/skills/video/agents/openai.yaml |
 | af117d681ee814036da2a294494d020b16173b46ff38c884a68c5ce89da9775e | 3274 | Integrations/skills/video/references/protocol.md |
+| 0614484a5056b4c576593e250c5d58dfedf0cd1b7e8c34e16cfc8266210f246c | 15192 | Integrations/test_asset_reuse.py |
 | 49b801aeb2feea55a7a3ac9642cce1f923fa48ce6e17e2546c75f3cbd21c4b46 | 26322 | Integrations/test_claude_stream.py |
 | f7a91aff7b83517aa151115f97188a286b55d66ddafb445046af5642e3127c3a | 48877 | Integrations/test_codex_broker.py |
 | 863aeaab77ca998dd2f928a8e0feeac9cf21b6aaf61bd5dd25bea1f9decfa771 | 9771 | Integrations/test_codex_events.py |
 | 16943ac9bffed6b9b6479f8c3331cded57455612b3167d90878eee3a4abf8484 | 24254 | Integrations/test_codex_production.py |
 | a6be5192e921223a3bd3a5c0b0750d80c2abfac439bc2bedb5282f65ba85fca6 | 8905 | Integrations/test_discover.py |
+| a746b63b68954816b49a4e666e3472eeb9700e3c96c85047d87fd7d2e9c99b12 | 7488 | Integrations/test_pencil_production.py |
+| 5e371767fdd7f3828665ceec23bd573c81e885fa565e8e77d25e1acfa02d5910 | 10373 | Integrations/test_production_motion.py |
 | e35ce985e3807c6889582067037c3035972056640226d8eb862b4edca152c428 | 36346 | Integrations/test_qwen_stream.py |
 | cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30 | 11358 | LICENSE |
 | c369f09e50d62d1a1c8eff1500888667ff7a192d0fdc7b32d39c800dfa1e9721 | 1597 | NOTICE |

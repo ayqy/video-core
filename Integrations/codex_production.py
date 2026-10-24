@@ -117,6 +117,58 @@ class LocalStep:
     expected_state: str | None = None
 
 
+@dataclass(frozen=True)
+class ResolvedAssetSources:
+    """Caller-side preflight result; never a content-planner inventory/tool."""
+    items: tuple
+    cache: object
+    use: str
+
+    @property
+    def missing(self):
+        from asset_reuse import AssetResolution
+        missing = []
+        for selected in self.items:
+            current = self.cache.resolve(selected.request, use=self.use)
+            if current.state != "available":
+                missing.append(current)
+            elif selected.state != "available" or current.sha256 != selected.sha256 or current.rights != selected.rights:
+                missing.append(AssetResolution(selected.request, "needs_generation", "selection_changed_resolve_again"))
+        return tuple(missing)
+
+    @property
+    def ready(self):
+        return not self.missing
+
+    def file_pins(self):
+        from codex_broker import FilePin
+        if not self.ready:
+            _fail("local_asset_generation_still_required")
+        # The ordinary LocalProductionPolicy rechecks these actual original bytes.
+        pins = {item.path: FilePin(item.path, item.sha256) for item in self.items}
+        for pin in pins.values():
+            pin.verify()
+        return tuple(pins.values())
+
+
+def resolve_sources(cache, requirements, *, generator=None, use="local_draft"):
+    """Resolve a completed content design before freezing a normal local plan.
+
+    The content planner already chose the named requirements. Only missing
+    requirements reach an explicit generator callback, as a content-only prompt.
+    No adapter means explicit misses, not generated success. The result is used
+    by the production script to pin/import sources; the model tool is unchanged.
+    """
+    from asset_reuse import AssetCache, AssetRequest
+    if not isinstance(cache, AssetCache) or not isinstance(requirements, (tuple, list)) or not 1 <= len(requirements) <= 64:
+        _fail("local_one_to_64_asset_requirements_required")
+    if any(not isinstance(value, AssetRequest) for value in requirements):
+        _fail("local_typed_content_asset_requirements_required")
+    if len({value.key for value in requirements}) != len(requirements):
+        _fail("local_unique_content_asset_requirements_required")
+    return ResolvedAssetSources(tuple(cache.ensure(value, generator, use=use) for value in requirements), cache, use)
+
+
 class LocalInvocation:
     kind = "local_production"
 
