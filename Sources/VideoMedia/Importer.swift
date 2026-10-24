@@ -2,6 +2,7 @@ import Foundation
 import PDFKit
 import AVFoundation
 import ImageIO
+import CoreText
 import CZlib
 import VideoCore
 
@@ -16,9 +17,14 @@ public enum MaterialImporter {
         case "pptx":
             type="slides"; guard size<=64*1024*1024 else { throw VideoError.invalid("PPTX超过64MiB，请移除无关大媒体") }; let zip=try BoundedZIP(Data(contentsOf:url))
             guard !zip.names.contains(where:{$0.lowercased().contains("vbaproject") || $0.lowercased().contains("externallinks")}) else { throw VideoError.permission("拒绝含宏或外部自动链接的演示文稿") }
-            let slides=zip.names.filter{$0.range(of:"^ppt/slides/slide[0-9]+\\.xml$",options:.regularExpression) != nil}.sorted { $0.localizedStandardCompare($1) == .orderedAscending }; guard !slides.isEmpty,slides.count<=200 else { throw VideoError.invalid("PPTX没有可读页面或超过200页") }
-            for (i,name) in slides.enumerated() { let text=try XMLText.extract(zip.file(name)); let number=name.components(separatedBy:"slide").last!.replacingOccurrences(of:".xml",with:""); let rel="ppt/slides/_rels/slide\(number).xml.rels"; var notes=""
-                if zip.names.contains(rel),let target=try XMLRelations.notes(zip.file(rel)),target.range(of:"^../notesSlides/notesSlide[0-9]+\\.xml$",options:.regularExpression) != nil { let path="ppt/notesSlides/"+target.components(separatedBy:"/").last!; if zip.names.contains(path) { notes=try XMLText.extract(zip.file(path)) } }
+            let slides=try PPTXParts.slides(in:zip)
+            let availableFonts=PPTXFeatures.availableFontNames()
+            for (i,name) in slides.enumerated() {
+                let bytes=try zip.file(name)
+                let features=try PPTXFeatures.read(bytes)
+                let text=try XMLText.extract(bytes)
+                let notes=try PPTXParts.notes(for:name,in:zip)
+                warnings.append(features.report(page:i+1,availableFonts:availableFonts))
                 pages.append(CoursePage(number:i+1,text:text,notes:notes,requiresOCR:text.isEmpty))
             }; warnings.append("保留原始课件供系统预览；字体、动画与复杂公式不能保证还原，请逐页核对或改用原录屏")
         case "ppt": throw VideoError.unavailable("旧PPT请先用原应用转换为PPTX或PDF；不会把解析失败当空课")
@@ -40,10 +46,139 @@ private final class XMLText:NSObject,XMLParserDelegate {
     func parser(_ parser:XMLParser,foundCharacters string:String) { if inside { result += string } }
     func parser(_ parser:XMLParser,didEndElement elementName:String,namespaceURI:String?,qualifiedName:String?) { if elementName=="a:t" || elementName=="t" { inside=false }; if elementName=="a:p" || elementName=="p" { result += "\n" } }
 }
-private final class XMLRelations:NSObject,XMLParserDelegate {
-    var target:String?
-    static func notes(_ data:Data) throws -> String? { let d=XMLRelations(); let p=XMLParser(data:data); p.shouldResolveExternalEntities=false; p.delegate=d; guard p.parse() else { throw VideoError.invalid("课件关联损坏") }; return d.target }
-    func parser(_ parser:XMLParser,didStartElement name:String,namespaceURI:String?,qualifiedName:String?,attributes:[String:String]) { if name=="Relationship",attributes["Type"]?.hasSuffix("/notesSlide")==true,attributes["TargetMode"] != "External" { target=attributes["Target"] } }
+/// OPC relationships describe presentation order; directory names do not.
+private enum PPTXParts {
+    static let presentationNamespaces:Set<String>=["http://schemas.openxmlformats.org/presentationml/2006/main","http://purl.oclc.org/ooxml/presentationml/main"]
+    static let officeNamespaces:Set<String>=["http://schemas.openxmlformats.org/officeDocument/2006/relationships","http://purl.oclc.org/ooxml/officeDocument/relationships"]
+    static func parse(_ data:Data,delegate:XMLParserDelegate)throws {
+        guard data.count<=5*1024*1024,let text=String(data:data,encoding:.utf8) ?? String(data:data,encoding:.utf16),
+              text.range(of:"<!DOCTYPE",options:.caseInsensitive)==nil,
+              text.range(of:"<!ENTITY",options:.caseInsensitive)==nil else {throw VideoError.invalid("课件XML过大、编码无效或含不支持的实体声明")}
+        let parser=XMLParser(data:data);parser.shouldProcessNamespaces=true;parser.shouldReportNamespacePrefixes=true
+        parser.shouldResolveExternalEntities=false;parser.delegate=delegate
+        guard parser.parse() else{throw VideoError.invalid("课件顺序或关联XML损坏")}
+    }
+    static func slides(in zip:BoundedZIP)throws->[String] {
+        guard Set(zip.names).count==zip.names.count else{throw VideoError.invalid("PPTX含重复部件，无法唯一核对来源")}
+        let order=PPTXOrder();try parse(zip.file("ppt/presentation.xml"),delegate:order)
+        guard order.validRoot,order.listCount==1,!order.ids.isEmpty,order.ids.count<=200,
+              Set(order.ids).count==order.ids.count else{throw VideoError.invalid("PPTX缺少有效页面顺序、页面重复或超过200页")}
+        let relations=try PPTXRelations.read(zip.file("ppt/_rels/presentation.xml.rels"))
+        var paths:[String]=[]
+        for id in order.ids {
+            guard let relation=relations.first(where:{$0.id==id}) else{throw VideoError.invalid("PPTX页面顺序引用了缺失关联")}
+            let path=try target(relation,kind:"slide",relativeTo:"ppt/presentation.xml",directory:"ppt/slides")
+            guard zip.names.contains(path),!paths.contains(path) else{throw VideoError.invalid("PPTX引用的页面缺失或重复")}
+            paths.append(path)
+        }
+        return paths
+    }
+    static func notes(for slide:String,in zip:BoundedZIP)throws->String {
+        let url=slide as NSString
+        let relationships=url.deletingLastPathComponent+"/_rels/"+url.lastPathComponent+".rels"
+        guard zip.names.contains(relationships) else{return ""}
+        let notes=try PPTXRelations.read(zip.file(relationships)).filter{$0.type.hasSuffix("/notesSlide")}
+        guard notes.count<=1 else{throw VideoError.invalid("PPTX同页备注关联不唯一")}
+        guard let note=notes.first else{return ""}
+        let path=try target(note,kind:"notesSlide",relativeTo:slide,directory:"ppt/notesSlides")
+        guard zip.names.contains(path) else{throw VideoError.invalid("PPTX备注关联指向缺失文件")}
+        let data=try zip.file(path)
+        _ = try PPTXFeatures.read(data)
+        return try XMLText.extract(data)
+    }
+    static func target(_ relation:PPTXRelations.Record,kind:String,relativeTo part:String,directory:String)throws->String {
+        guard officeNamespaces.contains(where:{relation.type==$0+"/"+kind}),
+              relation.mode==nil || relation.mode=="Internal" else{throw VideoError.permission("拒绝外部或不支持的课件页面/备注关联")}
+        guard !relation.target.isEmpty,relation.target.utf8.count<=4096,
+              let decoded=relation.target.removingPercentEncoding,!decoded.contains("%"),
+              !decoded.contains("\\"),!decoded.contains(":"),!decoded.contains("?"),!decoded.contains("#"),
+              !decoded.hasPrefix("//"),!decoded.unicodeScalars.contains(where:{$0.value<32 || $0.value==127}) else{throw VideoError.invalid("课件关联目标不是安全的包内部件")}
+        var components=decoded.hasPrefix("/") ? []:part.split(separator:"/").dropLast().map(String.init)
+        for segment in decoded.split(separator:"/") {
+            if segment=="." {continue}
+            if segment==".." {guard !components.isEmpty else{throw VideoError.invalid("课件关联逃出文件包")};components.removeLast()}
+            else{components.append(String(segment))}
+        }
+        let path=components.joined(separator:"/")
+        guard components.count==3,components.dropLast().joined(separator:"/")==directory,
+              components.last?.lowercased().hasSuffix(".xml")==true else{throw VideoError.invalid("课件关联越出允许的页面/备注目录")}
+        return path
+    }
+}
+private final class PPTXOrder:NSObject,XMLParserDelegate {
+    var ids:[String]=[],listCount=0,validRoot=false
+    var stack:[String]=[],prefixes:[String:[String]]=[:]
+    func parser(_ parser:XMLParser,didStartMappingPrefix prefix:String,toURI uri:String){prefixes[prefix,default:[]].append(uri)}
+    func parser(_ parser:XMLParser,didEndMappingPrefix prefix:String){_ = prefixes[prefix]?.popLast()}
+    func parser(_ parser:XMLParser,didStartElement name:String,namespaceURI:String?,qualifiedName:String?,attributes:[String:String]) {
+        let supported=namespaceURI.map{PPTXParts.presentationNamespaces.contains($0)} ?? false
+        if stack.isEmpty{validRoot=supported && name=="presentation"}
+        if supported && name=="sldIdLst" && stack==["presentation"]{listCount+=1}
+        if supported && name=="sldId" && stack==["presentation","sldIdLst"] {
+            let references=attributes.filter { key,_ in
+                let pieces=key.split(separator:":",omittingEmptySubsequences:false)
+                guard pieces.count==2,pieces[1]=="id",let namespace=prefixes[String(pieces[0])]?.last else{return false}
+                return PPTXParts.officeNamespaces.contains(namespace)
+            }.map(\.value)
+            guard references.count==1,!references[0].isEmpty,ids.count<200 else{parser.abortParsing();return}
+            ids.append(references[0])
+        }
+        stack.append(supported ? name:"#other")
+    }
+    func parser(_ parser:XMLParser,didEndElement name:String,namespaceURI:String?,qualifiedName:String?){_ = stack.popLast()}
+}
+private final class PPTXRelations:NSObject,XMLParserDelegate {
+    struct Record{var id:String;var type:String;var target:String;var mode:String?}
+    var records:[Record]=[],depth=0,validRoot=false
+    static func read(_ data:Data)throws->[Record] {
+        let delegate=PPTXRelations();try PPTXParts.parse(data,delegate:delegate)
+        guard delegate.validRoot,Set(delegate.records.map(\.id)).count==delegate.records.count else{throw VideoError.invalid("课件关联根无效或ID重复")}
+        return delegate.records
+    }
+    func parser(_ parser:XMLParser,didStartElement name:String,namespaceURI:String?,qualifiedName:String?,attributes:[String:String]) {
+        let supported=namespaceURI=="http://schemas.openxmlformats.org/package/2006/relationships"
+        if depth==0{validRoot=supported && name=="Relationships"}
+        if depth==1 && supported && name=="Relationship" {
+            guard let id=attributes["Id"],!id.isEmpty,let type=attributes["Type"],!type.isEmpty,
+                  let target=attributes["Target"],!target.isEmpty,records.count<2000 else{parser.abortParsing();return}
+            records.append(Record(id:id,type:type,target:target,mode:attributes["TargetMode"]))
+        }
+        depth+=1
+    }
+    func parser(_ parser:XMLParser,didEndElement name:String,namespaceURI:String?,qualifiedName:String?){depth-=1}
+}
+/// A risk report accompanies each actual page; no PowerPoint layout is claimed to be rendered.
+private final class PPTXFeatures:NSObject,XMLParserDelegate {
+    var fonts:Set<String>=[],themeFonts:Set<String>=[],hasAnimation=false
+    static func read(_ data:Data)throws->PPTXFeatures{let result=PPTXFeatures();try PPTXParts.parse(data,delegate:result);return result}
+    static func availableFontNames()->Set<String> {
+        let collection=CTFontCollectionCreateFromAvailableFonts(nil)
+        let descriptors=CTFontCollectionCreateMatchingFontDescriptors(collection) as? [CTFontDescriptor] ?? []
+        var result:Set<String>=[]
+        for descriptor in descriptors {for key in [kCTFontNameAttribute,kCTFontFamilyNameAttribute,kCTFontDisplayNameAttribute] {
+            if let value=CTFontDescriptorCopyAttribute(descriptor,key) as? String{result.insert(value.lowercased())}
+        }}
+        return result
+    }
+    func parser(_ parser:XMLParser,didStartElement name:String,namespaceURI:String?,qualifiedName:String?,attributes:[String:String]) {
+        if namespaceURI.map({PPTXParts.presentationNamespaces.contains($0)})==true,
+           ["timing","transition","anim","animEffect","animMotion","animRot","animScale"].contains(name){hasAnimation=true}
+        if namespaceURI=="http://schemas.openxmlformats.org/drawingml/2006/main" || namespaceURI=="http://purl.oclc.org/ooxml/drawingml/main",
+           ["latin","ea","cs"].contains(name),let raw=attributes["typeface"] {
+            let font=raw.trimmingCharacters(in:.whitespacesAndNewlines)
+            guard font.utf8.count<=512,fonts.count+themeFonts.count<256 else{parser.abortParsing();return}
+            if font.hasPrefix("+"){themeFonts.insert(font)}else if !font.isEmpty{fonts.insert(font)}
+        }
+    }
+    func report(page:Int,availableFonts:Set<String>)->String {
+        var details=["第\(page)页预览差异风险：已提取文字与备注，版式和公式未完整渲染"]
+        let missing=fonts.filter{!availableFonts.contains($0.lowercased())}.sorted()
+        if !missing.isEmpty{details.append("本机缺少显式字体："+missing.joined(separator:"、"))}
+        if !themeFonts.isEmpty{details.append("主题字体需由原应用解析："+themeFonts.sorted().joined(separator:"、"))}
+        if hasAnimation{details.append("检测到动画或切换，文本解析未还原时序与效果")}
+        details.append("请对照原课件预览；有差异可换原应用导出的PDF或原录屏")
+        return details.joined(separator:"；")
+    }
 }
 
 /// Limited ZIP reader: no extraction, path execution, macros, encryption or unbounded inflation.

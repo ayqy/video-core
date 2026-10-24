@@ -2,10 +2,10 @@
 
 VideoFree source export · package_free.py · version 1
 
-生成时间：2026-10-25 02:13:09 北京时间
+生成时间：2026-10-25 02:55:02 北京时间
 
-- 源码与必要元数据：206个文件；2631786字节（不含本清单）。
-- 整体内容指纹：`1810a4062fa9b432104d0fd24ad77c2f5ed913b3221c09f1f4587e556756a701`。
+- 源码与必要元数据：207个文件；2653870字节（不含本清单）。
+- 整体内容指纹：`27b9388c14bd4f8ed243904c525cdca22d9ca68270a140629e92b55c88180899`。
 - 来源：受控原始工程中的逐文件白名单；Package.swift来自Distribution/Free/Package.swift模板，README由发行脚本生成。
 - 本包不含.git，不可作为新业务checkout；本清单生成过程不执行构建、设备验收、签名安装或公共上传，各阶段以独立证据为准。
 - 排除：App、VideoGame、VideoCartoon、Premium、高级实现运行时测试、私有仓库地址、凭据、客户数据、缓存、日志及媒体过程产物。
@@ -123,7 +123,7 @@ VideoFree source export · package_free.py · version 1
 | a3c1ff6981dd81b2a97fee7cff2489fc9edb2381904ee46ebad18e9b6562dc91 | 4662 | Sources/VideoMedia/Diagnostics.swift |
 | c3bf72fdbf88b2ec2f7676a6c32a0aec701256add82293a2d3b522034583f70b | 11051 | Sources/VideoMedia/DinoBuiltinAssets.swift |
 | 2eafa759e4f2e1a94a5ecb866f39784b13363f7a5cfcacb60b125cf5e2fa12bd | 13316 | Sources/VideoMedia/FamiliarBuiltinAssets.swift |
-| 78eab44c664d354ecf71559b09af166acca4d9ee2c46786e9449fe9d2c8799cf | 9759 | Sources/VideoMedia/Importer.swift |
+| 45ab9c52b4d657c501039e336c28681ce8adef7d42b97bc299d41d4b55e323d6 | 18862 | Sources/VideoMedia/Importer.swift |
 | a60210d33c6fc2b9462dd8574277cb156f55bf5a8e0b48767faadec25e406a1e | 11538 | Sources/VideoMedia/IndependentLicenseRevocation.swift |
 | 015843acf9556e0ae30e8717d2f154505ddd230fb7ba351bf2518f7a238773d2 | 3146 | Sources/VideoMedia/LayerPainter.swift |
 | 744dc297431e5eb74b738ae651142fdebe3e93c69aae8ac346cbd62a9e9bd2c8 | 8161 | Sources/VideoMedia/LocalJobExecutor.swift |
@@ -213,6 +213,7 @@ VideoFree source export · package_free.py · version 1
 | 09707b85484233e0d0d8102b5af22ac557004eb35df8d2e7847421695601a272 | 15896 | Tests/VideoMediaTests/IndependentLicenseRevocationTests.swift |
 | 6e6627381bc3e0bbc6ab65500e5e56b6ae6ba7f019ae5b5cd3a5b98355d9afad | 9678 | Tests/VideoMediaTests/LocalJobKeepaliveTests.swift |
 | c7e58b70577f1181d014ba4a7e15bdd276a97129afc9fb2fb7086da9ad1f86b8 | 11493 | Tests/VideoMediaTests/LoudnessMediaTests.swift |
+| 3c0f34952d7f5f6e22ae06cf13edcb1157b3509a011c04f9eb268a840e899bca | 12981 | Tests/VideoMediaTests/MaterialImporterTests.swift |
 | 08274451bda7e16361ec64d78a2026f8a34f97007fde869c13c407f7fd66e59c | 3990 | Tests/VideoMediaTests/MediaFramingMediaTests.swift |
 | 1e0e423293fcfca12ecba28dbfbc41df38c87d74e351d386ce5ecedc2f1eb94d | 13458 | Tests/VideoMediaTests/MediaTests.swift |
 | bfbb0a58ee258df57ce9698feb281e7a4a758f88e959e6227c323722e123ab61 | 12099 | Tests/VideoMediaTests/PaperPresentationMediaTests.swift |
