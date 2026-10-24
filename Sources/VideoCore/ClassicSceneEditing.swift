@@ -222,8 +222,18 @@ public extension ClassicSceneEditing {
                     let summary="状态改变\(result.stateChanges.filter{$0.beforeStateID != $0.afterStateID}.count)项；没有实际资金转移"
                     candidates.append(Candidate(kind:.outcome,summary:summary,target:onset,suffix:"",flow:nil))
                 } else if !model.isRuleTable, flows.isEmpty {
-                    guard event.actors.contains(where:{$0.benefit>0 || $0.passed}) else { continue }
-                    let summary=event.actors.map{(names[$0.id] ?? $0.id)+"：实际收益\($0.benefit)"}.joined(separator:"；")
+                    let summary:String
+                    if model.payoffMatrix==nil,!event.obstacleCleared,event.totalContribution<event.threshold,
+                       event.actors.allSatisfy({!$0.passed && $0.benefit==0}) {
+                        // A completed public-good failure is an actual result,
+                        // not an absence of observations. Do not apply its
+                        // shared-gate semantics to a matrix or rule table.
+                        let actors=event.actors.map{names[$0.id] ?? $0.id}.joined(separator:"、")
+                        summary="实际投入\(event.totalContribution)，未达共享门槛\(event.threshold)；障碍未清除；"+actors+"均未通行，实际收益均为0"
+                    } else {
+                        guard event.actors.contains(where:{$0.benefit>0 || $0.passed}) else { continue }
+                        summary=event.actors.map{(names[$0.id] ?? $0.id)+"：实际收益\($0.benefit)"}.joined(separator:"；")
+                    }
                     candidates.append(Candidate(kind:.outcome,summary:summary,target:onset,suffix:"",flow:nil))
                 }
             default: continue

@@ -365,7 +365,91 @@ final class KnowledgeSoundTests:XCTestCase {
         var constrained=s;constrained.simulation.knowledge?.participants[0].initialResources=0
         constrained.simulationRecording=try SimulationReplay.record(scene:constrained)
         let blocked=try ClassicSceneEditing.knowledgeSoundMoments(scene:constrained)
-        XCTAssertEqual(blocked.map(\.kind),[.constrained]);XCTAssertEqual(blocked.map(\.sceneFrame),[30])
+        XCTAssertEqual(blocked.map(\.kind),[.constrained,.outcome]);XCTAssertEqual(blocked.map(\.sceneFrame),[30,150])
+        XCTAssertTrue(blocked[1].summary.contains("未达共享门槛1"))
+    }
+    private func failedPublicGoodsScene(rounds:Int=2)throws->Scene {
+        var s=try scene();s.durationFrames=rounds*180
+        s.simulation.knowledge=KnowledgeSimulation(knowledgeLabel:"共享通路的门槛与参与",resourceLabel:"精力",participants:[
+            .init(id:"actor-a",name:"甲",strategy:.contribute,initialResources:5),
+            .init(id:"actor-b",name:"乙",strategy:.contribute,initialResources:5),
+            .init(id:"actor-c",name:"丙",strategy:.freeRide,initialResources:5)
+        ],rounds:rounds,threshold:3)
+        s.simulation.seed=24
+        s.simulationPresentation=SimulationPresentation(sourceStartFrame:0,sourceEndFrame:s.durationFrames,presentationFrames:s.durationFrames)
+        s.simulationRecording=try SimulationReplay.record(scene:s)
+        return s
+    }
+    func testCompletedPublicGoodFailureProducesItsActualOutcomeInBothRounds()throws {
+        let s=try failedPublicGoodsScene(),bytes=try Codec.data(s)
+        let moments=try ClassicSceneEditing.knowledgeSoundMoments(scene:s)
+        XCTAssertEqual(moments.map(\.kind),[.action,.outcome,.action,.outcome])
+        XCTAssertEqual(moments.map(\.sourceFrame),[60,150,240,330])
+        let outcomes=moments.filter{$0.kind == .outcome}
+        XCTAssertEqual(outcomes.map(\.round),[1,2]);XCTAssertEqual(outcomes.map(\.sourceTick),[5,11])
+        for moment in outcomes {
+            XCTAssertTrue(moment.summary.contains("实际投入2，未达共享门槛3"))
+            XCTAssertTrue(moment.summary.contains("甲、乙、丙均未通行，实际收益均为0"))
+        }
+        XCTAssertEqual(try Codec.data(s),bytes)
+        var replay=s;replay.simulationRecording=try SimulationReplay.record(scene:replay)
+        XCTAssertEqual(try ClassicSceneEditing.knowledgeSoundMoments(scene:replay),moments,"重复录制同一模型不能重建声音事件身份")
+    }
+    func testFailedOutcomeRequiresVisibleSettlementAndNeverReplaysAfterItsOnset()throws {
+        let original=try failedPublicGoodsScene(rounds:1)
+        for (start,end,expected) in [(90,150,0),(150,180,1),(151,180,0)] {
+            var shot=original;shot.durationFrames=60
+            shot.simulationPresentation=SimulationPresentation(sourceStartFrame:start,sourceEndFrame:end,presentationFrames:60)
+            shot.simulationRecording=try SimulationReplay.record(scene:shot)
+            let moments=try ClassicSceneEditing.knowledgeSoundMoments(scene:shot)
+            XCTAssertEqual(moments.count,expected)
+            if expected==1 {XCTAssertEqual(moments[0].kind,.outcome);XCTAssertEqual(moments[0].sceneFrame,0);XCTAssertEqual(moments[0].sourceFrame,150)}
+        }
+    }
+    func testFailedOutcomeKeepsOneOwnerAcrossSplitAndRetimedSourceWindow()throws {
+        let s=try failedPublicGoodsScene(),moments=try ClassicSceneEditing.knowledgeSoundMoments(scene:s)
+        let project=Project(workspaceID:"w",name:"真实未达门槛",revision:Revision(contentContext:ContentContext(workspaceID:"w",name:"按实际结算定位声音"),aspect:.landscape,scenes:[s]))
+        let split=try Editor.apply([.splitScene(s.id,150)],to:project,baseRevision:project.current.id,assets:[],message:"在失败结算源时点拆分")
+        var after:[KnowledgeSoundMoment]=[]
+        for var shot in split.current.scenes {shot.simulationRecording=try SimulationReplay.record(scene:shot);after += try ClassicSceneEditing.knowledgeSoundMoments(scene:shot)}
+        XCTAssertEqual(after.map(\.id),moments.map(\.id));XCTAssertEqual(after.map(\.sourceFrame),moments.map(\.sourceFrame))
+        XCTAssertEqual(after.map(\.sceneFrame),[60,0,90,180])
+        var retimed=try failedPublicGoodsScene(rounds:1);retimed=try StoryboardTiming.extending(scene:retimed,to:360)
+        retimed.simulationRecording=try SimulationReplay.record(scene:retimed)
+        let outcome=try XCTUnwrap(ClassicSceneEditing.knowledgeSoundMoments(scene:retimed).first{$0.kind == .outcome})
+        XCTAssertEqual(outcome.sceneFrame,301);XCTAssertEqual(outcome.sourceFrame,150)
+        XCTAssertEqual(outcome.id,moments[1].id,"展示延长不改变实际轮次/结算事件身份")
+    }
+    func testZeroPayoutMatrixAndUnappliedTableDoNotBecomePublicGoodFailures()throws {
+        var matrix=KnowledgePayoffMatrix.prisonersDilemma();matrix.stake=0;matrix.externalBudget=0
+        matrix.cells=matrix.cells.map{var cell=$0;cell.rowPayout=0;cell.columnPayout=0;return cell}
+        var s=try scene()
+        s.simulation.knowledge=KnowledgeSimulation(knowledgeLabel:"零发放矩阵",participants:[
+            .init(id:"a",name:"甲",strategy:.contribute,matrixStrategy:.alwaysFirst),
+            .init(id:"b",name:"乙",strategy:.contribute,matrixStrategy:.alwaysFirst)
+        ],rounds:1,payoffMatrix:matrix)
+        s.simulationRecording=try SimulationReplay.record(scene:s)
+        XCTAssertTrue(try ClassicSceneEditing.knowledgeSoundMoments(scene:s).isEmpty,"矩阵未发放不等于公共品未达门槛")
+        var table=try tableScene()
+        table.simulation.knowledge?.ruleTable?.rules[0].conditions=[.init(kind:.actionCount,actionID:"act",minimum:0,maximum:0)]
+        table.simulationRecording=try SimulationReplay.record(scene:table)
+        XCTAssertFalse(try ClassicSceneEditing.knowledgeSoundMoments(scene:table).contains{$0.kind == .outcome},"未应用规则不能编造实际状态变化或失败后果")
+    }
+    func testFailedOutcomeBindsWholeSourceWithoutApprovingAndRetimesToTheSameSettlement()throws {
+        let(s,assets,evidence)=try audioFixture(failedPublicGoodsScene(rounds:1),frames:10)
+        let moment=try XCTUnwrap(ClassicSceneEditing.knowledgeSoundMoments(scene:s).first{$0.kind == .outcome})
+        let bound=try ClassicSceneEditing.addingKnowledgeCue(moment,assetID:assets[1].id,gain:0.3,to:s,assets:assets,evidence:evidence,workspaceID:"w")
+        let cue=try XCTUnwrap(bound.classicArtwork?.audioCues.first)
+        XCTAssertEqual(cue.startFrame,150);XCTAssertEqual(cue.durationFrames,10);XCTAssertFalse(cue.listened)
+        XCTAssertEqual(bound.simulationRecording,s.simulationRecording);XCTAssertEqual(bound.durationFrames,180)
+        let extended=try StoryboardTiming.extending(scene:bound,to:360)
+        XCTAssertEqual(extended.classicArtwork?.audioCues.first?.startFrame,301)
+        XCTAssertEqual(try extended.renderSimulationSourceFrame(atTimelineFrame:301),150)
+        XCTAssertEqual(extended.classicArtwork?.audioCues.first?.id,cue.id)
+        XCTAssertThrowsError(try ClassicSceneEditing.knowledgeSoundMoments(scene:extended),"扩时后仍须实际重新录制")
+        let(tooLong,longAssets,longEvidence)=try audioFixture(failedPublicGoodsScene(rounds:1),frames:31)
+        let late=try XCTUnwrap(ClassicSceneEditing.knowledgeSoundMoments(scene:tooLong).first{$0.kind == .outcome})
+        XCTAssertThrowsError(try ClassicSceneEditing.addingKnowledgeCue(late,assetID:longAssets[1].id,gain:0.3,to:tooLong,assets:longAssets,evidence:longEvidence,workspaceID:"w"),"失败音效也不能截断完整原音句尾")
     }
     func testTableEffectsAreSoundMomentsOnlyWhenActuallySettled()throws {
         var s=try tableScene()

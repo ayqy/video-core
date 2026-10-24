@@ -2,10 +2,10 @@
 
 VideoFree source export · package_free.py · version 1
 
-生成时间：2026-10-24 22:47:49 北京时间
+生成时间：2026-10-24 23:38:19 北京时间
 
-- 源码与必要元数据：206个文件；2614118字节（不含本清单）。
-- 整体内容指纹：`37d045ee999b905ad124b6ad352db9df0739c1c7ec78339964c4f536c65e2897`。
+- 源码与必要元数据：206个文件；2622017字节（不含本清单）。
+- 整体内容指纹：`6709f75b0162f93fc56e3a004138def22d058395ec535f9ed25e9410fd12349a`。
 - 来源：受控原始工程中的逐文件白名单；Package.swift来自Distribution/Free/Package.swift模板，README由发行脚本生成。
 - 本包不含.git，不可作为新业务checkout；本清单生成过程不执行构建、设备验收、签名安装或公共上传，各阶段以独立证据为准。
 - 排除：App、VideoGame、VideoCartoon、Premium、高级实现运行时测试、私有仓库地址、凭据、客户数据、缓存、日志及媒体过程产物。
@@ -64,7 +64,7 @@ VideoFree source export · package_free.py · version 1
 | 189ad6135ff5becbe08363ac71b03ed91e90ca27a03f07d0ec2fe3de97f3470f | 12961 | Sources/VideoCore/BatchRules.swift |
 | 77c10a02e09545b5087bd78330852f78f80fe9a4e472e65a33507135b21a232d | 14040 | Sources/VideoCore/CartoonActing.swift |
 | 203b7a5b8ae7d6e17bca0ae3c50bcea11e218c3ae683a55ab5ef6ad72e4c93fa | 10760 | Sources/VideoCore/ClassicArtwork.swift |
-| 2682870e29b46a3fdfc4834aac81aec914534c47259d43b34093472df8ef19cd | 21680 | Sources/VideoCore/ClassicSceneEditing.swift |
+| 6f76ab2ddab5ce59e4f56dde09159de0e8ca91de542384a322f8d8b399f2233c | 22473 | Sources/VideoCore/ClassicSceneEditing.swift |
 | b2cdd155b2ff7507f9ea0ca1b1c85ae41059c903c829d1aecb14f704a34badf0 | 17671 | Sources/VideoCore/CohortFinance.swift |
 | 3e3b6eb76ea2295ebb9f4a8619f128247fb2b04566953229fa51725944e9a087 | 12447 | Sources/VideoCore/Commercial.swift |
 | e9b64ac1623ddede8f3e28ec11cf5a7a70ac64358d5592e43fb52a6131fb03ca | 32976 | Sources/VideoCore/CommercialReports.swift |
@@ -164,7 +164,7 @@ VideoFree source export · package_free.py · version 1
 | 84bf0bbbf07c6dfb4a679f9754c238253b53237018d8519be541453f48c70e40 | 11156 | Tests/VideoCoreTests/BrandDeliveryTests.swift |
 | 8adf01feaf26bb66604d75da5b5ab4fd22a0b806f7e9ec1e524528412365bbfd | 10270 | Tests/VideoCoreTests/CartoonPerformanceTests.swift |
 | c19dd668a235f222bb68d631b9d6dbe34fa53619e9eb4d1003a0709f78347e4f | 7220 | Tests/VideoCoreTests/ClassicArtworkTests.swift |
-| d01018afb8f79341f84da69e20bc590245cc2a1568701d6e2fe36f82198b4658 | 51980 | Tests/VideoCoreTests/ClassicSceneEditingTests.swift |
+| 4b0167c86313089d6b5cde2f150169bedae59572014e985223f6631c6251d9f3 | 59086 | Tests/VideoCoreTests/ClassicSceneEditingTests.swift |
 | f18fda57b514d19653ff1ac7ce621f4022be6868fb8b385b2cb5884e698c447a | 17786 | Tests/VideoCoreTests/CohortFinanceTests.swift |
 | d6f32510e1092e64a73bf2fba1b1c8d1e1c1d6271bfed3dcbf12eb11665bc347 | 10029 | Tests/VideoCoreTests/CommercialTests.swift |
 | 8438c62638b707de943349321ec17617c4299d29a9e4c0d3dfa5981350c413be | 18704 | Tests/VideoCoreTests/ContentProjectTests.swift |
