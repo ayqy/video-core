@@ -124,7 +124,16 @@ public final class Repository: @unchecked Sendable {
         if FileManager.default.fileExists(atPath: url.path) { guard Codec.hash(try Data(contentsOf: url)) == hash else { throw VideoError.invalid("源文件哈希校验失败") } } else { try data.write(to: url, options: .atomic) }
         return asset
     }
-    public func verifyAssets(_ state: Database) throws { for a in state.assets { let data = try Data(contentsOf: assetURL(a)); guard data.count == a.bytes, Codec.hash(data) == a.hash else { throw VideoError.invalid("源素材缺失或哈希不符：\(a.name)") } } }
+    public func verifyAssets(_ state: Database) throws {
+        for asset in state.assets {
+            let data:Data
+            do { data=try Data(contentsOf:assetURL(asset)) }
+            catch { throw VideoError.invalid("源素材缺失或无法读取：\(asset.name)。请从含源备份恢复，或重新关联原件后再备份") }
+            guard data.count==asset.bytes,Codec.hash(data)==asset.hash else {
+                throw VideoError.invalid("源素材缺失或哈希不符：\(asset.name)")
+            }
+        }
+    }
     public func verifyDelivery(_ job:Job,revision:Revision) throws {
         guard job.revisionID==revision.id,job.digest == (try revision.contentDigest()),Set(job.artifacts.map(\.mime))==["video/mp4","image/png","application/x-subrip","text/plain"],job.artifacts.count==4 else { throw VideoError.review("尚无绑定当前版本的完整四项制作产物") }
         for artifact in job.artifacts { _ = try verifiedArtifactURL(artifact,job:job,revision:revision) }

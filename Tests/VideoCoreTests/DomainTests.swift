@@ -292,6 +292,20 @@ final class BackupRestoreInventoryTests:XCTestCase {
         let restored=try Repository.restore(PropertyListEncoder().encode(legacy),to:destination)
         XCTAssertEqual(try restored.read().assets.first?.id,asset.id);try restored.verifyAssets(restored.read())
     }
+    func testMissingSourceNamesAssetWithoutChangingStateAndVerifiedBackupStillRestores()throws {
+        let(repository,asset,backup)=try fixture(),before=try Codec.data(repository.read())
+        try fm.removeItem(at:repository.assetURL(asset))
+        XCTAssertThrowsError(try repository.backup()) { error in
+            guard case let VideoError.invalid(message)=error else { return XCTFail("Missing source must remain a domain error") }
+            XCTAssertTrue(message.contains(asset.name))
+            XCTAssertTrue(message.contains("含源备份恢复"))
+            XCTAssertFalse(message.contains(repository.root.path))
+        }
+        XCTAssertEqual(try Codec.data(repository.read()),before)
+        let restored=try Repository.restore(PropertyListEncoder().encode(backup),to:directory())
+        try restored.verifyAssets(restored.read())
+        XCTAssertEqual(try Data(contentsOf:restored.assetURL(asset)),backup.assets[asset.relativePath])
+    }
 }
 
 final class RenderedPriceFreshnessTests:XCTestCase {
