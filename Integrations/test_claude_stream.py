@@ -4,10 +4,11 @@ import hashlib
 import json
 import sys
 import tempfile
+import time
 import unittest
 from unittest.mock import patch
 
-from claude_stream import _configuration, _input, _pinned_json, consume, create_isolated_settings, run_claude
+from claude_stream import _configuration, _input, _pinned_json, _terminate_group, consume, create_isolated_settings, run_claude
 from codex_events import ProtocolError
 from qwen_stream import FilePin, PinnedPolicy
 from install import host_manifests
@@ -146,6 +147,79 @@ class ClaudeStreamTests(unittest.TestCase):
         self.assertTrue(result['policy_complete'])
         self.assertTrue(result['cleanup']['passed'])
         self.assertEqual(result['decisions'],[{'tool_use_id':'tool-0','allowed':True}])
+
+    def testUnreadingNativeStdinCannotBlockParentDeadline(self):
+        self.script.write_text("""import json,sys,time
+first=json.loads(sys.stdin.readline())
+print(json.dumps({'type':'control_response','response':{'subtype':'success','request_id':first['request_id'],'response':{'commands':[],'output_style':'default','available_output_styles':['default'],'models':[],'account':{}}}}),flush=True)
+time.sleep(3)
+""")
+        entered=[]
+        started=time.monotonic()
+        def stop(process):
+            entered.append(time.monotonic()-started)
+            return _terminate_group(process)
+        with patch('claude_stream._terminate_group',side_effect=stop):
+            result=consume([sys.executable,str(self.script),'normal',str(self.input)],
+                           'x'*65536,self.policy(),seconds=2)
+        self.assertEqual(result['status'],'hard_deadline')
+        self.assertTrue(result['initialized'])
+        self.assertEqual(len(entered),1)
+        self.assertLess(entered[0],2.5)
+        self.assertEqual(result['decisions'],[])
+        self.assertFalse(result['execution_complete'])
+        # The original cleanup's TERM/KILL/leader proof is not replaced by the
+        # transport deadline; an OS permission refusal remains a refusal.
+        self.assertIn('passed',result['cleanup'])
+
+    def testPartialAndTemporarilyBlockedStdinWritesKeepWholeMessageOrder(self):
+        import os
+        original=os.write
+        writes=[0]
+        def partial(descriptor,data):
+            writes[0]+=1
+            if writes[0]==2:
+                raise BlockingIOError()
+            return original(descriptor,data[:97])
+        self.script.write_text(PEER.replace(
+            "assert json.loads(sys.stdin.readline())['type']=='user'",
+            "user=json.loads(sys.stdin.readline());assert user['type']=='user' and user['message']['content']=='x'*65536"))
+        with patch('claude_stream.os.write',side_effect=partial):
+            result=consume([sys.executable,str(self.script),'normal',str(self.input)],
+                           'x'*65536,self.policy(),seconds=3)
+        self.assertEqual(result['status'],'native_result')
+        self.assertTrue(result['policy_complete'])
+        self.assertGreater(writes[0],600)
+        self.assertEqual(result['decisions'],[{'tool_use_id':'tool-0','allowed':True}])
+
+    def testClosedNativeStdinReturnsBoundedFailureAndActualCleanup(self):
+        self.script.write_text("""import json,os,sys,time
+first=json.loads(sys.stdin.readline())
+os.close(0)
+print(json.dumps({'type':'control_response','response':{'subtype':'success','request_id':first['request_id'],'response':{'commands':[],'output_style':'default','available_output_styles':['default'],'models':[],'account':{}}}}),flush=True)
+time.sleep(.05)
+""")
+        result=consume([sys.executable,str(self.script)],'bounded',self.policy(),seconds=1)
+        self.assertEqual(result['status'],'protocol_refused')
+        self.assertEqual(result['failure_type'],'OSError')
+        self.assertFalse(result['execution_complete'])
+        self.assertEqual(result['decisions'],[])
+        self.assertIn('passed',result['cleanup'])
+
+    def testNativeResultCannotDiscardPendingUserMessage(self):
+        script="""import json,os,sys,time
+first=json.loads(sys.stdin.readline())
+ack={'type':'control_response','response':{'subtype':'success','request_id':first['request_id'],'response':{'commands':[],'output_style':'default','available_output_styles':['default'],'models':[],'account':{}}}}
+session={'type':'system','subtype':'init','cwd':os.getcwd(),'session_id':'s','tools':['Bash'],'mcp_servers':[],'model':'native-model','permissionMode':'default','slash_commands':[],'apiKeySource':'not-exported','claude_code_version':'2.1.3','output_style':'default','agents':[],'skills':[],'plugins':[],'uuid':'init'}
+final={'type':'result','subtype':'success','is_error':False,'permission_denials':[],'session_id':'s'}
+os.write(1,('\\n'.join(json.dumps(x) for x in (ack,session,final))+'\\n').encode())
+time.sleep(.1)
+"""
+        self.script.write_text(script)
+        result=consume([sys.executable,str(self.script)],'x'*65536,self.policy(),seconds=1)
+        self.assertEqual(result['status'],'protocol_refused')
+        self.assertFalse(result['execution_complete'])
+        self.assertEqual(result['decisions'],[])
 
     def testPrivateInitializeAndSystemConfigurationMetadataNeverLeavesConsumer(self):
         result=self.run_peer('normal')

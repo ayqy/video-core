@@ -69,6 +69,92 @@ final class ClassicSceneEditingTests:XCTestCase {
         XCTAssertTrue(cues.allSatisfy{!$0.listened})
         XCTAssertEqual(changed.simulationRecordingConfirmed,false)
     }
+    private func timedCueScene(durationFrames:Int,presentation:SimulationPresentation?,startFrame:Int,cueFrames:Int)throws->Scene {
+        let (assets,evidence)=fixture()
+        var art=try ClassicSceneEditing.derivedAtlas(assetID:assets[1].id,originalAssetIDs:[assets[0].id],gameplay:.sokoban,transformation:"已有实际派生",assets:assets,evidence:evidence,workspaceID:"w")
+        art.sources.append(try ClassicSceneEditing.source(assetID:assets[2].id,assets:assets,evidence:evidence,workspaceID:"w"))
+        art.audioCues=[ClassicAudioCue(assetID:assets[2].id,startFrame:startFrame,durationFrames:cueFrames,gain:0.27,use:.prompt,listened:true)]
+        var scene=Scene(kind:.simulation,title:"声音与实际动作",body:"完整原音保持对应的源观察",durationFrames:durationFrames)
+        scene.classicArtwork=art;scene.simulationPresentation=presentation
+        try ClassicArtworkRules.validate(scene:scene,assets:assets)
+        return scene
+    }
+    func testNarrationExtensionKeepsKnowledgeCueOnItsActualSourceFrame()throws {
+        let scene=try timedCueScene(durationFrames:330,presentation:.init(sourceStartFrame:0,sourceEndFrame:90,presentationFrames:330),startFrame:222,cueFrames:20)
+        let original=try XCTUnwrap(scene.classicArtwork?.audioCues.first),bytes=try Codec.data(scene)
+        let extended=try StoryboardTiming.extending(scene:scene,to:660)
+        let cue=try XCTUnwrap(extended.classicArtwork?.audioCues.first)
+        XCTAssertEqual(try scene.renderSimulationSourceFrame(atTimelineFrame:222),60)
+        XCTAssertEqual(try extended.renderSimulationSourceFrame(atTimelineFrame:444),59,"单纯比例会让行动声提前到前一源阶段")
+        XCTAssertEqual(cue.startFrame,445)
+        XCTAssertEqual(try extended.renderSimulationSourceFrame(atTimelineFrame:cue.startFrame),60)
+        var expected=original;expected.startFrame=445;expected.listened=false
+        XCTAssertEqual(cue,expected)
+        XCTAssertEqual(extended.classicArtwork?.sources,scene.classicArtwork?.sources)
+        XCTAssertEqual(try Codec.data(scene),bytes,"只返回待复核新稿，不改原片或授权")
+    }
+    func testNarrationExtensionRetainsIntentionalDelayWithinHeldSourceFrames()throws {
+        let delayed=try timedCueScene(durationFrames:240,presentation:.init(sourceStartFrame:60,sourceEndFrame:180,presentationFrames:240),startFrame:30,cueFrames:20)
+        let longer=try StoryboardTiming.extending(scene:delayed,to:360)
+        let cue=try XCTUnwrap(longer.classicArtwork?.audioCues.first)
+        XCTAssertEqual(cue.startFrame,45,"同源区间43—45中保留比例位置，不强制提前到首次展示")
+        XCTAssertEqual(try longer.renderSimulationSourceFrame(atTimelineFrame:43),74)
+        XCTAssertEqual(try longer.renderSimulationSourceFrame(atTimelineFrame:cue.startFrame),try delayed.renderSimulationSourceFrame(atTimelineFrame:30))
+        let still=try timedCueScene(durationFrames:240,presentation:.init(sourceStartFrame:60,sourceEndFrame:61,presentationFrames:240),startFrame:100,cueFrames:20)
+        let held=try StoryboardTiming.extending(scene:still,to:360)
+        XCTAssertEqual(held.classicArtwork?.audioCues.first?.startFrame,150,"整段静止画面中的有意停顿不能被折叠到零帧")
+    }
+    func testNarrationExtensionKeepsCueOnSourceAxisAcrossPlaybackSpeedsAndPause()throws {
+        for speed in [0.5,2.0] {
+            var scene=try timedCueScene(durationFrames:330,presentation:.init(sourceStartFrame:0,sourceEndFrame:90,presentationFrames:330),startFrame:222,cueFrames:20)
+            scene.speed=speed;scene.pauseFrames=30
+            let extended=try StoryboardTiming.extending(scene:scene,to:660)
+            let cue=try XCTUnwrap(extended.classicArtwork?.audioCues.first)
+            XCTAssertEqual(cue.startFrame,445,"原音起点在源轴上，不能再次乘除播放倍率")
+            XCTAssertEqual(cue.durationFrames,20);XCTAssertEqual(extended.speed,speed);XCTAssertEqual(extended.pauseFrames,30)
+            let firstVideoFrame=Int((Double(cue.startFrame)/speed).rounded(.up))
+            XCTAssertEqual(try extended.renderSimulationSourceFrame(atTimelineFrame:firstVideoFrame),60)
+            XCTAssertEqual(try extended.renderSimulationSourceFrame(atTimelineFrame:firstVideoFrame-1),59)
+            XCTAssertEqual(try extended.renderSimulationSourceFrame(atTimelineFrame:extended.timelineFrames-1),89)
+        }
+    }
+    func testNarrationExtensionKeepsCueSourceInAnAlreadySlicedWindow()throws {
+        let window=SimulationPresentation(sourceStartFrame:41,sourceEndFrame:153,presentationFrames:201,presentationOffsetFrames:60)
+        for start in [0,20,89] {
+            let scene=try timedCueScene(durationFrames:90,presentation:window,startFrame:start,cueFrames:1)
+            let extended=try StoryboardTiming.extending(scene:scene,to:180)
+            let cue=try XCTUnwrap(extended.classicArtwork?.audioCues.first)
+            XCTAssertEqual(try extended.renderSimulationSourceFrame(atTimelineFrame:cue.startFrame),try scene.renderSimulationSourceFrame(atTimelineFrame:start))
+            XCTAssertEqual(try extended.renderSimulationSourceFrame(atTimelineFrame:0),try scene.renderSimulationSourceFrame(atTimelineFrame:0))
+            XCTAssertEqual(try extended.renderSimulationSourceFrame(atTimelineFrame:179),try scene.renderSimulationSourceFrame(atTimelineFrame:89))
+        }
+    }
+    func testNarrationExtensionRejectsSkippedCueSourceWithoutChangingTheDraft()throws {
+        let scene=try timedCueScene(durationFrames:3,presentation:.init(sourceStartFrame:0,sourceEndFrame:7,presentationFrames:3),startFrame:1,cueFrames:1)
+        let bytes=try Codec.data(scene)
+        XCTAssertEqual(try scene.renderSimulationSourceFrame(atTimelineFrame:1),3)
+        XCTAssertThrowsError(try StoryboardTiming.extending(scene:scene,to:4),"新采样仅0、2、4、6，不能把源3的原音移到别的观察")
+        XCTAssertEqual(try Codec.data(scene),bytes)
+    }
+    func testNarrationExtensionRejectsCueTailBeyondReframedSourceEndpoint()throws {
+        let scene=try timedCueScene(durationFrames:90,presentation:.init(sourceStartFrame:0,sourceEndFrame:4,presentationFrames:100),startFrame:70,cueFrames:20)
+        let bytes=try Codec.data(scene)
+        XCTAssertEqual(try scene.renderSimulationSourceFrame(atTimelineFrame:70),2)
+        XCTAssertThrowsError(try StoryboardTiming.extending(scene:scene,to:180),"新源窗口的源2仅出现在末帧，不能为了容纳20帧声音提前到源1或截尾")
+        XCTAssertEqual(try Codec.data(scene),bytes)
+    }
+    func testNarrationExtensionPreservesOrdinaryCueTimingAndRejectsMalformedArithmetic()throws {
+        let scene=try timedCueScene(durationFrames:240,presentation:nil,startFrame:30,cueFrames:120)
+        let extended=try StoryboardTiming.extending(scene:scene,to:360)
+        XCTAssertEqual(extended.classicArtwork?.audioCues.first?.startFrame,45)
+        XCTAssertEqual(extended.classicArtwork?.audioCues.first?.durationFrames,120)
+        for start in [Int.min,-1,240,Int.max] {
+            var invalid=scene;invalid.classicArtwork?.audioCues[0].startFrame=start
+            XCTAssertThrowsError(try StoryboardTiming.extending(scene:invalid,to:360))
+        }
+        var invalid=scene;invalid.classicArtwork?.audioCues[0].durationFrames=Int.max
+        XCTAssertThrowsError(try StoryboardTiming.extending(scene:invalid,to:360))
+    }
     func testSplitKeepsWholeAudioCuesOnTheirOwnSideAndRetimesTheRight()throws {
         var (assets,evidence)=fixture();assets[2].durationFrames=30
         var scene=try characterScene(assets:assets,evidence:evidence);scene.durationFrames=240

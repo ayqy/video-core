@@ -8,10 +8,11 @@ import signal
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from unittest.mock import patch
 
-from qwen_stream import ExactPolicy, FilePin, PinnedPolicy, _PolicyRefused, _policy_rejection, consume, create_isolated_settings, run_qwen
+from qwen_stream import ExactPolicy, FilePin, PinnedPolicy, _PolicyRefused, _policy_rejection, _terminate_group, consume, create_isolated_settings, run_qwen
 
 
 PEER = '''import json,sys,time
@@ -57,6 +58,82 @@ class QwenStreamTests(unittest.TestCase):
         self.assertEqual(result["decisions"], [{"tool_use_id": "call-one", "allowed": True}])
         self.assertTrue(result["cleanup"]["passed"])
         self.assertTrue(result["execution_complete"])
+
+    def testUnreadingNativeStdinCannotBlockParentDeadline(self):
+        script=self.root/'unreading-peer.py'
+        script.write_text("""import json,sys,time
+first=json.loads(sys.stdin.readline())
+print(json.dumps({'type':'control_response','response':{'subtype':'success','request_id':first['request_id'],'response':{'subtype':'initialize','capabilities':{'can_handle_can_use_tool':True}}}}),flush=True)
+time.sleep(3)
+""")
+        entered=[]
+        started=time.monotonic()
+        def stop(process):
+            entered.append(time.monotonic()-started)
+            return _terminate_group(process)
+        with patch('qwen_stream._terminate_group',side_effect=stop):
+            result=consume([sys.executable,str(script),'allow'],'x'*65536,self.policy,seconds=2)
+        self.assertEqual(result['status'],'hard_deadline')
+        self.assertTrue(result['initialized'])
+        self.assertEqual(len(entered),1)
+        self.assertLess(entered[0],2.5)
+        self.assertEqual(result['decisions'],[])
+        self.assertFalse(result['execution_complete'])
+        self.assertIn('passed',result['cleanup'])
+
+    def testPartialAndTemporarilyBlockedStdinWritesKeepWholeMessageOrder(self):
+        original=os.write
+        writes=[0]
+        def partial(descriptor,data):
+            writes[0]+=1
+            if writes[0]==2:
+                raise BlockingIOError()
+            return original(descriptor,data[:97])
+        script=self.root/'partial-peer.py'
+        script.write_text(PEER.replace(
+            "user=json.loads(sys.stdin.readline());assert user['type']=='user'",
+            "user=json.loads(sys.stdin.readline());assert user['type']=='user' and user['message']['content']=='x'*65536"))
+        with patch('qwen_stream.os.write',side_effect=partial):
+            result=consume([sys.executable,str(script),'allow'],'x'*65536,self.policy,seconds=3)
+        self.assertEqual(result['status'],'native_result')
+        self.assertTrue(result['execution_complete'])
+        self.assertGreater(writes[0],600)
+        self.assertEqual(result['decisions'],[{'tool_use_id':'call-one','allowed':True}])
+
+    def testClosedNativeStdinReturnsBoundedFailureAndActualCleanup(self):
+        script=self.root/'closed-peer.py'
+        script.write_text("""import json,os,sys,time
+first=json.loads(sys.stdin.readline())
+os.close(0)
+print(json.dumps({'type':'control_response','response':{'subtype':'success','request_id':first['request_id'],'response':{'subtype':'initialize','capabilities':{'can_handle_can_use_tool':True}}}}),flush=True)
+time.sleep(.05)
+""")
+        result=consume([sys.executable,str(script)],'bounded',self.policy,seconds=1)
+        self.assertEqual(result['status'],'protocol_refused')
+        self.assertFalse(result['execution_complete'])
+        self.assertEqual(result['decisions'],[])
+        self.assertIn('passed',result['cleanup'])
+
+    def testNativeResultCannotDiscardPendingUserMessage(self):
+        script=self.root/'premature-result-peer.py'
+        script.write_text("""import json,os,sys,time
+first=json.loads(sys.stdin.readline())
+ack={'type':'control_response','response':{'subtype':'success','request_id':first['request_id'],'response':{'subtype':'initialize','capabilities':{'can_handle_can_use_tool':True}}}}
+result={'type':'result','subtype':'success','is_error':False}
+os.write(1,('\\n'.join(json.dumps(x) for x in (ack,result))+'\\n').encode())
+time.sleep(.1)
+""")
+        result=consume([sys.executable,str(script)],'x'*65536,self.policy,seconds=1)
+        self.assertEqual(result['status'],'protocol_refused')
+        self.assertFalse(result['execution_complete'])
+        self.assertEqual(result['decisions'],[])
+
+    def testOutboundQueueBoundRefusesBeforeUserOrPermission(self):
+        result=consume(self.peer('allow'),'x'*(256*1024),self.policy,seconds=1)
+        self.assertEqual(result['status'],'protocol_refused')
+        self.assertTrue(result['initialized'])
+        self.assertFalse(result['execution_complete'])
+        self.assertEqual(result['decisions'],[])
 
     def testFullCommandEqualityRejectsAdditionalArgumentAtNativeGate(self):
         result = consume(self.peer("deny"), "bounded input", self.policy, seconds=3)
@@ -645,7 +722,9 @@ sys.stdout.write('{"output_tokens":1}}');sys.stdout.flush()
                 self.assertEqual([d["allowed"] for d in result["decisions"]], decisions)
 
     def testTimeoutDoesNotExtendParentHardDeadline(self):
-        result = consume(self.peer("timeout-stall", 120000), "test protocol only", self.policy(), seconds=0.3)
+        # Allow this real interpreter to initialize before testing a tool's
+        # 120000ms timeout; startup must still count against the parent budget.
+        result = consume(self.peer("timeout-stall", 120000), "test protocol only", self.policy(), seconds=0.8)
         self.assertEqual(result["status"], "hard_deadline")
         self.assertLess(result["seconds"], 1.5)
         self.assertNotEqual(result["exit_code"], 0)

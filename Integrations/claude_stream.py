@@ -75,6 +75,7 @@ _DIAGNOSTIC_REASONS = frozenset((
     "invalid_native_content_block", "invalid_native_tool_use", "invalid_native_tool_result",
     "unexpected_native_user_text", "unexpected_native_content_block",
     "invalid_native_initialize_envelope", "native_initialize_not_confirmed",
+    "native_outbound_byte_bound", "native_pending_input_at_result",
     "native_stderr_byte_bound", "native_json_structure_bound",
     "unexpected_native_control_response", "native_permission_before_session",
     "native_event_before_initialize", "invalid_json_object", "stream_already_closed",
@@ -371,6 +372,8 @@ def consume(arguments, prompt, policy: PinnedPolicy, *, seconds, on_event=None, 
     selector = selectors.DefaultSelector()
     selector.register(process.stdout, selectors.EVENT_READ, "out")
     selector.register(process.stderr, selectors.EVENT_READ, "err")
+    os.set_blocking(process.stdin.fileno(), False)
+    outgoing = bytearray()
     stream = JsonLines(max_bytes=8*1024*1024, max_line=1024*1024, max_events=1000)
     stderr = hashlib.sha256()
     stderr_bytes = 0
@@ -386,8 +389,12 @@ def consume(arguments, prompt, policy: PinnedPolicy, *, seconds, on_event=None, 
     diagnostic_stage = "initialize_send"
 
     def send(value):
-        process.stdin.write((json.dumps(value, ensure_ascii=False) + "\n").encode())
-        process.stdin.flush()
+        encoded = (json.dumps(value, ensure_ascii=False) + "\n").encode()
+        if len(outgoing) + len(encoded) > 256 * 1024:
+            raise ProtocolError("native_outbound_byte_bound")
+        outgoing.extend(encoded)
+        if process.stdin not in [key.fileobj for key in selector.get_map().values()]:
+            selector.register(process.stdin, selectors.EVENT_WRITE, "in")
 
     try:
         send({"type": "control_request", "request_id": identifier, "request": {"subtype": "initialize"}})
@@ -397,6 +404,17 @@ def consume(arguments, prompt, policy: PinnedPolicy, *, seconds, on_event=None, 
                 status = "hard_deadline"
                 break
             for key, _ in selector.select(min(.2, remaining)):
+                if key.data == "in":
+                    diagnostic_stage = "stdin_write"
+                    diagnostic_event = None
+                    try:
+                        written = os.write(process.stdin.fileno(), outgoing[:4096])
+                    except BlockingIOError:
+                        continue
+                    del outgoing[:written]
+                    if not outgoing:
+                        selector.unregister(process.stdin)
+                    continue
                 data = os.read(key.fileobj.fileno(), 65536)
                 if not data:
                     selector.unregister(key.fileobj)
@@ -438,6 +456,8 @@ def consume(arguments, prompt, policy: PinnedPolicy, *, seconds, on_event=None, 
                     else:
                         if not initialized:
                             raise ProtocolError("native_event_before_initialize")
+                        if kind == "result" and outgoing:
+                            raise ProtocolError("native_pending_input_at_result")
                         safe = native.observe(event)
                         events.append(safe)
                         if kind == "result":

@@ -134,8 +134,15 @@ public enum StoryboardTiming {
         if var artwork=scene.classicArtwork {
             for index in artwork.audioCues.indices {
                 let cue=artwork.audioCues[index]
-                let at=Int((Double(cue.startFrame)*Double(durationFrames)/Double(scene.durationFrames)).rounded())
-                guard cue.durationFrames>0,at>=0,at<=durationFrames-cue.durationFrames else { throw VideoError.review("延长后的原音触发位置容不下完整声音，请在新时序手动配置，不能截尾") }
+                guard cue.startFrame>=0,cue.startFrame<scene.durationFrames,
+                      cue.durationFrames>0,cue.durationFrames<=scene.durationFrames-cue.startFrame else { throw VideoError.review("延长前的原音位置或完整时长无效，请先核对源镜头，不会截尾或迁移无效录音") }
+                let proposed=Int((Int64(cue.startFrame)*Int64(durationFrames)+Int64(scene.durationFrames/2))/Int64(scene.durationFrames))
+                var at=proposed
+                if let original=scene.simulationPresentation,let retimed=value.simulationPresentation {
+                    at=try retimedAudioFrame(cue.startFrame,from:original,to:retimed,
+                        durationFrames:scene.durationFrames,newDurationFrames:durationFrames,proposed:proposed)
+                }
+                guard at>=0,at<=durationFrames-cue.durationFrames else { throw VideoError.review("延长后的原音触发位置容不下完整声音，请在新时序手动配置，不能截尾") }
                 artwork.audioCues[index].startFrame=at
                 artwork.audioCues[index].listened=false
                 // Actual audio duration and gain are retained. Only the trigger
@@ -145,5 +152,28 @@ public enum StoryboardTiming {
         }
         value.durationFrames=durationFrames
         return value
+    }
+    /// Keep the actual source observation while retaining a deliberate delay
+    /// within its held frames. A ratio alone can move an onset into the prior
+    /// phase because the presentation uses inclusive integer endpoints.
+    private static func retimedAudioFrame(_ frame:Int,from original:SimulationPresentation,to retimed:SimulationPresentation,
+                                          durationFrames:Int,newDurationFrames:Int,proposed:Int)throws->Int {
+        let target=try original.sourceFrame(atSceneFrame:frame,durationFrames:durationFrames)
+        func boundary(after:Bool)throws->Int {
+            var lower=0,upper=newDurationFrames
+            while lower<upper {
+                let middle=lower+(upper-lower)/2
+                let source=try retimed.sourceFrame(atSceneFrame:middle,durationFrames:newDurationFrames)
+                if source<target || (after && source==target) {lower=middle+1}else{upper=middle}
+            }
+            return lower
+        }
+        let first=try boundary(after:false)
+        guard first<newDurationFrames,
+              try retimed.sourceFrame(atSceneFrame:first,durationFrames:newDurationFrames)==target else {
+            throw VideoError.review("延长后的展示跳过了原音对应的实际源帧，请重新配置并听审，不会把声音移到其他动作或阶段")
+        }
+        let last=try boundary(after:true)-1
+        return min(last,max(first,proposed))
     }
 }

@@ -422,6 +422,8 @@ def consume(arguments: list[str], prompt: str, policy: ExactPolicy | PinnedPolic
     selector = selectors.DefaultSelector()
     selector.register(process.stdout, selectors.EVENT_READ, "out")
     selector.register(process.stderr, selectors.EVENT_READ, "err")
+    os.set_blocking(process.stdin.fileno(), False)
+    outgoing = bytearray()
     initialize_id = uuid.uuid4().hex
     events, decisions = [], []
     json_stream = JsonLines(max_bytes=8 * 1024 * 1024, max_line=4 * 1024 * 1024, max_events=1000)
@@ -435,8 +437,12 @@ def consume(arguments: list[str], prompt: str, policy: ExactPolicy | PinnedPolic
     active_event = None
 
     def send(value):
-        process.stdin.write((json.dumps(value, ensure_ascii=False) + "\n").encode())
-        process.stdin.flush()
+        encoded = (json.dumps(value, ensure_ascii=False) + "\n").encode()
+        if len(outgoing) + len(encoded) > 256 * 1024:
+            raise ProtocolError("native_outbound_byte_bound")
+        outgoing.extend(encoded)
+        if process.stdin not in [key.fileobj for key in selector.get_map().values()]:
+            selector.register(process.stdin, selectors.EVENT_WRITE, "in")
 
     try:
         send({"type": "control_request", "request_id": initialize_id,
@@ -447,6 +453,15 @@ def consume(arguments: list[str], prompt: str, policy: ExactPolicy | PinnedPolic
                 status = "hard_deadline"
                 break
             for key, _ in selector.select(timeout=min(remaining, 0.2)):
+                if key.data == "in":
+                    try:
+                        written = os.write(process.stdin.fileno(), outgoing[:4096])
+                    except BlockingIOError:
+                        continue
+                    del outgoing[:written]
+                    if not outgoing:
+                        selector.unregister(process.stdin)
+                    continue
                 data = os.read(key.fileobj.fileno(), 65536)
                 if not data:
                     selector.unregister(key.fileobj)
@@ -481,6 +496,8 @@ def consume(arguments: list[str], prompt: str, policy: ExactPolicy | PinnedPolic
                         send({"type": "control_response", "response": {"subtype": "success", "request_id": event["request_id"],
                               "response": {"behavior": "allow" if allowed else "deny", "message": "Only the exact authorized local action is permitted."}}})
                     elif kind == "result":
+                        if outgoing:
+                            raise ProtocolError("native_pending_input_at_result")
                         native_result = event
                         status = "native_result"
                         process.stdin.close()
@@ -497,7 +514,7 @@ def consume(arguments: list[str], prompt: str, policy: ExactPolicy | PinnedPolic
         status = "policy_refused"
         if rejection is None:
             rejection = _policy_rejection(active_event, policy, phase="observation", initialized=initialized)
-    except ProtocolError:
+    except (ProtocolError, OSError):
         status = "protocol_refused"
         if isinstance(policy, PinnedPolicy):
             policy.failed = True
