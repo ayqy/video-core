@@ -90,6 +90,142 @@ final class KnowledgeStoryboardTests:XCTestCase {
         XCTAssertThrowsError(try compose(i,a,e,t,s))
         i.grammar = .simulation;i.simulation=Simulation();XCTAssertThrowsError(try compose(i,a,e,t,s))
     }
+    func testKnowledgePlanRejectsClockOnlyChangesWhileReadComparisonKeepsThemObservable()throws {
+        var(input,assets,proofs,template,style)=try fixture()
+        var plan=input.knowledgeStoryboard!
+        plan.alternative=plan.baseline
+        plan.alternative.startTick=9;plan.alternative.roundTicks=11
+        let end=try plan.alternative.lastSettlementTick()+1
+        plan.alternativeShots=[.init(id:"after-clock",title:"仅改变展示时间",narration:"参与者和实际行动没有变化。",startTick:0,endTickExclusive:end,durationFrames:end*30)]
+        let explanation=try KnowledgeCounterfactualExplanation.build(baseline:plan.baseline,alternative:plan.alternative,seed:plan.seed)
+        XCTAssertNotEqual(explanation.comparison.baseline.events,explanation.comparison.alternative.events)
+        XCTAssertTrue(explanation.changedEvents.isEmpty);XCTAssertEqual(explanation.timingChanges.count,6)
+        XCTAssertEqual(explanation.comparison.balances.map(\.difference),[0,0])
+        input.knowledgeStoryboard=plan
+        XCTAssertThrowsError(try plan.validate()){error in XCTAssertTrue(error.localizedDescription.contains("实际行动、状态或结算观察差异"))}
+        XCTAssertThrowsError(try compose(input,assets,proofs,template,style))
+    }
+    func testKnowledgePlanRejectsUnreachedThresholdChangesInsteadOfTreatingAnInputAsAnOutcome()throws {
+        var(input,assets,proofs,template,style)=try fixture()
+        var plan=input.knowledgeStoryboard!
+        plan.alternative=plan.baseline;plan.alternative.threshold=3
+        let explanation=try KnowledgeCounterfactualExplanation.build(baseline:plan.baseline,alternative:plan.alternative,seed:plan.seed)
+        XCTAssertNotEqual(explanation.comparison.baseline.events,explanation.comparison.alternative.events)
+        XCTAssertTrue(explanation.changedEvents.isEmpty);XCTAssertTrue(explanation.timingChanges.isEmpty)
+        XCTAssertTrue(explanation.comparison.baseline.rounds.allSatisfy{!$0.obstacleCleared})
+        XCTAssertTrue(explanation.comparison.alternative.rounds.allSatisfy{!$0.obstacleCleared})
+        XCTAssertEqual(explanation.comparison.balances.map(\.difference),[0,0])
+        input.knowledgeStoryboard=plan
+        XCTAssertThrowsError(try plan.validate()){error in XCTAssertTrue(error.localizedDescription.contains("实际行动、状态或结算观察差异"))}
+        XCTAssertThrowsError(try compose(input,assets,proofs,template,style))
+    }
+    func testKnowledgePlanAcceptsDifferentExecutedActionsWithoutRequiringDifferentFinalBalances()throws {
+        var(input,assets,proofs,template,style)=try fixture()
+        var plan=input.knowledgeStoryboard!
+        let people=plan.baseline.participants.map{person in var value=person;value.strategy = .contribute;return value}
+        let table=KnowledgeRuleTable(actions:[.init(id:"act",label:"执行"),.init(id:"wait",label:"等待",pose:.idle)],
+            states:[.init(id:"pending",label:"待执行")],
+            plans:people.map{.init(actorID:$0.id,initialStateID:"pending",defaultActionID:"act")},
+            rules:[.init(id:"later",label:"第二轮才记录",conditions:[.init(kind:.round,minimum:2,maximum:2)],effects:[.setState(actorID:"a",stateID:"pending")])])
+        plan.baseline=KnowledgeSimulation(knowledgeLabel:"行动与结果的区别",participants:people,rounds:1,ruleTable:table)
+        plan.alternative=plan.baseline;plan.alternative.ruleTable?.plans[0].defaultActionID="wait"
+        let explanation=try KnowledgeCounterfactualExplanation.build(baseline:plan.baseline,alternative:plan.alternative,seed:plan.seed)
+        XCTAssertEqual(explanation.comparison.balances.map(\.difference),[0,0])
+        XCTAssertEqual(explanation.firstOutcomeDifference?.phase,.decision)
+        let action=try XCTUnwrap(explanation.changedEvents.first{$0.phase == .contribution})
+        XCTAssertEqual(action.baseline.actors.first?.executedActionID,"act")
+        XCTAssertEqual(action.alternative.actors.first?.executedActionID,"wait")
+        XCTAssertTrue(explanation.comparison.baseline.events.allSatisfy{$0.ruleExecution?.transfers.isEmpty != false})
+        input.knowledgeStoryboard=plan
+        try plan.validate()
+        let document=try compose(input,assets,proofs,template,style)
+        XCTAssertEqual(document.revision.scenes.filter{$0.kind == .simulation}.count,6)
+        XCTAssertFalse(document.confirmed);XCTAssertFalse(document.revision.review.complete)
+    }
+    func testKnowledgePlanAcceptsChangedPassageEvenWhenTheModelPaysNoBenefit()throws {
+        var(input,assets,proofs,template,style)=try fixture()
+        var plan=input.knowledgeStoryboard!
+        plan.baseline.benefit=0;plan.baseline.threshold=1
+        plan.alternative=plan.baseline;plan.alternative.threshold=2
+        let explanation=try KnowledgeCounterfactualExplanation.build(baseline:plan.baseline,alternative:plan.alternative,seed:plan.seed)
+        XCTAssertEqual(explanation.comparison.balances.map(\.difference),[0,0])
+        XCTAssertEqual(explanation.firstOutcomeDifference?.phase,.resolution)
+        XCTAssertTrue(explanation.comparison.baseline.rounds[0].actors.allSatisfy(\.passed))
+        XCTAssertTrue(explanation.comparison.alternative.rounds[0].actors.allSatisfy{!$0.passed})
+        input.knowledgeStoryboard=plan
+        try plan.validate()
+        let document=try compose(input,assets,proofs,template,style)
+        XCTAssertEqual(document.revision.scenes.filter{$0.kind == .simulation}.count,6)
+        XCTAssertFalse(document.confirmed);XCTAssertFalse(document.revision.review.complete)
+    }
+    private func ruleBehaviorPlan(from original:KnowledgeStoryboardPlan)->KnowledgeStoryboardPlan {
+        var plan=original
+        let people=plan.baseline.participants.map{person in var value=person;value.strategy = .contribute;return value}
+        let table=KnowledgeRuleTable(actions:[.init(id:"act",label:"执行")],states:[.init(id:"open",label:"待交付"),.init(id:"received",label:"已收到",pose:.celebrate)],
+            plans:people.map{.init(actorID:$0.id,initialStateID:"open",defaultActionID:"act")},
+            rules:[.init(id:"exchange",label:"实际交换",conditions:[.init(kind:.round,minimum:1,maximum:1)],
+                effects:[.transfer(from:"a",to:"b",amount:1),.setState(actorID:"b",stateID:"received")])])
+        plan.baseline=KnowledgeSimulation(knowledgeLabel:"行动与记录的区别",participants:people,rounds:1,ruleTable:table)
+        plan.alternative=plan.baseline
+        return plan
+    }
+    func testKnowledgePlanRejectsRuleAliasesAndConditionOnlyObservationsWhileComparisonRetainsThem()throws {
+        let(original,assets,proofs,template,style)=try fixture()
+        for change in ["rule-alias","condition-facts"] {
+            var input=original,plan=ruleBehaviorPlan(from:original.knowledgeStoryboard!)
+            if change=="rule-alias" {plan.alternative.ruleTable?.rules[0].id="renamed-exchange"}
+            else {plan.alternative.ruleTable?.rules[0].conditions=[.init(kind:.resources,actorID:"a",minimum:0,maximum:3)]}
+            let explanation=try KnowledgeCounterfactualExplanation.build(baseline:plan.baseline,alternative:plan.alternative,seed:plan.seed)
+            XCTAssertFalse(explanation.changedEvents.isEmpty,change);XCTAssertFalse(explanation.hasBehaviorDifference,change)
+            XCTAssertEqual(explanation.comparison.baseline.events.map(\.actors),explanation.comparison.alternative.events.map(\.actors),change)
+            input.knowledgeStoryboard=plan
+            XCTAssertThrowsError(try plan.validate(),change)
+            XCTAssertThrowsError(try compose(input,assets,proofs,template,style),change)
+        }
+    }
+    func testKnowledgePlanRejectsMatchedNoOpStateWritesWithNoActualStateChange()throws {
+        var(input,assets,proofs,template,style)=try fixture()
+        var plan=ruleBehaviorPlan(from:input.knowledgeStoryboard!)
+        plan.baseline.ruleTable?.rules[0].effects=[.setState(actorID:"a",stateID:"open")]
+        plan.alternative=plan.baseline;plan.alternative.ruleTable?.rules[0].conditions=[.init(kind:.round,minimum:2,maximum:2)]
+        let explanation=try KnowledgeCounterfactualExplanation.build(baseline:plan.baseline,alternative:plan.alternative,seed:plan.seed)
+        XCTAssertFalse(explanation.changedEvents.isEmpty);XCTAssertFalse(explanation.hasBehaviorDifference)
+        XCTAssertEqual(explanation.comparison.baseline.events.map(\.actors),explanation.comparison.alternative.events.map(\.actors))
+        input.knowledgeStoryboard=plan
+        XCTAssertThrowsError(try plan.validate())
+        XCTAssertThrowsError(try compose(input,assets,proofs,template,style))
+    }
+    func testKnowledgePlanRejectsEquivalentParticipantAndRulePlanOrdering()throws {
+        var(input,assets,proofs,template,style)=try fixture()
+        var plan=ruleBehaviorPlan(from:input.knowledgeStoryboard!)
+        plan.alternative.participants.reverse();plan.alternative.ruleTable?.plans.reverse()
+        let explanation=try KnowledgeCounterfactualExplanation.build(baseline:plan.baseline,alternative:plan.alternative,seed:plan.seed)
+        XCTAssertNotEqual(explanation.comparison.baseline.inputDigest,explanation.comparison.alternative.inputDigest)
+        XCTAssertEqual(explanation.comparison.baseline.events,explanation.comparison.alternative.events)
+        XCTAssertFalse(explanation.hasBehaviorDifference)
+        input.knowledgeStoryboard=plan
+        XCTAssertThrowsError(try plan.validate())
+        XCTAssertThrowsError(try compose(input,assets,proofs,template,style))
+    }
+    func testKnowledgePlanAcceptsDifferentActualTransferRoutesWithIdenticalActorsAndBalances()throws {
+        var(input,assets,proofs,template,style)=try fixture()
+        var plan=ruleBehaviorPlan(from:input.knowledgeStoryboard!)
+        let people=["a","b","c"].map{KnowledgeParticipant(id:$0,name:$0,strategy:.contribute,initialResources:3)}
+        plan.baseline.participants=people
+        plan.baseline.ruleTable?.plans=people.map{.init(actorID:$0.id,initialStateID:"open",defaultActionID:"act")}
+        plan.baseline.ruleTable?.rules[0].effects=[.transfer(from:"a",to:"b",amount:1),.transfer(from:"b",to:"c",amount:1),.transfer(from:"c",to:"a",amount:1)]
+        plan.alternative=plan.baseline
+        plan.alternative.ruleTable?.rules[0].effects=[.transfer(from:"a",to:"c",amount:1),.transfer(from:"c",to:"b",amount:1),.transfer(from:"b",to:"a",amount:1)]
+        let explanation=try KnowledgeCounterfactualExplanation.build(baseline:plan.baseline,alternative:plan.alternative,seed:plan.seed)
+        XCTAssertTrue(explanation.hasBehaviorDifference)
+        XCTAssertEqual(explanation.comparison.baseline.events.map(\.actors),explanation.comparison.alternative.events.map(\.actors))
+        XCTAssertEqual(explanation.comparison.balances.map(\.difference),[0,0,0])
+        input.knowledgeStoryboard=plan
+        try plan.validate()
+        let document=try compose(input,assets,proofs,template,style)
+        XCTAssertEqual(document.revision.scenes.filter{$0.kind == .simulation}.count,6)
+        XCTAssertFalse(document.confirmed);XCTAssertFalse(document.revision.review.complete)
+    }
     func testPlanRetainsSourceRightsBoundaryAndRejectsInheritedAudioOffsets()throws {
         var(i,a,e,t,s)=try fixture();i.knowledgeStoryboard!.artwork.audioCues=[ClassicAudioCue(assetID:"source-voice",startFrame:120,durationFrames:90)]
         XCTAssertThrowsError(try compose(i,a,e,t,s))

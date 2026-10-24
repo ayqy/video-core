@@ -2,10 +2,10 @@
 
 VideoFree source export · package_free.py · version 1
 
-生成时间：2026-10-24 20:09:29 北京时间
+生成时间：2026-10-24 21:32:07 北京时间
 
-- 源码与必要元数据：206个文件；2572058字节（不含本清单）。
-- 整体内容指纹：`8ee93dd9369f19233332594b988bbe7bfb29b782d7ab9b6c59ad03667830753e`。
+- 源码与必要元数据：206个文件；2594107字节（不含本清单）。
+- 整体内容指纹：`3dd8bfba51c99edccef6e44150c92e770449804f21fe8a36cc47a83794d52b3e`。
 - 来源：受控原始工程中的逐文件白名单；Package.swift来自Distribution/Free/Package.swift模板，README由发行脚本生成。
 - 本包不含.git，不可作为新业务checkout；本清单生成过程不执行构建、设备验收、签名安装或公共上传，各阶段以独立证据为准。
 - 排除：App、VideoGame、VideoCartoon、Premium、高级实现运行时测试、私有仓库地址、凭据、客户数据、缓存、日志及媒体过程产物。
@@ -78,11 +78,11 @@ VideoFree source export · package_free.py · version 1
 | 2bfaeccf8e337bf51c8c5e053272308a17f7973c4225570324038aa724308010 | 4242 | Sources/VideoCore/ImportRules.swift |
 | aac5404f87e8cf28f21ff655a186b284e651b2612c1cbbfc4a7d35dcb2aed090 | 9523 | Sources/VideoCore/JobOperations.swift |
 | b7af7e4c3d6f63da6beb33517189d7c89f920f619ad46037628202087871a8cb | 9966 | Sources/VideoCore/Jobs.swift |
-| a33d5c6bf33727cda13e951ac7a19297f6448a8b89f3b78cf4f484058dffd426 | 6196 | Sources/VideoCore/KnowledgeCounterfactualExplanation.swift |
+| c30e6243bddf528a998c37db59531a0956a60a140794ebc1f6b7039d794c3e6d | 8728 | Sources/VideoCore/KnowledgeCounterfactualExplanation.swift |
 | 377d98556ada3ef0458d8383c4958eaa5ede2661eb869c699e46b84d54d97fc5 | 6232 | Sources/VideoCore/KnowledgePresentationSchedule.swift |
 | 89bdf13864d580d29ba3fbf7c0ee665e73e807f5428a8fb81611eb5c22b78dda | 32809 | Sources/VideoCore/KnowledgeRuleTable.swift |
 | 69145ad27bdcfbf17a6d995cb50bc20d0683125f68a6be70a2f46e6f102c5c15 | 38900 | Sources/VideoCore/KnowledgeSimulation.swift |
-| 0b4dcd75c4ed1705532eec870709dbd776d2a58b422c1fa36715489c14c49b6c | 10596 | Sources/VideoCore/KnowledgeStoryboard.swift |
+| 7e5c91bfb62748fb5feacecc3a5a45197bb91ba0ceb1f025fe03592e2c783456 | 10855 | Sources/VideoCore/KnowledgeStoryboard.swift |
 | 0828ea38315debd85f3212781bbfa78942b8e360e00c6c199ab4388185924b43 | 3598 | Sources/VideoCore/LayerEntrance.swift |
 | c66e100b4b63cf34b4b6e2e0f5896f5c6e277150f066d216836555d472386edf | 7557 | Sources/VideoCore/Layers.swift |
 | 6036d8aff46e3704441f07e6a20d01adfa1db9315c3c182f083bd0ccaf47bc41 | 4408 | Sources/VideoCore/LearningExample.swift |
@@ -176,11 +176,11 @@ VideoFree source export · package_free.py · version 1
 | 3679c347b506d7431bfd4e0a9f2d08c383e9b87bd613c0d5e959b7635722240e | 13842 | Tests/VideoCoreTests/EditorPracticeTests.swift |
 | 2b62fdf4fe6d33e509688253a6e85d6293e58b5188dedfeeeb21f5a1eb335793 | 3900 | Tests/VideoCoreTests/H264RulesTests.swift |
 | e18a02e8dba8aef63d20f4a2f43f29aadb9993e3ccf111a62eaf03d7170031c4 | 11873 | Tests/VideoCoreTests/JobOperationTests.swift |
-| 8e53c4c3c252dfed343cc898580b09b2c246a27b82fe607221f653354833ad07 | 16351 | Tests/VideoCoreTests/KnowledgeCounterfactualExplanationTests.swift |
+| dab75185d3165e033e822c7ea0d3da944c81b2184295c61cf459f767113f8b7e | 24451 | Tests/VideoCoreTests/KnowledgeCounterfactualExplanationTests.swift |
 | 492e75b4ec94606a7286a259af806d0f3660c79c1b192fd3fde0c94278d218a2 | 6270 | Tests/VideoCoreTests/KnowledgePresentationScheduleTests.swift |
 | 78f362bac4e58371ad8c2481af3d3a519a8ff4c76778ca0ac1c97e3bbf808feb | 24476 | Tests/VideoCoreTests/KnowledgeRuleTableTests.swift |
 | d313eee0d4c1eefcdcca602fce5c17004f01f9067fbea1630a54efdf51960083 | 30593 | Tests/VideoCoreTests/KnowledgeSimulationTests.swift |
-| b4e681899130c421b727ddef4d938d0193715d969fde13a05cd44e2ab365e6ee | 22121 | Tests/VideoCoreTests/KnowledgeStoryboardTests.swift |
+| e61ec42dac719883b0fe90e6909e30e6dcaa159d6a53db8e749c0766eeb21e90 | 33279 | Tests/VideoCoreTests/KnowledgeStoryboardTests.swift |
 | 10e48eff675dfc89470b5c59f1f5a8de7d33a708fce2995d73d7fc4bc27b8c25 | 6500 | Tests/VideoCoreTests/LayerEntranceTests.swift |
 | 1c7965c4e437acd65085788b53c88a94ce7aaa8c604e98daa53c1ddae76ff57f | 2546 | Tests/VideoCoreTests/LayerTests.swift |
 | 082a8f3a9302736ee62ddc5eab2609dacac100a83145b24b55d5ed6b97ba1737 | 5928 | Tests/VideoCoreTests/LoudnessTests.swift |

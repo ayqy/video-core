@@ -39,12 +39,14 @@ final class KnowledgeCounterfactualExplanationTests: XCTestCase {
         let result = try KnowledgeCounterfactualExplanation.build(baseline: model, alternative: alternative, seed: 0)
         XCTAssertNotEqual(result.comparison.baseline.inputDigest, result.comparison.alternative.inputDigest)
         XCTAssertTrue(result.changedEvents.isEmpty); XCTAssertNil(result.firstOutcomeDifference)
+        XCTAssertFalse(result.hasBehaviorDifference)
     }
     func testDifferentClocksAlignByRoundAndPhaseWithoutInventingOutcomes() throws {
         let model = publicGood(rounds: 3)
         var alternative = model; alternative.startTick = 9; alternative.roundTicks = 11
         let result = try KnowledgeCounterfactualExplanation.build(baseline: model, alternative: alternative, seed: 7)
         XCTAssertTrue(result.changedEvents.isEmpty); XCTAssertEqual(result.timingChanges.count, 18)
+        XCTAssertFalse(result.hasBehaviorDifference)
         XCTAssertEqual(result.timingChanges.first?.phase, .preparation)
         XCTAssertEqual(result.timingChanges.first?.baselineTick, 0); XCTAssertEqual(result.timingChanges.first?.alternativeTick, 9)
         XCTAssertEqual(result.timingChanges.last?.round, 3)
@@ -59,11 +61,100 @@ final class KnowledgeCounterfactualExplanationTests: XCTestCase {
         XCTAssertTrue(first.changedActorIDs.isEmpty)
         XCTAssertTrue(first.baseline.obstacleCleared); XCTAssertFalse(first.alternative.obstacleCleared)
         XCTAssertTrue(result.changedEvents.allSatisfy { [.resolution, .passage, .settlement].contains($0.phase) })
+        XCTAssertTrue(result.hasBehaviorDifference)
     }
     func testAnUnreachedThresholdChangeHasNoActualOutcomeDifference() throws {
         let result = try KnowledgeCounterfactualExplanation.build(baseline: publicGood(threshold: 2), alternative: publicGood(threshold: 3), seed: 0)
         XCTAssertTrue(result.changedEvents.isEmpty)
         XCTAssertEqual(result.comparison.balances.map(\.difference), [0, 0])
+        XCTAssertFalse(result.hasBehaviorDifference)
+    }
+    func testRuleIdentityAliasesKeepDiagnosticRecordsWithoutManufacturingBehavior() throws {
+        let model=tableModel();var alternative=model
+        alternative.ruleTable?.rules[0].id="renamed-exchange"
+        let result=try KnowledgeCounterfactualExplanation.build(baseline:model,alternative:alternative,seed:0)
+        XCTAssertFalse(result.changedEvents.isEmpty);XCTAssertFalse(result.hasBehaviorDifference)
+        XCTAssertEqual(result.firstOutcomeDifference?.phase,.resolution)
+        XCTAssertTrue(result.changedEvents.allSatisfy{$0.observationFields == [.ruleExecution]})
+        XCTAssertEqual(result.comparison.baseline.events.map(\.actors),result.comparison.alternative.events.map(\.actors))
+        XCTAssertNotEqual(result.comparison.baseline.events.last?.ruleExecution?.transfers,result.comparison.alternative.events.last?.ruleExecution?.transfers)
+        XCTAssertNotEqual(result.comparison.baseline.events.last?.ruleExecution?.stateChanges,result.comparison.alternative.events.last?.ruleExecution?.stateChanges)
+    }
+    func testEquivalentParticipantAndPlanOrderingKeepsStableActorBehavior() throws {
+        let model=tableModel();var alternative=model
+        alternative.participants.reverse();alternative.ruleTable?.plans.reverse()
+        let result=try KnowledgeCounterfactualExplanation.build(baseline:model,alternative:alternative,seed:0)
+        XCTAssertNotEqual(result.comparison.baseline.inputDigest,result.comparison.alternative.inputDigest)
+        XCTAssertTrue(result.changedEvents.isEmpty);XCTAssertFalse(result.hasBehaviorDifference)
+        XCTAssertEqual(result.comparison.baseline.events,result.comparison.alternative.events)
+        // The engine currently emits stable order. Also exercise the derived
+        // comparator itself with equivalent actor-array representations.
+        var reordered=result.comparison
+        for index in reordered.alternative.events.indices {reordered.alternative.events[index].actors.reverse()}
+        XCTAssertNotEqual(reordered.baseline.events.map(\.actors),reordered.alternative.events.map(\.actors))
+        let observation=KnowledgeCounterfactualExplanation(comparison:reordered,changedEvents:result.changedEvents,timingChanges:result.timingChanges)
+        XCTAssertFalse(observation.hasBehaviorDifference)
+    }
+    func testChangedMatchedConditionFactsRemainVisibleWithoutQualifyingAsBehavior() throws {
+        var model=tableModel();model.ruleTable?.rules[0].conditions=[.init(kind:.round,minimum:1,maximum:1)]
+        var alternative=model;alternative.ruleTable?.rules[0].conditions=[.init(kind:.resources,actorID:"a",minimum:0,maximum:10)]
+        let result=try KnowledgeCounterfactualExplanation.build(baseline:model,alternative:alternative,seed:0)
+        XCTAssertFalse(result.changedEvents.isEmpty);XCTAssertFalse(result.hasBehaviorDifference)
+        let observed=try XCTUnwrap(result.changedEvents.first{$0.phase == .resolution})
+        XCTAssertEqual(observed.baseline.ruleExecution?.matches.first?.facts.first?.actualNumber,1)
+        XCTAssertEqual(observed.alternative.ruleExecution?.matches.first?.facts.first?.actualNumber,10)
+        XCTAssertEqual(result.comparison.baseline.events.map(\.actors),result.comparison.alternative.events.map(\.actors))
+        XCTAssertEqual(result.comparison.baseline.events.last?.ruleExecution?.transfers,result.comparison.alternative.events.last?.ruleExecution?.transfers)
+    }
+    func testMatchedNoOpStateWriteCannotManufactureChangedStateBehavior() throws {
+        var model=tableModel();model.ruleTable?.rules[0].conditions=[.init(kind:.round,minimum:1,maximum:1)]
+        model.ruleTable?.rules[0].effects=[.setState(actorID:"a",stateID:"open")]
+        var alternative=model;alternative.ruleTable?.rules[0].conditions=[.init(kind:.round,minimum:2,maximum:2)]
+        let result=try KnowledgeCounterfactualExplanation.build(baseline:model,alternative:alternative,seed:0)
+        XCTAssertFalse(result.changedEvents.isEmpty);XCTAssertFalse(result.hasBehaviorDifference)
+        XCTAssertEqual(result.comparison.baseline.events.map(\.actors),result.comparison.alternative.events.map(\.actors))
+        let state=try XCTUnwrap(result.comparison.baseline.events.last?.ruleExecution?.stateChanges.first)
+        XCTAssertEqual(state.beforeStateID,state.afterStateID)
+        XCTAssertTrue(result.comparison.alternative.events.last?.ruleExecution?.stateChanges.isEmpty == true)
+    }
+    private func routedTransfersModel() -> KnowledgeSimulation {
+        let people=["a","b","c"].map{KnowledgeParticipant(id:$0,name:$0,strategy:.contribute,initialResources:10)}
+        let table=KnowledgeRuleTable(actions:[.init(id:"act",label:"执行")],states:[.init(id:"open",label:"待交付")],
+            plans:people.map{.init(actorID:$0.id,initialStateID:"open",defaultActionID:"act")},
+            rules:[.init(id:"routes",label:"环形交换",conditions:[.init(kind:.round,minimum:1,maximum:1)],
+                effects:[.transfer(from:"a",to:"b",amount:2),.transfer(from:"b",to:"c",amount:2),.transfer(from:"c",to:"a",amount:2)])])
+        return KnowledgeSimulation(knowledgeLabel:"实际流向",participants:people,rounds:1,ruleTable:table)
+    }
+    func testActualTransferRoutesQualifyEvenWhenEveryActorAndFinalBalanceIsEqual() throws {
+        let model=routedTransfersModel();var alternative=model
+        alternative.ruleTable?.rules[0].effects=[.transfer(from:"a",to:"c",amount:2),.transfer(from:"c",to:"b",amount:2),.transfer(from:"b",to:"a",amount:2)]
+        let result=try KnowledgeCounterfactualExplanation.build(baseline:model,alternative:alternative,seed:0)
+        XCTAssertTrue(result.hasBehaviorDifference)
+        XCTAssertEqual(result.comparison.baseline.events.map(\.actors),result.comparison.alternative.events.map(\.actors))
+        XCTAssertEqual(result.comparison.balances.map(\.difference),[0,0,0])
+        XCTAssertEqual(result.firstOutcomeDifference?.phase,.settlement)
+        XCTAssertEqual(result.firstOutcomeDifference?.observationFields,[.ruleExecution])
+    }
+    func testAtomicTransferOrderAndRuleAliasDoNotChangeTheAppliedFlowMultiset() throws {
+        let model=routedTransfersModel();var alternative=model
+        alternative.ruleTable?.rules[0].effects=Array(model.ruleTable!.rules[0].effects.reversed())
+        alternative.ruleTable?.rules[0].id="renamed-routes"
+        let result=try KnowledgeCounterfactualExplanation.build(baseline:model,alternative:alternative,seed:0)
+        XCTAssertFalse(result.changedEvents.isEmpty);XCTAssertFalse(result.hasBehaviorDifference)
+        XCTAssertEqual(result.comparison.baseline.events.map(\.actors),result.comparison.alternative.events.map(\.actors))
+    }
+    func testActualPoolAndFundingChangesQualifyWithoutChangingActorFlows() throws {
+        let model=tableModel()
+        for change in ["initial-pool","external-funding"] {
+            var alternative=model
+            if change=="initial-pool" {alternative.ruleTable?.initialPool=2}
+            else {alternative.ruleTable?.externalBudgetPerRound=2}
+            let result=try KnowledgeCounterfactualExplanation.build(baseline:model,alternative:alternative,seed:0)
+            XCTAssertTrue(result.hasBehaviorDifference,change)
+            XCTAssertEqual(result.comparison.baseline.events.map(\.actors),result.comparison.alternative.events.map(\.actors),change)
+            XCTAssertEqual(result.comparison.balances.map(\.difference),[0,0],change)
+            XCTAssertEqual(result.comparison.baseline.events.last?.ruleExecution?.transfers,result.comparison.alternative.events.last?.ruleExecution?.transfers,change)
+        }
     }
     func testSameFinalBalancesStillExposeTheFirstDifferentRequestedAndExecutedActions() throws {
         var model = tableModel(); model.ruleTable?.rules[0].conditions = [.init(kind: .round, minimum: 2, maximum: 2)]
@@ -78,6 +169,7 @@ final class KnowledgeCounterfactualExplanationTests: XCTestCase {
         let executed = try XCTUnwrap(result.changedEvents.first { $0.phase == .contribution })
         XCTAssertEqual(executed.baseline.actors[0].executedActionID, "act")
         XCTAssertEqual(executed.alternative.actors[0].executedActionID, "wait")
+        XCTAssertTrue(result.hasBehaviorDifference)
     }
     func testEqualRuleAndTransferCountsRetainDifferentAppliedAmountsAndTheirStableRuleID() throws {
         let model = tableModel(); var alternative = model
@@ -90,6 +182,7 @@ final class KnowledgeCounterfactualExplanationTests: XCTestCase {
         XCTAssertEqual(first.baseline.ruleExecution?.transfers.first?.amount, 2)
         XCTAssertEqual(first.alternative.ruleExecution?.transfers.first?.amount, 3)
         XCTAssertEqual(first.baseline.ruleExecution?.stateChanges, first.alternative.ruleExecution?.stateChanges)
+        XCTAssertTrue(result.hasBehaviorDifference)
     }
     func testMatchedFactsAreKeptAtResolutionButAppliedEffectsNeverAppearEarly() throws {
         let model = tableModel(); var alternative = model
@@ -142,6 +235,8 @@ final class KnowledgeCounterfactualExplanationTests: XCTestCase {
         XCTAssertEqual(try Codec.data(model), before); XCTAssertEqual(try Codec.data(alternative), after)
         XCTAssertEqual(try Codec.data(first.comparison), oldWire)
         XCTAssertEqual(try Codec.decoder().decode(KnowledgeCounterfactualExplanation.self, from: Codec.data(first)), first)
+        let object=try XCTUnwrap(try JSONSerialization.jsonObject(with:Codec.data(first)) as? [String:Any])
+        XCTAssertNil(object["hasBehaviorDifference"])
     }
     func testIncompatibleIdentityOrMechanismIsRejectedByTheOriginalEngine() throws {
         let model = publicGood(); var alternative = model; alternative.participants[0].id = "renamed"

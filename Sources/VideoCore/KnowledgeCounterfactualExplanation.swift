@@ -10,7 +10,45 @@ public struct KnowledgeCounterfactualExplanation: Codable, Equatable, Sendable {
     /// First recorded observation difference, including stable rule/state
     /// identity or condition-fact differences. It is not proof of a sole cause.
     public var firstOutcomeDifference: KnowledgeCounterfactualEventDifference? { changedEvents.first }
+    /// A teaching performance needs a changed action, state, resource or applied
+    /// flow. Diagnostic rule identities and matched condition facts remain in
+    /// changedEvents, but cannot alone qualify as changed behavior. The traces
+    /// have already been recomputed and semantically aligned by build().
+    public var hasBehaviorDifference: Bool {
+        guard comparison.baseline.events.count == comparison.alternative.events.count else { return false }
+        return zip(comparison.baseline.events, comparison.alternative.events).contains { left, right in
+            guard left.round == right.round, left.phase == right.phase else { return false }
+            return left.actors.sorted{$0.id < $1.id} != right.actors.sorted{$0.id < $1.id} || left.totalContribution != right.totalContribution ||
+                left.obstacleCleared != right.obstacleCleared || left.matrixPool != right.matrixPool ||
+                AppliedRuleBehavior(left.ruleExecution) != AppliedRuleBehavior(right.ruleExecution)
+        }
+    }
     public static let notice = "以下按同一种子、同一轮次与阶段对照实际记录，也包括规则身份和条件观测变化；记录不同不证明唯一成因，同时改动多项输入更不能归因于其中一项。未命中规则的负条件事实未记录，不能补造；模型不证明现实因果。"
+
+    private struct AppliedRuleBehavior: Equatable {
+        private struct Transfer: Equatable {
+            let source: String?, destination: String?, amount: Int
+        }
+        private struct StateChange: Equatable {
+            let actor: String, before: String, after: String
+        }
+        private let poolBefore: Int, poolAfter: Int, funding: Int, deposits: Int
+        private let transfers: [Transfer]
+        private let stateChanges: [StateChange]
+        init(_ execution: KnowledgeRuleExecution?) {
+            poolBefore=execution?.poolBefore ?? 0;poolAfter=execution?.poolAfter ?? 0
+            funding=execution?.externalFunding ?? 0;deposits=execution?.deposits ?? 0
+            // Settlement is atomic. Rule order and rule IDs do not make a new
+            // flow; the actual endpoint/amount multiset does. Keep offsetting
+            // transfers, even when their final balance deltas cancel out.
+            transfers=(execution?.transfers ?? []).map{Transfer(source:$0.sourceActorID,destination:$0.destinationActorID,amount:$0.amount)}.sorted{
+                ($0.source ?? "",$0.destination ?? "",$0.amount) < ($1.source ?? "",$1.destination ?? "",$1.amount)
+            }
+            stateChanges=(execution?.stateChanges ?? []).filter{$0.beforeStateID != $0.afterStateID}.map{
+                StateChange(actor:$0.actorID,before:$0.beforeStateID,after:$0.afterStateID)
+            }.sorted{($0.actor,$0.before,$0.after) < ($1.actor,$1.before,$1.after)}
+        }
+    }
 
     public static func build(baseline: KnowledgeSimulation, alternative: KnowledgeSimulation,
                              seed: UInt64) throws -> KnowledgeCounterfactualExplanation {

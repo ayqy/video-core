@@ -38,8 +38,11 @@ public struct KnowledgeStoryboardPlan: Codable, Sendable {
         guard version==1,Self.text(ruleExplanation,limit:6000),Self.text(alternativeExplanation,limit:6000),Self.text(conclusion,limit:6000),artwork.derivation == .qStyle,artwork.audioCues.isEmpty else {
             throw VideoError.invalid("知识分镜须有规则、反事实说明、结论及实际Q版图集；原镜头音效须在新分镜分别重绑，不能沿用旧时间")
         }
-        let comparison=try KnowledgeSimulationEngine.compare(baseline:baseline,alternative:alternative,seed:seed)
-        guard comparison.baseline.events != comparison.alternative.events else { throw VideoError.invalid("反事实须实际改变策略、约束或事件结果，不能只改标题或复制相同模型") }
+        // Event equality includes clock ticks and repeated model inputs. Use
+        // the same semantic observations as the comparison view: moving time
+        // or an unreached threshold cannot manufacture a changed consequence.
+        let explanation=try KnowledgeCounterfactualExplanation.build(baseline:baseline,alternative:alternative,seed:seed)
+        guard explanation.hasBehaviorDifference else { throw VideoError.invalid("反事实分镜须有实际行动、状态或结算观察差异；只改名称、时钟或未改变结果的门槛不能充作因果演示") }
         try validate(shots:baselineShots,model:baseline)
         try validate(shots:alternativeShots,model:alternative)
         guard Set((baselineShots+alternativeShots).map(\.id)).count==baselineShots.count+alternativeShots.count else { throw VideoError.invalid("知识分镜标识重复") }
