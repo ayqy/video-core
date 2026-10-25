@@ -119,7 +119,7 @@ final class MediaTests:XCTestCase {
         let scene=Scene(title:"缓存身份",body:"编码参数来自同一配置。",durationFrames:15)
         for aspect in Aspect.allCases {
             let revision=try Planner.create(workspaceID:"w",name:"编码配置",aspect:aspect,scenes:[scene])
-            let configuration=VisualClipCache.EncodingConfiguration(aspect:aspect,fps:revision.fps)
+            let configuration=try VisualClipCache.EncodingConfiguration.capture(aspect:aspect,fps:revision.fps)
             let settings=configuration.writerSettings
             let compression=try XCTUnwrap(settings[AVVideoCompressionPropertiesKey] as? [String:Any])
             let colors=try XCTUnwrap(settings[AVVideoColorPropertiesKey] as? [String:Any])
@@ -166,7 +166,7 @@ final class MediaTests:XCTestCase {
         try repo.transaction{$0.workspaces=[workspace]}
         let scene=Scene(title:"依赖身份缺失",body:"仍可制作，不复用未知缓存。",durationFrames:15)
         let revision=try Planner.create(workspaceID:workspace.id,name:"未知编码依赖",aspect:.landscape,scenes:[scene])
-        var configuration=VisualClipCache.EncodingConfiguration(aspect:revision.aspect,fps:revision.fps)
+        var configuration=try VisualClipCache.EncodingConfiguration.capture(aspect:revision.aspect,fps:revision.fps)
         configuration.frameworks[0] = .init(expectedIdentifier:"com.apple.avfoundation",bundle:nil)
         XCTAssertFalse(configuration.canReusePersistentCache)
         for name in ["first.mp4","second.mp4"] {

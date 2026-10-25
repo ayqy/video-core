@@ -50,7 +50,7 @@ final class MediaFramingMediaTests: XCTestCase {
                 XCTAssertEqual(try region(before,rect),try region(after,rect))
                 XCTAssertFalse(layout.visual.intersects(rect))
             }
-            if aspect == .landscape {XCTAssertEqual(layout.visual.height,316)}
+            if aspect == .landscape {XCTAssertEqual(layout.visual.height,306)}
         }
     }
 }

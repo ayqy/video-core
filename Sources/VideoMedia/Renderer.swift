@@ -7,7 +7,8 @@ import VideoCore
 public struct RenderResult: Sendable { public var artifacts: [Artifact]; public var frames: Int; public var seconds: Double; public var warnings: [String] }
 public final class MediaRenderer: @unchecked Sendable {
     public let modules:RenderModuleRegistry?
-    public init(modules:RenderModuleRegistry?=nil) { self.modules=modules }
+    public let videoEncoder:NativeEncoderSelection
+    public init(modules:RenderModuleRegistry?=nil,videoEncoder:NativeEncoderSelection = .automatic) { self.modules=modules;self.videoEncoder=videoEncoder }
     public func render(revision r: Revision, repository: Repository, output: URL, invocation: RenderInvocation? = nil, progress: @escaping @Sendable (Double) throws -> Void = { _ in }) async throws -> RenderResult {
         do {
             try invocation?.verify(revision:r)
@@ -37,11 +38,14 @@ public final class MediaRenderer: @unchecked Sendable {
                 guard attributes[.type] as? FileAttributeType == .typeRegular,(attributes[.size] as? NSNumber)?.intValue==asset.bytes,asset.bytes>0,asset.bytes<=256*1024*1024,Codec.hash(try Data(contentsOf:url))==asset.hash else{throw VideoError.review("引用的源文件、元素、声音或授权原件摘要不一致，请从原件恢复后重做")}
             }
         }
+        // Resolve before touching output. One captured real identity constrains the
+        // writer and cache key, including an automatic selection's actual encoder.
+        let encoding=try VisualClipCache.EncodingConfiguration.capture(aspect:r.aspect,fps:r.fps,selection:videoEncoder)
         try FileManager.default.createDirectory(at:output,withIntermediateDirectories:true)
         let raw = output.appendingPathComponent("working.mp4"), final = output.appendingPathComponent("video.mp4")
         for u in [raw,final] { if FileManager.default.fileExists(atPath:u.path) { try FileManager.default.removeItem(at:u) } }
         defer { try? FileManager.default.removeItem(at:raw) }
-        let visuals = try await VisualClipCache.compose(revision:r,repository:repository,database:db,output:raw,modules:modules,invocation:invocation,progress:progress)
+        let visuals = try await VisualClipCache.compose(revision:r,repository:repository,database:db,output:raw,modules:modules,invocation:invocation,encoding:encoding,progress:progress)
         do {
             try await mix(video:raw,final:final,revision:r,repository:repository,database:db,progress:progress)
             let inspection=try await MediaInspection.inspect(final)
@@ -68,7 +72,8 @@ public final class MediaRenderer: @unchecked Sendable {
             let subtitles=output.appendingPathComponent("captions.srt"); try Self.subtitles(r).write(to:subtitles,atomically:true,encoding:.utf8)
             let text=output.appendingPathComponent("publication.txt");let note=try Self.publicationNotes(r,audio:audio);try note.write(to:text,atomically:true,encoding:.utf8)
             let refs=try [final,cover,subtitles,text].map { u -> Artifact in let data=try Data(contentsOf:u); let mime:[String:String]=["mp4":"video/mp4","png":"image/png","srt":"application/x-subrip","txt":"text/plain"]; return Artifact(path:u.path,mime:mime[u.pathExtension]!,bytes:data.count,sha256:Codec.hash(data),revision:r.id) }
-            try progress(1); return RenderResult(artifacts:refs,frames:r.frames,seconds:Date().timeIntervalSince(start),warnings:(!audible ? ["此版本无旁白，AAC音轨为明确的静音底轨"] : []) + ["画面缓存复用 \(visuals)/\(r.scenes.count) 镜头；声音与整片时间轴重新合成"])
+            let encoderNote=encoding.encoderIdentity.map{"实际H.264编码实现："+$0.identifier+(encoding.canReusePersistentCache ? "":"；依赖身份不完整，不持久复用画面缓存")} ?? "H.264实现身份无法完整确认，使用普通编码且不持久复用画面缓存"
+            try progress(1); return RenderResult(artifacts:refs,frames:r.frames,seconds:Date().timeIntervalSince(start),warnings:(!audible ? ["此版本无旁白，AAC音轨为明确的静音底轨"] : []) + ["画面缓存复用 \(visuals)/\(r.scenes.count) 镜头；声音与整片时间轴重新合成",encoderNote])
         } catch { try? FileManager.default.removeItem(at:final); throw error }
     }
     private func mix(video:URL,final:URL,revision r:Revision,repository:Repository,database:Database,progress: @escaping @Sendable (Double) throws -> Void) async throws {

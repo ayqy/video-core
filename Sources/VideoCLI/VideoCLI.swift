@@ -38,15 +38,24 @@ struct CommandSchema: Encodable {
     static func main() async {
         var request = Codec.id()
         do {
-            let args=Array(CommandLine.arguments.dropFirst()); var positional:[String]=[]; var root:String?; var inputPath:String?; var dry=false; var i=0
-            while i<args.count { let a=args[i]; if a=="--workspace" || a=="--input" { guard i+1<args.count else { throw VideoError.invalid("选项缺少参数") }; if a=="--workspace" { root=args[i+1] } else { inputPath=args[i+1] }; i+=2 } else if a=="--dry-run" { dry=true; i+=1 } else { guard !a.hasPrefix("--") else { throw VideoError.invalid("未知选项") }; positional.append(a); i+=1 } }
+            let args=Array(CommandLine.arguments.dropFirst()); var positional:[String]=[]; var root:String?; var inputPath:String?; var requestedEncoder:String?; var dry=false; var i=0
+            while i<args.count { let a=args[i]; if a=="--workspace" || a=="--input" || a=="--video-encoder" { guard i+1<args.count else { throw VideoError.invalid("选项缺少参数") }; if a=="--workspace" { root=args[i+1] } else if a=="--input" { inputPath=args[i+1] } else {guard requestedEncoder==nil else{throw VideoError.invalid("不能重复指定--video-encoder")};requestedEncoder=args[i+1]}; i+=2 } else if a=="--dry-run" { dry=true; i+=1 } else { guard !a.hasPrefix("--") else { throw VideoError.invalid("未知选项") }; positional.append(a); i+=1 } }
             let command=positional.joined(separator:" "); let input:Input;let inputData:Data
+            guard requestedEncoder==nil || command=="jobs run" else{throw VideoError.invalid("--video-encoder仅适用于jobs run；请用doctor查看本机实际实现")}
+            let videoEncoder:NativeEncoderSelection=requestedEncoder.map{$0=="automatic" ? .automatic:.identifier($0)} ?? .automatic
             if let inputPath { let data:Data; if inputPath=="-" { data=FileHandle.standardInput.readDataToEndOfFile() } else { data=try Data(contentsOf:URL(fileURLWithPath:inputPath)) }; guard data.count<=10*1024*1024 else { throw VideoError.invalid("输入超过10MiB") }; inputData=data;_ = try AgentContract.validate(command:command,data:data);input=try Codec.decoder().decode(Input.self,from:data) } else { inputData=Data("{}".utf8);_ = try AgentContract.validate(command:command,data:inputData);input=try Codec.decoder().decode(Input.self,from:inputData) }
             request=input.request_id ?? request
             var response=Response(request_id:request,ok:true,state:"succeeded")
             // AgentContract.validate above is the shared command authority. A second
             // allowlist can hide a shipped command while schema still advertises it.
-            if command=="schema" { response.result=try json(AgentContract.catalog()) }
+            if command=="schema" {
+                var catalog=try AgentContract.catalog()
+                if case .object(var fields)=catalog {
+                    fields["execution_options"] = .object(["--video-encoder":.object(["commands":.array([.string("jobs run")]),"default":.string("automatic"),"value":.string("automatic 或 doctor.video_encoders 中的真实VideoToolbox H.264实现ID"),"behavior":.string("明确约束实际writer并绑定缓存身份；显式不可用实现拒绝且不回退；dry-run验证本机会话但不制作或写工程")])])
+                    catalog = .object(fields)
+                }
+                response.result=try json(catalog)
+            }
             else if command=="speech voices" {response.result=try json(SpeechService.voices());response.cost.unknown="仅列出本机已有中文非个人声音，不下载声音，不代表商用许可"}
             else if command=="speech normalize" {response.result=try json(ChineseSpeech.normalize(input.text ?? "",dictionary:input.dictionary ?? []));response.cost.unknown="只读规范草稿；须选择声音并确认原文、规范稿和术语读法后才能合成"}
             else if command=="capabilities" { response.result=try json(["core.project":"free/open; projects create without product; script create product_id optional; IR versions 1 legacy and 2 contentContext", "core.explain":"free/open","core.edit":"free/open","core.export":"free/open","game.simulate":"独立闭源video-advanced Host；需要实际代码/策略签名与相应权益","cartoon.animate":"独立闭源video-advanced Host；需要实际代码/策略签名与相应权益","mac.editor":"Mac桌面人工剪辑客户端；独立商店权益，预览倍速独立于成片速度"]) }
@@ -55,6 +64,7 @@ struct CommandSchema: Encodable {
                 if let root {let database=try Repository(root:URL(fileURLWithPath:root),readOnly:true).read();try database.validate();snapshot=database}else{snapshot=nil}
                 let values=try FileManager.default.attributesOfFileSystem(forPath:root ?? FileManager.default.currentDirectoryPath)
                 var report:[String:AgentValue]=["os":.string(ProcessInfo.processInfo.operatingSystemVersionString),"free_bytes":.string(String((values[.systemFreeSize] as? NSNumber)?.int64Value ?? 0)),"engine":.string("Apple AVFoundation H.264/AAC"),"privacy":.string("仅报告本机诊断，未读取或验证供应商凭据"),"signing":.string("免费CLI自检不代表Mac App签名、公证、商店审核或已生效编辑器权益")]
+                report["video_encoders"] = .array(try NativeEncoder.availableIdentifiers().map(AgentValue.string))
                 if let snapshot {report["repository_schema"] = .number(Decimal(snapshot.schema));report["repository_generation"] = .number(Decimal(snapshot.generation));report["database"] = .object(["schema":.number(Decimal(snapshot.schema)),"generation":.number(Decimal(snapshot.generation)),"validated":.boolean(true),"read_only":.boolean(true)])}
                 else{report["database"] = .null}
                 response.result=try json(AgentValue.object(report))
@@ -70,7 +80,21 @@ struct CommandSchema: Encodable {
                         guard LocalWorkspaceIdentity.canBackUp(workspaces:snapshot.workspaces,principal:principal,usingDefaultIdentity:input.principal==nil) else {throw VideoError.permission("仅本地所有者可以导出完整工作区")}
                         try snapshot.validate()
                         response.result="完整备份需在实际执行时逐文件核对；本次未写文件"
-                    }else{response.result=try json(AgentPreview.evaluate(command:command,data:inputData,database:snapshot,principal:input.principal ?? LocalWorkspaceIdentity.principal(workspaceID:input.workspace_id,in:snapshot.workspaces,creatingWorkspace:command=="workspaces create")))}
+                    }else{
+                        var preview=try AgentPreview.evaluate(command:command,data:inputData,database:snapshot,principal:input.principal ?? LocalWorkspaceIdentity.principal(workspaceID:input.workspace_id,in:snapshot.workspaces,creatingWorkspace:command=="workspaces create"))
+                        if command=="jobs run" {
+                            guard let job=snapshot.jobs.first(where:{$0.id==input.job_id}),let revision=try snapshot.project(job.projectID).revisions.first(where:{$0.id==job.revisionID}) else{throw VideoError.notFound("原任务冻结版本不存在")}
+                            var fields:[String:AgentValue]
+                            if case .object(let original)=preview {fields=original}
+                            else {fields=["preview":preview]}
+                            let encoder=try NativeEncoder.resolve(videoEncoder,width:revision.aspect.width,height:revision.aspect.height,fps:revision.fps)
+                            fields["video_encoder_requested"] = .string(requestedEncoder ?? "automatic")
+                            fields["video_encoder_resolved"] = encoder.map{.string($0.identifier)} ?? .null
+                            fields["video_encoder_identity_known"] = .boolean(encoder != nil)
+                            preview = .object(fields)
+                        }
+                        response.result=try json(preview)
+                    }
                     if command=="speech synthesize" {let speechRequest=try Codec.decoder().decode(SpeechProjectRequest.self,from:inputData);_=try SpeechService.validateVoice(plan:speechRequest.plan)}
                     response.state="dry_run"
                 }
@@ -130,7 +154,7 @@ struct CommandSchema: Encodable {
                         case .restricted(let dto):response.job_id=dto.id;response.project_id=dto.projectID;response.revision=dto.revisionID;response.state=dto.state.rawValue;response.artifacts=[]}
                         response.result=try json(status.value())
                     case "jobs cancel", "jobs resume": let w=try workspace(); try repo.transaction { d in guard let i=d.jobs.firstIndex(where:{$0.id==input.job_id && $0.workspaceID==w.id}) else { throw VideoError.notFound("任务不存在") }; d.jobs[i]=command=="jobs cancel" ? JobRules.cancel(d.jobs[i]) : try JobRules.recover(d.jobs[i]); response.state=d.jobs[i].state.rawValue; response.job_id=d.jobs[i].id }
-                    case "jobs run": let w=try workspace();guard let original=db.jobs.first(where:{$0.id==input.job_id && $0.workspaceID==w.id})else{throw VideoError.notFound("原任务不在此工作区")};let completed=try await LocalJobExecutor.run(repository:repo,jobID:original.id,owner:"cli");response.job_id=completed.id;response.state=completed.state.rawValue;response.artifacts=completed.artifacts;response.result="成片已生成，需完整播放/听审后商业交付"
+                    case "jobs run": let w=try workspace();guard let original=db.jobs.first(where:{$0.id==input.job_id && $0.workspaceID==w.id})else{throw VideoError.notFound("原任务不在此工作区")};if case .identifier=videoEncoder {guard let revision=try db.project(original.projectID).revisions.first(where:{$0.id==original.revisionID})else{throw VideoError.notFound("原任务版本不存在")};_=try NativeEncoder.resolve(videoEncoder,width:revision.aspect.width,height:revision.aspect.height,fps:revision.fps)};let completed=try await LocalJobExecutor.run(repository:repo,jobID:original.id,owner:"cli",videoEncoder:videoEncoder);response.job_id=completed.id;response.state=completed.state.rawValue;response.artifacts=completed.artifacts;response.result="成片已生成，需完整播放/听审后商业交付"
                     case "jobs query", "jobs remote-cancel": let w=try workspace();guard let j=db.jobs.first(where:{$0.id==input.job_id && $0.workspaceID==w.id}),let provider=db.providers.first(where:{$0.id==j.quote.provider}) else {throw VideoError.notFound("原任务或服务配置不可用")};if command=="jobs remote-cancel" {try RemoteJobs.requireCancellationSupport(profile:provider);try repo.transaction{d in let i=d.jobs.firstIndex{$0.id==j.id}!;d.jobs[i]=JobRules.cancel(d.jobs[i])}};let snapshot=try await (command=="jobs remote-cancel" ? RemoteJobs.cancel(profile:provider,job:j):RemoteJobs.query(profile:provider,job:j));try repo.transaction{d in let i=d.jobs.firstIndex{$0.id==j.id}!;d.jobs[i]=try JobOperations.applyRemote(snapshot,to:d.jobs[i]);response.result=try json(d.jobs[i]);response.state=d.jobs[i].state.rawValue};response.job_id=j.id
                     case "jobs reconcile": let w=try workspace();guard let record=input.billing_record else{throw VideoError.invalid("缺少billing_record")};try repo.transaction{d in guard let i=d.jobs.firstIndex(where:{$0.id==input.job_id && $0.workspaceID==w.id})else{throw VideoError.notFound("任务不存在")};d.jobs[i]=try JobOperations.reconcile(d.jobs[i],record:record);response.result=try json(d.jobs[i]);response.job_id=d.jobs[i].id}
                     case "orders import": let w=try workspace(); guard let rows=input.orders,rows.allSatisfy({$0.workspaceID==w.id}),let batch=input.batch_id else { throw VideoError.invalid("订单工作区或批次无效") }; try repo.transaction { try $0.importOrders(rows,batchID:batch) }; response.result="按平台和盐化订单ID幂等导入\(rows.count)条"

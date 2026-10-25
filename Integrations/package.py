@@ -24,6 +24,10 @@ def package(source: Path, destination: Path, host: str, version: str, *, dry_run
     relative = installer.skill_relative(host)
     manifests = installer.host_manifests(host, version)
     expected = installer.fingerprints(source)
+    reference_spec = importlib.util.spec_from_file_location("video_narration_reference", Path(__file__).with_name("narration_reference.py"))
+    reference = importlib.util.module_from_spec(reference_spec)
+    reference_spec.loader.exec_module(reference)
+    reference.verify_reference(source)
     if not {"LICENSE", "NOTICE"}.issubset(expected):
         raise ValueError("共用Skill缺少完整许可与第三方声明")
     if destination.exists():

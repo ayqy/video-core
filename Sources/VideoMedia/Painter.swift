@@ -18,24 +18,26 @@ public enum ScenePainter {
         init(width:CGFloat,height:CGFloat,showPrice:Bool,separateBody:Bool,knowledge:Bool=false) {
             let portrait=height>width,margin:CGFloat=portrait ? 64:80
             let contentWidth=width-margin*2
-            footer=CGRect(x:margin,y:24,width:contentWidth,height:26)
+            footer=CGRect(x:margin,y:4,width:contentWidth,height:26)
             if portrait {
-                cta=CGRect(x:margin,y:62,width:contentWidth,height:48)
-                captionBackground=CGRect(x:margin,y:122,width:contentWidth,height:66)
-                price=CGRect(x:margin,y:200,width:contentWidth,height:58)
-                mediaBody=CGRect(x:margin,y:270,width:contentWidth,height:128)
-                visual=CGRect(x:margin,y:410,width:contentWidth,height:560)
+                captionBackground=CGRect(x:margin,y:46,width:contentWidth,height:84)
+                cta=CGRect(x:margin,y:146,width:contentWidth,height:48)
+                price=CGRect(x:margin,y:210,width:contentWidth,height:58)
+                mediaBody=CGRect(x:margin,y:284,width:contentWidth,height:128)
+                visual=CGRect(x:margin,y:428,width:contentWidth,height:542)
             } else {
                 // The wide canvas has room for price and CTA side by side.
                 let priceWidth:CGFloat=240,gap:CGFloat=20
-                price=CGRect(x:margin,y:62,width:priceWidth,height:58)
-                cta=CGRect(x:margin+(showPrice ? priceWidth+gap:0),y:62,width:contentWidth-(showPrice ? priceWidth+gap:0),height:58)
-                captionBackground=CGRect(x:margin,y:132,width:contentWidth,height:66)
-                mediaBody=CGRect(x:margin,y:210,width:contentWidth,height:72)
-                let bottom:CGFloat=separateBody ? 294:210
+                price=CGRect(x:margin,y:146,width:priceWidth,height:58)
+                cta=CGRect(x:margin+(showPrice ? priceWidth+gap:0),y:146,width:contentWidth-(showPrice ? priceWidth+gap:0),height:58)
+                captionBackground=CGRect(x:margin,y:46,width:contentWidth,height:84)
+                mediaBody=CGRect(x:margin,y:220,width:contentWidth,height:72)
+                let bottom:CGFloat=separateBody ? 304:220
                 visual=CGRect(x:margin,y:bottom,width:contentWidth,height:(knowledge ? 610:504)-bottom)
             }
-            captionText=captionBackground.insetBy(dx:12,dy:8)
+            // The legacy region name remains useful to callers, but this is a
+            // transparent cinema-caption band, never a filled body panel.
+            captionText=captionBackground
         }
     }
     public static func image(revision: Revision, frame: Int, media: CGImage? = nil, layerImages: [String:CGImage] = [:], resources:RenderResources = .empty, modules: RenderModuleRegistry? = nil, invocation: RenderInvocation? = nil) throws -> CGImage {
@@ -87,9 +89,11 @@ public enum ScenePainter {
             try checkedText(s.body,in:visual.insetBy(dx:28,dy:26),size:portrait ? 32:34,color:"E2E8F0",context:c,fontName:s.fontName ?? "PingFangSC-Medium")
         }
         if separateBody { try checkedText(s.body,in:overlay.mediaBody,size:portrait ? 26:25,color:"E2E8F0",context:c,fontName:s.fontName ?? "PingFangSC-Medium") }
+        let caption=s.captions.first(where: { $0.startFrame <= mapped && $0.endFrame > mapped })
+        if caption != nil { try CinemaSubtitles.validateClearance(scene:s,sourceFrame:mapped,aspect:revision.aspect,rect:overlay.captionText) }
         try LayerPainter.draw(scene:s,sourceFrame:mapped,aspect:revision.aspect,images:layerImages,context:c,fontName:s.fontName ?? "PingFangSC-Medium")
         if s.showPrice { guard let product=revision.product else{throw VideoError.review("没有关联产品事实，不能绘制产品价格")};let price = try product.price(at:revision.createdAt); try checkedText(price.money.display,in:overlay.price,size:40,color:"A5F3FC",context:c,fontName:s.fontName ?? "PingFangSC-Medium") }
-        if let caption = s.captions.first(where: { $0.startFrame <= mapped && $0.endFrame > mapped }) { c.setFillColor(color("000000",alpha:0.75)); c.fill(overlay.captionBackground); try checkedText(caption.text,in:overlay.captionText,size:28,color:"FFFFFF",context:c,fontName:s.fontName ?? "PingFangSC-Medium") }
+        if let caption { try CinemaSubtitles.draw(caption.text,in:overlay.captionText,context:c,fontName:s.fontName ?? "PingFangSC-Medium") }
         if index==revision.scenes.count-1 {
             try checkedText(revision.cta,in:overlay.cta,size:portrait ? 19:18,color:"A5F3FC",context:c,fontName:s.fontName ?? "PingFangSC-Medium")
         }

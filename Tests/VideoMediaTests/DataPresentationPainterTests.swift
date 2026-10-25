@@ -117,6 +117,8 @@ final class DataPresentationPainterTests: XCTestCase {
         // Reconstruct the base drawing key under the current encoding identity.
         // This isolates the paper-data suffix; old encoding cache migration is
         // verified separately and is not represented by this fixture.
+        let current=revision()
+        let encoding=try VisualClipCache.EncodingConfiguration.capture(aspect:current.aspect,fps:current.fps)
         func baseKeyForCurrentEncoding(_ revision:Revision)throws->String {
             var scene=revision.scenes[0]
             scene.voice=nil;scene.speechPlan=nil;scene.voiceGain=1;scene.sourceGain=0;scene.musicGain=0;scene.muted=false
@@ -124,16 +126,16 @@ final class DataPresentationPainterTests: XCTestCase {
             scene.narration=scene.narration.isEmpty ? "":"speech"
             let font=CTFontCreateWithName("PingFangSC-Medium" as CFString,32,nil)
             let table=CTFontCopyTable(font,0x68656164,[]) as Data? ?? Data()
-            return try Codec.digest(VisualClipCache.Key(version:VisualClipCache.version+revision.toolchain,os:ProcessInfo.processInfo.operatingSystemVersionString,font:(CTFontCopyPostScriptName(font) as String)+Codec.hash(table),scene:scene,encoding:.init(aspect:revision.aspect,fps:revision.fps),purpose:revision.purpose,aspect:revision.aspect,fps:revision.fps,index:0,sceneCount:1,startFrame:0,price:nil,cta:revision.cta,sourceHash:nil,layerHashes:[:],moduleIdentity:nil,artworkIdentity:nil))
+            return try Codec.digest(VisualClipCache.Key(version:VisualClipCache.version+revision.toolchain,cinemaSubtitleStyle:CinemaSubtitles.styleVersion,os:ProcessInfo.processInfo.operatingSystemVersionString,font:(CTFontCopyPostScriptName(font) as String)+Codec.hash(table),scene:scene,encoding:encoding,purpose:revision.purpose,aspect:revision.aspect,fps:revision.fps,index:0,sceneCount:1,startFrame:0,price:nil,cta:revision.cta,sourceHash:nil,layerHashes:[:],moduleIdentity:nil,artworkIdentity:nil))
         }
         for code in [false,true] {
             let ordinary=revision(code:code)
-            XCTAssertEqual(try baseKeyForCurrentEncoding(ordinary),try VisualClipCache.fingerprint(revision:ordinary,index:0,database:Database(),modules:nil))
+            XCTAssertEqual(try baseKeyForCurrentEncoding(ordinary),try VisualClipCache.fingerprint(revision:ordinary,index:0,database:Database(),modules:nil,encoding:encoding))
             let paper=paperRevision(code:code)
-            XCTAssertNotEqual(try baseKeyForCurrentEncoding(paper),try VisualClipCache.fingerprint(revision:paper,index:0,database:Database(),modules:nil),"同一编码身份下，纸面数据绘制语义须区别于普通暗板")
+            XCTAssertNotEqual(try baseKeyForCurrentEncoding(paper),try VisualClipCache.fingerprint(revision:paper,index:0,database:Database(),modules:nil,encoding:encoding),"同一编码身份下，纸面数据绘制语义须区别于普通暗板")
         }
         var drawing=paperRevision();drawing.scenes[0].layers=[]
-        XCTAssertEqual(try baseKeyForCurrentEncoding(drawing),try VisualClipCache.fingerprint(revision:drawing,index:0,database:Database(),modules:nil))
+        XCTAssertEqual(try baseKeyForCurrentEncoding(drawing),try VisualClipCache.fingerprint(revision:drawing,index:0,database:Database(),modules:nil,encoding:encoding))
     }
     func testActualValuesMoveBarEndsWithoutChangingWidth() throws {
         let rect=CGRect(x:80,y:294,width:1120,height:316)

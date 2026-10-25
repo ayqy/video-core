@@ -105,6 +105,12 @@ public final class Repository: @unchecked Sendable {
         return Database()
     }
     public func read() throws -> Database { lock.lock(); defer { lock.unlock() }; return try readUnlocked() }
+    /// File staging must fail before creating an output for a read-only repository.
+    func requireProductionExportWriteAccess() throws {
+        lock.lock(); defer { lock.unlock() }
+        guard !readOnly else { throw VideoError.permission("只读检查不能导出或记录交付") }
+        try ManagedInstallRules.authorizeWrite(repositoryRoot:root)
+    }
     @discardableResult public func transaction<T>(expectedGeneration: Int? = nil, _ mutate: (inout Database) throws -> T) throws -> T {
         guard !readOnly else { throw VideoError.permission("只读检查不能写入工程") }
         lock.lock(); defer { lock.unlock() }; try sql("BEGIN IMMEDIATE")

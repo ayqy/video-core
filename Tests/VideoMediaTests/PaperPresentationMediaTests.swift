@@ -162,6 +162,24 @@ final class PaperPresentationMediaTests:XCTestCase {
         }
     }
 
+    func testPaperGridRepeatsAcrossShotsAndReservesASeparateCinemaCaptionBand()throws {
+        for aspect in Aspect.allCases {
+            for mode in PaperPresentation.Layout.allCases {
+                let plain=PaperPresentationPainter.Layout(aspect:aspect,mode:mode,showPrice:false,showAction:false)
+                let final=PaperPresentationPainter.Layout(aspect:aspect,mode:mode,showPrice:true,showAction:true)
+                XCTAssertEqual(plain.visual,final.visual,"价格或片尾提示不应让同组主体跳位")
+                XCTAssertEqual(plain.caption,final.caption)
+                XCTAssertEqual(plain.body.minX,plain.title.minX)
+                XCTAssertEqual(plain.visual.minX,plain.title.minX)
+                XCTAssertEqual(plain.caption.midX,plain.visual.midX)
+                XCTAssertLessThan(CinemaSubtitles.fontSize,plain.bodySize)
+                XCTAssertLessThan(plain.bodySize,plain.titleSize)
+                XCTAssertGreaterThanOrEqual(plain.body.minY-plain.action.maxY,14)
+                XCTAssertGreaterThanOrEqual(plain.action.minY-plain.caption.maxY,14)
+            }
+        }
+    }
+
     func testVisualCacheBindsPaperColorsAndSourceEntrance()throws {
         var value=scene();value.layers=[rectangle(entrance:LayerEntrance(kind:.fade,startFrame:0,endFrame:60))]
         var r=revision(value)

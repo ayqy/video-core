@@ -17,20 +17,20 @@ enum PaperPresentationPainter {
         init(aspect:Aspect,mode:PaperPresentation.Layout,showPrice:Bool,showAction:Bool) {
             if aspect == .portrait {
                 title=CGRect(x:56,y:1030,width:608,height:180)
-                body=CGRect(x:56,y:showAction ? 198:162,width:608,height:showAction ? 66:102)
-                visual=CGRect(x:56,y:308,width:608,height:682)
-                caption=CGRect(x:56,y:44,width:608,height:80)
-                price=CGRect(x:56,y:270,width:608,height:38)
-                action=CGRect(x:56,y:132,width:608,height:52)
+                body=CGRect(x:56,y:202,width:608,height:66)
+                visual=CGRect(x:56,y:346,width:608,height:644)
+                caption=CGRect(x:56,y:36,width:608,height:84)
+                price=CGRect(x:56,y:284,width:608,height:38)
+                action=CGRect(x:56,y:134,width:608,height:52)
                 titleSize=mode == .cover ? 54:46
                 bodySize=30
             } else {
                 title=CGRect(x:80,y:mode == .cover ? 520:580,width:1120,height:mode == .cover ? 140:76)
-                body=CGRect(x:80,y:112,width:showPrice ? 820:1120,height:70)
-                visual=CGRect(x:80,y:206,width:1120,height:mode == .cover ? 294:342)
-                caption=CGRect(x:80,y:30,width:1120,height:58)
-                price=CGRect(x:940,y:112,width:260,height:70)
-                action=CGRect(x:80,y:88,width:1120,height:24)
+                body=CGRect(x:80,y:164,width:showPrice ? 820:1120,height:70)
+                visual=CGRect(x:80,y:258,width:1120,height:mode == .cover ? 242:290)
+                caption=CGRect(x:80,y:26,width:1120,height:84)
+                price=CGRect(x:940,y:164,width:260,height:70)
+                action=CGRect(x:80,y:124,width:1120,height:26)
                 titleSize=mode == .cover ? 60:48
                 bodySize=30
             }
@@ -45,6 +45,8 @@ enum PaperPresentationPainter {
         let layout=Layout(aspect:revision.aspect,mode:presentation.layout,showPrice:scene.showPrice,showAction:showAction)
         let fontName=scene.fontName ?? "PingFangSC-Medium"
         c.setFillColor(color(presentation.paperColor));c.fill(CGRect(x:0,y:0,width:width,height:height))
+        let caption=scene.captions.first(where:{$0.startFrame<=sourceFrame && $0.endFrame>sourceFrame})
+        if caption != nil {try CinemaSubtitles.validateClearance(scene:scene,sourceFrame:sourceFrame,aspect:revision.aspect,rect:layout.caption)}
         // Draw the author's actual source assets and timed layers. No fixed path,
         // decoration, placeholder paragraph, or synthetic pencil image is added.
         try LayerPainter.draw(scene:scene,sourceFrame:sourceFrame,aspect:revision.aspect,images:layerImages,context:c,fontName:fontName)
@@ -56,8 +58,8 @@ enum PaperPresentationPainter {
             try ScenePainter.checkedText(price.money.display,in:layout.price,size:30,color:presentation.inkColor,context:c,fontName:fontName)
         }
         if showAction {try ScenePainter.checkedText(revision.cta,in:layout.action,size:revision.aspect == .portrait ? 20:16,color:presentation.inkColor,context:c,fontName:fontName)}
-        if let caption=scene.captions.first(where:{$0.startFrame<=sourceFrame && $0.endFrame>sourceFrame}) {
-            try ScenePainter.checkedText(caption.text,in:layout.caption,size:26,color:presentation.inkColor,context:c,fontName:fontName)
+        if let caption {
+            try CinemaSubtitles.draw(caption.text,in:layout.caption,context:c,fontName:fontName)
         }
     }
 

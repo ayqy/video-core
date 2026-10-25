@@ -75,7 +75,7 @@ final class LocalJobKeepalive: @unchecked Sendable {
 
 /// One backend for UI, free CLI and the independent premium Host.
 public enum LocalJobExecutor {
-    public static func run(repository:Repository,jobID:String,owner:String,modules:RenderModuleRegistry?=nil,progress:@escaping @Sendable(Double)->Void={_ in}) async throws -> Job {
+    public static func run(repository:Repository,jobID:String,owner:String,modules:RenderModuleRegistry?=nil,videoEncoder:NativeEncoderSelection = .automatic,progress:@escaping @Sendable(Double)->Void={_ in}) async throws -> Job {
         let claimed:(Job,Revision)=try repository.transaction { db in
             for i in db.jobs.indices { db.jobs[i]=JobOperations.recoverExpired(db.jobs[i]) }
             guard let index=db.jobs.firstIndex(where:{$0.id==jobID}) else { throw VideoError.notFound("原任务不存在") }
@@ -99,7 +99,7 @@ public enum LocalJobExecutor {
             let heartbeat=try LocalJobKeepalive(repository:repository,invocation:invocation,token:token)
             keepalive=heartbeat
             let result=try await withTaskCancellationHandler(operation: {
-                try await render(repository:repository,jobID:jobID,revision:claimed.1,token:token,modules:modules,invocation:invocation,progress:progress)
+                try await render(repository:repository,jobID:jobID,revision:claimed.1,token:token,modules:modules,videoEncoder:videoEncoder,invocation:invocation,progress:progress)
             }, onCancel: { cancellation.cancel();heartbeat.cancel() })
             if let failure=await heartbeat.stop(){throw failure}
             try invocation.check()
@@ -113,8 +113,8 @@ public enum LocalJobExecutor {
             throw failure
         }
     }
-    private static func render(repository:Repository,jobID:String,revision:Revision,token:String,modules:RenderModuleRegistry?,invocation:RenderInvocation,progress:@escaping @Sendable(Double)->Void) async throws -> RenderResult {
-        let result=try await MediaRenderer(modules:modules).render(revision:revision,repository:repository,output:repository.root.appendingPathComponent("exports/"+jobID),invocation:invocation) { value in
+    private static func render(repository:Repository,jobID:String,revision:Revision,token:String,modules:RenderModuleRegistry?,videoEncoder:NativeEncoderSelection,invocation:RenderInvocation,progress:@escaping @Sendable(Double)->Void) async throws -> RenderResult {
+        let result=try await MediaRenderer(modules:modules,videoEncoder:videoEncoder).render(revision:revision,repository:repository,output:repository.root.appendingPathComponent("exports/"+jobID),invocation:invocation) { value in
                 try repository.transaction { db in guard let i=db.jobs.firstIndex(where:{$0.id==jobID}) else {throw VideoError.notFound("原任务不存在")};db.jobs[i]=try JobOperations.heartbeat(db.jobs[i],token:token,progress:value) }
                 progress(value)
             }
