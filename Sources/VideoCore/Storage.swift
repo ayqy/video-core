@@ -26,6 +26,7 @@ public struct Database: Codable, Sendable {
     public var topicBatches: [TopicBatch]?
     public var teachingBatches: [TeachingBatch]?
     public var courseCohortStatements: [CourseCohortStatement]?
+    public var upstreamLicenseWorkspaces: [WorkspaceUpstreamLicense]?
     public func workspace(_ id: String) throws -> Workspace { guard let w = workspaces.first(where: { $0.id == id }) else { throw VideoError.notFound("工作区不存在") }; return w }
     public func project(_ id: String) throws -> Project { guard let p = projects.first(where: { $0.id == id }) else { throw VideoError.notFound("项目不存在") }; return p }
     public func validate() throws {
@@ -41,6 +42,7 @@ public struct Database: Codable, Sendable {
         try TeachingStoreRules.validate(database:self)
         try CohortFinance.validateStatements(self)
         try TeachingBatchRules.validateDatabase(self)
+        try UpstreamLicenseRules.validate(database: self)
     }
     public mutating func importOrders(_ rows: [Order], batchID: String) throws {
         if imports.contains(where: { $0.id == batchID && !$0.rolledBack }) { return }

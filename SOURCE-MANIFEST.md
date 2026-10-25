@@ -2,10 +2,10 @@
 
 VideoFree source export · package_free.py · version 1
 
-生成时间：2026-10-25 11:23:23 北京时间
+生成时间：2026-10-25 12:04:18 北京时间
 
-- 源码与必要元数据：208个文件；2691819字节（不含本清单）。
-- 整体内容指纹：`24bcd5ce1ed6a9990857e35351722b361c27cfb31b4df70afcef6b06ad72945a`。
+- 源码与必要元数据：210个文件；2718123字节（不含本清单）。
+- 整体内容指纹：`0170075a85458403df5c1af3f78994c5935ddd75a9f28dfe7678a4462220d403`。
 - 来源：受控原始工程中的逐文件白名单；Package.swift来自Distribution/Free/Package.swift模板，README由发行脚本生成。
 - 本包不含.git，不可作为新业务checkout；本清单生成过程不执行构建、设备验收、签名安装或公共上传，各阶段以独立证据为准。
 - 排除：App、VideoGame、VideoCartoon、Premium、高级实现运行时测试、私有仓库地址、凭据、客户数据、缓存、日志及媒体过程产物。
@@ -109,9 +109,10 @@ VideoFree source export · package_free.py · version 1
 | 994e9705dd6b41d6833eb1b2c1aad353a4cc08a1416aa252544706ee3da7a446 | 3754 | Sources/VideoCore/SimulationPresentation.swift |
 | f581060ec2e1b7a908ee7232d0c701e6329c06ea10730f78c2a3b381d0133302 | 19039 | Sources/VideoCore/Speech.swift |
 | 24014a5716cce3259563e79a2fe2159f600091a2e1fa568fcbeaf97c4582492c | 8315 | Sources/VideoCore/SpeechProjectRules.swift |
-| 46895bba277ad06fab9f9e90060ec5981e48f0b6c69672239ef6d601303fb8c7 | 28540 | Sources/VideoCore/Storage.swift |
+| d77e5907a2c271bb1b747d3a98e3baa70bbd13aefb9d444bff5fed3fd7732dc0 | 28668 | Sources/VideoCore/Storage.swift |
 | 92dfe39cc68c46b23be5d2427f4fad63d96e7ef50aed0692da622c973725350d | 27958 | Sources/VideoCore/Teaching.swift |
 | eedd110e80735e0534e55dfcc0233723ab35e2fd41ce240b77a2b728c08e51c4 | 11179 | Sources/VideoCore/TeachingBatch.swift |
+| 28f9f3fcbdb6e579e61520dc3fa94a00db772a899ed5da05b4963bbec36e3e5c | 10843 | Sources/VideoCore/UpstreamLicense.swift |
 | 7121ad27352879f52316887ec87d9b806024faf64d2352017a459210363375a1 | 26694 | Sources/VideoCore/WorkspaceAccess.swift |
 | b749e2659c2cae1c87f701cde269ffae44aa3c7059c8406b6230858336445f1e | 13368 | Sources/VideoInstall/VideoInstall.swift |
 | ea4dc3e512b818726ea6fd7d350e697ef234e337bafff6e34d8af40720d9cc54 | 14314 | Sources/VideoMedia/BaiduVideoProvider.swift |
@@ -204,6 +205,7 @@ VideoFree source export · package_free.py · version 1
 | df92b2d3f14308b7adcaee0d397ae8d5be3d4ea06546ee3fdf592ad4c1b1cae9 | 10379 | Tests/VideoCoreTests/SpeechTests.swift |
 | b981114d904d881526d32e0c8d6a21fb465aa3d82553ec99457d742f8bce192a | 4075 | Tests/VideoCoreTests/SplitTimelineRulesTests.swift |
 | aea15ba734c2536753d15b739b26c8f68284c69294d586372a2f885bff1b706b | 17112 | Tests/VideoCoreTests/TeachingTests.swift |
+| fa21976b33dfc558041a027f2077a16d4229d4ee8327ec3f9290bb3094141f2e | 15333 | Tests/VideoCoreTests/UpstreamLicenseTests.swift |
 | 7ba0ca151fe677d9a3e081af45a3e9c0cbc725c82549e6b7b8193ef2cfbb8a3e | 24793 | Tests/VideoCoreTests/WorkspaceAccessTests.swift |
 | 1954490c7030c07bd27536157df492a6f5377db90aa91b2da8c0d5b80471ce2a | 8141 | Tests/VideoMediaTests/AudioMixMediaTests.swift |
 | 0207a9002bb7aef610449bd354ee6c50034a84f81d1a261ea8846a9bb864aada | 1906 | Tests/VideoMediaTests/BaiduVideoProviderTests.swift |
