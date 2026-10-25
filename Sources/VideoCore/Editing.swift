@@ -253,7 +253,10 @@ public enum Quality {
                 else if s.classicArtwork?.derivation != .qStyle {issues.append(QualityIssue(s.id+"classic_qstyle","下载原件须绑定实际Q版处理产物及来源后再制作新成片"))}
                 else {do {try ClassicArtworkRules.validateRights(scene:s,workspaceID:revision.workspaceID,assets:database.assets,evidence:database.evidence,commercial:commercial,requireListening:requireReview,now:now)} catch {issues.append(QualityIssue(s.id+"classic_rights",(error as? VideoError)?.localizedDescription ?? "外部游戏素材、处理来源或音轨许可尚未核对"))}}
             }
-            if s.title.isEmpty || s.body.isEmpty { issues.append(QualityIssue(s.id+"text", "镜头标题或知识内容为空")) }
+            let title=s.title.trimmingCharacters(in:.whitespacesAndNewlines)
+            let body=s.body.trimmingCharacters(in:.whitespacesAndNewlines)
+            let narration=s.narration.trimmingCharacters(in:.whitespacesAndNewlines)
+            if title.isEmpty || (body.isEmpty && narration.isEmpty) { issues.append(QualityIssue(s.id+"text", "镜头标题或知识内容为空；请填写标题，并在画面正文或独立旁白中保留知识内容")) }
             if s.kind == .image || s.kind == .video { if s.assetID == nil { issues.append(QualityIssue(s.id+"asset", "图片/录屏镜头缺少实际素材")) } }
             var refs = s.evidenceIDs
             let sourceIDs=Set([s.assetID,s.characterProfile?.voiceAssetID].compactMap{$0}+(s.layers ?? []).compactMap(\.assetID)+(s.narrativeSources ?? []).map(\.assetID))

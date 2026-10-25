@@ -29,6 +29,50 @@ final class ContentProjectTests:XCTestCase {
         XCTAssertThrowsError(try Planner.create(workspaceID:"",name:"新剪辑"))
         XCTAssertThrowsError(try Planner.create(workspaceID:"w",name:" \n"))
     }
+    func testNarrationCanCarryKnowledgeWithoutRepeatedScreenBodyWhileMediaGatesRemain()throws {
+        let(base,w,p)=try fixture()
+        let audio=Asset(workspaceID:w.id,name:"narration.wav",hash:String(repeating:"a",count:64),ext:"wav",bytes:10,mediaType:"audio",durationFrames:60)
+        for body in [""," \n\t"] {
+            var database=base,revision=p.current,scene=p.current.scenes[0]
+            scene.body=body;scene.narration="路修成后，邻居都能使用。"
+            scene.captions=[Caption(text:scene.narration,startFrame:0,endFrame:60)]
+            scene.voice=VoiceTake(assetID:audio.id,textDigest:try scene.speechDigest(),durationFrames:60,method:"recorded")
+            revision.scenes=[scene];revision.dependencies=nil;database.assets=[audio]
+            XCTAssertTrue(try Quality.inspect(revision,database:database,requireReview:false).isEmpty)
+            let pending=try Quality.inspect(revision,database:database,requireReview:true)
+            XCTAssertFalse(pending.contains{$0.id==scene.id+"text"})
+            XCTAssertTrue(pending.contains{$0.id==scene.id+"listened"})
+            XCTAssertTrue(pending.contains{$0.id==scene.id+"captions"})
+            XCTAssertTrue(pending.contains{$0.id=="review"})
+            var missing=revision;missing.scenes[0].voice=nil
+            XCTAssertTrue(try Quality.inspect(missing,database:database,requireReview:false).contains{$0.id==scene.id+"voice_missing"})
+            var stale=revision;stale.scenes[0].voice?.textDigest="outdated"
+            XCTAssertTrue(try Quality.inspect(stale,database:database,requireReview:false).contains{$0.id==scene.id+"voice"})
+            var commercial=revision;commercial.purpose = .course
+            XCTAssertTrue(try Quality.inspect(commercial,database:database,requireReview:false).contains{$0.id==audio.id+"audio_rights"})
+        }
+    }
+    func testKnowledgeCannotBeEmptyOrWhitespaceInBothBodyAndNarration()throws {
+        let(db,_,p)=try fixture()
+        for (body,narration) in [("",""),(" \n\t",""),(""," \n\t"),("\n","\t")] {
+            var revision=p.current
+            revision.dependencies=nil;revision.scenes[0].body=body;revision.scenes[0].narration=narration
+            XCTAssertTrue(try Quality.inspect(revision,database:db,requireReview:false).contains{$0.id==revision.scenes[0].id+"text"})
+        }
+    }
+    func testSceneTitleRequiresVisibleTextEvenWhenKnowledgeExists()throws {
+        let(db,_,p)=try fixture()
+        for title in [""," \n\t"] {
+            var revision=p.current
+            revision.dependencies=nil;revision.scenes[0].title=title
+            XCTAssertTrue(try Quality.inspect(revision,database:db,requireReview:false).contains{$0.id==revision.scenes[0].id+"text"})
+        }
+    }
+    func testScreenBodyCanCarryKnowledgeWithoutNarration()throws {
+        let(db,_,p)=try fixture();var revision=p.current
+        revision.dependencies=nil;revision.scenes[0].body=" \n观察人物选择与结果。\t";revision.scenes[0].narration=""
+        XCTAssertTrue(try Quality.inspect(revision,database:db,requireReview:false).isEmpty)
+    }
     func testEmptyDraftCanAddRealSceneAndReturnToEmptyWithoutPlaceholder()throws {
         let w=Workspace(name:"编辑空间",owner:"owner")
         let revision=try Planner.create(workspaceID:w.id,name:"真实空工程")

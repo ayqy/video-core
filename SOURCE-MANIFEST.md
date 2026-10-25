@@ -2,10 +2,10 @@
 
 VideoFree source export · package_free.py · version 1
 
-生成时间：2026-10-25 23:05:53 北京时间
+生成时间：2026-10-26 01:04:10 北京时间
 
-- 源码与必要元数据：219个文件；2876219字节（不含本清单）。
-- 整体内容指纹：`93ffb2b791af84133fe36d8fb53e0d551eced349b447a512d34e7e588e926d84`。
+- 源码与必要元数据：219个文件；2879649字节（不含本清单）。
+- 整体内容指纹：`7d02c0f38225151bcddd9178bae1bd2bd634cc99ec0fe814a72185f7f658a856`。
 - 来源：受控原始工程中的逐文件白名单；Package.swift来自Distribution/Free/Package.swift模板，README由发行脚本生成。
 - 本包不含.git，不可作为新业务checkout；本清单生成过程不执行构建、设备验收、签名安装或公共上传，各阶段以独立证据为准。
 - 排除：App、VideoGame、VideoCartoon、Premium、高级实现运行时测试、私有仓库地址、凭据、客户数据、缓存、日志及媒体过程产物。
@@ -73,7 +73,7 @@ VideoFree source export · package_free.py · version 1
 | 17137a461b816b17ea4da94e59f6ee299b3e7dd53992b985a04e98df0e21e9a5 | 4217 | Sources/VideoCore/ContentAssetMatching.swift |
 | 47b0e7ae5a22fa142bf1ad52e25d2b2e98ecfe086dff759f356abedbdd1d1833 | 11076 | Sources/VideoCore/DataPresentation.swift |
 | 80b4a15fb501e5f2f522ba831d9c0af79ed9b5d7879fc4f62e5258186724a597 | 20194 | Sources/VideoCore/Dependencies.swift |
-| ee903593d16d9fe8eb9a3a7dfc0b59f9d7b7cda96a38877fb46b1bdcef34d9d1 | 35035 | Sources/VideoCore/Editing.swift |
+| 714508adea287d957a1e18d43504d8b8e48b1137baa29cf070bfdeb34fff4dbf | 35366 | Sources/VideoCore/Editing.swift |
 | 2812b4b5a76d74c216cdf19af91de902ff2808edc0d2750bbc4a38cf71043c9f | 5735 | Sources/VideoCore/EditorPracticeRules.swift |
 | ff72243377a23f6732d56c34e50d291d82e60d1a71ada1878d9ee2e7c5f641b6 | 12517 | Sources/VideoCore/Finance.swift |
 | 9e5b2b47e55fdcf7b1495a61e0df94e9b9bb2e915bbb147ebb829585e84d148b | 6424 | Sources/VideoCore/H264Rules.swift |
@@ -174,7 +174,7 @@ VideoFree source export · package_free.py · version 1
 | 4b0167c86313089d6b5cde2f150169bedae59572014e985223f6631c6251d9f3 | 59086 | Tests/VideoCoreTests/ClassicSceneEditingTests.swift |
 | f18fda57b514d19653ff1ac7ce621f4022be6868fb8b385b2cb5884e698c447a | 17786 | Tests/VideoCoreTests/CohortFinanceTests.swift |
 | d6f32510e1092e64a73bf2fba1b1c8d1e1c1d6271bfed3dcbf12eb11665bc347 | 10029 | Tests/VideoCoreTests/CommercialTests.swift |
-| 8438c62638b707de943349321ec17617c4299d29a9e4c0d3dfa5981350c413be | 18704 | Tests/VideoCoreTests/ContentProjectTests.swift |
+| 71260096790e786abf708961cbd55d788070b36c1c4ddfd1498b4e4e7ae9327c | 21803 | Tests/VideoCoreTests/ContentProjectTests.swift |
 | 08acb39d3dddf1cccba68ee97a005612f46313268da81deef87c5d1b804820b9 | 11123 | Tests/VideoCoreTests/ContentServiceRulesTests.swift |
 | 4fe2c0effc931d205fe5a4be6b2dd60b4a05a8519c77b7eefcabe685f5b8ea4c | 9355 | Tests/VideoCoreTests/ContentWorkflowIntegrationTests.swift |
 | 878e7a28494fe563d08eab92f9e46b4d3848e141b0632b1f30fe6e8d804447aa | 11861 | Tests/VideoCoreTests/DataPresentationRulesTests.swift |
