@@ -2,10 +2,10 @@
 
 VideoFree source export · package_free.py · version 1
 
-生成时间：2026-10-25 03:42:22 北京时间
+生成时间：2026-10-25 10:40:39 北京时间
 
-- 源码与必要元数据：208个文件；2658123字节（不含本清单）。
-- 整体内容指纹：`66c8f8a4436a56e4cf1163f0489f19f9d1c4305a85204606315e7e6dbd29dffd`。
+- 源码与必要元数据：208个文件；2690673字节（不含本清单）。
+- 整体内容指纹：`5f4ef5a7c0e84a8bc23c26a13aae5962f944fdfd59f85e6fc701767c61f65476`。
 - 来源：受控原始工程中的逐文件白名单；Package.swift来自Distribution/Free/Package.swift模板，README由发行脚本生成。
 - 本包不含.git，不可作为新业务checkout；本清单生成过程不执行构建、设备验收、签名安装或公共上传，各阶段以独立证据为准。
 - 排除：App、VideoGame、VideoCartoon、Premium、高级实现运行时测试、私有仓库地址、凭据、客户数据、缓存、日志及媒体过程产物。
@@ -14,14 +14,14 @@ VideoFree source export · package_free.py · version 1
 
 | SHA-256 | 字节数 | 包内路径 / 原工程来源 |
 |---|---:|---|
-| 1b6ad47542eb79a127202d5eea2d17c0584fa04719c529a8a4916e78e01e4a23 | 28663 | Integrations/README.md |
+| f795b7a7c3b5275b14f7226c61dc97d24c94862c275e7b0f80862a8a15763496 | 30827 | Integrations/README.md |
 | 2ff174ec064ca614f24e8ba67ae5c7042a2caa883af162bafd27a8a4520d5ed7 | 26522 | Integrations/asset_reuse.py |
 | be0a15cd8fcb9b33fe92f2898a9ee53aa20f9722b368abd19e0a7a5ef924bc42 | 18066 | Integrations/check_install.py |
 | 78de5093a0969aa261d580b270f7ce5ae9c25d8de493afbd9f993bbc2d41219a | 4076 | Integrations/check_package.py |
 | 6b023bbea18e28cd1491c65300db60b7d552172153e03e679d526566a9edfc2d | 32762 | Integrations/claude_stream.py |
-| b6fe5ad68017449028201df317621a6c2b8c5d51c3a05054a2f328cbd4d2cdf4 | 45189 | Integrations/codex_broker.py |
+| e8f6d5c1f36d085bdb5302c1a43534fd57736ed16e657cc41bf2fa0d094a7f67 | 54005 | Integrations/codex_broker.py |
 | 7ecc56e44b3df5afd221e617549ae8f3f9a1d9847b72ac572fa2f2c0d2ae5ca2 | 12512 | Integrations/codex_events.py |
-| 2134f040a74486b5195f1760cf841d93abce9fa561ebdd62fa94bac1ab7c2763 | 38010 | Integrations/codex_production.py |
+| 331a2efd301fd9cf623d76e9e47bf85f3fa43fb8d1b6b3281831e418013075f0 | 41267 | Integrations/codex_production.py |
 | 36bdcf361abca71ae28992a3d5fd2f1c658738f9ba954a21ddb41fc7516b7ceb | 6332 | Integrations/discover.py |
 | f17393a51167b7998ad0e18817bc65c7bf74d750fa57f0d2b727d1ab9cfeda0f | 15088 | Integrations/install.py |
 | 939464f9a5015d84776c047eef0aca64144833cce61e479e00d97386f7f082ea | 3328 | Integrations/package.py |
@@ -31,13 +31,13 @@ VideoFree source export · package_free.py · version 1
 | cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30 | 11358 | Integrations/skills/video/LICENSE |
 | 1dbab07b005a071618dc75a2e3cd3b68fccfba4c235d4818238a18cdbfcdb052 | 358 | Integrations/skills/video/NOTICE |
 | 9efa96b4155e0201e65c85913250aa14f69d7cef9f7657c379e7ddc11b84fddd | 4013 | Integrations/skills/video/SKILL.md |
-| 80f697b67421db6f559e8ba99e92a01734018dca974979cee5f169e0f6f871e4 | 308 | Integrations/skills/video/agents/openai.yaml |
+| 2a43e05522b4f8036ceccddd178792b2a56c692796f8bbcdf7526dcf35490c2a | 326 | Integrations/skills/video/agents/openai.yaml |
 | af117d681ee814036da2a294494d020b16173b46ff38c884a68c5ce89da9775e | 3274 | Integrations/skills/video/references/protocol.md |
 | 0614484a5056b4c576593e250c5d58dfedf0cd1b7e8c34e16cfc8266210f246c | 15192 | Integrations/test_asset_reuse.py |
 | 68f8008e245c59161295a10d3c577d944548844cb6bbf6114a621857e1385798 | 30671 | Integrations/test_claude_stream.py |
-| f7a91aff7b83517aa151115f97188a286b55d66ddafb445046af5642e3127c3a | 48877 | Integrations/test_codex_broker.py |
+| 83ec1600798aceff9a840917d0a5d09b46e7b34cb03e04e5c81d119f98029960 | 59004 | Integrations/test_codex_broker.py |
 | 863aeaab77ca998dd2f928a8e0feeac9cf21b6aaf61bd5dd25bea1f9decfa771 | 9771 | Integrations/test_codex_events.py |
-| 16943ac9bffed6b9b6479f8c3331cded57455612b3167d90878eee3a4abf8484 | 24254 | Integrations/test_codex_production.py |
+| 0984ebf332a60489d46380fd8601ae2dce4bdc92cabaf0919321492943285453 | 29945 | Integrations/test_codex_production.py |
 | a6be5192e921223a3bd3a5c0b0750d80c2abfac439bc2bedb5282f65ba85fca6 | 8905 | Integrations/test_discover.py |
 | a746b63b68954816b49a4e666e3472eeb9700e3c96c85047d87fd7d2e9c99b12 | 7488 | Integrations/test_pencil_production.py |
 | 5e371767fdd7f3828665ceec23bd573c81e885fa565e8e77d25e1acfa02d5910 | 10373 | Integrations/test_production_motion.py |
@@ -52,7 +52,7 @@ VideoFree source export · package_free.py · version 1
 | 80324eed37fb3c06611102a5ed598bb3d60aa818eeb6f848068e359677a07ea7 | 18 | Sources/CZlib/shim.h |
 | f91009e63ad2cd947bb9a9e20acc909478e7ef5374aadc08c23654f5d8894029 | 15306 | Sources/VideoCLI/FiniteWorker.swift |
 | 3a85917885b9d15dd38123ead2d32aaef4417eef471701846e0080942fba0c23 | 29912 | Sources/VideoCLI/VideoCLI.swift |
-| 7b3174ed085c50b618aa6c6864009ac623e7f500d90c8f4e08c8cdb7d7a0b08f | 21470 | Sources/VideoCore/AgentContract.swift |
+| 4a33e59e8bab34a97111349bede96a26b13c62854ac01c0a1b8c6db7137ccba1 | 21455 | Sources/VideoCore/AgentContract.swift |
 | bf2f7ad7ef600774a301f579dd95b966a0702127595ca53e0ae7f55b91a2ded3 | 2784 | Sources/VideoCore/AgentJobAccess.swift |
 | 8bf2579a1f2466e15406fcad08bcbbc615b82cd2242a0f2db10aef489e805fbc | 20489 | Sources/VideoCore/AgentMutation.swift |
 | 9dfaab2c9ecbb1c61b5a066203329602c2bb3e691f48aaa9765dec87d39fd648 | 12072 | Sources/VideoCore/AgentPreview.swift |
@@ -151,7 +151,7 @@ VideoFree source export · package_free.py · version 1
 | 5d43deeb252e4329088ac744ebb71028287c508b2b8ba89d5e4e83fc476c1ddc | 4040 | Tests/VideoCLITests/content_project_smoke.py |
 | 5ae0c014535f0d2d9217494b30c1e8fe07336f3ee3ee2551abc52b4d21e9aac7 | 7640 | Tests/VideoCLITests/status_scope_smoke.py |
 | 09b3610b368060baad6f10bf2636233ff740e5bcffe06a4efb28e61feb743b84 | 7466 | Tests/VideoCLITests/worker_smoke.py |
-| 2bfdd4935e5f4e53fb1934516db3c6d3acc1f19f346d021686a24cd9ed1e9895 | 5693 | Tests/VideoCoreTests/AgentContractTests.swift |
+| f58e241f0eda2ec4d235036efc792137741a4098b3b9704a04c066128bc3acb6 | 8185 | Tests/VideoCoreTests/AgentContractTests.swift |
 | 3f5d9b81a289338a77f797ece9dd2d0fcb77a916ab24a2304ba67263bcd5fab8 | 5797 | Tests/VideoCoreTests/AgentJobAccessTests.swift |
 | f884bc9e1f7eb717eb0552011aaeda67e056d7fcabf821293efd5855b7568c82 | 14884 | Tests/VideoCoreTests/AgentMutationTests.swift |
 | 1f621be6ed8d70f38dd3ef93ef0e5db43cb87a8838f81f10b036196ffea12f40 | 10463 | Tests/VideoCoreTests/AgentPreviewTests.swift |
