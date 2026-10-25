@@ -204,6 +204,7 @@ def worker(args) -> None:
     sys.path.insert(0, str(args.runtime / "source"))
     sys.path.insert(0, str(args.runtime / "source/third_party/Matcha-TTS"))
     import random
+    import threading
     import numpy as np
     import torch
     import soundfile as sf
@@ -217,16 +218,31 @@ def worker(args) -> None:
     if args.voice not in model.list_available_spks():
         raise ValueError("发布模型中没有所选预设音色")
     chunks = []
-    # Preserve punctuation and intonation within a whole scene/utterance.
-    # Inputs are already authored/TN-checked; do not split at commas or re-normalize.
-    for item in model.inference_sft(args.text, args.voice,
-                                    stream=False, speed=1.0, text_frontend=False):
-        audio = item["tts_speech"].detach().cpu().numpy().reshape(-1)
-        if not len(audio) or not np.isfinite(audio).all():
-            raise ValueError("引擎未返回完整有效声音")
-        chunks.append(audio)
-    if len(chunks) != 1:
-        raise ValueError("整段推理返回多个片段，拒绝无条件拼接破坏语流")
+    thread_errors = []
+    previous_thread_hook = threading.excepthook
+
+    def inference_thread_failed(error):
+        # Upstream runs the LLM in a Python thread. join() does not rethrow its
+        # exception, and a partial token sequence can still produce valid PCM.
+        # This worker is an isolated process, so fail it before publishing audio.
+        thread_errors.append(error.exc_value)
+
+    threading.excepthook = inference_thread_failed
+    try:
+        # Preserve punctuation and intonation within a whole scene/utterance.
+        # Inputs are already authored/TN-checked; do not split at commas or re-normalize.
+        for item in model.inference_sft(args.text, args.voice,
+                                        stream=False, speed=1.0, text_frontend=False):
+            audio = item["tts_speech"].detach().cpu().numpy().reshape(-1)
+            if not len(audio) or not np.isfinite(audio).all():
+                raise ValueError("引擎未返回完整有效声音")
+            chunks.append(audio)
+        if thread_errors:
+            raise ValueError("模型推理线程失败；拒绝将部分语音发布或缓存") from thread_errors[0]
+        if len(chunks) != 1:
+            raise ValueError("整段推理返回多个片段，拒绝无条件拼接破坏语流")
+    finally:
+        threading.excepthook = previous_thread_hook
     sf.write(str(args.output), chunks[0], model.sample_rate, subtype="PCM_16")
 
 

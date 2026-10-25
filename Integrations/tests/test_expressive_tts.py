@@ -168,7 +168,9 @@ class SFTContractTests(unittest.TestCase):
                 mock.patch.object(socket, "create_connection"), \
                 mock.patch.object(socket.socket, "connect"), \
                 mock.patch.object(socket.socket, "connect_ex"):
+            previous_thread_hook = threading.excepthook
             tts.worker(args)
+            self.assertIs(threading.excepthook, previous_thread_hook)
         engine.inference_sft.assert_called_once_with(
             args.text, args.voice,
             stream=False, speed=1.0, text_frontend=False)
@@ -464,6 +466,70 @@ class GenerationBoundaryTests(unittest.TestCase):
                     expected.append(mock.call(process.pid, signal.SIGKILL))
                 self.assertEqual(kill.call_args_list, expected)
                 self.assert_no_delivery_cache_or_lock()
+
+    def test_partial_inference_chunk_then_thread_failure_never_writes_or_caches_audio(self):
+        # Execute the real worker and parent publication path against a finite
+        # engine fixture. Upstream-like background failure happens after a
+        # nonempty chunk; a valid WAV must not hide the failed LLM thread.
+        waveform = mock.MagicMock(name="partial-synthetic-waveform")
+        waveform.__len__.return_value = 6615
+        waveform.reshape.return_value = waveform
+        tensor = mock.MagicMock(name="partial-engine-output")
+        tensor.detach.return_value.cpu.return_value.numpy.return_value = waveform
+        engine = mock.Mock(sample_rate=22050)
+        engine.list_available_spks.return_value = ["中文女", "中文男"]
+
+        def inference(*args, **kwargs):
+            yield {"tts_speech": tensor}
+
+            def fail_after_tokens():
+                raise RuntimeError("synthetic LLM failure after partial tokens")
+
+            thread = threading.Thread(target=fail_after_tokens)
+            thread.start()
+            thread.join(timeout=2)
+            self.assertFalse(thread.is_alive())
+
+        engine.inference_sft.side_effect = inference
+        numpy = SimpleNamespace(random=SimpleNamespace(seed=mock.Mock()),
+                                isfinite=mock.Mock(return_value=SimpleNamespace(all=lambda: True)))
+        torch = SimpleNamespace(set_num_threads=mock.Mock(), set_num_interop_threads=mock.Mock(),
+                                manual_seed=mock.Mock())
+        soundfile = SimpleNamespace(write=mock.Mock(side_effect=lambda path, *a, **kw: write_test_pcm(Path(path))))
+        package, cli, module = ModuleType("cosyvoice"), ModuleType("cosyvoice.cli"), ModuleType("cosyvoice.cli.cosyvoice")
+        package.__path__ = []
+        cli.__path__ = []
+        module.AutoModel = mock.Mock(return_value=engine)
+        fake_modules = {"numpy": numpy, "torch": torch, "soundfile": soundfile,
+                        "cosyvoice": package, "cosyvoice.cli": cli, "cosyvoice.cli.cosyvoice": module}
+
+        def actual_worker(argv, **kwargs):
+            get = lambda option: argv[argv.index(option) + 1]
+            args = SimpleNamespace(runtime=Path(get("--runtime")), output=Path(get("--output")),
+                                   text=get("--text"), voice=get("--voice"),
+                                   instruction=get("--instruction"), seed=int(get("--seed")))
+            try:
+                tts.worker(args)
+                code = 0
+            except ValueError as error:
+                kwargs["stdout"].write(str(error).encode())
+                kwargs["stdout"].flush()
+                code = 2
+            return SimpleNamespace(pid=991237, wait=mock.Mock(return_value=code))
+
+        with mock.patch.dict(sys.modules, fake_modules), \
+                mock.patch.object(sys, "path", list(sys.path)), \
+                mock.patch.object(random, "seed"), \
+                mock.patch.object(socket, "create_connection"), \
+                mock.patch.object(socket.socket, "connect"), \
+                mock.patch.object(socket.socket, "connect_ex"), \
+                mock.patch.object(threading, "excepthook") as original_hook, \
+                mock.patch.object(tts.subprocess, "Popen", side_effect=actual_worker):
+            with self.assertRaisesRegex(ValueError, "推理线程失败"):
+                self.generate()
+            self.assertIs(threading.excepthook, original_hook)
+        soundfile.write.assert_not_called()
+        self.assert_no_delivery_cache_or_lock()
 
     def test_failed_or_invalid_worker_never_promotes_partial_artifacts(self):
         for kind in ("nonzero", "missing", "truncated", "silent", "not_wave", "spawn_error"):

@@ -2,10 +2,10 @@
 
 VideoFree source export · package_free.py · version 1
 
-生成时间：2026-10-26 07:00:30 北京时间
+生成时间：2026-10-26 07:29:02 北京时间
 
-- 源码与必要元数据：227个文件；2982194字节（不含本清单）。
-- 整体内容指纹：`5de6e464c579422286bb3cbfb214a89fa017b42a81e20af9e6ebda3f9cbc97d6`。
+- 源码与必要元数据：227个文件；2986735字节（不含本清单）。
+- 整体内容指纹：`64dad3080032dcc30391f272174f14d2100b7bc2b58427784116527f33a83903`。
 - 来源：受控原始工程中的逐文件白名单；Package.swift与唯一免费制作workflow来自Distribution/Free精确模板，README由发行脚本生成。
 - 本包不含.git，不可作为新业务checkout；本清单生成过程不执行构建、设备验收、签名安装或公共上传，各阶段以独立证据为准。
 - 排除：App、VideoGame、VideoCartoon、Premium、高级实现运行时测试、私有仓库地址、凭据、客户数据、缓存、日志及媒体过程产物。
@@ -27,8 +27,8 @@ VideoFree source export · package_free.py · version 1
 | 36bdcf361abca71ae28992a3d5fd2f1c658738f9ba954a21ddb41fc7516b7ceb | 6332 | Integrations/discover.py |
 | 71f141fb97afad654073147b6d7c9cccd12428be4e8ada6274946f0e30df14de | 3258 | Integrations/examples/README.md |
 | 5c647aa4023be1aff66c0fcf4166fe41bf9e8d54039f800b46d80ec8f43d86e7 | 30722 | Integrations/examples/free_production.py |
-| bd05cb2147a212d841cad750a4d74c10f3a9bdddc2c1f5fdf4cfd4dbbfcc460a | 5249 | Integrations/expressive_tts.md |
-| e519a4eef7e6309e7e04a4bdc87eab9f7c433350f9f9fa46381054ed93ddb1ce | 13467 | Integrations/expressive_tts.py |
+| 8ef21896ef8881ba4a74edc20745dd12278681a1945b450662ab19f6f61bbe10 | 5387 | Integrations/expressive_tts.md |
+| 7b02e8b4e3bd5abf2f91640c9c853f45d3131b504e8d421604c93f3dd00c3267 | 14197 | Integrations/expressive_tts.py |
 | f17393a51167b7998ad0e18817bc65c7bf74d750fa57f0d2b727d1ab9cfeda0f | 15088 | Integrations/install.py |
 | 62f9d807ade91cb2bac3b92933ee0dbf5d957fb52619f6e4979c905d0da8527f | 3842 | Integrations/narration_reference.py |
 | 5a2742408ea0c2e1ce512f90d6d349252e7493095b4b0317fb51551b7bd21f7f | 3621 | Integrations/package.py |
@@ -51,7 +51,7 @@ VideoFree source export · package_free.py · version 1
 | a746b63b68954816b49a4e666e3472eeb9700e3c96c85047d87fd7d2e9c99b12 | 7488 | Integrations/test_pencil_production.py |
 | 5e371767fdd7f3828665ceec23bd573c81e885fa565e8e77d25e1acfa02d5910 | 10373 | Integrations/test_production_motion.py |
 | 4521e9f2b792c2b0167b13651cbfd74d237d9c9d0c8c53e67a5d79a039a099e7 | 48707 | Integrations/test_qwen_stream.py |
-| 51f1a7505d7068b41b670c3d968d31741c7c8c910d007ae15a56b4ddb5300fa9 | 26209 | Integrations/tests/test_expressive_tts.py |
+| eaa46095a00b9e4fd00c12defe2e076d84c6c58ee6eebffac3e0c34a4e9f0859 | 29882 | Integrations/tests/test_expressive_tts.py |
 | cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30 | 11358 | LICENSE |
 | c369f09e50d62d1a1c8eff1500888667ff7a192d0fdc7b32d39c800dfa1e9721 | 1597 | NOTICE |
 | e3dae895ffcaa4ce4470f1dc9d63eee5071f829d63cfe227360c3dabfbdd0d91 | 1213 | Package.swift |

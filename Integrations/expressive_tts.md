@@ -33,7 +33,7 @@ python -B Integrations/prepare_cosyvoice.py --runtime .cache/narration-sft --pyt
 python -B Integrations/expressive_tts.py --runtime .cache/narration-sft --cache .cache/narration-sft/voices --text '四个邻居想修路。凑够三枚硬币，就能开工。' --voice 中文男 --seed 1986 --output narration.wav
 ```
 
-相同文本、SFT模型、引擎源码、实际依赖、适配器、预设音色、正常SFT调用合同和种子命中同一缓存，并校验WAV与来源回执后复用；任一身份项改变就使用不同缓存。空的兼容`instruction`不会授予语气控制能力，旧Instruct调用也不能命中SFT缓存。缓存损坏会明确拒绝，不静默重生。并发同请求只允许一个生成作业；超时终止本作业进程组，不留下成功缓存或交付。输出采用原子写入，不覆盖既有文件。
+相同文本、SFT模型、引擎源码、实际依赖、适配器、预设音色、正常SFT调用合同和种子命中同一缓存，并校验WAV与来源回执后复用；任一身份项改变就使用不同缓存。空的兼容`instruction`不会授予语气控制能力，旧Instruct调用也不能命中SFT缓存。缓存损坏会明确拒绝，不静默重生。并发同请求只允许一个生成作业；超时终止本作业进程组，不留下成功缓存或交付。模型推理子线程发生异常时，即使已返回部分非空音频，也会在写WAV前拒绝，不把部分语音发布或缓存。输出采用原子写入，不覆盖既有文件。
 
 输出是22050Hz单声道PCM16及本地缓存中的`source.md`。它记录实际采样数和完整生成身份；没有伪造的字级时间戳。把真实音源、来源及许可通过正常素材导入和`speech attach`绑定到工程，按实长重新检查镜头、字幕和动作。更换配音后，旧声音、字幕和整片确认仍需重新核验。
 
