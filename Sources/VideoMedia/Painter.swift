@@ -69,7 +69,9 @@ public enum ScenePainter {
         text("VIDEO  /  \(revision.purpose.rawValue)", in: CGRect(x: margin,y: wideKnowledge ? 680:h-84,width: w-margin*2,height: wideKnowledge ? 24:30), size: wideKnowledge ? 16:21, color: "A5B4FC", context: c,fontName:s.fontName ?? "PingFangSC-Medium")
         // PingFangSC-Medium at 36pt needs 50.4px ascent+descent. Keep a real
         // line above the stage and below the meta label; never relax text checks.
-        try checkedText(s.title, in: CGRect(x: margin,y: wideKnowledge ? 626:h-(portrait ? 240:200),width: w-margin*2,height: wideKnowledge ? 54:(portrait ? 125:100)), size: wideKnowledge ? 36:(portrait ? 45:48), color: "FFFFFF", context: c,fontName:s.fontName ?? "PingFangSC-Medium")
+        // Two 45pt PingFang lines require 126.000256px on the supported font.
+        // Keep complete wrapped titles inside their reserved area without weakening overflow checks.
+        try checkedText(s.title, in: CGRect(x: margin,y: wideKnowledge ? 626:h-(portrait ? 240:200),width: w-margin*2,height: wideKnowledge ? 54:(portrait ? 128:100)), size: wideKnowledge ? 36:(portrait ? 45:48), color: "FFFFFF", context: c,fontName:s.fontName ?? "PingFangSC-Medium")
         let separateBody=s.kind == .simulation || s.kind == .cartoon || media != nil || dataStage
         let overlay=OverlayLayout(width:w,height:h,showPrice:s.showPrice,separateBody:separateBody,knowledge:detailedStage)
         let base=overlay.visual

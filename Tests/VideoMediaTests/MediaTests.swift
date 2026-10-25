@@ -6,6 +6,17 @@ import CoreMedia
 import CoreGraphics
 
 final class MediaTests:XCTestCase {
+    func testWrappedChineseTitleSurvivesPortraitConversionWithOverflowStillRejected() throws {
+        var scene=Scene(kind:.explanation,title:"完整原音：内部技术回归（待审）",body:"保留完整原音与字幕，尚未完整看听。",durationFrames:287)
+        scene.captions=[Caption(text:"每一组都赢，合起来却输了。",startFrame:0,endFrame:107)]
+        var revision=try Planner.create(workspaceID:"w",name:"双画幅文字",aspect:.landscape,scenes:[scene])
+        XCTAssertNoThrow(try ScenePainter.image(revision:revision,frame:53))
+        revision.aspect = .portrait
+        XCTAssertNoThrow(try ScenePainter.image(revision:revision,frame:53),"转换后应完整显示两行中文标题")
+        revision.scenes[0].title=String(repeating:"完整中文标题必须保留且不可越界",count:8)
+        XCTAssertThrowsError(try ScenePainter.image(revision:revision,frame:53),"仍应阻止真正超出安全区的标题")
+    }
+
     func testSnapshotPriceCaptionsCTAAndFooterRemainDistinctInBothAspectFrames() throws {
         let product=Product(workspaceID:"w",sku:"layout",name:"课程",checkout:"https://example.com",audience:"学习者",task:"核对",outcome:"可复现",prerequisite:"无",scope:"布局",prices:[Price(money:Money(99),from:.distantPast,source:"合成测试",verified:true)])
         let source=try XCTUnwrap(CGContext(data:nil,width:80,height:40,bitsPerComponent:8,bytesPerRow:320,space:CGColorSpaceCreateDeviceRGB(),bitmapInfo:CGImageAlphaInfo.premultipliedLast.rawValue))
