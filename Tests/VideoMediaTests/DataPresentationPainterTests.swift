@@ -113,26 +113,27 @@ final class DataPresentationPainterTests: XCTestCase {
         assertPixel(try pixel(code,x:82,y:296),equals:try referencePixel("111C31"))
         assertPixel(try pixel(code,x:1188,y:500),equals:try referencePixel("244A61"))
     }
-    func testCacheInvalidatesOldPaperDataWithoutDiscardingOtherSceneCaches() throws {
-        // Reconstruct the prior production key from this empty-source fixture.
-        // This checks the actual fingerprint path, not just a version helper.
-        func previousKey(_ revision:Revision)throws->String {
+    func testPaperDataSuffixSeparatesDrawingSemanticsUnderCurrentEncoding() throws {
+        // Reconstruct the base drawing key under the current encoding identity.
+        // This isolates the paper-data suffix; old encoding cache migration is
+        // verified separately and is not represented by this fixture.
+        func baseKeyForCurrentEncoding(_ revision:Revision)throws->String {
             var scene=revision.scenes[0]
             scene.voice=nil;scene.speechPlan=nil;scene.voiceGain=1;scene.sourceGain=0;scene.musicGain=0;scene.muted=false
             scene.evidenceIDs=[];scene.courseMappingIDs=nil;scene.narrativeSources=nil;scene.locked=false
             scene.narration=scene.narration.isEmpty ? "":"speech"
             let font=CTFontCreateWithName("PingFangSC-Medium" as CFString,32,nil)
             let table=CTFontCopyTable(font,0x68656164,[]) as Data? ?? Data()
-            return try Codec.digest(VisualClipCache.Key(version:"native-scene-cache-10"+revision.toolchain,os:ProcessInfo.processInfo.operatingSystemVersionString,font:(CTFontCopyPostScriptName(font) as String)+Codec.hash(table),scene:scene,purpose:revision.purpose,aspect:revision.aspect,fps:revision.fps,index:0,sceneCount:1,startFrame:0,price:nil,cta:revision.cta,sourceHash:nil,layerHashes:[:],moduleIdentity:nil,artworkIdentity:nil))
+            return try Codec.digest(VisualClipCache.Key(version:VisualClipCache.version+revision.toolchain,os:ProcessInfo.processInfo.operatingSystemVersionString,font:(CTFontCopyPostScriptName(font) as String)+Codec.hash(table),scene:scene,encoding:.init(aspect:revision.aspect,fps:revision.fps),purpose:revision.purpose,aspect:revision.aspect,fps:revision.fps,index:0,sceneCount:1,startFrame:0,price:nil,cta:revision.cta,sourceHash:nil,layerHashes:[:],moduleIdentity:nil,artworkIdentity:nil))
         }
         for code in [false,true] {
             let ordinary=revision(code:code)
-            XCTAssertEqual(try previousKey(ordinary),try VisualClipCache.fingerprint(revision:ordinary,index:0,database:Database(),modules:nil))
+            XCTAssertEqual(try baseKeyForCurrentEncoding(ordinary),try VisualClipCache.fingerprint(revision:ordinary,index:0,database:Database(),modules:nil))
             let paper=paperRevision(code:code)
-            XCTAssertNotEqual(try previousKey(paper),try VisualClipCache.fingerprint(revision:paper,index:0,database:Database(),modules:nil),"旧纸面暗板缓存不能被新绘制语义复用")
+            XCTAssertNotEqual(try baseKeyForCurrentEncoding(paper),try VisualClipCache.fingerprint(revision:paper,index:0,database:Database(),modules:nil),"同一编码身份下，纸面数据绘制语义须区别于普通暗板")
         }
         var drawing=paperRevision();drawing.scenes[0].layers=[]
-        XCTAssertEqual(try previousKey(drawing),try VisualClipCache.fingerprint(revision:drawing,index:0,database:Database(),modules:nil))
+        XCTAssertEqual(try baseKeyForCurrentEncoding(drawing),try VisualClipCache.fingerprint(revision:drawing,index:0,database:Database(),modules:nil))
     }
     func testActualValuesMoveBarEndsWithoutChangingWidth() throws {
         let rect=CGRect(x:80,y:294,width:1120,height:316)

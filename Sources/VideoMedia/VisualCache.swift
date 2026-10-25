@@ -3,6 +3,7 @@ import Foundation
 import CoreGraphics
 import CoreText
 import ImageIO
+import VideoToolbox
 import VideoCore
 
 enum VisualClipCache {
@@ -12,15 +13,69 @@ enum VisualClipCache {
         // AVFoundation exposes cancellation concurrently with an asynchronous export.
         func cancel() { session.cancelExport() }
     }
-    // Bump whenever layout/codec semantics change. Font bytes and OS are also fingerprinted.
+    // Bump for drawing semantics; encoding settings and framework builds are bound separately.
     static let version="native-scene-cache-11"
+    struct EncodingConfiguration: Encodable {
+        struct FrameworkIdentity: Encodable {
+            var expectedIdentifier: String
+            var identifier: String?
+            var shortVersion: String?
+            var buildVersion: String?
+            init(expectedIdentifier: String, bundle: Bundle?) {
+                self.expectedIdentifier=expectedIdentifier
+                identifier=bundle?.bundleIdentifier
+                func version(_ key:String)->String? {
+                    guard let value=bundle?.object(forInfoDictionaryKey:key) as? String,
+                          !value.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty else{return nil}
+                    return value
+                }
+                shortVersion=version("CFBundleShortVersionString")
+                buildVersion=version("CFBundleVersion")
+            }
+            var isIdentified: Bool { identifier==expectedIdentifier && buildVersion != nil }
+        }
+        var codec=AVVideoCodecType.h264.rawValue
+        var width: Int; var height: Int; var fps: Int
+        var averageBitRate=2_500_000
+        var allowsFrameReordering=false
+        var maximumKeyFrameInterval: Int
+        var profileLevel=AVVideoProfileLevelH264HighAutoLevel
+        var colorPrimaries=AVVideoColorPrimaries_ITU_R_709_2
+        var transferFunction=AVVideoTransferFunction_ITU_R_709_2
+        var ycbcrMatrix=AVVideoYCbCrMatrix_ITU_R_709_2
+        var pixelFormat=kCVPixelFormatType_32ARGB
+        var mediaTimeScale: Int32
+        var fileType=AVFileType.mp4.rawValue
+        var frameworks: [FrameworkIdentity]
+        init(aspect: Aspect, fps: Int) {
+            width=aspect.width; height=aspect.height; self.fps=fps
+            maximumKeyFrameInterval=fps*2; mediaTimeScale=Int32(fps*1000)
+            frameworks=[("com.apple.avfoundation","AVFoundation"),("com.apple.VideoToolbox","VideoToolbox")].map { identifier,name in
+                let bundle=Bundle(identifier:identifier) ?? Bundle(path:"/System/Library/Frameworks/"+name+".framework")
+                return FrameworkIdentity(expectedIdentifier:identifier,bundle:bundle)
+            }
+        }
+        var canReusePersistentCache: Bool {
+            frameworks.count==2 && Set(frameworks.map(\.expectedIdentifier))==["com.apple.avfoundation","com.apple.VideoToolbox"] && frameworks.allSatisfy(\.isIdentified)
+        }
+        var writerSettings: [String:Any] {
+            [AVVideoCodecKey:AVVideoCodecType(rawValue:codec),AVVideoWidthKey:width,AVVideoHeightKey:height,
+             AVVideoColorPropertiesKey:[AVVideoColorPrimariesKey:colorPrimaries,AVVideoTransferFunctionKey:transferFunction,AVVideoYCbCrMatrixKey:ycbcrMatrix],
+             AVVideoCompressionPropertiesKey:[AVVideoAverageBitRateKey:averageBitRate,AVVideoExpectedSourceFrameRateKey:fps,AVVideoAllowFrameReorderingKey:allowsFrameReordering,AVVideoMaxKeyFrameIntervalKey:maximumKeyFrameInterval,AVVideoProfileLevelKey:profileLevel]]
+        }
+        var pixelBufferAttributes: [String:Any] {
+            [kCVPixelBufferPixelFormatTypeKey as String:pixelFormat,kCVPixelBufferWidthKey as String:width,kCVPixelBufferHeightKey as String:height,kCVPixelBufferCGImageCompatibilityKey as String:true,kCVPixelBufferCGBitmapContextCompatibilityKey as String:true]
+        }
+    }
     struct Key: Encodable {
         var version: String; var os: String; var font: String; var scene: Scene
+        var encoding: EncodingConfiguration
         var purpose: Purpose; var aspect: Aspect; var fps: Int; var index: Int; var sceneCount: Int; var startFrame: Int
         var price: Price?; var cta: String?; var sourceHash: String?; var layerHashes: [String:String];var moduleIdentity:String?; var artworkIdentity:String?
     }
     struct Entry: Codable { var key: String; var bytes: Int; var sha256: String; var frames: Int }
-    static func fingerprint(revision: Revision, index: Int, database: Database,modules:RenderModuleRegistry?) throws -> String {
+    static func fingerprint(revision: Revision, index: Int, database: Database,modules:RenderModuleRegistry?, encoding:EncodingConfiguration?=nil) throws -> String {
+        let encoding=encoding ?? EncodingConfiguration(aspect:revision.aspect,fps:revision.fps)
         var scene=revision.scenes[index]
         scene.voice=nil; scene.speechPlan=nil; scene.voiceGain=1; scene.sourceGain=0; scene.musicGain=0; scene.muted=false
         scene.evidenceIDs=[]; scene.courseMappingIDs=nil; scene.narrativeSources=nil; scene.locked=false
@@ -35,12 +90,20 @@ enum VisualClipCache {
         // identity of ordinary panels and authored drawing-only paper scenes.
         let paperData=scene.paperPresentation != nil && scene.layers?.contains(where:{$0.kind == .chart || $0.kind == .code}) == true
         let rendererVersion=version+(paperData ? "-paper-data-1":"")
-        return try Codec.digest(Key(version:rendererVersion+revision.toolchain,os:ProcessInfo.processInfo.operatingSystemVersionString,font:fontID,scene:scene,purpose:revision.purpose,aspect:revision.aspect,fps:revision.fps,index:index,sceneCount:revision.scenes.count,startFrame:revision.scenes.prefix(index).reduce(0){$0+$1.timelineFrames},price:scene.showPrice ? try revision.product?.price(at:revision.createdAt):nil,cta:index==revision.scenes.count-1 ? revision.cta:nil,sourceHash:database.assets.first{$0.id==scene.assetID}?.hash,layerHashes:Dictionary(uniqueKeysWithValues:database.assets.filter { a in scene.layers?.contains(where:{$0.assetID==a.id})==true }.map{($0.id,$0.hash)}),moduleIdentity:moduleIdentity,artworkIdentity:try ClassicArtworkMedia.fingerprint(scene:scene,database:database)))
+        return try Codec.digest(Key(version:rendererVersion+revision.toolchain,os:ProcessInfo.processInfo.operatingSystemVersionString,font:fontID,scene:scene,encoding:encoding,purpose:revision.purpose,aspect:revision.aspect,fps:revision.fps,index:index,sceneCount:revision.scenes.count,startFrame:revision.scenes.prefix(index).reduce(0){$0+$1.timelineFrames},price:scene.showPrice ? try revision.product?.price(at:revision.createdAt):nil,cta:index==revision.scenes.count-1 ? revision.cta:nil,sourceHash:database.assets.first{$0.id==scene.assetID}?.hash,layerHashes:Dictionary(uniqueKeysWithValues:database.assets.filter { a in scene.layers?.contains(where:{$0.assetID==a.id})==true }.map{($0.id,$0.hash)}),moduleIdentity:moduleIdentity,artworkIdentity:try ClassicArtworkMedia.fingerprint(scene:scene,database:database)))
     }
-    static func compose(revision r: Revision, repository: Repository, database db: Database, output: URL,modules:RenderModuleRegistry?, invocation:RenderInvocation?=nil, progress: @escaping @Sendable (Double) throws -> Void) async throws -> Int {
+    static func compose(revision r: Revision, repository: Repository, database db: Database, output: URL,modules:RenderModuleRegistry?, invocation:RenderInvocation?=nil, encoding:EncodingConfiguration?=nil, progress: @escaping @Sendable (Double) throws -> Void) async throws -> Int {
         try invocation?.verify(revision:r)
-        let directory=repository.root.appendingPathComponent("cache/visuals")
+        // One captured value drives both the key and the actual writer for every scene.
+        let encoding=encoding ?? EncodingConfiguration(aspect:r.aspect,fps:r.fps)
+        guard encoding.width==r.aspect.width,encoding.height==r.aspect.height,encoding.fps==r.fps else {
+            throw VideoError.invalid("编码尺寸或帧率与冻结工程不一致")
+        }
+        let persistent=encoding.canReusePersistentCache
+        let directory=repository.root.appendingPathComponent(persistent ? "cache/visuals":"cache/visuals-transient-"+Codec.id())
         try FileManager.default.createDirectory(at:directory,withIntermediateDirectories:true)
+        // Missing framework identity must not become a shared "unknown" cache generation.
+        defer { if !persistent { try? FileManager.default.removeItem(at:directory) } }
         let composition=AVMutableComposition()
         guard let track=composition.addMutableTrack(withMediaType:.video,preferredTrackID:kCMPersistentTrackID_Invalid) else { throw VideoError.unavailable("无法建立画面时间轴") }
         var cursor=0, hits=0
@@ -48,14 +111,14 @@ enum VisualClipCache {
             try Task.checkCancellation(); try invocation?.check()
             if let aid=scene.assetID,let asset=db.assets.first(where:{$0.id==aid}) { let data=try Data(contentsOf:repository.assetURL(asset)); guard data.count==asset.bytes,Codec.hash(data)==asset.hash else { throw VideoError.invalid("源素材摘要不符，拒绝复用缓存") } }
             _ = try ClassicArtworkMedia.load(scene:scene,workspaceID:r.workspaceID,repository:repository,database:db,commercial:r.purpose != .education)
-            let key=try fingerprint(revision:r,index:index,database:db,modules:modules)
+            let key=try fingerprint(revision:r,index:index,database:db,modules:modules,encoding:encoding)
             let clip=directory.appendingPathComponent(key+".mp4"), metadata=directory.appendingPathComponent(key+".plist")
             var valid=false
             if let bytes=try? Data(contentsOf:metadata), let entry=try? PropertyListDecoder().decode(Entry.self,from:bytes), entry.key==key,entry.frames==scene.timelineFrames,let data=try? Data(contentsOf:clip),data.count==entry.bytes,Codec.hash(data)==entry.sha256 { valid=true; hits += 1; try? FileManager.default.setAttributes([.modificationDate:Date()],ofItemAtPath:clip.path) }
             if !valid {
                 let temporary=directory.appendingPathComponent(Codec.id()+".mp4")
                 do {
-                    try await renderClip(revision:r,index:index,startFrame:cursor,repository:repository,database:db,output:temporary,modules:modules,invocation:invocation) { local in try progress((Double(cursor)+Double(scene.timelineFrames)*local)/Double(r.frames)*0.75) }
+                    try await renderClip(revision:r,index:index,startFrame:cursor,repository:repository,database:db,output:temporary,modules:modules,invocation:invocation,encoding:encoding) { local in try progress((Double(cursor)+Double(scene.timelineFrames)*local)/Double(r.frames)*0.75) }
                     try invocation?.check()
                     let bytes=try Data(contentsOf:temporary); let entry=Entry(key:key,bytes:bytes.count,sha256:Codec.hash(bytes),frames:scene.timelineFrames)
                     if FileManager.default.fileExists(atPath:clip.path) { try FileManager.default.removeItem(at:clip) }
@@ -75,11 +138,10 @@ enum VisualClipCache {
         trim(directory:directory,limit:256*1024*1024)
         return hits
     }
-    static func renderClip(revision r: Revision,index: Int,startFrame: Int,repository: Repository,database db: Database,output: URL,modules:RenderModuleRegistry?,invocation:RenderInvocation?=nil,progress: @escaping (Double) throws -> Void) async throws {
-        let scene=r.scenes[index]; let writer=try AVAssetWriter(outputURL:output,fileType:.mp4)
-        let settings:[String:Any]=[AVVideoCodecKey:AVVideoCodecType.h264,AVVideoWidthKey:r.aspect.width,AVVideoHeightKey:r.aspect.height,AVVideoColorPropertiesKey:[AVVideoColorPrimariesKey:AVVideoColorPrimaries_ITU_R_709_2,AVVideoTransferFunctionKey:AVVideoTransferFunction_ITU_R_709_2,AVVideoYCbCrMatrixKey:AVVideoYCbCrMatrix_ITU_R_709_2],AVVideoCompressionPropertiesKey:[AVVideoAverageBitRateKey:2_500_000,AVVideoExpectedSourceFrameRateKey:r.fps,AVVideoAllowFrameReorderingKey:false,AVVideoMaxKeyFrameIntervalKey:r.fps*2,AVVideoProfileLevelKey:AVVideoProfileLevelH264HighAutoLevel]]
-        let input=AVAssetWriterInput(mediaType:.video,outputSettings:settings); input.mediaTimeScale=Int32(r.fps*1000);input.expectsMediaDataInRealTime=false
-        let adaptor=AVAssetWriterInputPixelBufferAdaptor(assetWriterInput:input,sourcePixelBufferAttributes:[kCVPixelBufferPixelFormatTypeKey as String:kCVPixelFormatType_32ARGB,kCVPixelBufferWidthKey as String:r.aspect.width,kCVPixelBufferHeightKey as String:r.aspect.height,kCVPixelBufferCGImageCompatibilityKey as String:true,kCVPixelBufferCGBitmapContextCompatibilityKey as String:true])
+    static func renderClip(revision r: Revision,index: Int,startFrame: Int,repository: Repository,database db: Database,output: URL,modules:RenderModuleRegistry?,invocation:RenderInvocation?=nil,encoding:EncodingConfiguration,progress: @escaping (Double) throws -> Void) async throws {
+        let scene=r.scenes[index]; let writer=try AVAssetWriter(outputURL:output,fileType:AVFileType(rawValue:encoding.fileType))
+        let input=AVAssetWriterInput(mediaType:.video,outputSettings:encoding.writerSettings); input.mediaTimeScale=encoding.mediaTimeScale;input.expectsMediaDataInRealTime=false
+        let adaptor=AVAssetWriterInputPixelBufferAdaptor(assetWriterInput:input,sourcePixelBufferAttributes:encoding.pixelBufferAttributes)
         guard writer.canAdd(input) else { throw VideoError.unavailable("当前设备不支持H.264输出") };writer.add(input);guard writer.startWriting() else { throw VideoError.unavailable("画面编码无法启动") };writer.startSession(atSourceTime:.zero)
         var generator:AVAssetImageGenerator?, picture:CGImage?
         let resources=try ClassicArtworkMedia.load(scene:scene,workspaceID:r.workspaceID,repository:repository,database:db,commercial:r.purpose != .education)

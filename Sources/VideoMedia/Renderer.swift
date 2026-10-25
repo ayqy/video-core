@@ -72,6 +72,9 @@ public final class MediaRenderer: @unchecked Sendable {
         } catch { try? FileManager.default.removeItem(at:final); throw error }
     }
     private func mix(video:URL,final:URL,revision r:Revision,repository:Repository,database:Database,progress: @escaping @Sendable (Double) throws -> Void) async throws {
+        let preparationDirectory=repository.root.appendingPathComponent("cache/audio-preparation-"+Codec.id(),isDirectory:true)
+        try FileManager.default.createDirectory(at:preparationDirectory,withIntermediateDirectories:true)
+        defer {try? FileManager.default.removeItem(at:preparationDirectory)}
         let composition=AVMutableComposition(); let source=AVURLAsset(url:video); let tracks=try await source.loadTracks(withMediaType:.video); guard let sourceTrack=tracks.first,let dest=composition.addMutableTrack(withMediaType:.video,preferredTrackID:kCMPersistentTrackID_Invalid) else { throw VideoError.unavailable("视频轨道缺失") }
         let total=CMTime(value:Int64(r.frames),timescale:Int32(r.fps)); try dest.insertTimeRange(CMTimeRange(start:.zero,duration:total),of:sourceTrack,at:.zero)
         var parameters:[AVAudioMixInputParameters]=[]; var cursor=0
@@ -82,25 +85,19 @@ public final class MediaRenderer: @unchecked Sendable {
                     guard let asset=database.assets.first(where:{$0.id==cue.assetID && $0.workspaceID==r.workspaceID}) else{throw VideoError.notFound("场景游戏录音已缺失")}
                     let offset=try Self.sceneAudioTime(frames:cue.startFrame,fps:r.fps,speed:s.speed)
                     let length=try Self.sceneAudioTime(frames:cue.durationFrames,fps:r.fps,speed:s.speed)
-                    let parameter=try await addAudio(repository.assetURL(asset),to:composition,at:CMTimeAdd(at,offset),sourceStart:.zero,sourceFrames:cue.durationFrames,targetDuration:length,fps:r.fps,gain:Float(cue.gain),preservePitch:s.preservePitch)
+                    let parameter=try await addAudio(repository.assetURL(asset),to:composition,at:CMTimeAdd(at,offset),sourceStart:.zero,sourceFrames:cue.durationFrames,targetDuration:length,fps:r.fps,gain:Float(cue.gain),preservePitch:s.preservePitch,preparationDirectory:preparationDirectory)
                     parameters.append(parameter)
                 }
-                if let take=s.voice,let a=database.assets.first(where:{$0.id==take.assetID}) { let p=try await addAudio(repository.assetURL(a),to:composition,at:at,sourceStart:.zero,sourceFrames:take.durationFrames,targetDuration:try Self.sceneAudioTime(frames:take.durationFrames,fps:r.fps,speed:s.speed),fps:r.fps,gain:Float(s.voiceGain),preservePitch:s.preservePitch); parameters.append(p) }
-                if let aid=s.assetID,let a=database.assets.first(where:{$0.id==aid}),s.kind == .video,s.sourceGain>0 { if !(try await AVURLAsset(url:repository.assetURL(a)).loadTracks(withMediaType:.audio)).isEmpty { let p=try await addAudio(repository.assetURL(a),to:composition,at:at,sourceStart:CMTime(value:Int64(s.sourceStartFrame),timescale:Int32(r.fps)),sourceFrames:s.durationFrames,targetDuration:span,fps:r.fps,gain:Float(s.sourceGain),preservePitch:s.preservePitch); parameters.append(p) } }
+                if let take=s.voice,let a=database.assets.first(where:{$0.id==take.assetID}) { let p=try await addAudio(repository.assetURL(a),to:composition,at:at,sourceStart:.zero,sourceFrames:take.durationFrames,targetDuration:try Self.sceneAudioTime(frames:take.durationFrames,fps:r.fps,speed:s.speed),fps:r.fps,gain:Float(s.voiceGain),preservePitch:s.preservePitch,preparationDirectory:preparationDirectory); parameters.append(p) }
+                if let aid=s.assetID,let a=database.assets.first(where:{$0.id==aid}),s.kind == .video,s.sourceGain>0 { if !(try await AVURLAsset(url:repository.assetURL(a)).loadTracks(withMediaType:.audio)).isEmpty { let envelope=try AudioMixRules.sourceEnvelope(scene:s,fps:r.fps);let p=try await addAudio(repository.assetURL(a),to:composition,at:at,sourceStart:CMTime(value:Int64(s.sourceStartFrame),timescale:Int32(r.fps)),sourceFrames:s.durationFrames,targetDuration:span,fps:r.fps,gain:Float(s.sourceGain),preservePitch:s.preservePitch,preparationDirectory:preparationDirectory,envelope:envelope); parameters.append(p) } }
             }; cursor += s.timelineFrames
         }
         if let aid=r.musicAssetID,let a=database.assets.first(where:{$0.id==aid}),let track=composition.addMutableTrack(withMediaType:.audio,preferredTrackID:kCMPersistentTrackID_Invalid) { let music=AVURLAsset(url:repository.assetURL(a)); guard let src=try await music.loadTracks(withMediaType:.audio).first else { throw VideoError.invalid("配乐没有音轨") }; let duration=try await music.load(.duration); guard duration.seconds>0 else { throw VideoError.invalid("配乐时长无效") }; var t=CMTime.zero; while t<total { let length=CMTimeMinimum(duration,CMTimeSubtract(total,t)); try track.insertTimeRange(CMTimeRange(start:.zero,duration:length),of:src,at:t); t=CMTimeAdd(t,length) }; let p=AVMutableAudioMixInputParameters(track:track)
-            for segment in try AudioMixRules.musicEnvelope(scenes:r.scenes,fps:r.fps) {
-                let start=CMTime(seconds:segment.startSeconds,preferredTimescale:60000)
-                let end=CMTime(seconds:segment.endSeconds,preferredTimescale:60000)
-                // Constant intervals must be explicit too: isolated setVolume points can
-                // interpolate toward a later mute and lower earlier, still-audible music.
-                p.setVolumeRamp(fromStartVolume:Float(segment.startGain),toEndVolume:Float(segment.endGain),timeRange:CMTimeRange(start:start,end:end))
-            }
+            Self.applyEnvelope(try AudioMixRules.musicEnvelope(scenes:r.scenes,fps:r.fps),to:p,at:.zero)
             parameters.append(p) }
         // An explicit silent AAC floor ensures a standard audio stream even for a user-authored silent lesson.
         let silence=repository.root.appendingPathComponent("cache/silence.caf"); try FileManager.default.createDirectory(at:silence.deletingLastPathComponent(),withIntermediateDirectories:true); try Self.silence(to:silence,seconds:Double(r.frames)/Double(r.fps)); defer { try? FileManager.default.removeItem(at:silence) }
-        parameters.append(try await addAudio(silence,to:composition,at:.zero,sourceStart:.zero,sourceFrames:r.frames,targetDuration:total,fps:r.fps,gain:0,preservePitch:true))
+        parameters.append(try await addAudio(silence,to:composition,at:.zero,sourceStart:.zero,sourceFrames:r.frames,targetDuration:total,fps:r.fps,gain:0,preservePitch:true,preparationDirectory:preparationDirectory))
         let mix=AVMutableAudioMix(); mix.inputParameters=parameters
         // Explicit AAC48kHz output; preset exports may silently choose 44.1kHz or change portrait dimensions.
         let reader=try AVAssetReader(asset:composition);reader.timeRange=CMTimeRange(start:.zero,duration:total)
@@ -132,14 +129,116 @@ public final class MediaRenderer: @unchecked Sendable {
         // Audio is not quantized to video frames: even a one-frame effect at 4x retains its positive duration.
         return CMTime(seconds:Double(frames)/Double(fps)/speed,preferredTimescale:60_000)
     }
-    private func addAudio(_ url:URL,to composition:AVMutableComposition,at:CMTime,sourceStart:CMTime,sourceFrames:Int,targetDuration:CMTime,fps:Int,gain:Float,preservePitch:Bool) async throws -> AVMutableAudioMixInputParameters {
+    private static func applyEnvelope(_ segments:[MusicGainSegment],to parameters:AVMutableAudioMixInputParameters,at offset:CMTime) {
+        for segment in segments {
+            let start=CMTimeAdd(offset,CMTime(seconds:segment.startSeconds,preferredTimescale:60000))
+            let end=CMTimeAdd(offset,CMTime(seconds:segment.endSeconds,preferredTimescale:60000))
+            // Constant intervals must be explicit too: isolated volume points can
+            // interpolate toward a later mute and lower earlier, still-audible audio.
+            parameters.setVolumeRamp(fromStartVolume:Float(segment.startGain),toEndVolume:Float(segment.endGain),timeRange:CMTimeRange(start:start,end:end))
+        }
+    }
+    private func addAudio(_ url:URL,to composition:AVMutableComposition,at:CMTime,sourceStart:CMTime,sourceFrames:Int,targetDuration:CMTime,fps:Int,gain:Float,preservePitch:Bool,preparationDirectory:URL,envelope:[MusicGainSegment]?=nil) async throws -> AVMutableAudioMixInputParameters {
         let asset=AVURLAsset(url:url); guard let src=try await asset.loadTracks(withMediaType:.audio).first,let track=composition.addMutableTrack(withMediaType:.audio,preferredTrackID:kCMPersistentTrackID_Invalid) else { throw VideoError.invalid("声音素材没有可用音轨") }
         let available=try await asset.load(.duration); let desired=CMTime(value:Int64(sourceFrames),timescale:Int32(fps)); let duration=CMTimeMinimum(desired,CMTimeSubtract(available,sourceStart)); guard duration.seconds>0 else { throw VideoError.invalid("音轨裁切超出范围") }
-        try track.insertTimeRange(CMTimeRange(start:sourceStart,duration:duration),of:src,at:at); track.scaleTimeRange(CMTimeRange(start:at,duration:duration),toDuration:targetDuration); let p=AVMutableAudioMixInputParameters(track:track); p.audioTimePitchAlgorithm=preservePitch ? .spectral : .varispeed; p.setVolume(gain,at:at); return p
+        var prepared:URL?
+        if !preservePitch,CMTimeCompare(duration,targetDuration) != 0 {
+            let descriptions=try await src.load(.formatDescriptions)
+            if !descriptions.isEmpty,descriptions.allSatisfy({description in
+                CMAudioFormatDescriptionGetStreamBasicDescription(description)?.pointee.mFormatID == kAudioFormatLinearPCM
+            }) {prepared=try Self.prepareLinearPCM(url,sourceStart:sourceStart,duration:duration,targetDuration:targetDuration,directory:preparationDirectory)}
+        }
+        if let prepared {
+            let preparedAsset=AVURLAsset(url:prepared)
+            guard let preparedTrack=try await preparedAsset.loadTracks(withMediaType:.audio).first else{throw VideoError.review("变速声音准备后缺少音轨")}
+            let preparedDuration=try await preparedAsset.load(.duration)
+            try track.insertTimeRange(CMTimeRange(start:.zero,duration:preparedDuration),of:preparedTrack,at:at)
+        } else {
+            try track.insertTimeRange(CMTimeRange(start:sourceStart,duration:duration),of:src,at:at)
+            track.scaleTimeRange(CMTimeRange(start:at,duration:duration),toDuration:targetDuration)
+        }
+        let p=AVMutableAudioMixInputParameters(track:track); p.audioTimePitchAlgorithm=preservePitch ? .spectral : .varispeed
+        if let envelope {Self.applyEnvelope(envelope,to:p,at:at)} else {p.setVolume(gain,at:at)}
+        return p
+    }
+    /// Avoid OfflineMixer's short, scaled LPCM EOF stall. Reinterpret the actual
+    /// selected samples at N/T, drain the converter, then mix the closed file at unity rate.
+    /// Volume and ducking remain in addAudio and are applied once after preparation.
+    private static func prepareLinearPCM(_ url:URL,sourceStart:CMTime,duration:CMTime,targetDuration:CMTime,directory:URL)throws->URL {
+        try Task.checkCancellation()
+        let file=try AVAudioFile(forReading:url,commonFormat:.pcmFormatFloat32,interleaved:false)
+        let original=file.processingFormat,rate=original.sampleRate,targetSeconds=targetDuration.seconds
+        let startSamples=sourceStart.seconds*rate,selectedSamples=duration.seconds*rate
+        guard file.fileFormat.streamDescription.pointee.mFormatID==kAudioFormatLinearPCM,
+              rate.isFinite,rate>0,original.channelCount>0,targetSeconds.isFinite,targetSeconds>0,
+              startSamples.isFinite,startSamples>=0,startSamples<Double(Int64.max),
+              selectedSamples.isFinite,selectedSamples>0,selectedSamples<Double(Int64.max) else{throw VideoError.review("线性PCM变速的实际格式或采样窗口无效")}
+        let start=AVAudioFramePosition(startSamples.rounded()),requested=AVAudioFramePosition(selectedSamples.rounded())
+        guard start<file.length,requested>0 else{throw VideoError.review("线性PCM变速窗口没有实际采样")}
+        let sampleCount=min(requested,file.length-start),expectedOutput=targetSeconds*48000
+        guard expectedOutput.isFinite,expectedOutput>0,expectedOutput<Double(Int64.max),
+              let interpreted=AVAudioFormat(commonFormat:.pcmFormatFloat32,sampleRate:Double(sampleCount)/targetSeconds,channels:original.channelCount,interleaved:false),
+              let target=AVAudioFormat(commonFormat:.pcmFormatFloat32,sampleRate:48000,channels:original.channelCount,interleaved:false),
+              let converter=AVAudioConverter(from:interpreted,to:target),
+              let outputBuffer=AVAudioPCMBuffer(pcmFormat:target,frameCapacity:4096) else{throw VideoError.review("实际PCM采样窗口的变速转换器不可用")}
+        converter.sampleRateConverterQuality=AVAudioQuality.max.rawValue
+        file.framePosition=start
+        let output=directory.appendingPathComponent(Codec.id()+".caf")
+        var writer:AVAudioFile?=try AVAudioFile(forWriting:output,settings:target.settings)
+        defer{writer=nil}
+        var consumed:AVAudioFramePosition=0,produced:AVAudioFramePosition=0
+        var inputError:Error?,heldInput:AVAudioPCMBuffer?,endSent=false,endReturned=false,steps=0,noProgress=0
+        // The bound scales with both actual input and output lengths; it includes
+        // a finite allowance for converter priming/draining, never fabricated tail samples.
+        let stepLimit=Int(ceil(Double(sampleCount)/4096)+ceil(expectedOutput/4096))+16
+        while !endReturned {
+            try Task.checkCancellation()
+            guard steps<stepLimit else{throw VideoError.review("PCM变速未在实际采样量对应的有限步骤内结束")}
+            steps+=1;outputBuffer.frameLength=0
+            let before=consumed;var conversionError:NSError?
+            let status=converter.convert(to:outputBuffer,error:&conversionError) { packets,inputStatus in
+                do {
+                    try Task.checkCancellation()
+                    if consumed>=sampleCount {endSent=true;inputStatus.pointee = .endOfStream;return nil}
+                    let count=AVAudioFrameCount(min(AVAudioFramePosition(packets),min(4096,sampleCount-consumed)))
+                    guard count>0 else{inputStatus.pointee = .noDataNow;return nil}
+                    guard let native=AVAudioPCMBuffer(pcmFormat:original,frameCapacity:count) else{throw VideoError.review("PCM变速输入缓冲不可用")}
+                    try file.read(into:native,frameCount:count)
+                    guard native.frameLength>0,let nativeChannels=native.floatChannelData,
+                          let reinterpreted=AVAudioPCMBuffer(pcmFormat:interpreted,frameCapacity:native.frameLength),
+                          let reinterpretedChannels=reinterpreted.floatChannelData else{throw VideoError.review("PCM变速未读完所选实际采样")}
+                    reinterpreted.frameLength=native.frameLength
+                    for channel in 0..<Int(original.channelCount) {memcpy(reinterpretedChannels[channel],nativeChannels[channel],Int(native.frameLength)*MemoryLayout<Float>.size)}
+                    consumed+=AVAudioFramePosition(native.frameLength);heldInput=reinterpreted
+                    inputStatus.pointee = .haveData;return heldInput
+                } catch {inputError=error;inputStatus.pointee = .endOfStream;return nil}
+            }
+            if let inputError {throw inputError}
+            if let conversionError {throw conversionError}
+            try Task.checkCancellation()
+            if outputBuffer.frameLength>0 {
+                guard let writer else{throw VideoError.review("PCM变速输出文件未打开")}
+                try writer.write(from:outputBuffer);produced+=AVAudioFramePosition(outputBuffer.frameLength)
+            }
+            switch status {
+            case .endOfStream:endReturned=true
+            case .haveData,.inputRanDry:break
+            case .error:throw VideoError.review("PCM变速转换失败")
+            @unknown default:throw VideoError.review("PCM变速转换状态未知")
+            }
+            if !endReturned,consumed==before,outputBuffer.frameLength==0 {noProgress+=1}else{noProgress=0}
+            guard noProgress<3 else{throw VideoError.review("PCM变速转换未继续读取或输出采样")}
+        }
+        guard endSent,consumed==sampleCount,abs(Double(produced)-expectedOutput)<=0.500001 else{throw VideoError.review("PCM变速没有完整结束或实际时长偏离目标超过半个48kHz采样")}
+        writer=nil
+        let closed=try AVAudioFile(forReading:output)
+        guard closed.length==produced,closed.fileFormat.sampleRate==48000,closed.fileFormat.channelCount==original.channelCount else{throw VideoError.review("PCM变速文件关闭后的实际格式或采样量不一致")}
+        try Task.checkCancellation()
+        return output
     }
     private static func silence(to url:URL,seconds:Double) throws { let format=AVAudioFormat(standardFormatWithSampleRate:48000,channels:1)!; let file=try AVAudioFile(forWriting:url,settings:format.settings); let buffer=AVAudioPCMBuffer(pcmFormat:format,frameCapacity:48000)!; buffer.frameLength=48000; memset(buffer.floatChannelData![0],0,48000*MemoryLayout<Float>.size); var remaining=Int(ceil(seconds*48000)); while remaining>0 { buffer.frameLength=AVAudioFrameCount(min(remaining,48000)); try file.write(from:buffer); remaining -= Int(buffer.frameLength) } }
     public static func publicationNotes(_ r:Revision,audio:AudioDiagnostics) throws -> String {
-        var lines=[r.contentName,r.cta,"","用途："+r.purpose.rawValue,"AI辅助制作；请按实际用途核对AI/商业标识、版权和文字。通用文件导出不要求运营账号或平台挂载资格。","版本："+r.id,"IR/schema：\(r.schemaVersion)；工具链：\(r.toolchain)","摘要："+(try r.contentDigest()),"混音实测：峰值 \(audio.peakDBFS) dBFS；未加权RMS \(audio.rmsDBFS) dBFS（不是LUFS）","当前文件为待看听预览；人工审核与真实发布状态在工程中另记。","此包未自动发布。"]
+        var lines=[r.contentName,r.cta,"","用途："+r.purpose.rawValue,"AI辅助制作；请按实际用途核对AI/商业标识、版权和文字。通用文件导出不要求运营账号或平台挂载资格。","平台账号/挂载资格：未核实（仅通用文件交付）","版本："+r.id,"IR/schema：\(r.schemaVersion)；工具链：\(r.toolchain)","摘要："+(try r.contentDigest()),"混音实测：峰值 \(audio.peakDBFS) dBFS；未加权RMS \(audio.rmsDBFS) dBFS（不是LUFS）","当前文件为待看听预览；人工审核与真实发布状态在工程中另记。","此包未自动发布。"]
         if let brief=r.productionBrief {
             lines += ["制作目标："+brief.objective,"约定用途："+brief.intendedUse,"修改要求："+brief.modifications,"AI标识声明："+brief.aiDisclosure,"商业标识声明："+brief.commercialDisclosure,"使用限制："+brief.restrictions,"用途截止："+(brief.permittedUntil.map(BeijingTime.string) ?? "未另设；不扩张原授权"),"Brief证据："+brief.evidenceIDs.joined(separator:",")]
         }

@@ -115,6 +115,74 @@ final class MediaTests:XCTestCase {
     func testSubtitleRetimingUsesClipMapping()throws{
         let p=Product(workspaceID:"w",sku:"q",name:"q",checkout:"https://example.com",audience:"a",task:"t",outcome:"o",prerequisite:"p",scope:"s",prices:[Price(money:Money(1),source:"test")]);var s=Scene(title:"t",body:"b",durationFrames:120);s.speed=2;s.captions=[Caption(text:"99元 / AI",startFrame:30,endFrame:90,confirmed:true)];let r=Revision(product:p,purpose:.education,aspect:.portrait,scenes:[s],cta:"复现");XCTAssertTrue(MediaRenderer.subtitles(r).contains("00:00:00,500 --> 00:00:01,500"))
     }
+    func testVisualCacheIdentityBindsTheActualWriterConfigurationAndFrameworkBuilds() throws {
+        let scene=Scene(title:"缓存身份",body:"编码参数来自同一配置。",durationFrames:15)
+        for aspect in Aspect.allCases {
+            let revision=try Planner.create(workspaceID:"w",name:"编码配置",aspect:aspect,scenes:[scene])
+            let configuration=VisualClipCache.EncodingConfiguration(aspect:aspect,fps:revision.fps)
+            let settings=configuration.writerSettings
+            let compression=try XCTUnwrap(settings[AVVideoCompressionPropertiesKey] as? [String:Any])
+            let colors=try XCTUnwrap(settings[AVVideoColorPropertiesKey] as? [String:Any])
+            XCTAssertEqual(settings[AVVideoCodecKey] as? AVVideoCodecType,.h264)
+            XCTAssertEqual(settings[AVVideoWidthKey] as? Int,aspect.width)
+            XCTAssertEqual(settings[AVVideoHeightKey] as? Int,aspect.height)
+            XCTAssertEqual(compression[AVVideoAverageBitRateKey] as? Int,2_500_000)
+            XCTAssertEqual(compression[AVVideoExpectedSourceFrameRateKey] as? Int,30)
+            XCTAssertEqual(compression[AVVideoAllowFrameReorderingKey] as? Bool,false)
+            XCTAssertEqual(compression[AVVideoMaxKeyFrameIntervalKey] as? Int,60)
+            XCTAssertEqual(compression[AVVideoProfileLevelKey] as? String,AVVideoProfileLevelH264HighAutoLevel)
+            XCTAssertEqual(colors[AVVideoColorPrimariesKey] as? String,AVVideoColorPrimaries_ITU_R_709_2)
+            XCTAssertEqual(colors[AVVideoTransferFunctionKey] as? String,AVVideoTransferFunction_ITU_R_709_2)
+            XCTAssertEqual(colors[AVVideoYCbCrMatrixKey] as? String,AVVideoYCbCrMatrix_ITU_R_709_2)
+            XCTAssertEqual(configuration.pixelBufferAttributes[kCVPixelBufferPixelFormatTypeKey as String] as? UInt32,kCVPixelFormatType_32ARGB)
+            XCTAssertEqual(configuration.mediaTimeScale,30_000)
+            XCTAssertEqual(configuration.fileType,AVFileType.mp4.rawValue)
+            let key=try VisualClipCache.fingerprint(revision:revision,index:0,database:Database(),modules:nil,encoding:configuration)
+            XCTAssertEqual(key,try VisualClipCache.fingerprint(revision:revision,index:0,database:Database(),modules:nil))
+            func changesKey(_ change:(inout VisualClipCache.EncodingConfiguration)->Void) throws {
+                var changed=configuration; change(&changed)
+                XCTAssertNotEqual(key,try VisualClipCache.fingerprint(revision:revision,index:0,database:Database(),modules:nil,encoding:changed))
+            }
+            try changesKey{$0.averageBitRate += 1}
+            try changesKey{$0.allowsFrameReordering=true}
+            try changesKey{$0.maximumKeyFrameInterval += 1}
+            try changesKey{$0.profileLevel=AVVideoProfileLevelH264MainAutoLevel}
+            try changesKey{$0.colorPrimaries=AVVideoColorPrimaries_ITU_R_2020}
+            try changesKey{$0.transferFunction=AVVideoTransferFunction_Linear}
+            try changesKey{$0.ycbcrMatrix=AVVideoYCbCrMatrix_ITU_R_2020}
+            try changesKey{$0.pixelFormat=kCVPixelFormatType_32BGRA}
+            try changesKey{$0.mediaTimeScale += 1}
+            // A changed build here is an isolated identity fixture, not a claim that
+            // the machine's actual codec or frameworks have been upgraded.
+            try changesKey{$0.frameworks[0].buildVersion="different-test-build"}
+            try changesKey{$0.frameworks[1].buildVersion="different-test-build"}
+        }
+    }
+
+    func testMissingFrameworkIdentityRendersWithoutPersistentCacheReuse() async throws {
+        let root=FileManager.default.temporaryDirectory.appendingPathComponent("video-cache-unidentified-"+UUID().uuidString)
+        defer{try? FileManager.default.removeItem(at:root)}
+        let repo=try Repository(root:root),workspace=Workspace(name:"依赖身份缺失",owner:"tester")
+        try repo.transaction{$0.workspaces=[workspace]}
+        let scene=Scene(title:"依赖身份缺失",body:"仍可制作，不复用未知缓存。",durationFrames:15)
+        let revision=try Planner.create(workspaceID:workspace.id,name:"未知编码依赖",aspect:.landscape,scenes:[scene])
+        var configuration=VisualClipCache.EncodingConfiguration(aspect:revision.aspect,fps:revision.fps)
+        configuration.frameworks[0] = .init(expectedIdentifier:"com.apple.avfoundation",bundle:nil)
+        XCTAssertFalse(configuration.canReusePersistentCache)
+        for name in ["first.mp4","second.mp4"] {
+            let output=root.appendingPathComponent(name)
+            let hits=try await VisualClipCache.compose(revision:revision,repository:repo,database:repo.read(),output:output,modules:nil,encoding:configuration,progress:{_ in})
+            XCTAssertEqual(hits,0)
+            let tracks=try await AVURLAsset(url:output).loadTracks(withMediaType:.video)
+            XCTAssertEqual(tracks.count,1)
+            let descriptions=try await XCTUnwrap(tracks.first).load(.formatDescriptions)
+            XCTAssertEqual(CMFormatDescriptionGetMediaSubType(try XCTUnwrap(descriptions.first)),kCMVideoCodecType_H264)
+        }
+        let cache=root.appendingPathComponent("cache")
+        let files=try FileManager.default.contentsOfDirectory(at:cache,includingPropertiesForKeys:nil)
+        XCTAssertFalse(files.contains{$0.lastPathComponent.hasPrefix("visuals")},"未知依赖的临时编码不得留成共享缓存")
+    }
+
     func testActualSceneCacheReusesUnaffectedClipAndRejectsCorruptionOrToolchainChange()async throws {
         let root=FileManager.default.temporaryDirectory.appendingPathComponent("video-cache-"+UUID().uuidString);defer{try? FileManager.default.removeItem(at:root)}
         let repo=try Repository(root:root);let w=Workspace(name:"缓存夹具",owner:"tester");try repo.transaction{$0.workspaces.append(w)}
@@ -129,6 +197,7 @@ final class MediaTests:XCTestCase {
         XCTAssertEqual(try frame(first,0),try frame(changed,0));XCTAssertNotEqual(try frame(first,29),try frame(changed,29))
         let directory=root.appendingPathComponent("cache/visuals");for file in try FileManager.default.contentsOfDirectory(at:directory,includingPropertiesForKeys:nil) where file.pathExtension=="mp4" {try Data("corrupt".utf8).write(to:file,options:.atomic)}
         let rebuilt=try await MediaRenderer().render(revision:r,repository:repo,output:root.appendingPathComponent("four"));XCTAssertTrue(rebuilt.warnings.contains{$0.contains("0/2")})
-        r.toolchain="new-codec-runtime";let upgraded=try await MediaRenderer().render(revision:r,repository:repo,output:root.appendingPathComponent("five"));XCTAssertTrue(upgraded.warnings.contains{$0.contains("0/2")})
+        // This checks explicit toolchain namespacing, not an actual codec upgrade.
+        r.toolchain="changed-toolchain-marker";let changedToolchain=try await MediaRenderer().render(revision:r,repository:repo,output:root.appendingPathComponent("five"));XCTAssertTrue(changedToolchain.warnings.contains{$0.contains("0/2")})
     }
 }
