@@ -77,6 +77,21 @@ jobs:
           print('image=' + os.environ.get('ImageOS', 'unknown') + '; image_version=' + os.environ.get('ImageVersion', 'unknown'))
           PY
 
+      - name: Check offline narration adapter rules
+        shell: bash
+        run: |
+          python3 -B - <<'PY'
+          import unittest
+          suite = unittest.defaultTestLoader.discover('Integrations/tests', pattern='test_expressive_tts.py')
+          count = suite.countTestCases()
+          assert count >= 18, 'Expected the complete narration adapter rule suite'
+          print('expressive_tts_distinct_rules=' + str(count))
+          print('model_download=not_run; inference=not_run; voice_quality=needs_review')
+          PY
+          python3 -B -m unittest discover -s Integrations/tests -p test_expressive_tts.py
+          python3 -B Integrations/expressive_tts.py --help
+          python3 -B Integrations/prepare_cosyvoice.py --help
+
       - name: Prepare normal media tools
         shell: bash
         run: |
