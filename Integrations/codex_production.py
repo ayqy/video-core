@@ -45,7 +45,7 @@ _COST = frozenset(("currency", "estimated", "reserved", "actual", "unknown"))
 _SCENE = frozenset(("id", "kind", "title", "body", "narration", "durationFrames", "assetID", "evidenceIDs",
                     "sourceStartFrame", "sourceEndFrame", "speed", "preservePitch", "locked", "x", "y", "scale",
                     "voiceGain", "sourceGain", "musicGain", "muted", "pauseFrames", "captions", "voice", "simulation",
-                    "character", "emotion", "color", "showPrice", "keyframes", "classicArtworkRequired", "fontName"))
+                    "character", "emotion", "color", "showPrice", "keyframes", "classicArtworkRequired", "fontName", "speechPlan"))
 _ASSET = frozenset(("id", "workspaceID", "name", "hash", "ext", "bytes", "mediaType", "durationFrames", "pages",
                     "warnings", "evidenceID", "tags", "importedAt", "generatedSource"))
 _JOB = frozenset(("id", "workspaceID", "projectID", "revisionID", "digest", "requestKey", "quote", "state",
@@ -456,11 +456,70 @@ class LocalProductionPolicy:
             _object(caption, {"id", "text", "startFrame", "endFrame", "alignment", "confirmed"}, {"confirmed"})
             if caption["confirmed"] is not False:
                 _fail("local_no_human_review_grant")
+        if scene.get("speechPlan") is not None:
+            self._speech_plan(scene["speechPlan"], scene["narration"])
         if scene.get("voice") is not None:
             voice = scene["voice"]
             _object(voice, {"assetID", "textDigest", "durationFrames", "method", "listened"}, {"assetID", "listened"})
             if voice["assetID"] not in self.assets or voice["listened"] is not False:
                 _fail("local_imported_unreviewed_voice_required")
+
+    @staticmethod
+    def _speech_plan(plan, narration):
+        """Carry an authored local SpeechPlan without changing its audio identity."""
+        fields = {"source", "normalized", "dictionary", "mappings", "voiceIdentifier", "rate", "confirmed", "notes"}
+        _object(plan, fields, fields - {"voiceIdentifier"})
+
+        def utf16(value, maximum, *, nonempty=True):
+            if not isinstance(value, str) or (nonempty and not value.strip()):
+                _fail("local_speech_text_refused")
+            try:
+                count = len(value.encode("utf-16-le")) // 2
+            except UnicodeError:
+                _fail("local_speech_unicode_refused")
+            if count > maximum:
+                _fail("local_speech_text_bound")
+            return count
+
+        source_count = utf16(plan["source"], 4000)
+        normalized_count = utf16(plan["normalized"], 8000)
+        if plan["source"] != narration or plan["confirmed"] is not False:
+            _fail("local_unreviewed_matching_speech_source_required")
+        rate = plan["rate"]
+        if type(rate) not in (int, float) or not .2 <= rate <= .65 or not math.isfinite(rate):
+            _fail("local_speech_rate_refused")
+        voice = plan.get("voiceIdentifier")
+        if voice is not None:
+            utf16(voice, 256)
+        dictionary, mappings, notes = plan["dictionary"], plan["mappings"], plan["notes"]
+        if (not isinstance(dictionary, list) or len(dictionary) > 200 or
+                not isinstance(mappings, list) or len(mappings) > 256 or
+                not isinstance(notes, list) or len(notes) > 256):
+            _fail("local_speech_array_bound")
+        terms = set()
+        for entry in dictionary:
+            _object(entry, {"term", "pronunciation"}, {"term", "pronunciation"})
+            utf16(entry["term"], 100)
+            utf16(entry["pronunciation"], 200)
+            if entry["term"] in terms:
+                _fail("local_speech_duplicate_term_refused")
+            terms.add(entry["term"])
+        for note in notes:
+            utf16(note, 4000, nonempty=False)
+        previous_source = previous_normalized = 0
+        offsets = {"sourceStart", "sourceLength", "normalizedStart", "normalizedLength"}
+        for mapping in mappings:
+            _object(mapping, offsets | {"kind"}, offsets | {"kind"})
+            if any(type(mapping[key]) is not int for key in offsets):
+                _fail("local_speech_integer_offsets_required")
+            utf16(mapping["kind"], 100)
+            start, length = mapping["sourceStart"], mapping["sourceLength"]
+            normalized_start, normalized_length = mapping["normalizedStart"], mapping["normalizedLength"]
+            if (not previous_source <= start <= source_count or not 0 < length <= source_count-start or
+                    not previous_normalized <= normalized_start <= normalized_count or
+                    not 0 < normalized_length <= normalized_count-normalized_start):
+                _fail("local_speech_mapping_range_or_order_refused")
+            previous_source, previous_normalized = start+length, normalized_start+normalized_length
 
     def _quote(self, quote, *, confirmed):
         _object(quote, _QUOTE, _QUOTE)

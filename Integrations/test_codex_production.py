@@ -210,6 +210,93 @@ class LocalProductionTests(unittest.TestCase):
         with self.assertRaises(ProtocolError):
             policy.claim(policy.arguments(policy.commands[-1]))
 
+    @staticmethod
+    def speech_scene():
+        return dict(id='dddddddd-dddd-dddd-dddd-dddddddddddd', kind='图文讲解', title='Authored speech',
+            body='Unreviewed local material', narration='甲😀乙', durationFrames=287, captions=[],
+            speechPlan=dict(source='甲😀乙', normalized='甲笑脸乙', dictionary=[dict(term='😀',pronunciation='笑脸')],
+                mappings=[dict(sourceStart=1,sourceLength=2,normalizedStart=1,normalizedLength=2,kind='dictionary')],
+                rate=.5,confirmed=False,notes=['Preserve the authored input.']))
+
+    def speech_policy(self):
+        self.step('workspace','workspaces create',{'name':'local'})
+        return self.plan()
+
+    def test_unreviewed_speech_plan_preserves_utf16_source_and_optional_voice(self):
+        policy=self.speech_policy()
+        scene=self.speech_scene()
+        original=deepcopy(scene)
+        policy._scene(scene)
+        self.assertEqual(scene,original)
+        scene['speechPlan']['voiceIdentifier']='reviewed-local-voice'
+        policy._scene(scene)
+        scene['speechPlan']['voiceIdentifier']=None
+        policy._scene(scene)
+        # 乙 starts at UTF-16 offset 3, rather than Python code-point offset 2.
+        scene['speechPlan']['mappings'].append(dict(sourceStart=3,sourceLength=1,normalizedStart=3,normalizedLength=1,kind='unchanged'))
+        policy._scene(scene)
+        del scene['speechPlan']
+        policy._scene(scene)  # Existing ordinary callers remain supported.
+
+    def test_speech_plan_cannot_inject_provider_credentials_or_review_confirmation(self):
+        policy=self.speech_policy()
+        for mutation in ({'provider':'external'},{'api_key':'not-a-real-key'},{'confirmed':True},{'confirmed':0},
+                         {'source':'different narration'},{'voiceIdentifier':{}},{'notes':[{}]}):
+            with self.subTest(mutation=mutation):
+                scene=self.speech_scene();scene['speechPlan'].update(mutation)
+                with self.assertRaises(ProtocolError):policy._scene(scene)
+
+    def test_speech_rate_and_utf16_text_have_explicit_finite_bounds(self):
+        policy=self.speech_policy()
+        for rate in (True,False,'0.5',float('nan'),float('inf'),.199,.651,10**1000):
+            scene=self.speech_scene();scene['speechPlan']['rate']=rate
+            with self.subTest(rate=rate),self.assertRaises(ProtocolError):policy._scene(scene)
+        for value in ('','   ','😀'*2001):
+            scene=self.speech_scene();scene['narration']=value;scene['speechPlan']['source']=value
+            with self.subTest(source_length=len(value)),self.assertRaises(ProtocolError):policy._scene(scene)
+        scene=self.speech_scene();scene['speechPlan']['normalized']='😀'*4001
+        with self.assertRaises(ProtocolError):policy._scene(scene)
+
+    def test_speech_dictionary_rejects_duplicate_unknown_empty_or_overlong_terms(self):
+        policy=self.speech_policy()
+        for entries in ([{'term':'a','pronunciation':'b'},{'term':'a','pronunciation':'c'}],
+                        [{'term':'','pronunciation':'b'}],[{'term':'a','pronunciation':''}],
+                        [{'term':'a','pronunciation':'b','extra':True}],
+                        [{'term':'😀'*51,'pronunciation':'b'}],
+                        [{'term':'a','pronunciation':'😀'*101}],
+                        [dict(term=str(i),pronunciation='a') for i in range(201)]):
+            scene=self.speech_scene();scene['speechPlan']['dictionary']=entries
+            with self.subTest(entries=len(entries)),self.assertRaises(ProtocolError):policy._scene(scene)
+
+    def test_speech_mapping_ranges_order_integer_types_and_shapes_are_strict(self):
+        policy=self.speech_policy()
+        mutations=({'sourceStart':-1},{'sourceStart':5},{'sourceLength':0},{'sourceLength':2**63-1},
+                   {'normalizedStart':5},{'normalizedLength':0},{'normalizedLength':2**63-1},
+                   {'sourceStart':True},{'sourceLength':'2'},{'kind':''},{'extra':1})
+        for mutation in mutations:
+            scene=self.speech_scene();scene['speechPlan']['mappings'][0].update(mutation)
+            with self.subTest(mutation=mutation),self.assertRaises(ProtocolError):policy._scene(scene)
+        scene=self.speech_scene();scene['speechPlan']['mappings'].append(deepcopy(scene['speechPlan']['mappings'][0]))
+        with self.assertRaises(ProtocolError):policy._scene(scene)
+        scene=self.speech_scene();scene['speechPlan']['mappings']=[scene['speechPlan']['mappings'][0]]*257
+        with self.assertRaises(ProtocolError):policy._scene(scene)
+
+    def test_speech_plan_never_grants_voice_or_caption_human_review(self):
+        policy=self.speech_policy()
+        scene=self.speech_scene();scene['captions']=[dict(confirmed=True)]
+        with self.assertRaisesRegex(ProtocolError,'human_review'):policy._scene(scene)
+        scene=self.speech_scene();scene['voice']=dict(assetID='eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee',listened=True)
+        with self.assertRaisesRegex(ProtocolError,'unreviewed_voice'):policy._scene(scene)
+
+    def test_speech_plan_input_is_still_hash_pinned_before_any_write(self):
+        self.step('workspace','workspaces create',{'name':'local'})
+        step=self.step('project','projects create',{'workspace_id':None,'name':'local','scenes':[self.speech_scene()]},self.scope())
+        policy=self.plan()
+        changed=json.loads(step.input_file.read_text());changed['scenes'][0]['speechPlan']['normalized']='different'
+        step.input_file.write_text(json.dumps(changed))
+        with self.assertRaises(ValueError):policy.claim(policy.arguments(policy.commands[0]))
+        self.assertFalse(self.workspace.exists())
+
     def test_legacy_command_cannot_acquire_writes_by_changing_kind(self):
         self.step('workspace','workspaces create',{'name':'local'})
         with self.assertRaises(ValueError):
