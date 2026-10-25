@@ -15,7 +15,7 @@ from unittest.mock import patch
 from codex_broker import (Broker, Command, FilePin, Policy, TOOL, _consume, _stop, execute, run_codex,
                           server_arguments, thread_parameters, _OFFICIAL_NOTIFICATIONS, _NOTIFICATION_ENUM_SHA256,
                           _project_mcp, _mcp_projection, isolate_mcp, probe_mcp_isolation,
-                          _verified_model_catalog)
+                          _verified_model_catalog, PinnedSkill)
 from codex_events import ProtocolError
 
 
@@ -58,6 +58,12 @@ if mode!='zero':
  item.update(status='completed',success=True)
  send({'method':'item/completed','params':{'threadId':'thread-one','turnId':'turn-one','item':item}})
 send({'method':'turn/completed','params':{'threadId':'thread-one','turn':{'id':'turn-one','status':'completed','error':None}}})
+if mode.startswith('tail-') or mode=='normal':
+ assert sys.stdin.readline()==''
+ if mode=='tail-info': send({'method':'thread/status/changed','params':{'threadId':'thread-one','status':{'type':'idle'}}})
+ if mode=='tail-partial': sys.stdout.write('{"broken":');sys.stdout.flush()
+ if mode=='tail-invalid': send({'method':'item/tool/call','id':101,'params':{'secret':'never-execute'}})
+ if mode=='tail-timeout': time.sleep(30)
 if mode=='pass': time.sleep(30)  # Persistent server, stopped only by the owned-group cleanup.
 '''
 
@@ -157,10 +163,29 @@ class BrokerTests(unittest.TestCase):
                     broker.receive({"id": 2, "result": result})
                 self.assertEqual(broker.policy.used, 0)
                 self.assertFalse(broker.summary()["catalog_model_acknowledged"])
+                self.assertEqual(broker.summary()["catalog_model_receipt"]["received"], model)
             else:
                 response = broker.receive({"id": 2, "result": result})
                 self.assertEqual(response[0]["method"], "turn/start")
                 self.assertTrue(broker.summary()["catalog_model_acknowledged"])
+
+    def test_catalog_selects_only_its_reviewed_model_in_thread_with_or_without_skill(self):
+        catalog = self.catalog()
+        self.assertNotIn("model", thread_parameters(Policy((self.command(),))))
+        self.assertEqual(thread_parameters(Policy((self.command(),)), model_catalog=catalog)["model"], "test-model")
+        for skill in (None, self.skill()):
+            broker = Broker(Policy((self.command(),)), "bounded task", deadline=time.monotonic()+5,
+                            model_catalog=catalog, skill=skill)
+            broker.receive({"id": 1, "result": {}})
+            requests = broker.receive({"id": 4, "result": {"data": [], "nextCursor": None}})
+            if skill is not None:
+                requests = broker.receive({"id": 5, "result": {"data": [{"cwd": str(self.root), "errors": [], "skills": [
+                    {"path": str(skill.directory/"SKILL.md"), "name": "video", "enabled": True}]}]}})
+            self.assertEqual(requests[0]["method"], "thread/start")
+            self.assertEqual(requests[0]["params"]["model"], "test-model")
+            self.assertEqual(requests[0]["params"]["runtimeWorkspaceRoots"], [])
+        with self.assertRaises(ProtocolError):
+            thread_parameters(Policy((self.command(),)), model_catalog="unreviewed-model")
 
     def test_pinned_catalog_is_preserved_through_both_mcp_inventory_projections(self):
         pin = self.catalog()
@@ -174,6 +199,106 @@ class BrokerTests(unittest.TestCase):
     def command(self):
         return Command("discover", (str(self.python), str(self.discover), "--binary", str(self.binary)), self.root,
                        tuple(self.pin(p) for p in (self.python, self.discover, self.binary)), "discovery")
+
+    def skill(self):
+        root = self.root / "skill"
+        values = {"SKILL.md": "---\nname: video\n---\nPublic test-only instructions.\n",
+                  "LICENSE": "Test license", "NOTICE": "Test notice", "agents/openai.yaml": "name: video\n",
+                  "references/protocol.md": "Test protocol\n"}
+        for name, text in values.items():
+            path = root / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(text)
+        return PinnedSkill(root, tuple(self.pin(root/name) for name in values))
+
+    def test_explicit_skill_input_is_fixed_and_does_not_change_tool_or_permission_contract(self):
+        skill = self.skill()
+        broker = Broker(Policy((self.command(),)), "bounded task", deadline=time.monotonic()+5, skill=skill)
+        broker.receive({"id": 1, "result": {}})
+        requests = broker.receive({"id": 4, "result": {"data": [], "nextCursor": None}})
+        self.assertEqual(requests[0]["method"], "skills/list")
+        self.assertEqual(requests[0]["params"], {"cwds": [str(self.root)], "forceReload": True})
+        broker.receive({"id": 5, "result": {"data": [{"cwd": str(self.root), "errors": [], "skills": [
+            {"path": str(skill.directory/"SKILL.md"), "name": "video", "enabled": True}]}]}})
+        replies = broker.receive({"id": 2, "result": {"thread": {"id": "thread-one"}, "cwd": str(self.root),
+            "approvalPolicy": "on-request", "sandbox": {"type": "readOnly"}, "runtimeWorkspaceRoots": []}})
+        inputs = replies[0]["params"]["input"]
+        self.assertEqual(inputs, [{"type": "text", "text": "bounded task"},
+            {"type": "skill", "name": "video", "path": str(skill.directory/"SKILL.md")}])
+        self.assertTrue(broker.summary()["skill_input"]["submitted"])
+        self.assertTrue(broker.summary()["skill_input"]["catalog_verified"])
+        self.assertEqual(broker.summary()["native_approvals_accepted"], 0)
+        self.assertFalse(broker.summary()["passed"])
+        self.assertEqual(broker.policy.used, 0)
+
+    def test_explicit_skill_inventory_must_match_pinned_path_and_be_enabled(self):
+        skill = self.skill()
+        valid = {"data": [{"cwd": str(self.root), "errors": [], "skills": [
+            {"path": str(skill.directory/"SKILL.md"), "name": "video", "enabled": True}]}]}
+        for change in ("path", "disabled", "errors", "cwd", "duplicate"):
+            with self.subTest(change=change):
+                broker = Broker(Policy((self.command(),)), "bounded task", deadline=time.monotonic()+5, skill=skill)
+                broker.receive({"id": 1, "result": {}})
+                broker.receive({"id": 4, "result": {"data": [], "nextCursor": None}})
+                result = deepcopy(valid)
+                entry = result["data"][0]
+                if change == "path": entry["skills"][0]["path"] = str(self.root/"foreign"/"SKILL.md")
+                if change == "disabled": entry["skills"][0]["enabled"] = False
+                if change == "errors": entry["errors"] = [{}]
+                if change == "cwd": entry["cwd"] = str(self.root.parent)
+                if change == "duplicate": entry["skills"].append(deepcopy(entry["skills"][0]))
+                with self.assertRaises(ProtocolError):
+                    broker.receive({"id": 5, "result": result})
+                self.assertFalse(broker.skill_submitted)
+                self.assertEqual(broker.policy.used, 0)
+
+    def test_agent_message_receipt_keeps_only_bounded_length_and_hash(self):
+        broker = self.active()
+        text = "Private words never returned."
+        broker.receive({"method": "item/completed", "params": {"threadId": "thread-one", "turnId": "turn-one",
+            "item": {"id": "message-one", "type": "agentMessage", "text": text}}})
+        self.assertEqual(broker.summary()["agent_messages"], [{"bytes": len(text.encode()),
+            "sha256": hashlib.sha256(text.encode()).hexdigest()}])
+        self.assertNotIn(text, json.dumps(broker.summary()))
+        with self.assertRaises(ProtocolError):
+            broker.receive({"method": "item/completed", "params": {"threadId": "thread-one", "turnId": "turn-one",
+                "item": {"id": "message-two", "type": "agentMessage", "text": "x"*65537}}})
+
+    def test_skill_rejects_changed_incomplete_extra_link_or_identity_before_any_business(self):
+        skill = self.skill()
+        skill.verify()
+        for mutation in ("changed", "incomplete", "extra", "directory", "link", "identity"):
+            with self.subTest(mutation=mutation):
+                if mutation == "changed":
+                    (skill.directory/"NOTICE").write_text("changed")
+                elif mutation == "incomplete":
+                    skill = PinnedSkill(skill.directory, skill.pins[:-1])
+                elif mutation == "extra":
+                    (skill.directory/"extra.txt").write_text("unknown")
+                elif mutation == "directory":
+                    (skill.directory/"unknown").mkdir()
+                elif mutation == "link":
+                    path = skill.directory/"NOTICE"
+                    path.unlink();path.symlink_to(self.binary)
+                else:
+                    path = skill.directory/"SKILL.md"
+                    path.write_text("---\nname: other\n---\n")
+                    skill = PinnedSkill(skill.directory, tuple(self.pin(pin.path) for pin in skill.pins))
+                with self.assertRaises((ValueError, ProtocolError)):
+                    Broker(Policy((self.command(),)), "bounded task", deadline=time.monotonic()+5, skill=skill)
+                import shutil
+                shutil.rmtree(skill.directory)
+                skill = self.skill()
+
+    def test_skill_mutation_before_turn_is_refused_without_tool_execution(self):
+        skill = self.skill()
+        broker = Broker(Policy((self.command(),)), "bounded task", deadline=time.monotonic()+5, skill=skill)
+        broker.receive({"id": 1, "result": {}})
+        (skill.directory/"references/protocol.md").write_text("changed")
+        with self.assertRaises(ValueError):
+            broker.receive({"id": 4, "result": {"data": [], "nextCursor": None}})
+        self.assertFalse(broker.skill_submitted)
+        self.assertEqual(broker.policy.used, 0)
 
     def active(self):
         policy = Policy((self.command(),))
@@ -626,6 +751,39 @@ class BrokerTests(unittest.TestCase):
         self.assertTrue(r["passed"], r)
         self.assertEqual(len(r["executions"]), 1)
         self.assertEqual(r["native_approvals_accepted"], 0)
+        self.assertFalse(r["native_exit"]["normal"])
+
+    def test_terminal_eof_normal_exit_and_valid_tail_are_drained(self):
+        for mode in ("normal", "tail-info"):
+            with self.subTest(mode=mode):
+                policy = Policy((self.command(),))
+                result = _consume([str(self.python), str(self.peer), mode, json.dumps(policy.commands[0].arguments())],
+                                  "Use the exact operation", policy, seconds=5)
+                self.assertTrue(result["passed"], result)
+                self.assertTrue(result["native_exit"]["normal"], result)
+                self.assertEqual(result["native_exit"]["exit_code"], 0)
+                self.assertEqual(result["cleanup"]["term"], "not_attempted")
+                self.assertEqual(result["cleanup"]["kill"], "not_attempted")
+
+    def test_invalid_or_partial_tail_after_terminal_is_not_discarded(self):
+        for mode in ("tail-invalid", "tail-partial"):
+            with self.subTest(mode=mode):
+                policy = Policy((self.command(),))
+                result = _consume([str(self.python), str(self.peer), mode, json.dumps(policy.commands[0].arguments())],
+                                  "Use the exact operation", policy, seconds=5)
+                self.assertFalse(result["passed"], result)
+                self.assertEqual(result["status"], "client_failed")
+                self.assertTrue(result["cleanup"]["passed"])
+                self.assertNotIn("never-execute", json.dumps(result))
+
+    def test_terminal_server_without_exit_keeps_business_and_owned_cleanup_separate(self):
+        policy = Policy((self.command(),))
+        result = _consume([str(self.python), str(self.peer), "tail-timeout", json.dumps(policy.commands[0].arguments())],
+                          "Use the exact operation", policy, seconds=.8)
+        self.assertTrue(result["passed"], result)
+        self.assertFalse(result["native_exit"]["normal"])
+        self.assertTrue(result["cleanup"]["passed"])
+        self.assertLess(result["seconds"], 3)
 
     def test_offline_peer_zero_tool_failure_denial_timeout(self):
         for mode in ("zero", "failure", "denied", "timeout"):

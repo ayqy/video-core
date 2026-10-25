@@ -134,6 +134,53 @@ class FilePin:
             raise ValueError("file_pin_mismatch")
 
 
+@dataclass(frozen=True)
+class PinnedSkill:
+    """One caller-reviewed complete video Skill, never a model-selected path."""
+
+    directory: Path
+    pins: tuple[FilePin, ...]
+
+    def verify(self) -> dict:
+        root = _path(self.directory)
+        expected = {"SKILL.md", "LICENSE", "NOTICE", "agents/openai.yaml", "references/protocol.md"}
+        directories = {"agents", "references"}
+        if (not root.is_dir() or not isinstance(self.pins, tuple) or len(self.pins) != len(expected) or
+                any(not isinstance(pin, FilePin) for pin in self.pins)):
+            raise ProtocolError("video_skill_complete_pins_required")
+        actual, total = {}, 0
+        for count, path in enumerate(root.rglob("*"), 1):
+            if count > len(expected) + len(directories):
+                raise ProtocolError("video_skill_layout_refused")
+            _path(path)
+            relative = path.relative_to(root).as_posix()
+            info = path.stat()
+            if path.is_dir():
+                if relative not in directories:
+                    raise ProtocolError("video_skill_layout_refused")
+                continue
+            if not path.is_file() or info.st_nlink != 1 or relative not in expected:
+                raise ProtocolError("video_skill_layout_refused")
+            total += info.st_size
+            if not 0 < info.st_size <= 256 * 1024 or total > 1024 * 1024:
+                raise ProtocolError("video_skill_byte_bound")
+            actual[path] = relative
+        if set(actual.values()) != expected or {pin.path for pin in self.pins} != set(actual):
+            raise ProtocolError("video_skill_complete_pins_required")
+        for pin in self.pins:
+            pin.verify()
+        entry = root / "SKILL.md"
+        if not entry.read_bytes().startswith(b"---\nname: video\n"):
+            raise ProtocolError("video_skill_identity_refused")
+        package = {actual[pin.path]: pin.sha256 for pin in self.pins}
+        digest = hashlib.sha256(json.dumps(package, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+        return {"name": "video", "path": str(entry), "sha256": package["SKILL.md"], "package_sha256": digest}
+
+    def input(self) -> dict:
+        value = self.verify()
+        return {"type": "skill", "name": "video", "path": value["path"]}
+
+
 def _verified_model_catalog(pin: FilePin | None) -> str | None:
     """A caller-reviewed single-model Direct catalog, never arbitrary CLI options."""
     if pin is None:
@@ -518,24 +565,37 @@ def _verify_mcp_inventory(result: dict, disabled_names: frozenset[str]):
         raise ProtocolError("mcp_inventory_name_mismatch")
 
 
-def thread_parameters(policy: Policy) -> dict:
-    return {"cwd": str(policy.directory), "approvalPolicy": "on-request", "sandbox": "read-only",
-            "ephemeral": True, "environments": [], "runtimeWorkspaceRoots": [], "dynamicTools": [policy.spec()]}
+def thread_parameters(policy: Policy, *, model_catalog: FilePin | None = None) -> dict:
+    params = {"cwd": str(policy.directory), "approvalPolicy": "on-request", "sandbox": "read-only",
+              "ephemeral": True, "environments": [], "runtimeWorkspaceRoots": [], "dynamicTools": [policy.spec()]}
+    # Loading a catalog changes metadata, not the configured default model.
+    # Select only its already reviewed sole model; never accept an arbitrary slug.
+    model = _verified_model_catalog(model_catalog)
+    if model is not None:
+        params["model"] = model
+    return params
 
 
 class Broker:
     """One initialized thread and one finite turn. All other requests fail closed."""
 
     def __init__(self, policy: Policy, prompt: str, *, deadline: float, disabled_mcp_names=(), initialize_only=False,
-                 model_catalog: FilePin | None = None):
+                  model_catalog: FilePin | None = None, skill: PinnedSkill | None = None):
         if not isinstance(prompt, str) or not 0 < len(prompt.encode()) <= 65536:
             raise ValueError("bounded_nonempty_prompt_required")
         if policy.used:
             raise ValueError("fresh_policy_required")
         self.policy, self.prompt, self.deadline = policy, prompt, deadline
         self.model_catalog = model_catalog
+        if skill is not None and not isinstance(skill, PinnedSkill):
+            raise ProtocolError("video_skill_pin_required")
+        self.skill = skill
+        self.skill_identity = skill.verify() if skill is not None else None
+        self.skill_submitted = False
+        self.skill_catalog_verified = False
         self.expected_catalog_model = _verified_model_catalog(model_catalog)
         self.catalog_model_acknowledged = False
+        self.catalog_model_receipt = None
         self.disabled_mcp_names = _mcp_names(disabled_mcp_names)
         self.initialize_only = initialize_only
         self.mcp_inventory_verified = False
@@ -544,6 +604,7 @@ class Broker:
         self.items = {}
         self.calls = {}
         self.completed_items = set()
+        self.agent_messages = []
         self.rpc_responses = set()
         self.errors, self.denials, self.executions = [], [], []
         self.command_cleanup_failures = []
@@ -569,6 +630,8 @@ class Broker:
 
     def receive(self, message: dict) -> list[dict]:
         _verified_model_catalog(self.model_catalog)
+        if self.skill is not None:
+            self.skill.verify()
         method, identity = message.get("method"), message.get("id")
         params = message.get("params", {})
         if identity is None and isinstance(method, str) and method in _OFFICIAL_NOTIFICATIONS:
@@ -578,7 +641,8 @@ class Broker:
                 return []
             raise ProtocolError("event_after_turn_terminal")
         if not method:
-            if type(identity) is not int or identity not in (1, 2, 3, 4) or identity in self.rpc_responses:
+            if (type(identity) is not int or identity not in ((1, 2, 3, 4, 5) if self.skill is not None else (1, 2, 3, 4)) or
+                    identity in self.rpc_responses):
                 raise ProtocolError("unexpected_rpc_response")
             self.rpc_responses.add(identity)
             if "error" in message:
@@ -598,9 +662,32 @@ class Broker:
                 if self.initialize_only:
                     self.terminal = "mcp_isolation_verified"
                     return []
+                if self.skill is not None:
+                    self.phase = "skill_inventory"
+                    return [self.request(5, "skills/list", {"cwds": [str(self.policy.directory)], "forceReload": True})]
                 self.phase = "thread"
-                return [self.request(2, "thread/start", thread_parameters(self.policy))]
+                return [self.request(2, "thread/start", thread_parameters(self.policy, model_catalog=self.model_catalog))]
+            if identity == 5 and self.phase == "skill_inventory":
+                entries = result.get("data")
+                if (set(result) != {"data"} or not isinstance(entries, list) or len(entries) != 1 or
+                        not isinstance(entries[0], dict) or set(entries[0]) != {"cwd", "skills", "errors"} or
+                        entries[0]["cwd"] != str(self.policy.directory) or entries[0]["errors"] != [] or
+                        not isinstance(entries[0]["skills"], list) or len(entries[0]["skills"]) > 256):
+                    raise ProtocolError("video_skill_inventory_refused")
+                matches = [entry for entry in entries[0]["skills"] if isinstance(entry, dict) and
+                           entry.get("path") == self.skill_identity["path"]]
+                if len(matches) != 1 or matches[0].get("name") != "video" or matches[0].get("enabled") is not True:
+                    raise ProtocolError("video_skill_not_enabled_at_pinned_path")
+                self.skill.verify()
+                self.skill_catalog_verified = True
+                self.phase = "thread"
+                return [self.request(2, "thread/start", thread_parameters(self.policy, model_catalog=self.model_catalog))]
             if identity == 2 and self.phase == "thread":
+                if self.expected_catalog_model is not None:
+                    actual = result.get("model")
+                    received = actual if isinstance(actual, str) and re.fullmatch(r"[A-Za-z0-9._-]{1,100}", actual) else None
+                    self.catalog_model_receipt = {"expected": self.expected_catalog_model, "received": received,
+                                                  "selection": "reviewed_catalog_thread_parameter"}
                 if self.expected_catalog_model is not None and result.get("model") != self.expected_catalog_model:
                     raise ProtocolError("catalog_model_not_acknowledged")
                 self.catalog_model_acknowledged = self.expected_catalog_model is not None
@@ -611,9 +698,13 @@ class Broker:
                         result.get("sandbox", {}).get("type") != "readOnly" or result.get("runtimeWorkspaceRoots") != []):
                     raise ProtocolError("thread_boundary_not_acknowledged")
                 self.phase = "turn"
+                inputs = [{"type": "text", "text": self.prompt}]
+                if self.skill is not None:
+                    inputs.append(self.skill.input())
+                    self.skill_submitted = True
                 return [self.request(3, "turn/start", {"threadId": self.thread_id, "environments": [],
-                                                      "runtimeWorkspaceRoots": [],
-                                                      "input": [{"type": "text", "text": self.prompt}]})]
+                                                       "runtimeWorkspaceRoots": [],
+                                                       "input": inputs})]
             if identity == 3 and self.phase == "turn":
                 self._turn(result.get("turn", {}).get("id"))
                 return []
@@ -678,7 +769,7 @@ class Broker:
         if method not in known:
             self._reject_notification(method, params)
             raise ProtocolError("unsupported_notification")
-        if self.phase in ("initialize", "mcp_inventory"):
+        if self.phase in ("initialize", "mcp_inventory", "skill_inventory"):
             raise ProtocolError("notification_before_mcp_inventory")
         if method in ("turn/started", "turn/completed", "item/started", "item/completed", "error"):
             if params.get("threadId") != self.thread_id:
@@ -708,6 +799,12 @@ class Broker:
                     self.completed_items.add(item_id)
             elif kind not in ("agentMessage", "reasoning", "userMessage", "hookPrompt"):
                 raise ProtocolError("native_execution_item_refused")
+            elif kind == "agentMessage" and method == "item/completed":
+                text = item.get("text")
+                if not isinstance(text, str) or len(text.encode()) > 65536 or len(self.agent_messages) >= 64:
+                    raise ProtocolError("bounded_agent_message_required")
+                raw = text.encode()
+                self.agent_messages.append({"bytes": len(raw), "sha256": hashlib.sha256(raw).hexdigest()})
         elif method == "turn/completed":
             turn = params.get("turn", {})
             self._turn(turn.get("id"))
@@ -725,7 +822,9 @@ class Broker:
             self.unsupported_notifications.append(_notification_diagnostic(method, params))
 
     def summary(self):
-        passed = (self.terminal == "completed" and self.rpc_responses == {1, 2, 3, 4} and self.mcp_inventory_verified and
+        expected_responses = {1, 2, 3, 4, 5} if self.skill is not None else {1, 2, 3, 4}
+        passed = (self.terminal == "completed" and self.rpc_responses == expected_responses and self.mcp_inventory_verified and
+                  (self.skill is None or self.skill_catalog_verified) and
                   not self.errors and not self.denials and self.policy.used == len(self.policy.commands) and
                   len(self.executions) == len(self.calls) == len(self.items) == len(self.completed_items) == len(self.policy.commands) and
                   all(r["passed"] for r in self.executions))
@@ -736,20 +835,26 @@ class Broker:
                 "unsupported_notification_count": self.unsupported_notification_count,
                 "execution_control": "client_dynamic_tools_exact_argv", "host_environments": [],
                 "mcp_inventory_verified": self.mcp_inventory_verified, "mcp_disabled_count": len(self.disabled_mcp_names),
-                "initialize_only": self.initialize_only,
+                  "initialize_only": self.initialize_only,
+                  "agent_messages": self.agent_messages,
                 "native_approvals_accepted": 0}
         if self.model_catalog is not None:
             result["catalog_model_acknowledged"] = self.catalog_model_acknowledged
+            result["catalog_model_receipt"] = self.catalog_model_receipt
+        if self.skill_identity is not None:
+            result["skill_input"] = dict(self.skill_identity, submitted=self.skill_submitted,
+                                         catalog_verified=self.skill_catalog_verified)
         return result
 
 
 def _consume(arguments: list[str], prompt: str, policy: Policy, *, seconds: float,
-             disabled_mcp_names=(), initialize_only=False, model_catalog: FilePin | None = None) -> dict:
+              disabled_mcp_names=(), initialize_only=False, model_catalog: FilePin | None = None,
+              skill: PinnedSkill | None = None) -> dict:
     if not 0 < seconds <= 120:
         raise ValueError("one_to_120_seconds_required")
     started = time.monotonic()
     broker = Broker(policy, prompt, deadline=started + seconds, disabled_mcp_names=disabled_mcp_names,
-                    initialize_only=initialize_only, model_catalog=model_catalog)
+                    initialize_only=initialize_only, model_catalog=model_catalog, skill=skill)
     _verified_model_catalog(model_catalog)
     process = subprocess.Popen(arguments, cwd=policy.directory, stdin=subprocess.PIPE,
                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
@@ -760,6 +865,9 @@ def _consume(arguments: list[str], prompt: str, policy: Policy, *, seconds: floa
     outgoing = bytearray()
     lines = JsonLines()
     stderr_hash, stderr_bytes = hashlib.sha256(), 0
+    stdin_closed = False
+    eof = {"out": False, "err": False}
+    drain_deadline = None
 
     def queue(message):
         outgoing.extend((json.dumps(message, ensure_ascii=False, separators=(",", ":")) + "\n").encode())
@@ -770,12 +878,26 @@ def _consume(arguments: list[str], prompt: str, policy: Policy, *, seconds: floa
 
     queue(broker.initialize())
     try:
-        while selector.get_map() and (not broker.terminal or outgoing):
+        while selector.get_map():
             _verified_model_catalog(model_catalog)
+            if skill is not None:
+                skill.verify()
+            if broker.terminal and not outgoing:
+                if broker.terminal not in ("completed", "mcp_isolation_verified"):
+                    break
+                if not stdin_closed:
+                    process.stdin.close()
+                    stdin_closed = True
+                    drain_deadline = min(broker.deadline, time.monotonic() + 2)
+                if time.monotonic() >= drain_deadline:
+                    break
             remaining = broker.deadline - time.monotonic()
             if remaining <= 0:
-                broker.terminal = "hard_deadline"
+                if not broker.terminal:
+                    broker.terminal = "hard_deadline"
                 break
+            if drain_deadline is not None:
+                remaining = min(remaining, max(0, drain_deadline-time.monotonic()))
             for key, _ in selector.select(min(.1, remaining)):
                 if key.data == "in":
                     written = os.write(process.stdin.fileno(), outgoing[:4096])
@@ -786,6 +908,7 @@ def _consume(arguments: list[str], prompt: str, policy: Policy, *, seconds: floa
                 data = os.read(key.fileobj.fileno(), 65536)
                 if not data:
                     selector.unregister(key.fileobj)
+                    eof[key.data] = True
                 if key.data == "err":
                     stderr_bytes += len(data)
                     stderr_hash.update(data)
@@ -798,18 +921,45 @@ def _consume(arguments: list[str], prompt: str, policy: Policy, *, seconds: floa
                 if not data and not broker.terminal:
                     broker.terminal = "ended_without_turn"
         _verified_model_catalog(model_catalog)
+        if skill is not None:
+            skill.verify()
     except (ValueError, OSError, subprocess.SubprocessError) as error:
         broker.errors.append({"source": "client", "protocol_code": str(error) if isinstance(error, ProtocolError) else type(error).__name__})
         broker.terminal = "client_failed"
     finally:
         try:
-            cleanup = _stop(process)
+            # A completed turn can close the official stdio transport normally.
+            # This short drain shares the original parent deadline; a persistent
+            # server or any failure still uses the original owned-group cleanup.
+            if stdin_closed and all(eof.values()) and drain_deadline is not None:
+                try:
+                    process.wait(timeout=max(.001, min(drain_deadline, broker.deadline)-time.monotonic()))
+                except subprocess.TimeoutExpired:
+                    pass
+            exit_code = process.poll()
+            group_absent = False
+            if exit_code is not None:
+                try:
+                    os.killpg(process.pid, 0)
+                except ProcessLookupError:
+                    group_absent = True
+                except OSError:
+                    pass
+            native_exit = {"stdin_closed": stdin_closed, "stdout_eof": eof["out"], "stderr_eof": eof["err"],
+                           "observed_before_cleanup": exit_code is not None, "exit_code": exit_code,
+                           "normal": stdin_closed and all(eof.values()) and exit_code == 0 and group_absent}
+            if group_absent:
+                cleanup = {"term": "not_attempted", "kill": "not_attempted", "leader_reaped": True,
+                           "owned_group": "absent", "passed": True}
+            else:
+                cleanup = _stop(process)
         finally:
             selector.close()
             for stream in (process.stdin, process.stdout, process.stderr):
                 stream.close()
     summary = broker.summary()
     summary["cleanup"] = cleanup
+    summary["native_exit"] = native_exit
     summary["passed"] = summary["passed"] and cleanup["passed"]
     summary.update(seconds=round(time.monotonic() - started, 3), event_bytes=lines.bytes,
                    event_sha256=lines.digest.hexdigest(), stderr_bytes=stderr_bytes, stderr_sha256=stderr_hash.hexdigest())
@@ -817,16 +967,21 @@ def _consume(arguments: list[str], prompt: str, policy: Policy, *, seconds: floa
 
 
 def run_codex(prompt: str, policy: Policy, *, seconds: float = 90, executable: str = "codex",
-              model_catalog: FilePin | None = None) -> dict:
+               model_catalog: FilePin | None = None, skill: PinnedSkill | None = None) -> dict:
     """Explicit online entry. Local MCP configuration gates precede app-server."""
     if not 0 < seconds <= 120:
         raise ValueError("one_to_120_seconds_required")
     deadline = time.monotonic() + seconds
     _verified_model_catalog(model_catalog)
+    if skill is not None:
+        if not isinstance(skill, PinnedSkill):
+            raise ProtocolError("video_skill_pin_required")
+        skill.verify()
     _verify_version(executable, timeout=min(10, seconds))
     options = {} if model_catalog is None else {"model_catalog": model_catalog}
     arguments, names = isolate_mcp(executable, policy.directory, deadline=deadline, **options)
-    return _consume(arguments, prompt, policy, seconds=deadline - time.monotonic(), disabled_mcp_names=names, **options)
+    return _consume(arguments, prompt, policy, seconds=deadline - time.monotonic(), disabled_mcp_names=names,
+                    skill=skill, **options)
 
 
 def _verify_version(executable: str, *, timeout: float):

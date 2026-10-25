@@ -83,7 +83,7 @@ public enum AgentContract {
         AgentCommand("worker launch", required:["workspace_id","request_id"],optional:["job_ids","max_jobs","timeout_seconds","resume_interrupted","query_remote"],writes:true,network:true,idempotency:"local_ticket_receipt_process_launch_non_atomic"),
         AgentCommand("worker status", required:["workspace_id","worker_id"]),
         AgentCommand("worker stop", required:["workspace_id","worker_id"],writes:true,idempotency:"stop_marker_invalidates_only_owned_leases"),
-        AgentCommand("jobs reconcile", required: ["workspace_id", "job_id", "billing_record", "baidu_input"], writes: true, idempotency: "billing_record_id"),
+        AgentCommand("jobs reconcile", required: ["workspace_id", "job_id", "billing_record"], writes: true, idempotency: "billing_record_id"),
         AgentCommand("orders import", required: ["workspace_id", "batch_id", "orders"], writes: true, idempotency: "atomic_database_request_receipt"),
         AgentCommand("metrics import", required: ["workspace_id", "batch_id", "metrics"], writes: true, idempotency: "atomic_database_request_receipt"),
         AgentCommand("imports rollback", required: ["workspace_id", "batch_id"], writes: true, idempotency: "atomic_database_request_receipt"),

@@ -90,7 +90,11 @@ Claude的3-turn/0.10美元上限会话与缩减后的1-turn/0.01美元上限探�
 
 普通本地制作可显式选用`codex_production.py`的`LocalProductionPolicy`，再交给同一`run_codex`消费。调用者先审定最多32个有序`LocalStep`、输入模板、源文件和实际CLI的`FilePin`，指定新的本地工作区及恢复目录；模型只能提交下一步名称、固定cwd和完整计划摘要，不能提交命令行、JSON内容、ID或路径。`ResultBinding`仅将先前经过严格校验的原生回执字段绑定到审定模板；每个写步骤先预检再实际执行，逐次核对退出状态及业务封套。
 
-Codex 0.159.2 的模型目录 `tool_mode` 优先于功能开关。若所选模型声明 `code_mode_only`，仅关闭主机功能仍会拒绝调用。需要 Direct 消费时，调用者可显式传 `run_codex(..., model_catalog=FilePin(目录绝对路径, SHA256))`；只注入官方启动级 `model_catalog_json` 参数，没有任意额外 argv。调用者须先审定同一模型的完整元数据，只改变 `tool_mode` 为 `direct` 并记录原/新摘要；目录放临时工作区，不修改全局配置或认证、不启用 Code Mode 主机。入口核规范普通文件、单模型/Direct 结构和512 KiB上限，启动与调用期反复核pin；线程必须回读同一模型，文件变更即停止。未传该参数时行为保持不变。[官方模式优先顺序](https://github.com/openai/codex/blob/rust-v0.159.2/codex-rs/core/src/tools/mod.rs#L68)、[启动目录配置](https://github.com/openai/codex/blob/rust-v0.159.2/codex-rs/core/config.schema.json#L7411)。
+需要显式调用共用Skill时，先在业务项目的原生技能目录安装同源5件包，再以`PinnedSkill(directory, pins)`固定`SKILL.md`、`LICENSE`、`NOTICE`、`agents/openai.yaml`和`references/protocol.md`，传给`run_codex(..., skill=...)`。入口拒绝未知文件/目录、链接、缺件和改名；逐事件、发起请求前与调用完成后复核全部文件。MCP隔离门后，独立`skills/list(forceReload=true)`必须回读精确路径、`name=video`、启用及无目录错误，才发送固定原生`skill`输入。目录识别、输入提交、模型工具调用和实际业务结果分别记录，不把发送请求本身叫作已加载或制作成功。Agent文字只留长度与摘要，不保存私密会话正文；该接口没有开放模型读文件、Shell或额外执行权限。
+
+回合完成后，消费端关闭stdin，在原父期限内最多再读取2秒完整尾流并等待退出；合法被动尾通知可保留，畸形尾流或终态后工具请求仍拒绝。原生退出码、双流EOF及是否自然退出单列于`native_exit`，不与`cleanup.passed`混同。服务器继续运行、超时或异常时仍按原owned进程组清理，业务是否完成继续由原完整工具生命周期与回执合同判断，不要求持久服务器必须自然退出。
+
+Codex 0.159.2 的模型目录 `tool_mode` 优先于功能开关。若所选模型声明 `code_mode_only`，仅关闭主机功能仍会拒绝调用。需要 Direct 消费时，调用者可显式传 `run_codex(..., model_catalog=FilePin(目录绝对路径, SHA256))`；只注入官方启动级 `model_catalog_json` 参数，没有任意额外 argv。调用者须先审定同一模型的完整元数据，只改变 `tool_mode` 为 `direct` 并记录原/新摘要；目录放临时工作区，不修改全局配置或认证、不启用 Code Mode 主机。入口核规范普通文件、单模型/Direct 结构和512 KiB上限，启动与调用期反复核pin；`thread/start`显式选择目录中已核的唯一slug，加载目录本身不会选择模型。线程必须回读同一模型，文件变更即停止；不接受调用者或模型另传任意模型字符串。未传该参数时不覆盖原线程模型选择。[官方模式优先顺序](https://github.com/openai/codex/blob/rust-v0.159.2/codex-rs/core/src/tools/mod.rs#L68)、[启动目录配置](https://github.com/openai/codex/blob/rust-v0.159.2/codex-rs/core/config.schema.json#L7411)。
 
 `account/updated` 仅按该版本两个 nullable 枚举字段验证，不保留账户值或授予认证/执行许可。`turn/moderationMetadata` 只接受当前 thread/turn 的完整三字段结构，内部 metadata 仅核有界合法JSON且不保留、不解释；其他未知通知仍拒绝。进程清理保留每次 TERM/KILL 的实际结果；仅当本次已请求 TERM、KILL 被拒且 leader 已实际reap，才对该owned进程组查询一次 signal 0。只有独立 ESRCH 证明组已不存在才能通过，EPERM、存在或未知仍失败，不能凭leader退出猜后代已结束。
 

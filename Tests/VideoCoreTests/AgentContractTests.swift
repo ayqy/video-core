@@ -56,4 +56,32 @@ final class AgentContractTests: XCTestCase {
         XCTAssertEqual(try AgentContract.describe("render submit").idempotency, "frozen_job_request_key")
         XCTAssertEqual(try AgentContract.describe("script create").idempotency, "atomic_database_request_receipt")
     }
+    func testReconciliationAcceptsAnOrdinaryBillWithoutVideoGenerationInput() throws {
+        let record = BillingRecord(id: "unit-bill", kind: .charge, money: Money(12), source: "unit-test receipt")
+        let value = try Codec.decoder().decode(AgentValue.self, from: Codec.data(record))
+        let input: [String: AgentValue] = ["workspace_id": .string("w"), "job_id": .string("original-job"), "billing_record": value]
+        XCTAssertNoThrow(try AgentContract.validate(command: "jobs reconcile", data: data(.object(input))))
+        var unrelated = input; unrelated["baidu_input"] = .object([:])
+        XCTAssertThrowsError(try AgentContract.validate(command: "jobs reconcile", data: data(.object(unrelated))))
+        unrelated = input; unrelated["typo"] = .string("unsupported")
+        XCTAssertThrowsError(try AgentContract.validate(command: "jobs reconcile", data: data(.object(unrelated))))
+        var missing = input; missing.removeValue(forKey: "billing_record")
+        XCTAssertThrowsError(try AgentContract.validate(command: "jobs reconcile", data: data(.object(missing))))
+        let schema = try XCTUnwrap(AgentContract.inputSchema("jobs reconcile").object)
+        XCTAssertEqual(schema["required"], .array([.string("workspace_id"), .string("job_id"), .string("billing_record")]))
+        XCTAssertNil(schema["properties"]?.object?["baidu_input"])
+        XCTAssertEqual(schema["additionalProperties"], .boolean(false))
+        XCTAssertTrue(try AgentContract.describe("baidu submit").required.contains("baidu_input"))
+    }
+    func testReconciliationKeepsOwnerPermissionAndBillingEventIdempotency() throws {
+        let descriptor = try AgentContract.describe("jobs reconcile")
+        XCTAssertEqual(descriptor.permission, .workspaceOwner)
+        XCTAssertEqual(descriptor.idempotency, "billing_record_id")
+        XCTAssertTrue(descriptor.writes)
+        XCTAssertFalse(descriptor.network)
+        let now = Date(); var workspace = Workspace(name: "账单所属空间", owner: "owner")
+        workspace.grants = [Grant(principal: "collaborator", role: .collaborator, projectIDs: ["p"], revisionIDs: ["r"], expiresAt: now.addingTimeInterval(60))]
+        XCTAssertNoThrow(try AgentContract.authorize(command: "jobs reconcile", workspace: workspace, principal: "owner", now: now))
+        XCTAssertThrowsError(try AgentContract.authorize(command: "jobs reconcile", workspace: workspace, principal: "collaborator", projectID: "p", revisionID: "r", now: now))
+    }
 }
