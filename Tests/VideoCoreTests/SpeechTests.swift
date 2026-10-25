@@ -2,6 +2,183 @@ import XCTest
 @testable import VideoCore
 
 final class SpeechTests: XCTestCase {
+    private func captionFixture() throws -> (Project, Scene, Asset) {
+        let asset = Asset(workspaceID: "w", name: "isolated-recording.caf", hash: "isolated-domain-audio-reference",
+            ext: "caf", bytes: 100, mediaType: "audio", durationFrames: 100)
+        var scene = Scene(title: "术语校正规则", body: "字幕草稿与声音独立", narration: "API。示例。", durationFrames: 120)
+        var plan = try ChineseSpeech.normalize(scene.narration, dictionary: [SpeechTerm("API", "阿皮")])
+        plan.voiceIdentifier = "isolated-voice-reference"; plan.confirmed = true
+        scene.speechPlan = plan
+        scene.captions = [Caption(text: "API。", startFrame: 0, endFrame: 40, confirmed: true),
+                          Caption(text: "示例。", startFrame: 60, endFrame: 100, confirmed: true)]
+        scene.voice = VoiceTake(assetID: asset.id, textDigest: try scene.speechDigest(), durationFrames: 100,
+            method: "isolated-recording-reference", listened: true)
+        var revision = try Planner.create(workspaceID: "w", name: "隔离字幕规则工程", scenes: [scene])
+        // Deliberately approved prior state is isolated test data, never runtime acceptance.
+        revision.review.text = true; revision.review.rights = true; revision.review.fullPreview = true
+        revision.review.sound = true; revision.review.captions = true; revision.review.digest = try revision.contentDigest()
+        return (Project(workspaceID: "w", name: "隔离字幕规则工程", revision: revision), scene, asset)
+    }
+
+    func testCaptionDraftKeepsOriginalRecordingAndAudioInputsWhileRevokingAllApprovals() throws {
+        let (project, scene, asset) = try captionFixture()
+        var captions = scene.captions; captions[0].text = "应用程序接口。"; captions[0].endFrame = 45
+        let draft = try SpeechRules.captionDraft(captions, for: scene)
+        var expected = scene.voice; expected?.listened = false
+        XCTAssertEqual(draft.voice, expected)
+        XCTAssertEqual(draft.speechPlan, scene.speechPlan); XCTAssertEqual(draft.narration, scene.narration)
+        XCTAssertEqual(draft.durationFrames, scene.durationFrames)
+        XCTAssertEqual(try draft.speechDigest(), try scene.speechDigest())
+        XCTAssertEqual(draft.captions.map(\.id), scene.captions.map(\.id))
+        XCTAssertTrue(draft.captions.allSatisfy { !$0.confirmed })
+        XCTAssertTrue(scene.voice!.listened); XCTAssertTrue(scene.captions.allSatisfy(\.confirmed))
+        let saved = try Editor.apply([.replaceScene(scene.id, draft)], to: project,
+            baseRevision: project.current.id, assets: [asset], message: "字幕草稿")
+        XCTAssertFalse(saved.current.review.complete); XCTAssertNil(saved.current.review.digest)
+        XCTAssertEqual(saved.revisions[0].scenes[0].voice, scene.voice)
+        XCTAssertEqual(saved.revisions[0].scenes[0].captions, scene.captions)
+    }
+
+    func testMatchingVoiceAllowsEditorialPlanMetadataButRejectsChangedAudioInputs() throws {
+        let (_, scene, _) = try captionFixture()
+        var editorial = try XCTUnwrap(scene.speechPlan)
+        editorial.confirmed = false; editorial.notes = ["新的审校备注"]
+        editorial.mappings = [SpeechMapping(sourceStart: 0, sourceLength: editorial.source.utf16.count,
+            normalizedStart: 0, normalizedLength: editorial.normalized.utf16.count, kind: "manual_document")]
+        XCTAssertEqual(try SpeechRules.matchingVoice(in: scene, plan: editorial), scene.voice)
+        var changed: [SpeechPlan] = []
+        var value = editorial; value.normalized = "应用程序接口。示例。"; value.mappings = []; changed.append(value)
+        value = editorial; value.dictionary = [SpeechTerm("API", "应用程序接口")]; changed.append(value)
+        value = editorial; value.voiceIdentifier = "different-isolated-voice"; changed.append(value)
+        value = editorial; value.rate = 0.4; changed.append(value)
+        for plan in changed { XCTAssertNil(try SpeechRules.matchingVoice(in: scene, plan: plan)) }
+        value = editorial; value.source = "另一原文"; value.mappings = []
+        XCTAssertThrowsError(try SpeechRules.matchingVoice(in: scene, plan: value))
+    }
+
+    func testCaptionContentChangesCannotCarryOldVoiceOrCueApprovalsThroughEditor() throws {
+        let (project, scene, asset) = try captionFixture()
+        var changes: [[Caption]] = []
+        var value = scene.captions; value[0].text = "接口。"; changes.append(value)
+        value = scene.captions; value[0].startFrame = 1; changes.append(value)
+        value = scene.captions; value[0].endFrame = 39; changes.append(value)
+        value = scene.captions; value.insert(Caption(text: "补充", startFrame: 40, endFrame: 60, confirmed: true), at: 1); changes.append(value)
+        changes.append(Array(scene.captions.dropFirst())); changes.append(Array(scene.captions.reversed()))
+        for captions in changes {
+            var supplied = scene; supplied.captions = captions
+            let saved = try Editor.apply([.replaceScene(scene.id, supplied)], to: project,
+                baseRevision: project.current.id, assets: [asset], message: "实际字幕变化")
+            let result = saved.current.scenes[0]
+            XCTAssertEqual(result.voice?.assetID, scene.voice?.assetID)
+            XCTAssertEqual(result.voice?.textDigest, scene.voice?.textDigest)
+            XCTAssertEqual(result.voice?.durationFrames, scene.voice?.durationFrames)
+            XCTAssertEqual(result.speechPlan, scene.speechPlan)
+            XCTAssertFalse(result.voice!.listened); XCTAssertTrue(result.captions.allSatisfy { !$0.confirmed })
+            XCTAssertFalse(saved.current.review.complete)
+        }
+    }
+
+    func testApprovalAndProvenanceMetadataDoNotInvalidateMatchingCaptionContent() throws {
+        let (project, scene, asset) = try captionFixture()
+        var metadata = scene
+        for index in metadata.captions.indices {
+            metadata.captions[index].id = Codec.id(); metadata.captions[index].alignment = "user-reviewed-timing"
+            metadata.captions[index].confirmed = false
+        }
+        XCTAssertEqual(try SpeechRules.captionContentDigest(metadata.captions), try SpeechRules.captionContentDigest(scene.captions))
+        let saved = try Editor.apply([.replaceScene(scene.id, metadata)], to: project,
+            baseRevision: project.current.id, assets: [asset], message: "字幕确认元数据")
+        XCTAssertTrue(saved.current.scenes[0].voice!.listened)
+        XCTAssertEqual(saved.current.scenes[0].captions, metadata.captions)
+    }
+
+    func testSavedCaptionDraftCanBeReheardAndConfirmedWithoutAnotherContentInvalidation() throws {
+        let (project, scene, asset) = try captionFixture()
+        var captions = scene.captions; captions[0].text = "接口。"
+        let draft = try SpeechRules.captionDraft(captions, for: scene)
+        let saved = try Editor.apply([.replaceScene(scene.id, draft)], to: project,
+            baseRevision: project.current.id, assets: [asset], message: "先存字幕草稿")
+        var confirmed = saved.current.scenes[0]
+        confirmed.voice?.listened = true
+        for index in confirmed.captions.indices { confirmed.captions[index].confirmed = true }
+        let reviewed = try Editor.apply([.replaceScene(scene.id, confirmed)], to: saved,
+            baseRevision: saved.current.id, assets: [asset], message: "后存真实听审声明")
+        XCTAssertTrue(reviewed.current.scenes[0].voice!.listened)
+        XCTAssertTrue(reviewed.current.scenes[0].captions.allSatisfy(\.confirmed))
+        XCTAssertFalse(reviewed.current.review.complete)
+        XCTAssertFalse(saved.current.scenes[0].voice!.listened)
+    }
+
+    func testCaptionApprovalCanBeSavedWithoutConfirmingVoice() throws {
+        let (project, scene, asset) = try captionFixture()
+        var captions = scene.captions; captions[0].text = "接口。"
+        let draft = try SpeechRules.captionDraft(captions, for: scene)
+        let saved = try Editor.apply([.replaceScene(scene.id, draft)], to: project,
+            baseRevision: project.current.id, assets: [asset], message: "隔离字幕草稿")
+        var captionsOnly = saved.current.scenes[0]
+        for index in captionsOnly.captions.indices { captionsOnly.captions[index].confirmed = true }
+        let result = try Editor.apply([.replaceScene(scene.id, captionsOnly)], to: saved,
+            baseRevision: saved.current.id, assets: [asset], message: "仅记录隔离字幕确认")
+        XCTAssertTrue(result.current.scenes[0].captions.allSatisfy(\.confirmed))
+        XCTAssertFalse(result.current.scenes[0].voice!.listened)
+        XCTAssertEqual(result.current.scenes[0].voice, saved.current.scenes[0].voice)
+        XCTAssertEqual(result.current.scenes[0].speechPlan, scene.speechPlan)
+        XCTAssertEqual(result.current.scenes[0].narration, scene.narration)
+        XCTAssertFalse(saved.current.scenes[0].captions.allSatisfy(\.confirmed))
+        XCTAssertFalse(result.current.review.complete)
+    }
+
+    func testVoiceApprovalCanBeSavedWithoutConfirmingCaptions() throws {
+        let (project, scene, asset) = try captionFixture()
+        var captions = scene.captions; captions[0].text = "接口。"
+        let draft = try SpeechRules.captionDraft(captions, for: scene)
+        let saved = try Editor.apply([.replaceScene(scene.id, draft)], to: project,
+            baseRevision: project.current.id, assets: [asset], message: "隔离字幕草稿")
+        var voiceOnly = saved.current.scenes[0]; voiceOnly.voice?.listened = true
+        let result = try Editor.apply([.replaceScene(scene.id, voiceOnly)], to: saved,
+            baseRevision: saved.current.id, assets: [asset], message: "仅记录隔离声音确认")
+        XCTAssertTrue(result.current.scenes[0].voice!.listened)
+        XCTAssertTrue(result.current.scenes[0].captions.allSatisfy { !$0.confirmed })
+        XCTAssertEqual(result.current.scenes[0].voice?.assetID, scene.voice?.assetID)
+        XCTAssertEqual(result.current.scenes[0].voice?.textDigest, scene.voice?.textDigest)
+        XCTAssertEqual(result.current.scenes[0].captions, saved.current.scenes[0].captions)
+        XCTAssertEqual(result.current.scenes[0].speechPlan, scene.speechPlan)
+        XCTAssertEqual(result.current.scenes[0].narration, scene.narration)
+        XCTAssertFalse(saved.current.scenes[0].voice!.listened)
+        XCTAssertFalse(result.current.review.complete)
+    }
+
+    func testCaptionDraftCannotBypassSceneLockOrStaleRevision() throws {
+        let (project, scene, asset) = try captionFixture()
+        var captions = scene.captions; captions[0].text = "接口。"
+        let draft = try SpeechRules.captionDraft(captions, for: scene)
+        XCTAssertThrowsError(try Editor.apply([.replaceScene(scene.id, draft)], to: project,
+            baseRevision: "stale-revision", assets: [asset], message: "旧字幕窗口")) {
+            XCTAssertEqual(($0 as? VideoError)?.code, "revision_conflict")
+        }
+        var locked = project; locked.revisions[0].scenes[0].locked = true
+        XCTAssertThrowsError(try Editor.apply([.replaceScene(scene.id, draft)], to: locked,
+            baseRevision: locked.current.id, assets: [asset], message: "锁定镜头字幕")) {
+            XCTAssertEqual(($0 as? VideoError)?.code, "permission_required")
+        }
+    }
+
+    func testCaptionDraftRejectsInvalidTimingAndStaleOrMissingAudioBinding() throws {
+        let (_, scene, _) = try captionFixture()
+        var invalid: [[Caption]] = []
+        var value = scene.captions; value[0].text = ""; invalid.append(value)
+        value = scene.captions; value[0].startFrame = -1; invalid.append(value)
+        value = scene.captions; value[0].endFrame = 61; invalid.append(value)
+        value = scene.captions; value[1].endFrame = 121; invalid.append(value)
+        value = scene.captions; value[1].id = value[0].id; invalid.append(value)
+        value = scene.captions; value[0].id = ""; invalid.append(value)
+        for captions in invalid { XCTAssertThrowsError(try SpeechRules.captionDraft(captions, for: scene)) }
+        var missing = scene; missing.voice = nil
+        XCTAssertThrowsError(try SpeechRules.captionDraft(scene.captions, for: missing))
+        var stale = scene; stale.speechPlan?.rate = 0.4
+        XCTAssertThrowsError(try SpeechRules.captionDraft(scene.captions, for: stale))
+    }
+
     func testUntrustedMappingIntegerExtremesAreRejectedAsInvalidInput() throws {
         let invalid = [
             SpeechMapping(sourceStart: .max, sourceLength: 1, normalizedStart: 0, normalizedLength: 1, kind: "manual"),

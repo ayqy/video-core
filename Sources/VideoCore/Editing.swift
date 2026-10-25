@@ -81,6 +81,11 @@ public enum Editor {
                     if scene.voice?.assetID == old.voice?.assetID || scene.voice?.textDigest != (try? scene.speechDigest()) { scene.voice = nil }
                     for j in scene.captions.indices { scene.captions[j].confirmed = false }; revision.invalidated += ["该镜头配音", "字幕对齐", "口型与节奏"]
                 }
+                if try SpeechRules.captionContentDigest(old.captions) != SpeechRules.captionContentDigest(scene.captions) {
+                    scene.voice?.listened = false
+                    for j in scene.captions.indices { scene.captions[j].confirmed = false }
+                    revision.invalidated += ["字幕内容、时轴与声音重新复核"]
+                }
                 try scene.validate(assets: assets); revision.scenes[i] = scene
             case .removeScene(let id): guard let s = revision.scenes.first(where: { $0.id == id }), !s.locked, (revision.scenes.count > 1 || revision.contentContext != nil) else { throw VideoError.permission("不能删除锁定镜头；旧产品工程须保留至少一个镜头") }; revision.scenes.removeAll { $0.id == id }
             case .moveScene(let id, let target): guard let i = revision.scenes.firstIndex(where: { $0.id == id }), (0..<revision.scenes.count).contains(target), !revision.scenes[i].locked else { throw VideoError.invalid("重排目标无效或片段已锁定") }; let s = revision.scenes.remove(at: i); revision.scenes.insert(s, at: target)

@@ -161,6 +161,31 @@ public enum ChineseSpeech {
 }
 
 public enum SpeechRules {
+    /// Only the ordered, visible text and its timing change a subtitle rehearsal.
+    /// IDs, alignment provenance and approval flags are editorial metadata.
+    public static func captionContentDigest(_ captions: [Caption]) throws -> String {
+        struct Content: Codable { var text: String; var start: Int; var end: Int }
+        return try Codec.digest(captions.map { Content(text: $0.text, start: $0.startFrame, end: $0.endFrame) })
+    }
+    /// Compare actual audio inputs, not approval or mapping metadata. A draft
+    /// pronunciation, voice, rate or dictionary cannot reuse a different take.
+    public static func matchingVoice(in scene: Scene, plan: SpeechPlan) throws -> VoiceTake? {
+        guard let take = scene.voice, take.textDigest == (try digest(scene)) else { return nil }
+        var candidate = scene; candidate.speechPlan = plan
+        return try digest(candidate) == take.textDigest ? take : nil
+    }
+    /// Save captions without manufacturing a fresh recording or a listening approval.
+    /// The caller still applies the scene through its normal editor/permission path.
+    public static func captionDraft(_ captions: [Caption], for scene: Scene) throws -> Scene {
+        try validateCaptions(captions, durationFrames: scene.durationFrames)
+        guard var take = scene.voice, take.textDigest == (try digest(scene)) else {
+            throw VideoError.review("原配音与当前读法不匹配，请先重新生成或绑定真实音轨")
+        }
+        var result = scene
+        take.listened = false; result.voice = take
+        result.captions = captions.map { original in var cue = original; cue.confirmed = false; return cue }
+        return result
+    }
     public static func digest(_ scene: Scene) throws -> String {
         guard let plan = scene.speechPlan else { return try Codec.digest(scene.narration) }
         try plan.validate()
@@ -183,6 +208,9 @@ public enum SpeechRules {
         }
     }
     public static func validateCaptions(_ captions: [Caption], durationFrames: Int) throws {
+        guard Set(captions.map(\.id)).count == captions.count, captions.allSatisfy({ !$0.id.isEmpty }) else {
+            throw VideoError.invalid("同一镜头的字幕标识缺失或重复，请保留每段独立标识")
+        }
         var previous = 0
         for caption in captions.sorted(by: { $0.startFrame < $1.startFrame }) {
             guard !caption.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
