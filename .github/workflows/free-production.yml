@@ -84,7 +84,7 @@ jobs:
           import unittest
           suite = unittest.defaultTestLoader.discover('Integrations/tests', pattern='test_expressive_tts.py')
           count = suite.countTestCases()
-          assert count >= 18, 'Expected the complete narration adapter rule suite'
+          assert count >= 22, 'Expected the complete narration adapter rule suite, including instruction boundaries'
           print('expressive_tts_distinct_rules=' + str(count))
           print('model_download=not_run; inference=not_run; voice_quality=needs_review')
           PY

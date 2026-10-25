@@ -8,13 +8,17 @@ from __future__ import annotations
 import concurrent.futures
 import hashlib
 import importlib.util
+import json
 from pathlib import Path
+import random
 import signal
+import socket
 import struct
 import subprocess
+import sys
 import tempfile
 import threading
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 import unittest
 from unittest import mock
 import wave
@@ -49,7 +53,7 @@ class RequestIdentityTests(unittest.TestCase):
                            source=tts.SOURCE_REVISION, runtime_sha256="runtime-v1",
                            adapter_sha256="adapter-v1")
         self.request = dict(text="小明出了十元，桥修好了。", voice="中文女",
-                            instruction="先好奇地提问，再清楚地讲出结果。", seed=1986)
+                            instruction="", seed=1986)
 
     def test_same_complete_request_has_stable_identity_and_explicit_audio_contract(self):
         request, key = tts.request_identity(self.engine, **self.request)
@@ -65,8 +69,7 @@ class RequestIdentityTests(unittest.TestCase):
         changes = [("engine", "another-engine"), ("model", "model-v2"),
                    ("source", "source-v2"), ("runtime_sha256", "runtime-v2"),
                    ("adapter_sha256", "adapter-v2"),
-                   ("text", "小明出了十元，桥还没修好。"), ("voice", "中文男"),
-                   ("instruction", "温和地讲述，让选择处的停顿自然。"), ("seed", 1987)]
+                   ("text", "小明出了十元，桥还没修好。"), ("voice", "中文男"), ("seed", 1987)]
         for field, value in changes:
             with self.subTest(field=field):
                 engine, request = dict(self.engine), dict(self.request)
@@ -80,7 +83,7 @@ class RequestIdentityTests(unittest.TestCase):
         changes = [("text", ""), ("text", " "), ("text", "文" * 241),
                    ("text", "第一段\n第二段"), ("text", "你好<laughter>"),
                    ("text", "甲|乙"), ("text", "甲\x00乙"),
-                   ("voice", "外部克隆音色"), ("instruction", ""),
+                   ("voice", "外部克隆音色"), ("instruction", "自然讲述"),
                    ("instruction", "语" * 161), ("instruction", "自然\r讲述"),
                    ("instruction", "<|endofprompt|>"),
                    ("seed", -1), ("seed", 2**31)]
@@ -89,6 +92,89 @@ class RequestIdentityTests(unittest.TestCase):
                 request = {**self.request, field: value}
                 with self.assertRaises(ValueError):
                     tts.request_identity(self.engine, **request)
+
+    def test_cache_identity_declares_sft_mode_and_separates_rejected_instruct_cache(self):
+        request, key = tts.request_identity(self.engine, **self.request)
+        self.assertEqual(request["mode"], "sft-text-only")
+        self.assertEqual(request["text"], self.request["text"])
+        self.assertFalse(request.get("instruction"))
+        self.assertNotIn("instruction_boundary", request)
+        for marker in ("<endofprompt>", "<|endofprompt|>"):
+            self.assertNotIn(marker, request["text"])
+        for boundary in (None, "CosyVoice-300M-legacy-<endofprompt>",
+                         "CosyVoice-300M-current-upstream-v3"):
+            historical = {**request, "engine": "FunAudioLLM/CosyVoice-300M-Instruct",
+                          "model": "706bee1915e9fd1f1214929e2a0509c874cff433",
+                          "instruction": "请用好奇、活泼的语气说话。"}
+            historical.pop("mode")
+            if boundary is not None:
+                historical["instruction_boundary"] = boundary
+            old_key = hashlib.sha256(json.dumps(historical, ensure_ascii=False,
+                                                sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+            self.assertNotEqual(key, old_key)
+        overridden, _ = tts.request_identity({**self.engine, "mode": "instruct"}, **self.request)
+        self.assertEqual(overridden["mode"], "sft-text-only")
+
+
+class SFTContractTests(unittest.TestCase):
+    def test_nonempty_directions_are_rejected_rather_than_ignored_or_spoken(self):
+        tts.validate_request("四个邻居想修路。", "中文女", "", 1986)
+        for instruction in ("请用好奇、活泼的语气说话。", "A happy girl with high tone.", " ", "\t"):
+            with self.subTest(instruction=repr(instruction)):
+                with self.assertRaises(ValueError):
+                    tts.validate_request("四个邻居想修路。", "中文女", instruction, 1986)
+
+    def test_caller_cannot_supply_either_generation_of_control_marker(self):
+        for instruction in ("自然讲述<endofprompt>", "自然讲述<|endofprompt|>",
+                            "<endofprompt>", "<|endofprompt|>", "自然\n讲述", "自然\x00讲述"):
+            with self.subTest(instruction=repr(instruction)):
+                with self.assertRaises(ValueError):
+                    tts.validate_request("四个邻居想修路。", "中文女", instruction, 1986)
+                with self.assertRaises(ValueError):
+                    tts.validate_request("四个邻居想修路。" + instruction, "中文女", "", 1986)
+
+    def test_worker_calls_sft_with_original_narration_and_never_calls_instruct(self):
+        # This isolates the actual adapter-to-engine call without installing or
+        # pretending to evaluate a model. It catches accidental concatenation of
+        # the direction into the narration, which file/PCM tests cannot detect.
+        waveform = mock.MagicMock(name="synthetic-waveform")
+        waveform.__len__.return_value = 6615
+        waveform.reshape.return_value = waveform
+        tensor = mock.MagicMock(name="synthetic-engine-output")
+        tensor.detach.return_value.cpu.return_value.numpy.return_value = waveform
+        engine = mock.Mock(sample_rate=22050)
+        engine.list_available_spks.return_value = ["中文女", "中文男"]
+        engine.inference_sft.return_value = [{"tts_speech": tensor}]
+        factory = mock.Mock(return_value=engine)
+        numpy = SimpleNamespace(random=SimpleNamespace(seed=mock.Mock()),
+                                isfinite=mock.Mock(return_value=SimpleNamespace(all=lambda: True)))
+        torch = SimpleNamespace(set_num_threads=mock.Mock(), set_num_interop_threads=mock.Mock(),
+                                manual_seed=mock.Mock())
+        soundfile = SimpleNamespace(write=mock.Mock())
+        package, cli, module = ModuleType("cosyvoice"), ModuleType("cosyvoice.cli"), ModuleType("cosyvoice.cli.cosyvoice")
+        package.__path__ = []
+        cli.__path__ = []
+        module.AutoModel = factory
+        fake_modules = {"numpy": numpy, "torch": torch, "soundfile": soundfile,
+                        "cosyvoice": package, "cosyvoice.cli": cli,
+                        "cosyvoice.cli.cosyvoice": module}
+        args = SimpleNamespace(runtime=Path(tempfile.gettempdir()) / "synthetic-runtime",
+                               output=Path(tempfile.gettempdir()) / "synthetic-output.wav",
+                               text="四个邻居想修路。凑够三枚硬币，就能开工。",
+                               voice="中文女", instruction="", seed=1986)
+        with mock.patch.dict(sys.modules, fake_modules), \
+                mock.patch.object(sys, "path", list(sys.path)), \
+                mock.patch.object(random, "seed"), \
+                mock.patch.object(socket, "create_connection"), \
+                mock.patch.object(socket.socket, "connect"), \
+                mock.patch.object(socket.socket, "connect_ex"):
+            tts.worker(args)
+        engine.inference_sft.assert_called_once_with(
+            args.text, args.voice,
+            stream=False, speed=1.0, text_frontend=False)
+        engine.inference_instruct.assert_not_called()
+        engine.inference_instruct2.assert_not_called()
+        soundfile.write.assert_called_once_with(str(args.output), waveform, 22050, subtype="PCM_16")
 
 
 class WaveValidationTests(unittest.TestCase):
@@ -163,7 +249,7 @@ class GenerationBoundaryTests(unittest.TestCase):
         self.addCleanup(self.patch_live_dependencies.stop)
         self.write_manifest()
         self.request = dict(text="小明出了十元，桥修好了。", voice="中文女",
-                            instruction="用自然亲切的语气讲述。", seed=1986)
+                            instruction="", seed=1986)
 
     def discover_dependencies(self, args, **kwargs):
         self.assertEqual(args[:3], [str(self.runtime / "venv/bin/python"), "-B", "-c"])

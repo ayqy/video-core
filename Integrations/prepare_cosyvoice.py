@@ -17,7 +17,7 @@ import sys
 import tarfile
 import urllib.request
 
-from expressive_tts import MODEL_FILES, MODEL_REVISION, SOURCE_REVISION, digest
+from expressive_tts import ENGINE, MODEL_FILES, MODEL_REVISION, SOURCE_REVISION, digest
 
 MATCHA_REVISION = "dd9105b34bf2be2230f4aa1e4769fb586a3c824e"
 DEPENDENCIES = (
@@ -106,8 +106,8 @@ def main() -> None:
         archive(f"https://codeload.github.com/shivammehta25/Matcha-TTS/tar.gz/{MATCHA_REVISION}",
                 root / "source/third_party/Matcha-TTS", root / "matcha-upstream.tar.gz")
     elif a.stage == "model":
-        base = f"https://huggingface.co/FunAudioLLM/CosyVoice-300M-Instruct/resolve/{MODEL_REVISION}/"
-        with urllib.request.urlopen("https://huggingface.co/api/models/FunAudioLLM/CosyVoice-300M-Instruct/revision/" + MODEL_REVISION + "?blobs=true", timeout=30) as response:
+        base = f"https://huggingface.co/{ENGINE}/resolve/{MODEL_REVISION}/"
+        with urllib.request.urlopen("https://huggingface.co/api/models/" + ENGINE + "/revision/" + MODEL_REVISION + "?blobs=true", timeout=30) as response:
             meta = json.load(response)
         if meta["sha"] != MODEL_REVISION or meta["cardData"]["license"] != "apache-2.0":
             raise ValueError("官方模型身份/许可不符")

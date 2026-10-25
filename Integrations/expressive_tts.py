@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Offline, full-utterance CosyVoice narration with a verified reusable cache.
+"""Offline, full-utterance CosyVoice preset narration with a verified cache.
 
 No account, remote inference, voice cloning, editing workspace or review approval.
 Use prepare_cosyvoice.py once to install the explicitly selected local engine.
@@ -19,12 +19,12 @@ import sys
 import tempfile
 import wave
 
-ENGINE = "FunAudioLLM/CosyVoice-300M-Instruct"
-MODEL_REVISION = "706bee1915e9fd1f1214929e2a0509c874cff433"
+ENGINE = "FunAudioLLM/CosyVoice-300M-SFT"
+MODEL_REVISION = "fbb71de2afe387ed854eebd80b9f3d078c6b9869"
 SOURCE_REVISION = "074ca6dc9e80a2f424f1f74b48bdd7d3fea531cc"
 MODEL_FILES = {
-    "llm.pt": (1242994771, "ef23893d68b93406eae04719a3b800488921e08b394624e9a5ba69bea3a59a13"),
-    "flow.pt": (419900943, "fd80b089444a95e52956c57cdf177d7f6017a5af13b8a697717628a1d2be6b55"),
+    "llm.pt": (1242994835, "d198ce56636e1eb1c9d0cb0d6e3529de8fdfd3fd45075c346296b0d6dcfc54ea"),
+    "flow.pt": (419900943, "21eae78c105b5e1c6c337b04f667843377651b4bcfb2d43247ed3ad7fd0a3470"),
     "hift.pt": (81896716, "91e679b6ca1eff71187ffb4f3ab0444935594cdcc20a9bd12afad111ef8d6012"),
     "speech_tokenizer_v1.onnx": (522624269, "23b5a723ed9143aebfd9ffda14ac4c21231f31c35ef837b6a13bb9e5488abb1e"),
     "campplus.onnx": (28303423, "a6ac6a63997761ae2997373e2ee1c47040854b4b759ea41ec48e4e42df0f4d73"),
@@ -45,8 +45,8 @@ def validate_request(text: str, voice: str, instruction: str, seed: int) -> None
         raise ValueError("请输入一段1–240字完整讲述；不接受控制标记或多段拼接")
     if voice not in ("中文女", "中文男"):
         raise ValueError("本地叙事配音只使用模型发布的中文女/中文男预设，不克隆人物")
-    if not instruction.strip() or len(instruction) > 160 or any(c in instruction for c in "\x00\r\n|<>"):
-        raise ValueError("请输入1–160字语气说明，不接受模型控制标记")
+    if instruction != "":
+        raise ValueError("当前预设音色模型不支持语气指令；请保留空串，导演备注不要送进旁白")
     if not 0 <= seed <= 2**31 - 1:
         raise ValueError("seed须为非负32位整数")
 
@@ -81,7 +81,8 @@ def request_identity(engine: dict, text: str, voice: str, instruction: str, seed
     validate_request(text, voice, instruction, seed)
     request = {**engine, "text": text, "voice": voice, "instruction": instruction,
                "seed": seed, "speed": 1.0, "sample_rate": 22050,
-               "segmentation": "one-complete-utterance", "format": "mono-pcm16"}
+               "segmentation": "one-complete-utterance", "format": "mono-pcm16",
+               "mode": "sft-text-only"}
     key = hashlib.sha256(json.dumps(request, ensure_ascii=False, sort_keys=True,
                                     separators=(",", ":")).encode()).hexdigest()
     return request, key
@@ -218,8 +219,8 @@ def worker(args) -> None:
     chunks = []
     # Preserve punctuation and intonation within a whole scene/utterance.
     # Inputs are already authored/TN-checked; do not split at commas or re-normalize.
-    for item in model.inference_instruct(args.text, args.voice, args.instruction,
-                                         stream=False, speed=1.0, text_frontend=False):
+    for item in model.inference_sft(args.text, args.voice,
+                                    stream=False, speed=1.0, text_frontend=False):
         audio = item["tts_speech"].detach().cpu().numpy().reshape(-1)
         if not len(audio) or not np.isfinite(audio).all():
             raise ValueError("引擎未返回完整有效声音")
@@ -234,8 +235,8 @@ def main() -> int:
     parser.add_argument("--runtime", type=Path, required=True)
     parser.add_argument("--cache", type=Path)
     parser.add_argument("--text", required=True)
-    parser.add_argument("--voice", default="中文女")
-    parser.add_argument("--instruction", default="请用自然、亲切的语气讲故事，问句带着好奇，讲到选择时稍作停顿，揭晓结果时清楚有力。")
+    parser.add_argument("--voice", default="中文男")
+    parser.add_argument("--instruction", default="", help="兼容参数；当前SFT模式只接受空串，不支持显式语气指令")
     parser.add_argument("--seed", type=int, default=1986)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--deadline", type=int, default=600)
