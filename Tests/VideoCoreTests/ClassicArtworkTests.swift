@@ -9,6 +9,30 @@ final class ClassicArtworkTests:XCTestCase {
         var scene=Scene(kind:.simulation,title:"经典玩法",body:"测试事件");scene.classicArtwork=ClassicArtwork.quadrants(assetID:asset.id,gameplay:.sokoban,sources:[source])
         return(scene,[asset],[proof])
     }
+    private func knowledgeFixture(_ model:KnowledgeSimulation) -> (Scene,[Asset],[Evidence]) {
+        var(scene,assets,evidence)=fixture()
+        var derived=assets[0];derived.id=Codec.id();derived.name="actual-knowledge-poses-fixture.png";derived.hash=String(repeating:"b",count:64);assets.append(derived)
+        let proof=evidence[0],original=assets[0]
+        let source=ClassicSource(assetID:derived.id,hash:derived.hash,source:proof.source,owner:proof.owner,license:"isolated-test",evidenceID:proof.id)
+        let roles=ClassicArtworkRules.requiredRoles(knowledge:true,cartoon:false).union(["hero_walk_alt"])
+        scene.simulation.knowledge=model
+        scene.classicArtwork=ClassicArtwork(gameplay:.platformer,sprites:roles.sorted().map{ClassicSprite(role:$0,assetID:derived.id)},sources:scene.classicArtwork!.sources+[source],derivation:.qStyle,transformation:"隔离测试中的实际不同派生字节绑定，不代表产品素材",originalAssetIDs:[original.id])
+        return(scene,assets,evidence)
+    }
+    private func publicGoodModel()->KnowledgeSimulation {
+        KnowledgeSimulation(knowledgeLabel:"实际选择与后果",participants:[KnowledgeParticipant(id:"a",name:"甲",strategy:.contribute),KnowledgeParticipant(id:"b",name:"乙",strategy:.freeRide)],rounds:1)
+    }
+    private func matrixModel()->KnowledgeSimulation {
+        var model=publicGoodModel();model.version=2;model.payoffMatrix = .prisonersDilemma()
+        for index in model.participants.indices {model.participants[index].strategy = .contribute;model.participants[index].matrixStrategy = .alwaysFirst}
+        return model
+    }
+    private func ruleTableModel()->KnowledgeSimulation {
+        var model=publicGoodModel()
+        for index in model.participants.indices {model.participants[index].strategy = .contribute}
+        model.version=3;model.ruleTable=KnowledgeRuleTable(actions:[.init(id:"act",label:"执行")],states:[.init(id:"open",label:"待执行")],plans:model.participants.map{.init(actorID:$0.id,initialStateID:"open",defaultActionID:"act")},rules:[.init(id:"transfer",label:"实际交换",conditions:[.init(kind:.round,minimum:1,maximum:1)],effects:[.transfer(from:"a",to:"b",amount:1)])])
+        return model
+    }
     func testArtworkPinsConcreteFilesWorkspaceAndEvidence()throws {
         let(scene,assets,evidence)=fixture()
         try scene.validate(assets:assets)
@@ -38,6 +62,76 @@ final class ClassicArtworkTests:XCTestCase {
         XCTAssertNoThrow(try scene.validate(assets:assets))
         scene.classicArtwork?.sprites[1].assetID=assets[0].id
         XCTAssertThrowsError(try scene.validate(assets:assets))
+    }
+    func testQKnowledgeHeroCannotHideOriginalPublicGoodOrMatrixActionPoses()throws {
+        for model in [publicGoodModel(),matrixModel()] {
+            try model.validate()
+            let(scene,assets,_)=knowledgeFixture(model)
+            XCTAssertNoThrow(try ClassicArtworkRules.validate(scene:scene,assets:assets))
+            for role in ["hero_idle","hero_walk","hero_walk_alt","hero_contribute","hero_success","hero_blocked"] {
+                var changed=scene
+                let index=try XCTUnwrap(changed.classicArtwork?.sprites.firstIndex{$0.role==role})
+                changed.classicArtwork?.sprites[index].assetID=assets[0].id
+                XCTAssertThrowsError(try ClassicArtworkRules.validate(scene:changed,assets:assets),"实际绘制的\(role)不能借用默认hero的Q版标签")
+            }
+        }
+    }
+    func testQKnowledgeSceneryRejectsOriginalGroundAndBackdropAcrossMechanisms()throws {
+        for model in [publicGoodModel(),matrixModel(),ruleTableModel()] {
+            try model.validate()
+            var(scene,assets,_)=knowledgeFixture(model)
+            XCTAssertNoThrow(try ClassicArtworkRules.validate(scene:scene,assets:assets),"可选天空背景未提供时不新增必填要求")
+            scene.classicArtwork?.sprites.append(ClassicSprite(role:"backdrop",assetID:assets[1].id))
+            XCTAssertNoThrow(try ClassicArtworkRules.validate(scene:scene,assets:assets))
+            for role in ["floor","knowledge_backdrop","backdrop"] {
+                var changed=scene
+                let index=try XCTUnwrap(changed.classicArtwork?.sprites.firstIndex{$0.role==role})
+                changed.classicArtwork?.sprites[index].assetID=assets[0].id
+                XCTAssertThrowsError(try ClassicArtworkRules.validate(scene:changed,assets:assets),"实际绘制的\(role)不能以原件冒充统一Q版场景")
+            }
+        }
+    }
+    func testQPublicGoodChecksDerivedGateWithoutPromotingUnusedObstaclesInOtherMechanisms()throws {
+        for model in [publicGoodModel(),matrixModel(),ruleTableModel()] {
+            var(scene,assets,_)=knowledgeFixture(model)
+            let index=try XCTUnwrap(scene.classicArtwork?.sprites.firstIndex{$0.role=="obstacle"})
+            scene.classicArtwork?.sprites[index].assetID=assets[0].id
+            if model.version==1 {
+                XCTAssertThrowsError(try ClassicArtworkRules.validate(scene:scene,assets:assets),"公共品实际清障必须绘制Q版障碍")
+            } else {
+                XCTAssertNoThrow(try ClassicArtworkRules.validate(scene:scene,assets:assets),"矩阵和规则表不绘制此备用图块，不将它升级为本次Q版要求")
+            }
+        }
+    }
+    func testQKnowledgePoseChecksKeepOptionalWalkFallbackAndIgnoreUnusedExtraSprites()throws {
+        var(scene,assets,_)=knowledgeFixture(publicGoodModel())
+        scene.classicArtwork?.sprites.removeAll{$0.role=="hero_walk_alt"}
+        scene.classicArtwork?.sprites.append(ClassicSprite(role:"unused-original-reference",assetID:assets[0].id))
+        XCTAssertNoThrow(try ClassicArtworkRules.validate(scene:scene,assets:assets),"可选步态缺失仍由渲染器正常回退；未使用的原件参考不升级为Q版要求")
+        var alias=assets[0];alias.id=Codec.id();alias.name="same-original-bytes.png";assets.append(alias)
+        let source=try XCTUnwrap(scene.classicArtwork?.sources.first{$0.assetID==assets[0].id})
+        scene.classicArtwork?.sources.append(ClassicSource(assetID:alias.id,hash:alias.hash,source:source.source,owner:source.owner,license:source.license,evidenceID:source.evidenceID))
+        let walk=try XCTUnwrap(scene.classicArtwork?.sprites.firstIndex{$0.role=="hero_walk"})
+        scene.classicArtwork?.sprites[walk].assetID=alias.id
+        XCTAssertThrowsError(try ClassicArtworkRules.validate(scene:scene,assets:assets),"相同原件字节换assetID也不是派生")
+    }
+    func testQRuleTableChecksItsActualDeclaredPosesWithoutRequiringUnusedCelebration()throws {
+        let model=ruleTableModel()
+        try model.validate()
+        var(scene,assets,_)=knowledgeFixture(model)
+        let celebration=try XCTUnwrap(scene.classicArtwork?.sprites.firstIndex{$0.role=="hero_success"})
+        scene.classicArtwork?.sprites[celebration].assetID=assets[0].id
+        XCTAssertNoThrow(try ClassicArtworkRules.validate(scene:scene,assets:assets),"当前规则未声明或绘制的庆祝姿态不新增派生要求")
+        for role in ["hero_idle","hero_walk","hero_walk_alt","hero_contribute","hero_blocked"] {
+            var changed=scene
+            let index=try XCTUnwrap(changed.classicArtwork?.sprites.firstIndex{$0.role==role})
+            changed.classicArtwork?.sprites[index].assetID=assets[0].id
+            XCTAssertThrowsError(try ClassicArtworkRules.validate(scene:changed,assets:assets),role)
+        }
+        var action=scene;action.simulation.knowledge?.ruleTable?.actions[0].pose = .celebrate
+        XCTAssertThrowsError(try ClassicArtworkRules.validate(scene:action,assets:assets),"声明动作实际选择的庆祝图块也须为派生")
+        var state=scene;state.simulation.knowledge?.ruleTable?.states[0].pose = .celebrate
+        XCTAssertThrowsError(try ClassicArtworkRules.validate(scene:state,assets:assets),"声明状态实际选择的庆祝图块也须为派生")
     }
     func testAudioBoundsAndListeningAreIndependentOfNarration()throws {
         var(scene,assets,evidence)=fixture()

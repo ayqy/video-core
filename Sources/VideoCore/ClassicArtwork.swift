@@ -65,7 +65,20 @@ public enum ClassicArtworkRules {
         }
         if artwork.derivation == .qStyle {
             let originalHashes=Set(assets.filter{artwork.originalAssetIDs.contains($0.id)}.map(\.hash))
-        var primaryRoles:Set<String> = scene.kind == .simulation && scene.simulation.knowledge == nil ? ["hero","crate"]:["hero"]
+            var primaryRoles:Set<String> = scene.kind == .simulation && scene.simulation.knowledge == nil ? ["hero","crate"]:["hero"]
+            if scene.kind == .simulation, let knowledge=scene.simulation.knowledge {
+                // Knowledge renderers draw scenery and actual action/state
+                // sprites, not just the legacy hero. A derived hero must not
+                // hide originals in the scene or its performed poses.
+                // Filtering existing sprites below retains the optional second
+                // walk frame and sky backdrop; no new role becomes required.
+                primaryRoles.formUnion(["floor","knowledge_backdrop","backdrop","hero_idle","hero_walk","hero_walk_alt","hero_contribute","hero_blocked"])
+                if knowledge.version==1 { primaryRoles.insert("obstacle") }
+                if knowledge.isRuleTable, let table=knowledge.ruleTable {
+                    primaryRoles.formUnion(table.actions.map{$0.pose.spriteRole})
+                    primaryRoles.formUnion(table.states.map{$0.pose.spriteRole})
+                } else { primaryRoles.insert("hero_success") }
+            }
             if let acting=scene.cartoonPerformance {primaryRoles.formUnion(acting.actors.flatMap{Array($0.poseRoles.values)})}
             let primarySprites=artwork.sprites.filter{primaryRoles.contains($0.role)}
             guard !artwork.originalAssetIDs.isEmpty,!artwork.transformation.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty,
