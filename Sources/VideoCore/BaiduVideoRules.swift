@@ -88,7 +88,16 @@ public enum BaiduVideoRules {
         let c=input.config,allowed=[[1920,1080],[1280,720],[1024,576],[1080,1920],[720,1280],[576,1024]]
         guard c.productType=="video",allowed.contains(c.resolution) else{throw VideoError.invalid("此适配只回收真实MP4视频；分辨率须使用合同列出的六种规格")}
         if let voice=c.ttsPer{guard [0,1,3,4,5,103,106,110,111,5003,5118,4003,4100,4103,4105,4106,4115,4117,4119,4144,4140,4143,4129,4278,4254,4149].contains(voice) else{throw VideoError.invalid("音库ID不在固定合同范围")}}
-        if let template=c.templateId {let horizontal=["30","41","42","43","44","45","46","47","48","49"],vertical=["40","28","29"]+(31...39).map(String.init)+(50...71).map(String.init);guard (c.resolution[0]>c.resolution[1] ? horizontal:vertical).contains(template) else{throw VideoError.invalid("模板ID与横竖屏合同不符")}}
+        if let template=c.templateId {
+            let horizontal:[String]=["30","41","42","43","44","45","46","47","48","49"]
+            let middleVertical:[String]=(31...39).map { value in String(value) }
+            let lastVertical:[String]=(50...71).map { value in String(value) }
+            var vertical:[String]=["40","28","29"]
+            vertical.append(contentsOf:middleVertical)
+            vertical.append(contentsOf:lastVertical)
+            let allowedTemplates:[String]=c.resolution[0]>c.resolution[1] ? horizontal:vertical
+            guard allowedTemplates.contains(template) else{throw VideoError.invalid("模板ID与横竖屏合同不符")}
+        }
         for setting in [c.bgMusic,c.videoBegin,c.videoEnd].compactMap({$0}){guard setting.mediaSource.type==3 else{throw VideoError.invalid("辅助媒体须使用URL类型3")};_ = try safeHTTPS(setting.mediaSource.url)}
         if let caption=c.caption{guard caption.marginBottom.map({(0...500).contains($0)}) ?? true,[caption.fontAlpha,caption.bgAlpha].compactMap({$0}).allSatisfy({(0...100).contains($0)}),[caption.fontColor,caption.bgColor].compactMap({$0}).allSatisfy({$0.range(of:"^[a-fA-F0-9]{6}$",options:.regularExpression) != nil}) else{throw VideoError.invalid("字幕位置、透明度或十六进制颜色超出合同")}}
         if let logo=c.videoLogo{guard logo.mediaSource.type==3,logo.location.map({["top-left","top-right"].contains($0)}) ?? true,logo.margin.map({(0...100).contains($0)}) ?? true else{throw VideoError.invalid("角标位置或边距超出合同")};_ = try safeHTTPS(logo.mediaSource.url)}

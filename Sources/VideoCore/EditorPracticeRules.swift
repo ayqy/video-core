@@ -63,7 +63,18 @@ public enum EditorPracticeRules {
         guard originalProduct.hasSameFacts(as:expected),currentProduct.hasSameFacts(as:originalProduct),project.current.purpose == .education,
               project.current.cta=="换成真实资料，再创建自己的作品" else{return false}
         // Tutorial text/timing/layout changes are allowed. It cannot quietly become a real-media customer project.
-        var references=Set(project.current.scenes.compactMap(\.assetID)+project.current.scenes.compactMap{$0.voice?.assetID}+project.current.scenes.flatMap{$0.layers ?? []}.compactMap(\.assetID)+project.current.scenes.flatMap{$0.narrativeSources ?? []}.map(\.assetID))
+        let scenes:[Scene]=project.current.scenes
+        let sceneAssetIDs:[String]=scenes.compactMap { $0.assetID }
+        let voiceAssetIDs:[String]=scenes.compactMap { $0.voice?.assetID }
+        let layers:[SceneLayer]=scenes.flatMap { $0.layers ?? [] }
+        let layerAssetIDs:[String]=layers.compactMap { $0.assetID }
+        let narrativeSources:[NarrativeSource]=scenes.flatMap { $0.narrativeSources ?? [] }
+        let narrativeAssetIDs:[String]=narrativeSources.map { $0.assetID }
+        var referenceIDs:[String]=sceneAssetIDs
+        referenceIDs.append(contentsOf:voiceAssetIDs)
+        referenceIDs.append(contentsOf:layerAssetIDs)
+        referenceIDs.append(contentsOf:narrativeAssetIDs)
+        var references:Set<String>=Set(referenceIDs)
         for artwork in project.current.scenes.compactMap(\.classicArtwork) {references.formUnion(artwork.assetIDs)}
         if let music=project.current.musicAssetID{references.insert(music)}
         for character in project.current.scenes.compactMap(\.characterProfile){if let voice=character.voiceAssetID{references.insert(voice)}}

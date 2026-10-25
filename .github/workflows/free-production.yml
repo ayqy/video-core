@@ -119,6 +119,36 @@ jobs:
               log.unlink(missing_ok=True)
           PY
 
+      - name: Check affected provider and practice rules
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import os, re, subprocess
+          root = Path(os.environ['GITHUB_WORKSPACE'])
+          scratch = Path(os.environ['RUNNER_TEMP']) / 'video-free-build'
+          log = Path(os.environ['RUNNER_TEMP']) / 'video-free-rules.log'
+          try:
+              with log.open('wb') as stream:
+                  result = subprocess.run(['swift', 'test', '--package-path', str(root),
+                      '--scratch-path', str(scratch), '--disable-sandbox', '--jobs', '2',
+                      '-c', 'release', '--filter', 'BaiduVideoRulesTests|EditorPracticeTests|MacCommerceRulesTests'],
+                      stdout=stream, stderr=subprocess.STDOUT, timeout=900)
+              lines = log.read_text(errors='replace').splitlines()
+              errors = [line[:700] for line in lines if re.search(r'error:|fatal error:', line, re.I)]
+              for line in errors[-12:]:
+                  print(line)
+              for line in lines:
+                  if re.search(r'Executed \d+ tests?|Test Suite .* (passed|failed)', line):
+                      print(line[:700])
+              assert result.returncode == 0, 'Affected provider/practice rules failed'
+              counts = [int(value) for value in re.findall(r'Executed (\d+) tests?', '\n'.join(lines))]
+              assert 29 in counts, 'Expected 8 provider, 13 practice and 8 commerce rule tests'
+              print('affected_rules=passed; distinct_tests=29')
+          finally:
+              log.unlink(missing_ok=True)
+          PY
+
       - name: Install and discover the shared Skill files
         shell: bash
         run: |

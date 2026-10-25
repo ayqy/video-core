@@ -2,10 +2,10 @@
 
 VideoFree source export · package_free.py · version 1
 
-生成时间：2026-10-26 02:06:16 北京时间
+生成时间：2026-10-26 02:13:11 北京时间
 
-- 源码与必要元数据：222个文件；2922090字节（不含本清单）。
-- 整体内容指纹：`3fbb19cb370350f166ed546076085588a8ce494f2968983db693019b8db648d5`。
+- 源码与必要元数据：222个文件；2924576字节（不含本清单）。
+- 整体内容指纹：`ff9e1f7b7ac496c13af3996bb5422f090a6ad01432f754c98332e1466d3c802b`。
 - 来源：受控原始工程中的逐文件白名单；Package.swift与唯一免费制作workflow来自Distribution/Free精确模板，README由发行脚本生成。
 - 本包不含.git，不可作为新业务checkout；本清单生成过程不执行构建、设备验收、签名安装或公共上传，各阶段以独立证据为准。
 - 排除：App、VideoGame、VideoCartoon、Premium、高级实现运行时测试、私有仓库地址、凭据、客户数据、缓存、日志及媒体过程产物。
@@ -14,7 +14,7 @@ VideoFree source export · package_free.py · version 1
 
 | SHA-256 | 字节数 | 包内路径 / 原工程来源 |
 |---|---:|---|
-| 7f62bd6a001faca17482acbdb2233f5eb4dbd092d737eba940baad08f6fc2b7e | 7810 | .github/workflows/free-production.yml |
+| 2d75aa2ae62c89ce44cc8118552c0ef67245ee36efd82fabe7a8d74fdf8f5945 | 9464 | .github/workflows/free-production.yml |
 | 657d1e41716c0e58c0e5072cee94060c103394dd4dc26ead7dbc851d8e85a00a | 31765 | Integrations/README.md |
 | 2ff174ec064ca614f24e8ba67ae5c7042a2caa883af162bafd27a8a4520d5ed7 | 26522 | Integrations/asset_reuse.py |
 | be0a15cd8fcb9b33fe92f2898a9ee53aa20f9722b368abd19e0a7a5ef924bc42 | 18066 | Integrations/check_install.py |
@@ -65,7 +65,7 @@ VideoFree source export · package_free.py · version 1
 | 9abfcc0fb2fe524d09107761d1471684807e723a87184e2ad3cd1793b940c55f | 3611 | Sources/VideoCore/AgentWorker.swift |
 | a4a917beec4d38f3d9c9aa6f13c83f269987305ab84a195e953a86907fadc3ac | 4979 | Sources/VideoCore/AttributionEditing.swift |
 | e3b059161aa969b73d0787d69ea36694a0aad001c0f1b8e4035f4b8ac0bf8b7e | 3326 | Sources/VideoCore/AudioMixRules.swift |
-| e4188a8ecfcc0be2a4be4232e062ca6228523577a0e15a07074710671845bf3a | 18116 | Sources/VideoCore/BaiduVideoRules.swift |
+| 4bc36645d22e9ab55ed6f4fa58e58a21f050a994b29012d55361e37952301b79 | 18455 | Sources/VideoCore/BaiduVideoRules.swift |
 | 189ad6135ff5becbe08363ac71b03ed91e90ca27a03f07d0ec2fe3de97f3470f | 12961 | Sources/VideoCore/BatchRules.swift |
 | 77c10a02e09545b5087bd78330852f78f80fe9a4e472e65a33507135b21a232d | 14040 | Sources/VideoCore/CartoonActing.swift |
 | f233bfc6993babb28bcb7a68fa99c42292821d49461a7ce75b226ae2d4fac303 | 11777 | Sources/VideoCore/ClassicArtwork.swift |
@@ -77,7 +77,7 @@ VideoFree source export · package_free.py · version 1
 | 47b0e7ae5a22fa142bf1ad52e25d2b2e98ecfe086dff759f356abedbdd1d1833 | 11076 | Sources/VideoCore/DataPresentation.swift |
 | 80b4a15fb501e5f2f522ba831d9c0af79ed9b5d7879fc4f62e5258186724a597 | 20194 | Sources/VideoCore/Dependencies.swift |
 | 714508adea287d957a1e18d43504d8b8e48b1137baa29cf070bfdeb34fff4dbf | 35366 | Sources/VideoCore/Editing.swift |
-| 2812b4b5a76d74c216cdf19af91de902ff2808edc0d2750bbc4a38cf71043c9f | 5735 | Sources/VideoCore/EditorPracticeRules.swift |
+| 637390cfaf18b0c0ed51d28ac41cd52ee9f0cd83527df3abe2d8d36e47077705 | 6228 | Sources/VideoCore/EditorPracticeRules.swift |
 | ff72243377a23f6732d56c34e50d291d82e60d1a71ada1878d9ee2e7c5f641b6 | 12517 | Sources/VideoCore/Finance.swift |
 | 9e5b2b47e55fdcf7b1495a61e0df94e9b9bb2e915bbb147ebb829585e84d148b | 6424 | Sources/VideoCore/H264Rules.swift |
 | 2bfaeccf8e337bf51c8c5e053272308a17f7973c4225570324038aa724308010 | 4242 | Sources/VideoCore/ImportRules.swift |
