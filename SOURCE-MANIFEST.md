@@ -2,11 +2,11 @@
 
 VideoFree source export · package_free.py · version 1
 
-生成时间：2026-10-26 01:04:10 北京时间
+生成时间：2026-10-26 02:06:16 北京时间
 
-- 源码与必要元数据：219个文件；2879649字节（不含本清单）。
-- 整体内容指纹：`7d02c0f38225151bcddd9178bae1bd2bd634cc99ec0fe814a72185f7f658a856`。
-- 来源：受控原始工程中的逐文件白名单；Package.swift来自Distribution/Free/Package.swift模板，README由发行脚本生成。
+- 源码与必要元数据：222个文件；2922090字节（不含本清单）。
+- 整体内容指纹：`3fbb19cb370350f166ed546076085588a8ce494f2968983db693019b8db648d5`。
+- 来源：受控原始工程中的逐文件白名单；Package.swift与唯一免费制作workflow来自Distribution/Free精确模板，README由发行脚本生成。
 - 本包不含.git，不可作为新业务checkout；本清单生成过程不执行构建、设备验收、签名安装或公共上传，各阶段以独立证据为准。
 - 排除：App、VideoGame、VideoCartoon、Premium、高级实现运行时测试、私有仓库地址、凭据、客户数据、缓存、日志及媒体过程产物。
 - 已检查：路径与普通文本文件类型、符号/硬链接拒绝、免费源码闭源import、已知凭据形态和仓库URL。模式检查不能证明任意自由文本绝无敏感信息，仍需发行审查。
@@ -14,6 +14,7 @@ VideoFree source export · package_free.py · version 1
 
 | SHA-256 | 字节数 | 包内路径 / 原工程来源 |
 |---|---:|---|
+| 7f62bd6a001faca17482acbdb2233f5eb4dbd092d737eba940baad08f6fc2b7e | 7810 | .github/workflows/free-production.yml |
 | 657d1e41716c0e58c0e5072cee94060c103394dd4dc26ead7dbc851d8e85a00a | 31765 | Integrations/README.md |
 | 2ff174ec064ca614f24e8ba67ae5c7042a2caa883af162bafd27a8a4520d5ed7 | 26522 | Integrations/asset_reuse.py |
 | be0a15cd8fcb9b33fe92f2898a9ee53aa20f9722b368abd19e0a7a5ef924bc42 | 18066 | Integrations/check_install.py |
@@ -23,6 +24,8 @@ VideoFree source export · package_free.py · version 1
 | 7ecc56e44b3df5afd221e617549ae8f3f9a1d9847b72ac572fa2f2c0d2ae5ca2 | 12512 | Integrations/codex_events.py |
 | 331a2efd301fd9cf623d76e9e47bf85f3fa43fb8d1b6b3281831e418013075f0 | 41267 | Integrations/codex_production.py |
 | 36bdcf361abca71ae28992a3d5fd2f1c658738f9ba954a21ddb41fc7516b7ceb | 6332 | Integrations/discover.py |
+| 71f141fb97afad654073147b6d7c9cccd12428be4e8ada6274946f0e30df14de | 3258 | Integrations/examples/README.md |
+| 5c647aa4023be1aff66c0fcf4166fe41bf9e8d54039f800b46d80ec8f43d86e7 | 30722 | Integrations/examples/free_production.py |
 | f17393a51167b7998ad0e18817bc65c7bf74d750fa57f0d2b727d1ab9cfeda0f | 15088 | Integrations/install.py |
 | 62f9d807ade91cb2bac3b92933ee0dbf5d957fb52619f6e4979c905d0da8527f | 3842 | Integrations/narration_reference.py |
 | 5a2742408ea0c2e1ce512f90d6d349252e7493095b4b0317fb51551b7bd21f7f | 3621 | Integrations/package.py |
@@ -47,7 +50,7 @@ VideoFree source export · package_free.py · version 1
 | cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30 | 11358 | LICENSE |
 | c369f09e50d62d1a1c8eff1500888667ff7a192d0fdc7b32d39c800dfa1e9721 | 1597 | NOTICE |
 | e3dae895ffcaa4ce4470f1dc9d63eee5071f829d63cfe227360c3dabfbdd0d91 | 1213 | Package.swift |
-| 84aa9519111f7259d886e42e5bffd26e20dd05b732117071232c2044514b28c6 | 2980 | README.md |
+| 771b5bfdac0af67cbeba8eab9655f366dffd699238f2b7cfb714d1e5d7879452 | 3631 | README.md |
 | bbfe59a972a3e8e09e347c04bc22c0eacd2544881af8a4b6068bfc30b38466e8 | 80 | Sources/CSQLite/module.modulemap |
 | b052d8e561e942f97b503033ecd2eaa2b35213bdbf374983efe9e68eabdfc024 | 21 | Sources/CSQLite/shim.h |
 | 347257a3cd5bcb0e501506a29ab4dc2892a46d2560a111a8d779b124e594ebb9 | 60 | Sources/CZlib/module.modulemap |

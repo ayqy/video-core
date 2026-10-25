@@ -18,6 +18,12 @@ MacApp、旧 App、VideoGame、VideoCartoon、Premium、高级实现运行时测
 - DinoBuiltinAssets与VoicePromptBuiltinAssets仅是固定被动素材包的导入器文本；Mac内置图片、原音和依赖这些资源的集成测试不在此文本分包。普通文件导入与免费制作不依赖这些素材包。
 - 规则测试与源文件摘要见 `SOURCE-MANIFEST.md`。此分包检查不等于编译、设备验收或公开发行已经通过。
 
+## 独立制作入门
+
+`Integrations/examples/README.md`提供可直接运行的普通免费制作配方：固定公开原件与许可、脚本和剪辑、真实英文提示录音、成片四件、质量交接及含源恢复。提示录音不冒中文知识旁白，人工声音/字幕/整片审核保持待审。
+
+公共仓库的`free-production`工作流在全新标准macOS运行器编译并执行该配方，不安装Mac App、付费插件或激活材料；共用Skill按正常项目目录安装和验证，CLI发现不代表模型宿主业务或市场上架。工作流及配方也可分别复用，不读取服务凭据或上传私人工程。
+
 ## 许可和可重复检查
 
 本包原创免费源码与生成的 Package / README 元数据按 Apache-2.0 授权，保留 `LICENSE`、`NOTICE`。系统框架与用户素材适用各自条款，导入或合成成功不等于获得商业授权。
