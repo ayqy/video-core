@@ -89,4 +89,20 @@ public enum ScriptJobRules {
         updated.lease=nil;updated.updatedAt=now
         return updated
     }
+    /// Only the live invocation that has not entered transport may use this.
+    /// Missing persisted response fields alone never establish that fact.
+    public static func notSubmitted(_ job:Job,executionToken:String,now:Date=Date())->Job {
+        do{try authorizeExecution(job,token:executionToken,now:now)}catch{return job}
+        guard job.remoteID==nil,job.remoteCheckedAt==nil,job.artifacts.isEmpty,
+              job.actual==nil,(job.billing ?? []).isEmpty,job.refundPending==nil,
+              job.videoGeneration==nil,(job.outputAssetIDs ?? []).isEmpty,
+              let receipts=job.providerAttempts,receipts.count==1,
+              receipts[0].number==1,receipts[0].id==job.requestKey+"-attempt-1",
+              receipts[0].respondedAt==nil else{return job}
+        var updated=job
+        updated.state = .cancelled;updated.actual=Money(0,job.quote.upper.currency)
+        updated.billingUnknown=false;updated.lease=nil;updated.updatedAt=now
+        updated.message="本次执行在提交网络请求前停止；实际费用为0，原任务与报价保留。这不是退款回执"
+        return updated
+    }
 }

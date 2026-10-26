@@ -104,5 +104,64 @@ final class ScriptJobsTests:XCTestCase {
         }
         do{_ = try await task.value;XCTFail("cancelled request was allowed")}catch{XCTAssertTrue(error is CancellationError)}
     }
+    func testPrecancelledPublicSubmissionNeverReadsCredentialsOrStoresPaidIntent()async throws {
+        let(repository,prepared)=try fixture();defer{try? FileManager.default.removeItem(at:repository.root)}
+        try repository.transaction{$0.jobs=[]}
+        let database=try repository.read(),before=try Codec.digest(database)
+        let task=Task {
+            withUnsafeCurrentTask{$0?.cancel()}
+            return try await ScriptJobs.submit(repository:repository,workspaceID:"w",projectID:database.projects[0].id,profileID:database.providers[0].id,evidenceIDs:[],brief:"解释已选内容",quote:prepared.quote,requestKey:"pre-cancelled-public",principal:"owner")
+        }
+        do{_ = try await task.value;XCTFail("pre-cancelled submission was allowed")}
+        catch{XCTAssertTrue(error is CancellationError,"public entry must return cancellation before local credential access; got \(type(of:error))")}
+        XCTAssertEqual(try Codec.digest(repository.read()),before)
+        XCTAssertTrue(try repository.read().jobs.isEmpty)
+    }
+    func testCancellationAfterPreparedReceiptDoesNotEnterTransmissionBoundary()async throws {
+        let(repository,_)=try fixture();defer{try? FileManager.default.removeItem(at:repository.root)}
+        var profile=try repository.read().providers[0]
+        profile.keyReference="script-rules-"+Codec.id()
+        try SecureCredentials.save("local-rule-value",reference:profile.keyReference)
+        defer{SecureCredentials.remove(profile.keyReference)}
+        let boundary=ScriptTestTransmissionCount(),revision=try repository.read().projects[0].current
+        let task=Task {
+            try await ProviderClient.script(profile:profile,revision:revision,evidence:[],brief:"取消边界",onTransmissionStarted:{boundary.record()},onAttempt:{_ in withUnsafeCurrentTask{$0?.cancel()}})
+        }
+        do{_ = try await task.value;XCTFail("cancelled after preparation")}
+        catch{XCTAssertTrue(error is CancellationError)}
+        XCTAssertEqual(boundary.value,0)
+    }
+    func testEnteredTransportFailureRetainsUnknownSpendAndPreventsNewPaidIntent()async throws {
+        let(repository,prepared)=try fixture();defer{try? FileManager.default.removeItem(at:repository.root)}
+        let reference="script-rules-"+Codec.id()
+        try SecureCredentials.save("local-rule-value",reference:reference);defer{SecureCredentials.remove(reference)}
+        try repository.transaction{db in db.jobs=[];db.providers[0].keyReference=reference;db.providers[0].endpoint="https://127.0.0.1:1/chat/completions"}
+        let db=try repository.read(),p=db.projects[0],profile=db.providers[0]
+        // A refused local TLS connection is a transport-boundary rule test,
+        // never a real supplier acceptance or a supplier billing receipt.
+        do{_ = try await ScriptJobs.submit(repository:repository,workspaceID:"w",projectID:p.id,profileID:profile.id,evidenceIDs:[],brief:"解释已选内容",quote:prepared.quote,requestKey:"local-refused-transport",principal:"owner");XCTFail("loopback port unexpectedly accepted script")}
+        catch{XCTAssertFalse(error is CancellationError)}
+        let actual=try repository.read();XCTAssertEqual(actual.jobs.count,1)
+        let unknown=try XCTUnwrap(actual.jobs.first)
+        XCTAssertEqual(unknown.state,.unknownRemote);XCTAssertTrue(unknown.billingUnknown);XCTAssertEqual(unknown.exposure.amount,3);XCTAssertNil(unknown.actual);XCTAssertNil(unknown.lease)
+        var next=prepared.quote;next.id=Codec.id()
+        XCTAssertThrowsError(try repository.transaction{try ScriptJobRules.prepare(database:&$0,workspaceID:"w",projectID:p.id,profile:profile,evidence:[],brief:"解释已选内容",quote:next,requestKey:"cannot-pay-again",principal:"owner")})
+        XCTAssertEqual(try repository.read().jobs.count,1)
+    }
+    func testFailureAfterWorkspaceRevocationCannotWriteZeroCostOrUnknownState()throws {
+        let(repository,job)=try fixture();defer{try? FileManager.default.removeItem(at:repository.root)}
+        let token=try XCTUnwrap(job.lease).token
+        try repository.transaction{$0.workspaces[0].owner="new-owner"}
+        let before=try Codec.digest(repository.read())
+        for transmitted in [false,true] {
+            XCTAssertThrowsError(try ScriptJobs.handleFailure(repository:repository,job:job,principal:"owner",executionToken:token,transmissionStarted:transmitted))
+            XCTAssertEqual(try Codec.digest(repository.read()),before)
+        }
+    }
+}
+private final class ScriptTestTransmissionCount:@unchecked Sendable {
+    private let lock=NSLock();private var count=0
+    func record(){lock.lock();defer{lock.unlock()};count+=1}
+    var value:Int{lock.lock();defer{lock.unlock()};return count}
 }
 #endif

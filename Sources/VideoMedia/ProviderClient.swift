@@ -23,13 +23,13 @@ public enum SecureCredentials {
 public enum ProviderClient {
     /// Only a returned but malformed response may be repaired, and only within an explicitly frozen two-attempt quote.
     /// Transport uncertainty and HTTP failures never cause another paid POST.
-    public static func script(profile:ProviderProfile,product:VideoCore.Product,evidence:[Evidence],brief:String,requestKey:String?=nil,quote:Quote?=nil,deadline:Date?=nil,onAttempt:(@Sendable (ProviderAttempt) async throws -> Void)?=nil) async throws -> String {
-        try await execute(profile:profile,requestKey:requestKey,quote:quote,deadline:deadline,onAttempt:onAttempt){previous in try ProviderRules.body(profile:profile,product:product,evidence:evidence,brief:brief,previous:previous)}
+    public static func script(profile:ProviderProfile,product:VideoCore.Product,evidence:[Evidence],brief:String,requestKey:String?=nil,quote:Quote?=nil,deadline:Date?=nil,onTransmissionStarted:(@Sendable () -> Void)?=nil,onAttempt:(@Sendable (ProviderAttempt) async throws -> Void)?=nil) async throws -> String {
+        try await execute(profile:profile,requestKey:requestKey,quote:quote,deadline:deadline,onAttempt:onAttempt,onTransmissionStarted:onTransmissionStarted){previous in try ProviderRules.body(profile:profile,product:product,evidence:evidence,brief:brief,previous:previous)}
     }
-    public static func script(profile:ProviderProfile,revision:Revision,evidence:[Evidence],brief:String,requestKey:String?=nil,quote:Quote?=nil,deadline:Date?=nil,onAttempt:(@Sendable (ProviderAttempt) async throws -> Void)?=nil) async throws -> String {
-        try await execute(profile:profile,requestKey:requestKey,quote:quote,deadline:deadline,onAttempt:onAttempt){previous in try ProviderRules.body(profile:profile,revision:revision,evidence:evidence,brief:brief,previous:previous)}
+    public static func script(profile:ProviderProfile,revision:Revision,evidence:[Evidence],brief:String,requestKey:String?=nil,quote:Quote?=nil,deadline:Date?=nil,onTransmissionStarted:(@Sendable () -> Void)?=nil,onAttempt:(@Sendable (ProviderAttempt) async throws -> Void)?=nil) async throws -> String {
+        try await execute(profile:profile,requestKey:requestKey,quote:quote,deadline:deadline,onAttempt:onAttempt,onTransmissionStarted:onTransmissionStarted){previous in try ProviderRules.body(profile:profile,revision:revision,evidence:evidence,brief:brief,previous:previous)}
     }
-    private static func execute(profile:ProviderProfile,requestKey:String?,quote:Quote?,deadline suppliedDeadline:Date?,onAttempt:(@Sendable (ProviderAttempt) async throws -> Void)?,makeBody:(String?)throws->Data) async throws -> String {
+    private static func execute(profile:ProviderProfile,requestKey:String?,quote:Quote?,deadline suppliedDeadline:Date?,onAttempt:(@Sendable (ProviderAttempt) async throws -> Void)?,onTransmissionStarted:(@Sendable () -> Void)?,makeBody:(String?)throws->Data) async throws -> String {
         let started=Date(),allowed=ScriptJobRules.executionAttempts(profile:profile,quote:quote,now:started)
         let deadline=min(suppliedDeadline ?? .distantFuture,ScriptJobRules.executionDeadline(profile:profile,quote:quote,now:started))
         func checkDeadline()throws {
@@ -61,7 +61,13 @@ public enum ProviderClient {
             var request=URLRequest(url:url,timeoutInterval:min(ScriptJobRules.requestTimeoutSeconds,deadline.timeIntervalSinceNow));request.httpMethod="POST";request.setValue("Bearer "+credential,forHTTPHeaderField:"Authorization");request.setValue("application/json",forHTTPHeaderField:"Content-Type");request.httpBody=body
             if profile.idempotency {request.setValue(receipt.id,forHTTPHeaderField:"Idempotency-Key")}
             let data:Data,response:URLResponse
-            do{(data,response)=try await session.data(for:request)}catch{try Task.checkCancellation();throw VideoError.unavailable("远端响应不确定，可能已消耗；先查询原任务或对账，不自动重交")}
+            try checkDeadline()
+            do{
+                // Synchronous observation immediately before URLSession takes
+                // ownership. Once called, even an immediate error is uncertain.
+                onTransmissionStarted?()
+                (data,response)=try await session.data(for:request)
+            }catch{try Task.checkCancellation();throw VideoError.unavailable("远端响应不确定，可能已消耗；先查询原任务或对账，不自动重交")}
             try checkDeadline()
             guard let http=response as? HTTPURLResponse,(200..<300).contains(http.statusCode),data.count<=2*1024*1024 else{throw VideoError.unavailable("模型未返回有效响应，保留已占用预算待对账；不自动重交")}
             receipt.respondedAt=Date()

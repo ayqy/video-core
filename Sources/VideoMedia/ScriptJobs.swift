@@ -4,6 +4,7 @@ import VideoCore
 
 public enum ScriptJobs {
     public static func submit(repository:Repository,workspaceID:String,projectID:String,profileID:String,evidenceIDs:Set<String>,brief:String,quote:Quote,requestKey:String,principal:String)async throws->Job {
+        try Task.checkCancellation()
         let snapshot=try repository.read()
         guard try snapshot.workspace(workspaceID).owner==principal,
               let profile=snapshot.providers.first(where:{$0.id==profileID}) else{throw VideoError.permission("本机服务或工作区权限不可用")}
@@ -16,15 +17,18 @@ public enum ScriptJobs {
             return old
         }
         // Missing/revoked local credentials fail before any paid intent is stored.
+        try Task.checkCancellation()
         _=try SecureCredentials.read(profile.keyReference)
         let prepared=try repository.transaction{db in
-            try ScriptJobRules.prepare(database:&db,workspaceID:workspaceID,projectID:projectID,profile:profile,evidence:evidence,brief:brief,quote:quote,requestKey:requestKey,principal:principal)
+            try Task.checkCancellation()
+            return try ScriptJobRules.prepare(database:&db,workspaceID:workspaceID,projectID:projectID,profile:profile,evidence:evidence,brief:brief,quote:quote,requestKey:requestKey,principal:principal)
         }
         guard prepared.shouldSubmit else{return prepared.job}
         let job=prepared.job
         guard let lease=job.lease else{throw VideoError.conflict("原脚本请求缺少有界执行权，不能提交")}
+        let transmission=ScriptTransmission()
         do {
-            let text=try await ProviderClient.script(profile:profile,revision:project.current,evidence:evidence,brief:brief,requestKey:requestKey,quote:quote,deadline:lease.expiresAt,onAttempt:{receipt in
+            let text=try await ProviderClient.script(profile:profile,revision:project.current,evidence:evidence,brief:brief,requestKey:requestKey,quote:quote,deadline:lease.expiresAt,onTransmissionStarted:{transmission.markStarted()},onAttempt:{receipt in
                 try repository.transaction{db in
                     guard try db.workspace(workspaceID).owner==principal,let i=db.jobs.firstIndex(where:{$0.id==job.id && $0.digest==job.digest}) else{throw VideoError.permission("原任务权限已撤销")}
                     db.jobs[i]=try ScriptJobRules.record(receipt,in:db.jobs[i],executionToken:lease.token)
@@ -33,8 +37,17 @@ public enum ScriptJobs {
             let draft=try prepareDraft(text:text,job:job,repository:repository,principal:principal)
             return try publishDraft(draft,repository:repository)
         }catch{
-            try? repository.transaction{db in guard let i=db.jobs.firstIndex(where:{$0.id==job.id}) else{return};db.jobs[i]=ScriptJobRules.interrupted(db.jobs[i],executionToken:lease.token)}
+            try? handleFailure(repository:repository,job:job,principal:principal,executionToken:lease.token,transmissionStarted:transmission.hasStarted)
             throw error
+        }
+    }
+    static func handleFailure(repository:Repository,job:Job,principal:String,executionToken:String,transmissionStarted:Bool)throws {
+        try repository.transaction{db in
+            guard try db.workspace(job.workspaceID).owner==principal,
+                  let i=db.jobs.firstIndex(where:{$0.id==job.id && $0.workspaceID==job.workspaceID && $0.projectID==job.projectID && $0.revisionID==job.revisionID && $0.digest==job.digest && $0.requestKey==job.requestKey && $0.quote.id==job.quote.id}) else{throw VideoError.permission("原任务身份或所有者已变化，拒绝失败回写")}
+            let next=transmissionStarted ? ScriptJobRules.interrupted(db.jobs[i],executionToken:executionToken):ScriptJobRules.notSubmitted(db.jobs[i],executionToken:executionToken)
+            guard try Codec.digest(next) != Codec.digest(db.jobs[i]) else{throw VideoError.conflict("原执行权已变化，失败处理没有可写状态")}
+            db.jobs[i]=next
         }
     }
     /// This normal two-phase path permits a fresh authority/state check after
@@ -109,6 +122,14 @@ public enum ScriptJobs {
         guard data.count<=120000,let text=String(data:data,encoding:.utf8) else{throw VideoError.review("候选讲稿不是可用的有界UTF-8文本")}
         return text
     }
+}
+
+/// Invocation-local, monotonic transport evidence. Never persisted or supplied
+/// by an external caller: reopening/crash recovery still assumes uncertainty.
+private final class ScriptTransmission:@unchecked Sendable {
+    private let lock=NSLock();private var started=false
+    func markStarted(){lock.lock();defer{lock.unlock()};started=true}
+    var hasStarted:Bool{lock.lock();defer{lock.unlock()};return started}
 }
 
 struct ScriptDraftIdentity:Equatable {

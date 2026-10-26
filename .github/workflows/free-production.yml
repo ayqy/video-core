@@ -151,10 +151,10 @@ jobs:
               ('VideoCoreTests', 'MacCommerceRulesTests'): (8, None),
               ('VideoCoreTests', 'SpeechTests'): (24, None),
               ('VideoCoreTests', 'AudioMixRulesTests'): (14, None),
-              ('VideoCoreTests', 'ContentServiceRulesTests'): (13, None),
+              ('VideoCoreTests', 'ContentServiceRulesTests'): (16, None),
               ('VideoCoreTests', 'SpeechProjectRulesTests'): (11, None),
               ('VideoMediaTests', 'AudioMixMediaTests'): (7, None),
-              ('VideoMediaTests', 'ScriptJobsTests'): (9, None),
+              ('VideoMediaTests', 'ScriptJobsTests'): (13, None),
               ('VideoMediaTests', 'SpeechProjectProductionTests'): (5, (
                   'testNormalImportedAudioAttachChecksRealBytesAndKeepsHumanReviewPending',
                   'testImported22050AudioKeepsContainerTailAndChecksMacCommitAfterDecode')),
@@ -173,7 +173,7 @@ jobs:
               filters.append('^' + re.escape(target) + r'\.' + re.escape(suite) +
                              '/(?:' + '|'.join(re.escape(method) for method in selected) + ')$')
           expected = len(expected_methods)
-          assert expected == sum(method_counts.values()) == 109
+          assert expected == sum(method_counts.values()) == 116
           print('affected_suite_methods=' + str(method_counts))
           print('system_tts_methods=not_selected; import_only_methods=2')
           try:

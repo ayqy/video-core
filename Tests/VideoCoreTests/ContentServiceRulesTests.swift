@@ -2,6 +2,56 @@ import XCTest
 @testable import VideoCore
 
 final class ContentServiceRulesTests:XCTestCase {
+    func testUnsentCancellationReleasesOnlyItsReservationAndKeepsOriginalReplay()throws {
+        var db=try database();db.budget=BudgetPolicy(project:Money(3),month:Money(3))
+        let p=db.projects[0],profile=db.providers[0],q=try quote(db)
+        let first=try ScriptJobRules.prepare(database:&db,workspaceID:"w",projectID:p.id,profile:profile,evidence:[],brief:"按真实材料解释",quote:q,requestKey:"not-sent",principal:"owner").job
+        XCTAssertEqual(first.exposure.amount,3)
+        let stopped=ScriptJobRules.notSubmitted(first,executionToken:try XCTUnwrap(first.lease).token)
+        XCTAssertEqual(stopped.state,.cancelled);XCTAssertEqual(stopped.actual,Money(0));XCTAssertFalse(stopped.billingUnknown);XCTAssertNil(stopped.lease)
+        XCTAssertEqual(stopped.exposure.amount,0);XCTAssertEqual(stopped.id,first.id);XCTAssertEqual(stopped.quote.id,q.id)
+        XCTAssertEqual(try Codec.data(stopped.providerAttempts),try Codec.data(first.providerAttempts));XCTAssertNil(stopped.refundPending);XCTAssertNil(stopped.billing)
+        db.jobs[0]=stopped
+        let replay=try ScriptJobRules.prepare(database:&db,workspaceID:"w",projectID:p.id,profile:profile,evidence:[],brief:"按真实材料解释",quote:q,requestKey:"not-sent",principal:"owner")
+        XCTAssertFalse(replay.shouldSubmit);XCTAssertEqual(replay.job.id,first.id)
+        var next=q;next.id=Codec.id()
+        let retried=try ScriptJobRules.prepare(database:&db,workspaceID:"w",projectID:p.id,profile:profile,evidence:[],brief:"按真实材料解释",quote:next,requestKey:"new-authorized-intent",principal:"owner")
+        XCTAssertTrue(retried.shouldSubmit);XCTAssertNotEqual(retried.job.id,first.id);XCTAssertEqual(db.jobs.count,2)
+        let root=FileManager.default.temporaryDirectory.appendingPathComponent(Codec.id(),isDirectory:true)
+        defer{try? FileManager.default.removeItem(at:root)}
+        let repo=try Repository(root:root);try repo.transaction{$0=db}
+        XCTAssertEqual(try Repository(root:root).read().jobs[0].exposure.amount,0)
+    }
+    func testUnsentReleaseCannotEraseUncertainResponseSpendOrAnotherExecution()throws {
+        var db=try database();let p=db.projects[0],profile=db.providers[0],q=try quote(db)
+        let first=try ScriptJobRules.prepare(database:&db,workspaceID:"w",projectID:p.id,profile:profile,evidence:[],brief:"按真实材料解释",quote:q,requestKey:"bound-not-sent",principal:"owner").job
+        let token=try XCTUnwrap(first.lease).token
+        var variants:[Job]=[]
+        for state:JobState in [.unknownRemote,.cancelRequested,.cancelled,.billingPending,.succeeded] {var j=first;j.state=state;variants.append(j)}
+        var j=first;j.remoteID="real-original";variants.append(j)
+        j=first;j.remoteCheckedAt=Date();variants.append(j)
+        j=first;j.providerAttempts?[0].respondedAt=Date();variants.append(j)
+        j=first;j.actual=Money(1);variants.append(j)
+        j=first;j.refundPending=Money(1);variants.append(j)
+        j=first;j.billing=[BillingRecord(id:"bill",kind:.charge,money:Money(1),source:"规则账单，仅验证不覆盖")];variants.append(j)
+        j=first;j.lease?.owner="another-owner";variants.append(j)
+        j=first;j.lease=nil;variants.append(j)
+        j=first;j.lease?.expiresAt=Date().addingTimeInterval(-1);variants.append(j)
+        j=first;j.providerAttempts=[];variants.append(j)
+        j=first;j.providerAttempts?.append(ProviderAttempt(id:first.requestKey+"-attempt-2",number:2,inputDigest:String(repeating:"b",count:64),capabilityVersion:profile.capabilities?.version));variants.append(j)
+        j=first;j.outputAssetIDs=["asset"];variants.append(j)
+        j=first;j.artifacts=[Artifact(path:"/existing.txt",mime:"text/plain",bytes:1,sha256:String(repeating:"a",count:64),revision:first.revisionID)];variants.append(j)
+        for value in variants {XCTAssertEqual(try Codec.digest(ScriptJobRules.notSubmitted(value,executionToken:token)),try Codec.digest(value))}
+        XCTAssertEqual(try Codec.digest(ScriptJobRules.notSubmitted(first,executionToken:"wrong-token")),try Codec.digest(first))
+    }
+    func testCrashRecoveryDoesNotInferZeroCostFromMissingResponseFields()throws {
+        var db=try database();let p=db.projects[0],profile=db.providers[0],q=try quote(db)
+        let first=try ScriptJobRules.prepare(database:&db,workspaceID:"w",projectID:p.id,profile:profile,evidence:[],brief:"按真实材料解释",quote:q,requestKey:"crash-before-response",principal:"owner").job
+        let recovered=JobOperations.recoverExpired(first,now:try XCTUnwrap(first.lease).expiresAt)
+        XCTAssertEqual(recovered.state,.unknownRemote);XCTAssertEqual(recovered.exposure.amount,3);XCTAssertTrue(recovered.billingUnknown)
+        db.jobs[0]=recovered;var next=q;next.id=Codec.id()
+        XCTAssertThrowsError(try ScriptJobRules.prepare(database:&db,workspaceID:"w",projectID:p.id,profile:profile,evidence:[],brief:"按真实材料解释",quote:next,requestKey:"cannot-bypass-crash",principal:"owner"))
+    }
     private func profile()->ProviderProfile {
         var p=ProviderProfile(name:"自带聊天",endpoint:"https://api.example.com/chat/completions",model:"reasoning-with-known-contract",supportedParameters:[],allowsUpload:true,keyReference:"opaque-local-reference")
         p.capabilities=ProviderCapabilities(version:"user-checked-v1",source:"https://api.example.com/docs",outputFormat:.text)
