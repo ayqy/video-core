@@ -2,6 +2,74 @@ import XCTest
 @testable import VideoCore
 
 final class SpeechTests: XCTestCase {
+    func testImportedVoiceKeepsCompleteSourceAcrossMeasuredResamplingFrameBoundary() throws {
+        // Real 22050Hz source / completed 48000Hz AVAssetReader output from scene02.
+        let source = 80128.0 / 22050
+        let decoded = 174395.0 / 48000
+        XCTAssertEqual(Int(ceil(source * 30)), 110)
+        XCTAssertEqual(Int(ceil(decoded * 30)), 109)
+        XCTAssertEqual(try SpeechRules.importedDurationFrames(registeredFrames: 110,
+            containerDuration: source, decodedDuration: decoded), 110,
+            "重采样时钟差不能把完整原音从110帧缩为109帧")
+    }
+
+    func testImportedVoicePreservesContainerSpanWhenDecodedClockIsSlightlyLonger() throws {
+        XCTAssertEqual(try SpeechRules.importedDurationFrames(registeredFrames: 30,
+            containerDuration: 1, decodedDuration: 1.0005), 30)
+        XCTAssertEqual(try SpeechRules.importedDurationFrames(registeredFrames: 31,
+            containerDuration: 1.0005, decodedDuration: 1), 31)
+    }
+
+    func testImportedVoiceRejectsRegistrationThatOnlyMatchesDecodedClock() throws {
+        let source = 80128.0 / 22050
+        let decoded = 174395.0 / 48000
+        for registration in [109, 111, 0, -1, Int.min, Int.max] {
+            XCTAssertThrowsError(try SpeechRules.importedDurationFrames(registeredFrames: registration,
+                containerDuration: source, decodedDuration: decoded)) { error in
+                XCTAssertEqual((error as? VideoError)?.code, "needs_review")
+            }
+        }
+    }
+
+    func testImportedVoiceRejectsInvalidDurationsBeforeIntegerConversion() throws {
+        for invalid in [Double.nan, .infinity, -.infinity, 0, -0.001, 3600.001, .greatestFiniteMagnitude] {
+            XCTAssertThrowsError(try SpeechRules.importedDurationFrames(registeredFrames: 30,
+                containerDuration: invalid, decodedDuration: 1))
+            XCTAssertThrowsError(try SpeechRules.importedDurationFrames(registeredFrames: 30,
+                containerDuration: 1, decodedDuration: invalid))
+        }
+    }
+
+    func testImportedVoiceRejectsCrossFrameDifferencesOverOneMillisecondInEitherDirection() throws {
+        for (source, decoded, frames) in [(3.6345, 3.6325, 110), (1.0, 1.002, 30),
+                                          (1.001001, 1.0, 31), (1.0, 1.001001, 30)] {
+            XCTAssertThrowsError(try SpeechRules.importedDurationFrames(registeredFrames: frames,
+                containerDuration: source, decodedDuration: decoded)) { error in
+                XCTAssertEqual((error as? VideoError)?.code, "needs_review")
+            }
+        }
+    }
+
+    func testImportedVoiceAllowsOneMillisecondBoundaryWithoutShorteningSource() throws {
+        XCTAssertEqual(try SpeechRules.importedDurationFrames(registeredFrames: 30,
+            containerDuration: 1, decodedDuration: 1.001), 30)
+        XCTAssertEqual(try SpeechRules.importedDurationFrames(registeredFrames: 31,
+            containerDuration: 1.001, decodedDuration: 1), 31)
+    }
+
+    func testImportedVoiceRetainsPreviousSameFrameBucketBehavior() throws {
+        // Both complete readings round to109; the existing equality rule accepted them.
+        XCTAssertGreaterThan(abs(3.61 - 3.63), 0.001)
+        XCTAssertEqual(try SpeechRules.importedDurationFrames(registeredFrames: 109,
+            containerDuration: 3.61, decodedDuration: 3.63), 109)
+        XCTAssertEqual(try SpeechRules.importedDurationFrames(registeredFrames: 109,
+            containerDuration: 3.63, decodedDuration: 3.61), 109)
+        XCTAssertEqual(try SpeechRules.importedDurationFrames(registeredFrames: 30,
+            containerDuration: 1, decodedDuration: 1), 30)
+        XCTAssertEqual(try SpeechRules.importedDurationFrames(registeredFrames: 108000,
+            containerDuration: 3600, decodedDuration: 3600), 108000)
+    }
+
     private func captionFixture() throws -> (Project, Scene, Asset) {
         let asset = Asset(workspaceID: "w", name: "isolated-recording.caf", hash: "isolated-domain-audio-reference",
             ext: "caf", bytes: 100, mediaType: "audio", durationFrames: 100)

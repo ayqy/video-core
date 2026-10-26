@@ -2,10 +2,10 @@
 
 VideoFree source export · package_free.py · version 1
 
-生成时间：2026-10-26 07:29:02 北京时间
+生成时间：2026-10-26 07:54:33 北京时间
 
-- 源码与必要元数据：227个文件；2986735字节（不含本清单）。
-- 整体内容指纹：`64dad3080032dcc30391f272174f14d2100b7bc2b58427784116527f33a83903`。
+- 源码与必要元数据：227个文件；2992789字节（不含本清单）。
+- 整体内容指纹：`85dfd47546c327ed9be2f93e6b626a2023eab0199b7174a2a97dc096589f21b9`。
 - 来源：受控原始工程中的逐文件白名单；Package.swift与唯一免费制作workflow来自Distribution/Free精确模板，README由发行脚本生成。
 - 本包不含.git，不可作为新业务checkout；本清单生成过程不执行构建、设备验收、签名安装或公共上传，各阶段以独立证据为准。
 - 排除：App、VideoGame、VideoCartoon、Premium、高级实现运行时测试、私有仓库地址、凭据、客户数据、缓存、日志及媒体过程产物。
@@ -14,7 +14,7 @@ VideoFree source export · package_free.py · version 1
 
 | SHA-256 | 字节数 | 包内路径 / 原工程来源 |
 |---|---:|---|
-| 3083a128bf84ba62a31adc0d9db900de5a421c0245e18cdb9a67b26de439ab44 | 10252 | .github/workflows/free-production.yml |
+| 1ed86ce373d7c106ea7d74faafc548dc8c1cd8f6bab4856c64d9071375f54352 | 10951 | .github/workflows/free-production.yml |
 | 657d1e41716c0e58c0e5072cee94060c103394dd4dc26ead7dbc851d8e85a00a | 31765 | Integrations/README.md |
 | 2ff174ec064ca614f24e8ba67ae5c7042a2caa883af162bafd27a8a4520d5ed7 | 26522 | Integrations/asset_reuse.py |
 | be0a15cd8fcb9b33fe92f2898a9ee53aa20f9722b368abd19e0a7a5ef924bc42 | 18066 | Integrations/check_install.py |
@@ -119,7 +119,7 @@ VideoFree source export · package_free.py · version 1
 | 458006105dd003a1a5920cd3abede5b5770307979325df6fafbf28f1bd40791a | 13402 | Sources/VideoCore/ScenarioPlanning.swift |
 | 7cb1d10ba903baa1b854bd0b3f67fe97df1736410a0154478c34aad7b4c0605c | 5556 | Sources/VideoCore/ScriptJobRules.swift |
 | 994e9705dd6b41d6833eb1b2c1aad353a4cc08a1416aa252544706ee3da7a446 | 3754 | Sources/VideoCore/SimulationPresentation.swift |
-| 213ff73b543f68ef19801887a7670d6d5e0f5d9489d09d3461b5f69d5274074d | 20974 | Sources/VideoCore/Speech.swift |
+| dda3c2cf96f414ff3d43290b39b95e32e5a77682a711cb00e9fb434633300a31 | 22247 | Sources/VideoCore/Speech.swift |
 | 24014a5716cce3259563e79a2fe2159f600091a2e1fa568fcbeaf97c4582492c | 8315 | Sources/VideoCore/SpeechProjectRules.swift |
 | aa56b5a27e1c721995a8e6b5ea8f5094f53cfd29c3efa7799026e61b2202b75b | 29031 | Sources/VideoCore/Storage.swift |
 | 92dfe39cc68c46b23be5d2427f4fad63d96e7ef50aed0692da622c973725350d | 27958 | Sources/VideoCore/Teaching.swift |
@@ -157,7 +157,7 @@ VideoFree source export · package_free.py · version 1
 | 39086f663d5e770c4aca64e985134266495a507216cd253df1ddf36ac146b87e | 36099 | Sources/VideoMedia/RenderModules.swift |
 | 6ff94477edc77a818af0ee88115f534f2497b58695aaf397a38c63defcf899e2 | 38036 | Sources/VideoMedia/Renderer.swift |
 | 06fdff6e71495ced1c996fc1d589d46010e2f1b798ce03b6e065df78ac8419da | 4392 | Sources/VideoMedia/ScriptJobs.swift |
-| 067027f4504488abe5751b255a13325a0cbf3e3e8059e3b4ccaad0dd61495fc9 | 6674 | Sources/VideoMedia/SpeechProjectProduction.swift |
+| cdacae4766191de4337bdf3d73922fee49acc834203e1afcac3e20f1153d6c09 | 6940 | Sources/VideoMedia/SpeechProjectProduction.swift |
 | 81c13adf8fc3da2b78b0a1af64b69ede3504924d62bfb46e5b8ece6f0dd5605e | 12565 | Sources/VideoMedia/SpeechService.swift |
 | cd10fc3a3d6d594402cdb47d4bf1b9cb9b89408d26eb35c4d3596bde21fc6b29 | 17987 | Sources/VideoMedia/VisualCache.swift |
 | 73405ccea354d3d9bd2f26f62727ef19ab9e2057decab8bb11c59c8cb9003e86 | 8544 | Sources/VideoMedia/VoicePromptBuiltinAssets.swift |
@@ -217,7 +217,7 @@ VideoFree source export · package_free.py · version 1
 | 9ea33dd46fbd8bf267f33c15b7e604d182f40ee7f8ba9f09cbcee71f3fc45138 | 9280 | Tests/VideoCoreTests/SimulationPresentationTests.swift |
 | 0354e6bdbb9c68ee64693371ac7ecb54983767046e9c23029a79403f6d46c257 | 16668 | Tests/VideoCoreTests/SimulationRecordingTests.swift |
 | 3ded2f8749359d632cd6c33c39754758b9accf9ebb3d0692f6bb99ede88dce4c | 12298 | Tests/VideoCoreTests/SpeechProjectRulesTests.swift |
-| ea29d1f011b737421309bb0b79a7395443339c1f248d29b3fc7e63040095f08f | 22783 | Tests/VideoCoreTests/SpeechTests.swift |
+| cd16b7cdada4e7d896db62a7ba2cc81adeae17c5b7117b630f8855b86a2f332f | 26599 | Tests/VideoCoreTests/SpeechTests.swift |
 | b981114d904d881526d32e0c8d6a21fb465aa3d82553ec99457d742f8bce192a | 4075 | Tests/VideoCoreTests/SplitTimelineRulesTests.swift |
 | aea15ba734c2536753d15b739b26c8f68284c69294d586372a2f885bff1b706b | 17112 | Tests/VideoCoreTests/TeachingTests.swift |
 | fa21976b33dfc558041a027f2077a16d4229d4ee8327ec3f9290bb3094141f2e | 15333 | Tests/VideoCoreTests/UpstreamLicenseTests.swift |

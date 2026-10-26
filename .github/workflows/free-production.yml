@@ -134,7 +134,7 @@ jobs:
               log.unlink(missing_ok=True)
           PY
 
-      - name: Check affected provider and practice rules
+      - name: Check affected speech, provider and practice rules
         shell: bash
         run: |
           python3 - <<'PY'
@@ -143,11 +143,21 @@ jobs:
           root = Path(os.environ['GITHUB_WORKSPACE'])
           scratch = Path(os.environ['RUNNER_TEMP']) / 'video-free-build'
           log = Path(os.environ['RUNNER_TEMP']) / 'video-free-rules.log'
+          minimum_methods = {'BaiduVideoRulesTests': 8, 'EditorPracticeTests': 13,
+                             'MacCommerceRulesTests': 8, 'SpeechTests': 24}
+          method_counts = {}
+          for suite, minimum in minimum_methods.items():
+              source = (root / 'Tests/VideoCoreTests' / (suite + '.swift')).read_text()
+              methods = re.findall(r'(?m)^[ \t]*(?:@\w+(?:\([^\n)]*\))?[ \t]+)*func[ \t]+(test\w+)[ \t]*\(', source)
+              assert len(methods) == len(set(methods)) and len(methods) >= minimum, suite
+              method_counts[suite] = len(methods)
+          expected = sum(method_counts.values())
+          print('affected_suite_methods=' + str(method_counts))
           try:
               with log.open('wb') as stream:
                   result = subprocess.run(['swift', 'test', '--package-path', str(root),
                       '--scratch-path', str(scratch), '--disable-sandbox', '--jobs', '2',
-                      '-c', 'release', '--filter', 'BaiduVideoRulesTests|EditorPracticeTests|MacCommerceRulesTests'],
+                      '-c', 'release', '--filter', '|'.join(minimum_methods)],
                       stdout=stream, stderr=subprocess.STDOUT, timeout=900)
               lines = log.read_text(errors='replace').splitlines()
               errors = [line[:700] for line in lines if re.search(r'error:|fatal error:', line, re.I)]
@@ -156,10 +166,10 @@ jobs:
               for line in lines:
                   if re.search(r'Executed \d+ tests?|Test Suite .* (passed|failed)', line):
                       print(line[:700])
-              assert result.returncode == 0, 'Affected provider/practice rules failed'
+              assert result.returncode == 0, 'Affected speech/provider/practice rules failed'
               counts = [int(value) for value in re.findall(r'Executed (\d+) tests?', '\n'.join(lines))]
-              assert 29 in counts, 'Expected 8 provider, 13 practice and 8 commerce rule tests'
-              print('affected_rules=passed; distinct_tests=29')
+              assert expected in counts, 'Affected rule execution did not cover all declared methods'
+              print('affected_rules=passed; distinct_tests=' + str(expected))
           finally:
               log.unlink(missing_ok=True)
           PY

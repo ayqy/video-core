@@ -161,6 +161,25 @@ public enum ChineseSpeech {
 }
 
 public enum SpeechRules {
+    /// Keep the imported source's complete 30fps span. Completed resampling may
+    /// cross a frame boundary by at most 1ms; it must not shorten the voice take.
+    /// The caller remains responsible for completed decoding and source integrity.
+    public static func importedDurationFrames(registeredFrames: Int, containerDuration: Double, decodedDuration: Double) throws -> Int {
+        guard containerDuration.isFinite, decodedDuration.isFinite,
+              containerDuration > 0, containerDuration <= 3600,
+              decodedDuration > 0, decodedDuration <= 3600 else {
+            throw VideoError.invalid("导入音轨的原始或解码时长无效或超过一小时")
+        }
+        let containerFrames = Int(ceil(containerDuration * 30))
+        guard registeredFrames == containerFrames else {
+            throw VideoError.review("导入音轨原容器实长与登记不一致，禁止绑定")
+        }
+        let decodedFrames = Int(ceil(decodedDuration * 30))
+        guard decodedFrames == containerFrames || abs(decodedDuration - containerDuration) <= 0.001 else {
+            throw VideoError.review("导入音轨解码实长跨帧且与原容器相差超过1毫秒，禁止截尾或伪造声音")
+        }
+        return containerFrames
+    }
     /// Only the ordered, visible text and its timing change a subtitle rehearsal.
     /// IDs, alignment provenance and approval flags are editorial metadata.
     public static func captionContentDigest(_ captions: [Caption]) throws -> String {

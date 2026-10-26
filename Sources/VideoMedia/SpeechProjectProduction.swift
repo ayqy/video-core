@@ -39,8 +39,9 @@ import VideoCore
             guard bytes.count==asset.bytes,Codec.hash(bytes)==asset.hash else {throw VideoError.conflict("导入配音真实源已变化，禁止绑定")}
             try checkDeadline()
             let diagnostics=try await AudioInspection.inspect(repository.assetURL(asset))
-            let frames=Int(ceil(diagnostics.duration*30))
-            guard diagnostics.peakDBFS > -70,asset.durationFrames==frames else {throw VideoError.review("导入音轨实长与登记不一致或近乎静音，禁止截尾或伪造声音")}
+            guard diagnostics.peakDBFS > -70 else {throw VideoError.review("导入音轨近乎静音，禁止绑定或伪造声音")}
+            guard let containerDuration=diagnostics.containerDuration,let registeredFrames=asset.durationFrames else {throw VideoError.review("导入音轨缺少原容器时长或登记帧长，禁止绑定")}
+            let frames=try SpeechRules.importedDurationFrames(registeredFrames:registeredFrames,containerDuration:containerDuration,decodedDuration:diagnostics.duration)
             var bound=scene;bound.speechPlan=request.plan
             production=SpeechProduction(asset:asset,evidence:evidence,diagnostics:diagnostics,plan:request.plan,captions:try SpeechRules.captions(request.plan,durationFrames:frames),take:VoiceTake(assetID:id,textDigest:try SpeechRules.digest(bound),durationFrames:frames,method:"imported-recording",listened:false))
         } else {
