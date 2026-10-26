@@ -15,6 +15,37 @@ final class AgentContractTests: XCTestCase {
         XCTAssertNoThrow(try AgentContract.authorize(command:command,workspace:workspace,principal:"owner"))
         XCTAssertThrowsError(try AgentContract.authorize(command:command,workspace:workspace,principal:"reader",projectID:"p"))
     }
+    func testProductionExportRequiresAnExplicitFrozenTargetAndAbsoluteDirectory() throws {
+        let command="production export"
+        let input:[String:AgentValue] = ["workspace_id":.string("w"),"project_id":.string("p"),"base_revision":.string("r"),"job_id":.string("j"),"path":.string("/tmp/chosen-export-directory"),"request_id":.string("export-request")]
+        XCTAssertNoThrow(try AgentContract.validate(command:command,data:data(.object(input))))
+        for key in ["workspace_id","project_id","base_revision","job_id","path","request_id"] {
+            var missing=input;missing.removeValue(forKey:key)
+            XCTAssertThrowsError(try AgentContract.validate(command:command,data:data(.object(missing))),key)
+        }
+        for path in ["relative","~/Desktop","file:///tmp/output","/tmp/line\nbreak"] {
+            var changed=input;changed["path"] = .string(path)
+            XCTAssertThrowsError(try AgentContract.validate(command:command,data:data(.object(changed))))
+        }
+        for key in ["review","now","approval","overwrite"] {
+            var changed=input;changed[key] = .boolean(true)
+            XCTAssertThrowsError(try AgentContract.validate(command:command,data:data(.object(changed))),key)
+        }
+    }
+    func testProductionExportIsOwnerOnlyAndDoesNotPromiseAtomicRequestReplay() throws {
+        let command="production export",descriptor=try AgentContract.describe(command)
+        XCTAssertTrue(descriptor.writes);XCTAssertFalse(descriptor.network)
+        XCTAssertEqual(descriptor.permission,.workspaceOwner)
+        XCTAssertEqual(descriptor.idempotency,"exclusive_named_directory_no_overwrite_no_request_replay")
+        var w=Workspace(name:"导出所属空间",owner:"owner")
+        w.grants=[Grant(principal:"collaborator",role:.collaborator,projectIDs:["p"],revisionIDs:["r"],expiresAt:Date().addingTimeInterval(60))]
+        XCTAssertNoThrow(try AgentContract.authorize(command:command,workspace:w,principal:"owner",projectID:"p",revisionID:"r"))
+        XCTAssertThrowsError(try AgentContract.authorize(command:command,workspace:w,principal:"collaborator",projectID:"p",revisionID:"r"))
+        let schema=try XCTUnwrap(AgentContract.inputSchema(command).object)
+        XCTAssertEqual(schema["additionalProperties"],.boolean(false))
+        XCTAssertNil(schema["properties"]?.object?["review"])
+        XCTAssertNil(schema["properties"]?.object?["overwrite"])
+    }
     func testRequiredCommandFieldsAreCheckedBeforeDryRunCanSucceed() throws {
         XCTAssertThrowsError(try AgentContract.validate(command: "render submit", data: Data("{}".utf8)))
         XCTAssertThrowsError(try AgentContract.validate(command: "products list", data: Data("{\"workspace_id\":\"w\",\"typo\":1}".utf8)))

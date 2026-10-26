@@ -30,7 +30,7 @@ struct CommandSchema: Encodable {
     var commands: [String]
     var input = "--input FILE 或 -（stdin）"
     var workspace = "--workspace DIRECTORY"
-    var side_effects = "所有写操作支持--dry-run；任务幂等键request_id与冻结revision/quote绑定"
+    var side_effects = "所有写操作支持--dry-run；幂等性按各命令schema；四件导出仅独占新目录，不自动重放"
     var exit_codes = "0成功 2参数 3权限 4预算 5待审核 6版本冲突 8外部不确定"
 }
 
@@ -46,6 +46,7 @@ struct CommandSchema: Encodable {
             if let inputPath { let data:Data; if inputPath=="-" { data=FileHandle.standardInput.readDataToEndOfFile() } else { data=try Data(contentsOf:URL(fileURLWithPath:inputPath)) }; guard data.count<=10*1024*1024 else { throw VideoError.invalid("输入超过10MiB") }; inputData=data;_ = try AgentContract.validate(command:command,data:data);input=try Codec.decoder().decode(Input.self,from:data) } else { inputData=Data("{}".utf8);_ = try AgentContract.validate(command:command,data:inputData);input=try Codec.decoder().decode(Input.self,from:inputData) }
             request=input.request_id ?? request
             var response=Response(request_id:request,ok:true,state:"succeeded")
+            var responseExit:Int32 = 0
             // AgentContract.validate above is the shared command authority. A second
             // allowlist can hide a shipped command while schema still advertises it.
             if command=="schema" {
@@ -75,7 +76,18 @@ struct CommandSchema: Encodable {
                 else if dry {
                     let snapshot:Database
                     if command=="workspaces create" {snapshot=Database()}else{snapshot=try Repository(root:rootURL,readOnly:true).read()}
-                    if command=="backup create" {
+                    if command == "production export" {
+                        let w = try snapshot.workspace(input.workspace_id ?? "")
+                        let principal = input.principal ?? LocalWorkspaceIdentity.principal(workspaceID:w.id,in:snapshot.workspaces)
+                        try AgentContract.authorize(command:command,workspace:w,principal:principal,projectID:input.project_id,revisionID:input.base_revision)
+                        let project = try snapshot.project(input.project_id ?? "")
+                        guard project.workspaceID == w.id else { throw VideoError.permission("导出工程不属于所选工作区") }
+                        let repository = try Repository(root:rootURL,readOnly:true)
+                        let plan = try repository.previewProductionExport(projectID:project.id,revisionID:input.base_revision ?? "",jobID:input.job_id ?? "",principal:principal,destination:URL(fileURLWithPath:input.path ?? ""))
+                        response.project_id=project.id;response.revision=input.base_revision;response.job_id=input.job_id
+                        response.result=try json(plan)
+                        response.cost.unknown="只读核验当前已审四件及明确目标；未创建目录、复制文件、保存交付记录或调用网络；实际导出仍重核权限与并发变化"
+                    } else if command=="backup create" {
                         let principal=input.principal ?? LocalWorkspaceIdentity.principal(workspaceID:input.workspace_id,in:snapshot.workspaces)
                         guard LocalWorkspaceIdentity.canBackUp(workspaces:snapshot.workspaces,principal:principal,usingDefaultIdentity:input.principal==nil) else {throw VideoError.permission("仅本地所有者可以导出完整工作区")}
                         try snapshot.validate()
@@ -133,6 +145,20 @@ struct CommandSchema: Encodable {
                     case "evidence add": let w=try workspace(); guard let e=input.evidence,e.workspaceID==w.id else { throw VideoError.invalid("凭据工作区不一致") }; try repo.transaction { $0.evidence.removeAll{$0.id==e.id}; $0.evidence.append(e) }; response.result=e.id
                     case "projects list": let w=try workspace(); response.result=try json(db.projects.filter{$0.workspaceID==w.id})
                     case "projects facts-impact": let w=try workspace(); response.result=try json(db.projectFactImpact(projectID:input.project_id ?? "",workspaceID:w.id));response.project_id=input.project_id
+                    case "production export":
+                        let w = try workspace(), project = try db.project(input.project_id ?? "")
+                        guard project.workspaceID == w.id else { throw VideoError.permission("导出工程不属于所选工作区") }
+                        let prepared = try repo.prepareProductionExport(projectID:project.id,revisionID:input.base_revision ?? "",jobID:input.job_id ?? "",principal:principal,destination:URL(fileURLWithPath:input.path ?? ""))
+                        defer { prepared.cancel() }
+                        let exported = try repo.publishProductionExport(prepared)
+                        response.project_id=project.id;response.revision=input.base_revision;response.job_id=input.job_id
+                        response.state=exported.recordSaved ? "files_exported":"files_exported_record_pending"
+                        response.result=try json(AgentValue.object(["directory":.string(exported.directory.path),"files_exported":.boolean(true),"record_saved":.boolean(exported.recordSaved),"platform_published":.boolean(false)]))
+                        response.cost.unknown="本地四件文件导出，无外部API请求或新账单；未声明平台投稿、观看或文件已送达他人"
+                        if !exported.recordSaved {
+                            response.ok=false;responseExit=8
+                            response.error = .init(code:"delivery_record_pending",message:"四件文件已完整导出，但本地交付记录未保存；现有输出保留",retryable:false,next_action:"先核对已导出目录和本地记录；不要自动重导、覆盖或补造成功记录")
+                        }
                     case "knowledge compare": response.result=try json(AgentPreview.evaluate(command:command,data:inputData,database:db,principal:principal));response.project_id=input.project_id;response.revision=input.base_revision;response.cost.unknown="只读重算教学模型，不制作媒体、不收费、不确认事实或人工审核"
                     case "script create": let w=try workspace(); guard let p=db.products.first(where:{$0.id==input.product_id && $0.workspaceID==w.id}) else { throw VideoError.notFound("产品不存在") }; var r=try Planner.create(product:p,knowledge:input.knowledge ?? "",demonstration:input.demonstration ?? "",hook:input.hook ?? "",purpose:input.purpose ?? .course,aspect:input.aspect ?? .portrait,kind:input.kind ?? .explanation,evidenceIDs:input.evidence_ids ?? []); r.dependencies=try DependencyRules.freeze(revision:r,assets:db.assets,evidence:db.evidence);let project=Project(workspaceID:w.id,name:input.name ?? p.name,revision:r); try repo.transaction { $0.projects.append(project) }; response.project_id=project.id; response.revision=r.id
                     case "edit apply": let w=try workspace(); guard let id=input.project_id else { throw VideoError.invalid("缺少project_id") }; try repo.transaction { d in let p=try d.project(id); guard p.workspaceID==w.id else { throw VideoError.permission("项目不在工作区") }; var changed=try Editor.apply(input.edits ?? [],to:p,baseRevision:input.base_revision ?? "",assets:d.assets,message:input.text ?? "Agent编辑");changed.revisions[changed.revisions.count-1].dependencies=try DependencyRules.freeze(revision:changed.current,assets:d.assets,evidence:d.evidence); d.projects[d.projects.firstIndex(where:{$0.id==id})!]=changed; response.revision=changed.current.id; for k in d.publications.indices where d.publications[k].projectID==id { d.publications[k].stale=true } }; response.project_id=id
@@ -181,6 +207,7 @@ struct CommandSchema: Encodable {
                 }
             }
             print(String(decoding:try Codec.data(response),as:UTF8.self))
+            if responseExit != 0 { exit(responseExit) }
         } catch {
             let e=(error as? VideoError) ?? (error is CancellationError ? .unavailable("配音已取消；未写入成功回执，已保存版本保留"): .invalid("操作失败，请检查输入格式、文件或本地权限；敏感内容未写入错误输出"))
             let response=Response(request_id:request,ok:false,state:e.code,error:.init(code:e.code,message:e.localizedDescription,retryable:e.exitCode==8,next_action:e.exitCode==8 ? "先查询已有任务或修复外部条件" : "更正输入或核对当前版本与权限后重试"))

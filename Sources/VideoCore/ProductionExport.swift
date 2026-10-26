@@ -1,6 +1,24 @@
 import Foundation
 import Darwin
 
+/// A read-only view of the exact currently reviewed four-file export.
+/// It is not a permit: prepare and publish recheck current state and destination.
+public struct ProductionExportPlan: Codable, Equatable, Sendable {
+    public struct Artifact: Codable, Equatable, Sendable {
+        public let name: String
+        public let mime: String
+        public let bytes: Int
+        public let sha256: String
+    }
+    public let workspaceID: String
+    public let projectID: String
+    public let revisionID: String
+    public let jobID: String
+    public let contentDigest: String
+    public let directory: String
+    public let artifacts: [Artifact]
+}
+
 public struct ProductionExportResult: Sendable {
     public let directory: URL
     public let recordSaved: Bool
@@ -138,18 +156,39 @@ fileprivate enum ProductionExportRules {
 }
 
 public extension Repository {
-    /// The caller retains any security-scoped destination access until publish/cancel.
-    /// Staging does not approve a revision or create a final export directory.
-    func prepareProductionExport(projectID:String, revisionID:String, jobID:String,
-                                 principal:String, destination:URL) throws -> PreparedProductionExport {
-        try requireProductionExportWriteAccess()
+    private func productionExportContext(projectID:String, revisionID:String, jobID:String,
+                                         principal:String, destination:URL) throws -> (Project,Job,URL,URL,ProductionExportIdentity) {
         let (project,job)=try ProductionExportRules.current(read(),projectID:projectID,revisionID:revisionID,jobID:jobID,principal:principal)
         try verifyDelivery(job,revision:project.current)
         guard destination.isFileURL else { throw VideoError.invalid("请选择本机文件夹保存交付") }
         let parent=destination.standardizedFileURL.resolvingSymlinksInPath()
         let parentIdentity=try ProductionExportIdentity.directory(parent)
-        let stem=ProductionExportRules.safeName(project),final=parent.appendingPathComponent(stem,isDirectory:true)
-        guard !FileManager.default.fileExists(atPath:final.path) else { throw VideoError.conflict("所选位置已有 \(stem) 文件夹；现有交付不会覆盖，请换一个保存位置") }
+        let final=parent.appendingPathComponent(ProductionExportRules.safeName(project),isDirectory:true)
+        var existing=stat()
+        if lstat(final.path,&existing)==0 { throw VideoError.conflict("所选位置已有 \(final.lastPathComponent) 条目；现有交付不会覆盖，请换一个保存位置") }
+        guard errno==ENOENT else { throw VideoError.unavailable("无法确认所选位置的现有条目，请检查保存目录后重新预演") }
+        return (project,job,parent,final,parentIdentity)
+    }
+
+    /// No staging directory, file copy, database mutation or delivery record.
+    /// The caller must still retain destination access and recheck at export time.
+    func previewProductionExport(projectID:String, revisionID:String, jobID:String,
+                                 principal:String, destination:URL) throws -> ProductionExportPlan {
+        let (project,job,_,final,_)=try productionExportContext(projectID:projectID,revisionID:revisionID,jobID:jobID,principal:principal,destination:destination)
+        let artifacts=try job.artifacts.sorted{$0.mime<$1.mime}.map { artifact -> ProductionExportPlan.Artifact in
+            guard let name=ProductionExportRules.names[artifact.mime] else { throw VideoError.review("交付文件类型不完整") }
+            return ProductionExportPlan.Artifact(name:name,mime:artifact.mime,bytes:artifact.bytes,sha256:artifact.sha256)
+        }
+        return ProductionExportPlan(workspaceID:project.workspaceID,projectID:project.id,revisionID:project.current.id,jobID:job.id,contentDigest:try project.current.contentDigest(),directory:final.path,artifacts:artifacts)
+    }
+
+    /// The caller retains any security-scoped destination access until publish/cancel.
+    /// Staging does not approve a revision or create a final export directory.
+    func prepareProductionExport(projectID:String, revisionID:String, jobID:String,
+                                 principal:String, destination:URL) throws -> PreparedProductionExport {
+        try requireProductionExportWriteAccess()
+        let (project,job,parent,final,parentIdentity)=try productionExportContext(projectID:projectID,revisionID:revisionID,jobID:jobID,principal:principal,destination:destination)
+        let stem=final.lastPathComponent
         let staging=parent.appendingPathComponent(".\(stem).\(Codec.id()).preparing",isDirectory:true)
         try FileManager.default.createDirectory(at:staging,withIntermediateDirectories:false,attributes:[.posixPermissions:0o700])
         let prepared:PreparedProductionExport

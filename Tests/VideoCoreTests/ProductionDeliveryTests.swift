@@ -2,12 +2,17 @@ import XCTest
 @testable import VideoCore
 
 final class ProductionDeliveryTests:XCTestCase {
-    private func fixture(approval:Bool=true)throws->(Database,String) {
+    private func fixture(approval:Bool=true,legacy:Bool=false)throws->(Database,String) {
         var db=Database();var workspace=Workspace(name:"隔离制作规则",owner:"rules");workspace.id="w";db.workspaces=[workspace]
         var evidence=Evidence(workspaceID:"w",title:"规则中的授权凭据",source:"isolated-authorized-document",claim:"本制作允许教学使用",owner:"规则权利人",commercialAllowed:true,verified:true)
         evidence.checkedAt=Date().addingTimeInterval(-5);db.evidence=[evidence]
         var revision=try Planner.create(workspaceID:"w",name:"普通受托视频",aspect:.landscape,scenes:[Scene(title:"解释概念",body:"对照原材料理解概念。")])
-        revision.purpose = .brand
+        if legacy {
+            var product=Product(workspaceID:"w",sku:"LEGACY-RULES",name:"隔离旧格式资料",checkout:"https://example.org/isolated-rules",audience:"规则测试",task:"核旧格式交付",outcome:"守卫不被跳过",prerequisite:"仅测试",scope:"不是实际商品或售价",prices:[Price(money:Money(99),from:.distantPast,source:"隔离规则价，不代表实际现价",verified:true)])
+            product.isExample=true;db.products=[product]
+            revision=Revision(product:product,purpose:.education,aspect:.landscape,scenes:revision.scenes,cta:"")
+        }
+        revision.purpose = legacy ? .education:.brand
         revision.productionBrief=ProductionBrief(objective:"讲解概念",intendedUse:"约定的教学成片",modifications:"保留来源",commercialDisclosure:"受托制作内容",evidenceIDs:[evidence.id],permittedUntil:Date().addingTimeInterval(3600),approvalRequired:approval)
         revision.dependencies=try DependencyRules.freeze(revision:revision,assets:[],evidence:db.evidence)
         revision.review.text=true;revision.review.rights=true;revision.review.sound=true;revision.review.captions=true;revision.review.fullPreview=true
@@ -20,6 +25,42 @@ final class ProductionDeliveryTests:XCTestCase {
         db.jobs=[job];return(db,project.id)
     }
     private func approve(_ db:inout Database,_ id:String)throws{try db.approveProduction(projectID:id,revisionID:db.project(id).current.id,reviewer:"本机明确审稿声明",note:"规则用指定版审批")}
+    func testLegacyProductBriefRequiresItsOwnApprovalAndRechecksChangedRights() throws {
+        var (db,id)=try fixture(legacy:true)
+        XCTAssertNil(db.projects[0].current.contentContext)
+        XCTAssertNotNil(db.projects[0].current.productionBrief)
+        XCTAssertTrue(try Quality.inspect(db.projects[0].current,database:db,requireReview:true).contains{$0.id=="production_delivery"})
+        try approve(&db,id)
+        XCTAssertTrue(try Quality.inspect(db.projects[0].current,database:db,requireReview:true).isEmpty)
+        db.evidence[0].claim="旧格式的用途条款已变化"
+        XCTAssertFalse(ProductionDeliveryRules.inspect(revision:db.projects[0].current,database:db).isEmpty)
+        XCTAssertThrowsError(try approve(&db,id))
+        XCTAssertEqual(db.projects[0].productionApprovals?.count,1)
+    }
+    func testLegacyProductBriefExpiryAndUnverifiedEvidenceAreNotSkipped() throws {
+        for invalidation in ["brief_expired","evidence_unverified","insufficient_period"] {
+            var (db,_)=try fixture(approval:false,legacy:true)
+            XCTAssertTrue(ProductionDeliveryRules.inspect(revision:db.projects[0].current,database:db,requireApproval:false).isEmpty)
+            switch invalidation {
+            case "brief_expired": db.projects[0].revisions[0].productionBrief?.permittedUntil=Date().addingTimeInterval(-1)
+            case "evidence_unverified": db.evidence[0].verified=false
+            default: db.evidence[0].expiresAt=Date().addingTimeInterval(30)
+            }
+            XCTAssertTrue(ProductionDeliveryRules.inspect(revision:db.projects[0].current,database:db,requireApproval:false).contains{$0.id=="production_delivery"},invalidation)
+            XCTAssertTrue(try Quality.inspect(db.projects[0].current,database:db,requireReview:true).contains{$0.id=="production_delivery"},invalidation)
+        }
+    }
+    func testLegacyWithoutProductionBriefKeepsItsOriginalEducationalContract() throws {
+        var (db,_)=try fixture(approval:false,legacy:true)
+        db.projects[0].revisions[0].productionBrief=nil
+        // This fixture represents a valid old project that never had a Brief.
+        // Removing it must also rebuild the frozen graph before reviewing it.
+        db.projects[0].revisions[0].dependencies=try DependencyRules.freeze(revision:db.projects[0].current,assets:db.assets,evidence:db.evidence)
+        let digest=try db.projects[0].current.contentDigest()
+        db.projects[0].revisions[0].review.digest=digest
+        XCTAssertTrue(ProductionDeliveryRules.inspect(revision:db.projects[0].current,database:db).isEmpty)
+        XCTAssertTrue(try Quality.inspect(db.projects[0].current,database:db,requireReview:true).isEmpty)
+    }
     func testOrdinaryBrandContentNeedsProductionApprovalButNoSalesOrChannelAccount()throws {
         var (db,id)=try fixture()
         XCTAssertTrue(db.products.isEmpty);XCTAssertTrue(db.brandDeals.isEmpty);XCTAssertTrue(db.publications.isEmpty)

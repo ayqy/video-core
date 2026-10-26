@@ -29,3 +29,10 @@
 写操作是否以request_id安全回放，按该命令schema里的idempotency字段判断。幂等账本需要与业务修改同一事务保存；单独调用fingerprint/replay工具函数不能自动提供断电原子性。不要因CLI接受了request_id便给全部命令许诺“恰好一次”。
 
 需要人机交接时提供：当前项目/版本/任务、实际产物与哈希、待确认的术语/字幕帧或声音问题、授权缺口、未知费用。人完成看听再记录其真实声明，保留待审核状态直到确认完成。
+
+
+`production export`把已审当前版本的实际四件复制到调用者明确选择的本地文件夹，并保存`files_exported`记录。严格输入为`workspace_id`、`project_id`、`base_revision`、`job_id`、绝对现存目录`path`和`request_id`，仅本机工作区所有者可以调用；不接受`review`、`approval`、`now`或`overwrite`，不能用该命令自动补审核。普通CLI沿本机进程文件权限，Mac沿已有系统目录授权；无需付费App或高级模块，也不新增TCC授权。
+
+先用`--dry-run`调用同源SDK只读预演，返回当前版本、原任务、目标目录及四件名称/类型/大小/摘要。它会核当前完整审核、事实与配置Brief的权利/用途期限、已审原任务和真实四件字节；不创建目录、暂存、文件或交付记录。预演不预留目录，不保证以后权限或并发条件不变。实际导出复用双阶段`prepareProductionExport`/`publishProductionExport`，复制后在写事务内再次核版本、审核、权利、原件与目录身份，使用排他重命名，绝不覆盖已有同名版本文件夹。
+
+此命令不承诺数据库与文件系统跨系统原子提交，也不保存`request_id`自动重放回执；幂等语义为独占新目录、不覆盖、不自动重导。正常返回`state=files_exported`、`record_saved=true`和实际目录。若四件已发布而本地记录保存失败，则保留已核输出，返回`state=files_exported_record_pending`、`ok=false`、退出码8、`delivery_record_pending`及`retryable=false`；调用者先核现有目录和记录，不能自动重导、覆盖或补造成功记录。导出不调用网络，不宣称平台投稿、观看或已送达他人。

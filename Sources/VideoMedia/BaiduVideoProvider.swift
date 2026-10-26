@@ -5,53 +5,69 @@ import VideoCore
 /// idempotency/cancel endpoint, purchase, free quota, or automatic publication.
 public enum BaiduVideoProvider {
     public static func submit(repository:Repository,workspaceID:String,projectID:String,profileID:String,input:BaiduVideoInput,quote:Quote,requestID:String,principal:String) async throws->Job {
+        try Task.checkCancellation()
         let snapshot=try repository.read();guard try snapshot.workspace(workspaceID).owner==principal,let profile=snapshot.providers.first(where:{$0.id==profileID}) else{throw VideoError.permission("当前本机所有者或百度配置不可用")}
         try BaiduVideoRules.validate(profile:profile);let body=try BaiduVideoRules.requestBody(input:input)
         // A known replay needs no credential access and can never create a new request.
         if let old=snapshot.jobs.first(where:{$0.workspaceID==workspaceID && $0.requestKey==requestID}) {guard old.projectID==projectID,old.quote.id==quote.id,old.videoGeneration?.inputDigest==(try input.digest()) else{throw VideoError.conflict("原request_id与此次生成内容不符")};return try RemoteJobs.checkedTarget(original:old,profile:profile,database:snapshot,principal:principal,command:"baidu submit",ownerOnly:true)}
-        let token=try SecureCredentials.read(profile.keyReference)
-        let prepared=try repository.transaction {db->(job:Job,shouldSubmit:Bool) in
+        try Task.checkCancellation()
+        _ = try SecureCredentials.read(profile.keyReference)
+        let prepared=try repository.transaction {db->(job:Job,shouldSubmit:Bool,permit:BaiduSubmissionPermit?) in
+            try Task.checkCancellation()
             guard let live=db.providers.first(where:{$0.id==profileID}),try RemoteJobs.profileIdentity(live)==RemoteJobs.profileIdentity(profile) else{throw VideoError.conflict("百度服务配置已变化，请重新核对上传范围与报价")}
-            return try BaiduVideoRules.prepare(database:&db,workspaceID:workspaceID,projectID:projectID,profile:live,input:input,quote:quote,requestID:requestID,principal:principal)
+            return try BaiduVideoRules.prepareForSubmission(database:&db,workspaceID:workspaceID,projectID:projectID,profile:live,input:input,quote:quote,requestID:requestID,principal:principal)
         }
         guard prepared.shouldSubmit else{return prepared.job}
+        guard let permit=prepared.permit else{throw VideoError.conflict("本次新意图缺少活调用许可；保留原任务，不推断未发送")}
         do {
+            try Task.checkCancellation()
             _ = try RemoteJobs.checkedTarget(original:prepared.job,profile:profile,database:repository.read(),principal:principal,command:"baidu submit",ownerOnly:true)
-            let data=try await api(path:BaiduVideoRules.materialPath,body:body,token:token)
+            try Task.checkCancellation()
+            let token=try SecureCredentials.read(profile.keyReference)
+            let data=try await api(path:BaiduVideoRules.materialPath,body:body,token:token,onTransmissionStarted:{try permit.markTransmissionStarted()})
             let result=try BaiduVideoRules.createResponse(data)
             return try update(repository:repository,original:prepared.job,profile:profile,principal:principal,command:"baidu submit"){job,_ in job=try BaiduVideoRules.applyCreated(result,to:job)}
         } catch {
-            _ = try? update(repository:repository,original:prepared.job,profile:profile,principal:principal,command:"baidu submit"){job,_ in
-                guard job.remoteID==nil else{throw VideoError.conflict("原百度任务已绑定远端ID，未覆盖原结果")}
-                job.state = .unknownRemote;job.videoGeneration?.phase = .unknown;job.message="百度创建响应未确认，可能已接单或扣点；保留预算，禁止重复提交，需从供应商记录核对原ID/账单";job.updatedAt=Date()
+            let started=permit.transmissionStarted,wasCancelled=error is CancellationError || Task.isCancelled
+            _ = try? handleSubmissionFailure(repository:repository,original:prepared.job,profile:profile,principal:principal,permit:permit,wasCancelled:wasCancelled)
+            if !started {
+                if wasCancelled{throw CancellationError()}
+                throw error
             }
             // Never expose URLSession's URL/userInfo: its query contains access_token.
             throw VideoError.unavailable("百度创建结果不确定；保留原任务和预算，不重交。请在官方账户核对原任务及账单")
         }
     }
     public static func refresh(repository:Repository,workspaceID:String,jobID:String,principal:String) async throws->Job {
+        try Task.checkCancellation()
         let context=try authorized(repository:repository,workspaceID:workspaceID,jobID:jobID,principal:principal,command:"baidu query")
         let response=try await query(profile:context.profile,job:context.job)
+        try Task.checkCancellation()
         return try update(repository:repository,original:context.job,profile:context.profile,principal:principal,command:"baidu query"){job,_ in job=try BaiduVideoRules.applyQuery(response,to:job)}
     }
     public static func querySnapshot(profile:ProviderProfile,job:Job) async throws->RemoteSnapshot {try await query(profile:profile,job:job).snapshot(job:job)}
     /// Only query requests repeat. material POST is never reached by this method.
     public static func query(profile:ProviderProfile,job:Job) async throws->BaiduQueryResponse {
+        try Task.checkCancellation()
         try BaiduVideoRules.validate(profile:profile)
         guard job.quote.provider==profile.id,job.videoGeneration?.contractVersion==BaiduVideoRules.version,let id=job.remoteID else{throw VideoError.unavailable("缺少原百度字符串ID；未知创建结果不能用数字或新请求替代")}
-        let token=try SecureCredentials.read(profile.keyReference),body=try BaiduVideoRules.queryBody(remoteID:id)
+        let body=try BaiduVideoRules.queryBody(remoteID:id)
+        try Task.checkCancellation()
+        let token=try SecureCredentials.read(profile.keyReference)
         let data=try await api(path:BaiduVideoRules.queryPath,body:body,token:token)
         return try BaiduVideoRules.queryResponse(data)
     }
     /// Recovers the actual MP4 into ordinary local CAS. This job creates a source
     /// clip, not the four-part final deliverable; editing and rights review follow.
     public static func collect(repository:Repository,workspaceID:String,jobID:String,principal:String) async throws->Job {
+        try Task.checkCancellation()
         let context=try authorized(repository:repository,workspaceID:workspaceID,jobID:jobID,principal:principal,command:"baidu collect")
         if let ids=context.job.outputAssetIDs,!ids.isEmpty {
             let database=try repository.read(),current=try RemoteJobs.checkedTarget(original:context.job,profile:context.profile,database:database,principal:principal,command:"baidu collect",ownerOnly:true)
             try verifyCollected(job:current,database:database,repository:repository);return current
         }
         let response=try await query(profile:context.profile,job:context.job)
+        try Task.checkCancellation()
         guard response.state == .ready,let address=response.videoAddress else{_ = try update(repository:repository,original:context.job,profile:context.profile,principal:principal,command:"baidu collect"){job,_ in job=try BaiduVideoRules.applyQuery(response,to:job)};throw VideoError.unavailable("百度原任务尚无可回收的有效MP4；未创建新请求")}
         let token=Codec.id(),now=Date()
         let claimed=try update(repository:repository,original:context.job,profile:context.profile,principal:principal,command:"baidu collect"){job,_ in
@@ -109,15 +125,36 @@ public enum BaiduVideoProvider {
             job.videoGeneration?.collectionToken=nil;job.videoGeneration?.collectionExpiresAt=nil
         }
     }
-    private static func api(path:String,body:Data,token:String) async throws->Data {
+    /// Called only by the new prepare result's live invocation, never by replay
+    /// or recovery. The in-memory transport observation cannot be reconstructed
+    /// from an old receipt, absent remote ID, or absent billing fields.
+    static func handleSubmissionFailure(repository:Repository,original:Job,profile:ProviderProfile,principal:String,permit:BaiduSubmissionPermit,wasCancelled:Bool)throws->Job {
+        try permit.checkOriginal(original)
+        return try update(repository:repository,original:original,profile:profile,principal:principal,command:"baidu submit"){job,_ in
+            if !permit.transmissionStarted {
+                job=try BaiduVideoRules.notSubmitted(job,permit:permit,wasCancelled:wasCancelled)
+            }else {
+                guard job.remoteID==nil,job.videoGeneration?.phase == .submissionStarted else{throw VideoError.conflict("原百度任务已有远端响应或已结束，未覆盖原结果")}
+                job.state = .unknownRemote;job.billingUnknown=true;job.videoGeneration?.phase = .unknown;job.message="百度创建响应未确认，可能已接单或扣点；保留预算，禁止重复提交，需从供应商记录核对原ID/账单";job.updatedAt=Date()
+            }
+        }
+    }
+    private static func api(path:String,body:Data,token:String,onTransmissionStarted:(@Sendable ()throws->Void)?=nil) async throws->Data {
+        try Task.checkCancellation()
         guard [BaiduVideoRules.materialPath,BaiduVideoRules.queryPath].contains(path) else{throw VideoError.invalid("百度接口路径不在固定合同内")}
         var components=URLComponents(string:BaiduVideoRules.origin+path)!;components.queryItems=[URLQueryItem(name:"access_token",value:token)]
         var request=URLRequest(url:components.url!,timeoutInterval:60);request.httpMethod="POST";request.httpBody=body;request.setValue("application/json",forHTTPHeaderField:"Content-Type")
         // Official contract has no Idempotency-Key or Authorization header.
         let config=URLSessionConfiguration.ephemeral;config.httpShouldSetCookies=false;config.httpCookieStorage=nil;config.urlCache=nil;config.timeoutIntervalForResource=70
         let session=URLSession(configuration:config,delegate:BaiduNoRedirect(),delegateQueue:nil);defer{session.invalidateAndCancel()}
-        do{let(data,response)=try await session.data(for:request);guard let http=response as? HTTPURLResponse,(200..<300).contains(http.statusCode),data.count<=1_048_576 else{throw VideoError.unavailable("百度响应未确认，原任务保留，不自动重交")};return data}
-        catch{throw VideoError.unavailable("百度网络或响应未确认；不输出请求地址或凭据，不自动重交")}
+        try Task.checkCancellation()
+        do{
+            // Mark synchronously immediately before handing ownership to URLSession.
+            // Any error from that point is uncertain, even an immediate cancel.
+            try onTransmissionStarted?()
+            let(data,response)=try await session.data(for:request);guard let http=response as? HTTPURLResponse,(200..<300).contains(http.statusCode),data.count<=1_048_576 else{throw VideoError.unavailable("百度响应未确认，原任务保留，不自动重交")};return data
+        }
+        catch{try Task.checkCancellation();throw VideoError.unavailable("百度网络或响应未确认；不输出请求地址或凭据，不自动重交")}
     }
 }
 private final class BaiduNoRedirect:NSObject,URLSessionTaskDelegate,@unchecked Sendable {

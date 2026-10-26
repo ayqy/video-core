@@ -146,12 +146,17 @@ jobs:
           # Each full suite is reviewed against its exact source inventory.
           # The import-only selection must not run installed-system TTS on CI.
           suites = {
-              ('VideoCoreTests', 'BaiduVideoRulesTests'): (8, None),
+              ('VideoCoreTests', 'BaiduVideoRulesTests'): (12, None),
               ('VideoCoreTests', 'EditorPracticeTests'): (13, None),
               ('VideoCoreTests', 'MacCommerceRulesTests'): (8, None),
               ('VideoCoreTests', 'SpeechTests'): (34, None),
               ('VideoCoreTests', 'AudioMixRulesTests'): (14, None),
               ('VideoCoreTests', 'ContentServiceRulesTests'): (18, None),
+              ('VideoCoreTests', 'ContentProjectTests'): (23, None),
+              ('VideoCoreTests', 'ProductionExportTests'): (19, None),
+              ('VideoCoreTests', 'ProductionDeliveryTests'): (13, None),
+              ('VideoCoreTests', 'BrandDeliveryTests'): (10, None),
+              ('VideoCoreTests', 'AgentMutationTests'): (9, None),
               ('VideoCoreTests', 'SpeechProjectRulesTests'): (12, None),
               ('VideoCoreTests', 'ProviderRulesTests'): (14, None),
               ('VideoCoreTests', 'ProductFactsTests'): (20, None),
@@ -160,9 +165,9 @@ jobs:
               ('VideoCoreTests', 'AgentJobAccessTests'): (9, None),
               ('VideoCoreTests', 'JobOperationTests'): (17, None),
               ('VideoCoreTests', 'AgentWorkerTests'): (6, None),
-              ('VideoCoreTests', 'AgentContractTests'): (9, None),
+              ('VideoCoreTests', 'AgentContractTests'): (11, None),
               ('VideoCoreTests', 'AgentPreviewTests'): (11, None),
-              ('VideoMediaTests', 'BaiduVideoProviderTests'): (7, None),
+              ('VideoMediaTests', 'BaiduVideoProviderTests'): (13, None),
               ('VideoMediaTests', 'SpeechProjectProductionTests'): (5, (
                   'testNormalImportedAudioAttachChecksRealBytesAndKeepsHumanReviewPending',
                   'testImported22050AudioKeepsContainerTailAndChecksMacCommitAfterDecode')),
@@ -174,11 +179,11 @@ jobs:
           expected_methods = set()
           filters = []
           for (target, suite), (source_count, selection) in suites.items():
-              source_name = 'ContentProjectTests.swift' if suite == 'ProductFactsTests' else suite + '.swift'
+              source_name = 'ContentProjectTests.swift' if suite in {'ContentProjectTests', 'ProductFactsTests'} else suite + '.swift'
               source = (root / 'Tests' / target / source_name).read_text()
-              if suite == 'ProductFactsTests':
-                  declaration = re.search(r'(?m)^final class ProductFactsTests\s*:\s*XCTestCase\s*\{', source)
-                  assert declaration, 'ProductFactsTests declaration missing'
+              if suite in {'ContentProjectTests', 'ProductFactsTests'}:
+                  declaration = re.search(r'(?m)^final class ' + re.escape(suite) + r'\s*:\s*XCTestCase\s*\{', source)
+                  assert declaration, suite + ' declaration missing'
                   source = source[declaration.end():]
                   following = re.search(r'(?m)^(?:final )?class \w+\s*:', source)
                   if following:
@@ -192,15 +197,17 @@ jobs:
               filters.append('^' + re.escape(target) + r'\.' + re.escape(suite) +
                              '/(?:' + '|'.join(re.escape(method) for method in selected) + ')$')
           expected = len(expected_methods)
-          assert expected == sum(method_counts.values()) == 233
+          assert expected == sum(method_counts.values()) == 319
           print('affected_suite_methods=' + str(method_counts))
           print('system_tts_methods=not_selected; import_only_methods=2')
           try:
+              executable = Path(os.environ['VIDEO_FREE_BINARY']).resolve(strict=True)
+              environment = dict(os.environ, VIDEO_TEST_CLI=str(executable))
               with log.open('wb') as stream:
                   result = subprocess.run(['swift', 'test', '--package-path', str(root),
                       '--scratch-path', str(scratch), '--disable-sandbox', '--jobs', '2',
                       '-c', 'release', '--filter', '|'.join(filters)],
-                      stdout=stream, stderr=subprocess.STDOUT, timeout=900)
+                      stdout=stream, stderr=subprocess.STDOUT, timeout=900, env=environment)
               lines = log.read_text(errors='replace').splitlines()
               errors = [line[:700] for line in lines if re.search(r'error:|fatal error:', line, re.I)]
               for line in errors[-12:]:

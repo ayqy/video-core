@@ -69,6 +69,7 @@ public enum AgentContract {
         AgentCommand("speech synthesize",required:["workspace_id","project_id","scene_id","base_revision","speech_plan","request_id"],optional:["extend_scene","timeout_seconds"],permission:.projectWrite,writes:true,idempotency:"confirmed_input_atomic_revision_receipt_local_speech"),
         AgentCommand("edit apply", required: ["workspace_id", "project_id", "base_revision", "edits"], optional: ["text"], permission: .projectWrite, writes: true, idempotency: "atomic_database_request_receipt"),
         AgentCommand("review record", required: ["workspace_id", "project_id", "base_revision", "review"], permission: .projectReview, writes: true, idempotency: "atomic_database_request_receipt"),
+        AgentCommand("production export", required: ["workspace_id", "project_id", "base_revision", "job_id", "path", "request_id"], writes: true, idempotency: "exclusive_named_directory_no_overwrite_no_request_replay"),
         AgentCommand("render estimate", required: ["workspace_id", "project_id"], optional: ["estimate", "text"], permission: .projectRead),
         AgentCommand("render submit", required: ["workspace_id", "project_id", "quote", "request_id"], optional: ["budget"], permission: .projectWrite, writes: true, idempotency: "frozen_job_request_key"),
         AgentCommand("jobs status", required: ["workspace_id", "job_id"], permission: .projectRead),
@@ -130,6 +131,13 @@ public enum AgentContract {
             } else {
                 guard let text = value.string, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw VideoError.invalid(key + "须为非空字符串") }
                 if key.hasSuffix("_id") || key == "base_revision" { guard text.utf8.count <= 200, !text.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) else { throw VideoError.invalid("标识过长或含控制字符") } }
+            }
+        }
+        if command == "production export" {
+            let path = object["path"]?.string ?? ""
+            guard path.hasPrefix("/"), path.utf8.count <= 4096,
+                  !path.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) else {
+                throw VideoError.invalid("导出path须为调用者明确选择的本机绝对目录路径，且不含控制字符")
             }
         }
         var count = 0; try validateTree(value, depth: 0, count: &count)

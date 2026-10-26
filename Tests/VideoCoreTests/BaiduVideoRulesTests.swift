@@ -78,4 +78,64 @@ final class BaiduVideoRulesTests:XCTestCase {
         let result=JobRules.cancel(original)
         XCTAssertEqual(result.state,original.state);XCTAssertEqual(result.remoteID,original.remoteID);XCTAssertEqual(result.requestKey,original.requestKey);XCTAssertEqual(result.quote.upper,original.quote.upper);XCTAssertEqual(result.actual,original.actual);XCTAssertEqual(result.billingUnknown,original.billingUnknown);XCTAssertTrue(result.message.contains("未"));XCTAssertFalse(result.message.contains("须查询远端取消结果"))
     }
+    func testLiveUntransmittedCancellationKeepsOriginalIntentAndReleasesOnlyReservation()throws {
+        var(db,w,project,profile,quote)=try fixture()
+        let prepared=try BaiduVideoRules.prepareForSubmission(database:&db,workspaceID:w.id,projectID:project.id,profile:profile,input:input(),quote:quote,requestID:"live-not-transmitted",principal:"owner"),original=prepared.job,permit=try XCTUnwrap(prepared.permit)
+        let stopped=try BaiduVideoRules.notSubmitted(original,permit:permit,wasCancelled:true)
+        XCTAssertEqual(stopped.state,.cancelled);XCTAssertEqual(stopped.actual,Money(0,quote.upper.currency));XCTAssertEqual(stopped.exposure,Money(0,quote.upper.currency));XCTAssertFalse(stopped.billingUnknown)
+        XCTAssertEqual(stopped.id,original.id);XCTAssertEqual(stopped.requestKey,original.requestKey);XCTAssertEqual(stopped.revisionID,original.revisionID);XCTAssertEqual(stopped.digest,original.digest)
+        XCTAssertEqual(try Codec.digest(stopped.quote),try Codec.digest(original.quote));XCTAssertEqual(stopped.videoGeneration?.inputDigest,original.videoGeneration?.inputDigest);XCTAssertEqual(stopped.videoGeneration?.startedAt,original.videoGeneration?.startedAt)
+        XCTAssertEqual(stopped.videoGeneration?.phase,.failed);XCTAssertNil(stopped.remoteID);XCTAssertNil(stopped.refundPending);XCTAssertTrue((stopped.billing ?? []).isEmpty);XCTAssertTrue(stopped.message.contains("不是远端取消或退款"))
+        XCTAssertThrowsError(try BaiduVideoRules.notSubmitted(original,permit:permit,wasCancelled:true));XCTAssertThrowsError(try permit.markTransmissionStarted())
+    }
+    func testLiveUntransmittedLocalFailureIsFailedAndCannotAutomaticallyReuseQuote()throws {
+        var(db,w,project,profile,quote)=try fixture()
+        let prepared=try BaiduVideoRules.prepareForSubmission(database:&db,workspaceID:w.id,projectID:project.id,profile:profile,input:input(),quote:quote,requestID:"local-setup-failure",principal:"owner"),original=prepared.job,permit=try XCTUnwrap(prepared.permit)
+        db.jobs[0]=try BaiduVideoRules.notSubmitted(original,permit:permit,wasCancelled:false)
+        XCTAssertEqual(db.jobs[0].state,.failed);XCTAssertEqual(db.jobs[0].actual,Money(0));XCTAssertFalse(db.jobs[0].billingUnknown);XCTAssertTrue(db.jobs[0].message.contains("前失败"))
+        let replay=try BaiduVideoRules.prepareForSubmission(database:&db,workspaceID:w.id,projectID:project.id,profile:profile,input:input(),quote:quote,requestID:original.requestKey,principal:"owner")
+        XCTAssertFalse(replay.shouldSubmit);XCTAssertNil(replay.permit);XCTAssertEqual(replay.job.id,original.id);XCTAssertEqual(db.jobs.count,1)
+        XCTAssertThrowsError(try BaiduVideoRules.prepare(database:&db,workspaceID:w.id,projectID:project.id,profile:profile,input:input(),quote:quote,requestID:"reuse-old-quote",principal:"owner"))
+        var confirmedAgain=quote;confirmedAgain.id=Codec.id()
+        let explicit=try BaiduVideoRules.prepareForSubmission(database:&db,workspaceID:w.id,projectID:project.id,profile:profile,input:input(),quote:confirmedAgain,requestID:"explicit-new-intent",principal:"owner")
+        XCTAssertTrue(explicit.shouldSubmit);XCTAssertNotNil(explicit.permit);XCTAssertNotEqual(explicit.job.id,original.id);XCTAssertEqual(db.jobs.count,2);XCTAssertNil(explicit.job.actual)
+    }
+    func testUntransmittedRuleRejectsRemoteBillingUsageAndChangedLifecycle()throws {
+        var(db,w,project,profile,quote)=try fixture()
+        let prepared=try BaiduVideoRules.prepareForSubmission(database:&db,workspaceID:w.id,projectID:project.id,profile:profile,input:input(),quote:quote,requestID:"guard-local-proof",principal:"owner"),original=prepared.job,permit=try XCTUnwrap(prepared.permit)
+        let mutations:[(inout Job)->Void]=[
+            {$0.state = .running},{$0.videoGeneration?.phase = .unknown},{$0.videoGeneration?.phase = .accepted},
+            {$0.remoteID="1717153286267015037"},{$0.remoteCheckedAt=Date()},{$0.progress=0.1},
+            {$0.actual=Money(0)},{$0.remoteReportedActual=Money(2)},{$0.refundPending=Money(1)},
+            {$0.billing=[BillingRecord(id:"local-rule-charge",kind:.charge,money:Money(1),source:"隔离账单规则")]},
+            {$0.artifacts=[Artifact(path:"local-rule-output",mime:"video/mp4",bytes:1,sha256:String(repeating:"a",count:64),revision:$0.revisionID)]},
+            {$0.outputAssetIDs=["existing-source"]},{$0.lease=WorkerLease(owner:"other",token:"other",heartbeat:Date(),expiresAt:Date().addingTimeInterval(60))},
+            {$0.videoGeneration?.acceptedAt=Date()},{$0.videoGeneration?.checkedAt=Date()},{$0.videoGeneration?.points=0},
+            {$0.videoGeneration?.basicDurationMilliseconds=0},{$0.videoGeneration?.digitalHumanDurationMilliseconds=0},
+            {$0.videoGeneration?.collectionToken="collector"},{$0.videoGeneration?.collectionExpiresAt=Date()},
+            {$0.videoGeneration?.contractVersion="other-contract"},{$0.videoGeneration?.model="other-model"},{$0.attempt=2}
+        ]
+        for (index,mutation) in mutations.enumerated() {
+            var changed=original;mutation(&changed);let before=try Codec.digest(changed)
+            XCTAssertThrowsError(try BaiduVideoRules.notSubmitted(changed,permit:permit,wasCancelled:true),"guard \(index)")
+            XCTAssertEqual(try Codec.digest(changed),before)
+        }
+        var other=original;other.requestKey="another-original"
+        XCTAssertThrowsError(try BaiduVideoRules.notSubmitted(other,permit:permit,wasCancelled:true))
+        try permit.markTransmissionStarted();XCTAssertTrue(permit.transmissionStarted)
+        XCTAssertThrowsError(try BaiduVideoRules.notSubmitted(original,permit:permit,wasCancelled:true))
+        try permit.markTransmissionStarted();XCTAssertTrue(permit.transmissionStarted)
+    }
+    func testRecoveredUnknownReceiptCannotBeInferredUnsentOrPaidAgain()throws {
+        var(db,w,project,profile,quote)=try fixture()
+        var original=try BaiduVideoRules.prepare(database:&db,workspaceID:w.id,projectID:project.id,profile:profile,input:input(),quote:quote,requestID:"lost-response",principal:"owner").job
+        let oldIntent=try BaiduVideoRules.prepareForSubmission(database:&db,workspaceID:w.id,projectID:project.id,profile:profile,input:input(),quote:quote,requestID:"lost-response",principal:"owner")
+        XCTAssertFalse(oldIntent.shouldSubmit);XCTAssertNil(oldIntent.permit);XCTAssertEqual(oldIntent.job.videoGeneration?.phase,.submissionStarted)
+        original.videoGeneration?.phase = .unknown
+        let recovered=try Codec.decoder().decode(Job.self,from:Codec.data(original));db.jobs=[recovered]
+        let replay=try BaiduVideoRules.prepareForSubmission(database:&db,workspaceID:w.id,projectID:project.id,profile:profile,input:input(),quote:quote,requestID:"lost-response",principal:"owner")
+        XCTAssertFalse(replay.shouldSubmit);XCTAssertNil(replay.permit);XCTAssertEqual(replay.job.state,.unknownRemote);XCTAssertTrue(replay.job.billingUnknown);XCTAssertEqual(replay.job.exposure,quote.upper)
+        var replacement=quote;replacement.id=Codec.id()
+        XCTAssertThrowsError(try BaiduVideoRules.prepare(database:&db,workspaceID:w.id,projectID:project.id,profile:profile,input:input(),quote:replacement,requestID:"cannot-guess-unsent",principal:"owner"));XCTAssertEqual(db.jobs.count,1)
+    }
 }

@@ -43,6 +43,29 @@ public struct GeneratedAssetSource:Codable,Equatable,Sendable {
     public var sourceJobID:String;public var providerID:String;public var model:String;public var promptDigest:String;public var contractVersion:String;public var collectedAt:Date
     public init(job:Job,receipt:VideoGenerationReceipt,at:Date=Date()){sourceJobID=job.id;providerID=job.quote.provider;model=receipt.model;promptDigest=receipt.inputDigest;contractVersion=receipt.contractVersion;collectedAt=at}
 }
+/// A new intent's in-process observation, never Codable or reconstructed from a
+/// receipt. Only prepareForSubmission can construct it. Marking transmission is
+/// monotonic; consuming an unsent permit prevents later use or transmission.
+public final class BaiduSubmissionPermit:@unchecked Sendable {
+    private let binding:String
+    private let lock=NSLock();private var started=false;private var consumed=false
+    fileprivate init(job:Job)throws{binding=try Codec.digest(job)}
+    public var transmissionStarted:Bool{lock.lock();defer{lock.unlock()};return started}
+    public func checkOriginal(_ job:Job)throws {
+        guard try Codec.digest(job)==binding else{throw VideoError.conflict("活调用许可不属于原百度意图、请求或冻结内容")}
+    }
+    public func markTransmissionStarted()throws {
+        lock.lock();defer{lock.unlock()}
+        guard !consumed else{throw VideoError.conflict("未发送许可已消费，不能再提交此原意图")}
+        started=true
+    }
+    fileprivate func consumeUnsent(_ job:Job)throws {
+        try checkOriginal(job)
+        lock.lock();defer{lock.unlock()}
+        guard !started,!consumed else{throw VideoError.conflict("活调用已进入传输或许可已消费，不能按未发送清零")}
+        consumed=true
+    }
+}
 public enum BaiduCreateResponse:Equatable,Sendable {case accepted(String),rejected(Int)}
 public struct BaiduQueryResponse:Equatable,Sendable {
     public enum State:Equatable,Sendable {case queued,running,ready,failed,expired,unknown}
@@ -135,6 +158,36 @@ public enum BaiduVideoRules {
         try TeachingBatchRules.validateSubmission(project:project,quote:quote,batches:database.teachingBatches ?? [],existingJobs:database.jobs,requestKey:requestID)
         var job=try JobRules.submit(workspaceID:workspaceID,project:project,quote:quote,requestKey:requestID,existing:database.jobs,budget:database.budget,now:now)
         job.videoGeneration=VideoGenerationReceipt(inputDigest:digest,now:now);job.state = .unknownRemote;job.attempt=1;job.message="百度创建调用已登记，结果可能未知；没有幂等/取消合同，不自动重交";database.jobs.append(job);return(job,true)
+    }
+    /// The compatible prepare API deliberately provides no live observation.
+    /// Replays and recovered receipts receive no permit, even without a remote ID.
+    public static func prepareForSubmission(database:inout Database,workspaceID:String,projectID:String,profile:ProviderProfile,input:BaiduVideoInput,quote:Quote,requestID:String,principal:String,now:Date=Date())throws->(job:Job,shouldSubmit:Bool,permit:BaiduSubmissionPermit?) {
+        let prepared=try prepare(database:&database,workspaceID:workspaceID,projectID:projectID,profile:profile,input:input,quote:quote,requestID:requestID,principal:principal,now:now)
+        let permit:BaiduSubmissionPermit?
+        if prepared.shouldSubmit{permit=try BaiduSubmissionPermit(job:prepared.job)}else{permit=nil}
+        return(prepared.job,prepared.shouldSubmit,permit)
+    }
+    /// Only the new intent's still-live invocation may use this rule after proving
+    /// it never handed the material request to URLSession. Missing response fields
+    /// are guardrails, not proof: crash recovery must keep the original unknown.
+    public static func notSubmitted(_ job:Job,permit:BaiduSubmissionPermit,wasCancelled:Bool,now:Date=Date())throws->Job {
+        guard var receipt=job.videoGeneration,receipt.contractVersion==version,receipt.model==model,
+              receipt.phase == .submissionStarted,job.state == .unknownRemote,
+              job.quote.provider != "native",job.attempt==1,job.quote.attempts==1,
+              job.remoteID==nil,job.remoteCheckedAt==nil,job.progress==0,
+              job.actual==nil,job.remoteReportedActual==nil,(job.billing ?? []).isEmpty,
+              job.refundPending==nil,job.artifacts.isEmpty,(job.outputAssetIDs ?? []).isEmpty,
+              job.lease==nil,receipt.acceptedAt==nil,receipt.checkedAt==nil,
+              receipt.points==nil,receipt.basicDurationMilliseconds==nil,receipt.digitalHumanDurationMilliseconds==nil,
+              receipt.collectionToken==nil,receipt.collectionExpiresAt==nil else {
+            throw VideoError.conflict("原百度意图已有远端、费用或产物变化；未按未发送清零")
+        }
+        var result=job;receipt.phase = .failed;result.videoGeneration=receipt
+        result.state = wasCancelled ? .cancelled:.failed;result.actual=Money(0,job.quote.upper.currency)
+        result.billingUnknown=false;result.updatedAt=now
+        result.message=wasCancelled ? "本次百度创建在交给网络传输前取消，实际费用为0；原任务与报价保留。这不是远端取消或退款回执":"本次百度创建在交给网络传输前失败，实际费用为0；原任务与报价保留，不自动重交。这不是退款回执"
+        try permit.consumeUnsent(job)
+        return result
     }
     public static func applyCreated(_ response:BaiduCreateResponse,to job:Job,now:Date=Date())throws->Job {
         guard var receipt=job.videoGeneration,receipt.contractVersion==version else{throw VideoError.conflict("原任务不是此百度合同")};var result=job

@@ -83,7 +83,7 @@ public enum ProductionDeliveryRules {
         }
     }
     public static func inspect(revision:Revision,database:Database,requireApproval:Bool=true,now:Date=Date())->[QualityIssue] {
-        guard revision.contentContext != nil else{return []}
+        guard revision.contentContext != nil || revision.productionBrief != nil else{return []}
         let commercial=revision.purpose != .education
         guard let brief=revision.productionBrief else{return commercial ? [QualityIssue("production_brief","商业用途交付须明确制作目标、用途与AI/商业标识；不需要营收、平台挂载或经营账号")]:[]}
         do {

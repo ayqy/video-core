@@ -243,7 +243,10 @@ public enum Quality {
         var issues: [QualityIssue] = []
         let commercial = revision.purpose != .education
         if requireReview && enforceBrandDelivery {
-            issues += revision.contentContext != nil ? ProductionDeliveryRules.inspect(revision:revision,database:database,now:now):BrandDeliveryRules.inspect(revision:revision,database:database,now:now)
+            // Legacy product projects keep their original brand guard. Any actual
+            // production brief additionally binds delivery terms in either schema.
+            if revision.contentContext == nil { issues += BrandDeliveryRules.inspect(revision:revision,database:database,now:now) }
+            if revision.contentContext != nil || revision.productionBrief != nil { issues += ProductionDeliveryRules.inspect(revision:revision,database:database,now:now) }
         }
         if let product=revision.product {
             if commercial && product.isExample==true {issues.append(QualityIssue("example","练习示例不是实际商品，不能用于商业发布；请在真实工作区选择已有产品与资料"))}
