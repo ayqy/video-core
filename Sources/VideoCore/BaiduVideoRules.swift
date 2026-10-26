@@ -35,6 +35,9 @@ public struct VideoGenerationReceipt:Codable,Equatable,Sendable {
     public enum Phase:String,Codable,Sendable {case submissionStarted="submission_started",accepted,unknown,failed,collected}
     public var contractVersion:String;public var model:String;public var inputDigest:String;public var phase:Phase
     public var startedAt:Date;public var acceptedAt:Date?;public var checkedAt:Date?
+    /// Local accepted-query version. Absence in an older receipt is version 0;
+    /// this is not a supplier sequence, timestamp or proof of remote ordering.
+    public var querySequence:Int?
     public var points:Decimal?;public var basicDurationMilliseconds:Int64?;public var digitalHumanDurationMilliseconds:Int64?
     public var collectionToken:String?;public var collectionExpiresAt:Date?
     public init(inputDigest:String,now:Date=Date()){contractVersion=BaiduVideoRules.version;model=BaiduVideoRules.model;self.inputDigest=inputDigest;phase = .submissionStarted;startedAt=now}
@@ -206,15 +209,45 @@ public enum BaiduVideoRules {
         case .rejected(let code):receipt.phase = .failed;result.state = .failed;result.message="百度明确返回错误码\(code)；未自动重试，费用仍待账单核对"}
         result.videoGeneration=receipt;result.updatedAt=now;return result
     }
+    /// Repository callers pass the job observed before the request. Cash ledger
+    /// updates may proceed concurrently; a newer query or collection fact may not
+    /// be overwritten by this older observation. Authorization stays with callers.
+    public static func applyQuery(_ response:BaiduQueryResponse,to job:Job,observing original:Job,now:Date=Date())throws->Job {
+        guard job.id==original.id,job.workspaceID==original.workspaceID,job.projectID==original.projectID,
+              job.revisionID==original.revisionID,job.digest==original.digest,job.requestKey==original.requestKey,
+              job.quote.provider==original.quote.provider,job.remoteID==original.remoteID,
+              try Codec.digest(job.createdAt)==Codec.digest(original.createdAt),
+              try Codec.digest(job.quote)==Codec.digest(original.quote),
+              let before=original.videoGeneration,let live=job.videoGeneration,
+              before.contractVersion==live.contractVersion,before.model==live.model,before.inputDigest==live.inputDigest,
+              try Codec.digest(before.startedAt)==Codec.digest(live.startedAt) else {
+            throw VideoError.conflict("查询观察不属于原任务、冻结报价或生成输入；未接受回包")
+        }
+        guard (before.querySequence ?? 0)==(live.querySequence ?? 0),before.phase==live.phase,
+              before.collectionToken==live.collectionToken,
+              try Codec.digest(before.collectionExpiresAt)==Codec.digest(live.collectionExpiresAt),
+              (original.outputAssetIDs ?? [])==(job.outputAssetIDs ?? []) else {
+            throw VideoError.conflict("原任务已有较新的查询或回收状态；未写入迟到回包，请读取原ID当前结果")
+        }
+        return try applyQuery(response,to:job,now:now)
+    }
     public static func applyQuery(_ response:BaiduQueryResponse,to job:Job,now:Date=Date())throws->Job {
         // Keep the same boundary for SDK callers constructing a response:
         // a system failure cannot be relabelled as a task failure or success.
         if let code=response.errorCode,code != 0 {
             guard code==31001,response.state == .expired else{throw querySystemError(code)}
         }
-        guard var receipt=job.videoGeneration else{throw VideoError.conflict("原任务缺少百度生成凭据")};var result=try JobOperations.applyRemote(response.snapshot(job:job,now:now),to:job,now:now)
+        guard var receipt=job.videoGeneration else{throw VideoError.conflict("原任务缺少百度生成凭据")}
+        let sequence=receipt.querySequence ?? 0
+        guard sequence>=0,sequence<Int.max else{throw VideoError.conflict("原查询版本无效或已达上限；未覆盖原任务")}
+        let collected=receipt.phase == .collected || !(job.outputAssetIDs ?? []).isEmpty
+        var result=try JobOperations.applyRemote(response.snapshot(job:job,now:now),to:job,now:now)
+        receipt.querySequence=sequence+1
         receipt.checkedAt=now;receipt.points=response.points ?? receipt.points;receipt.basicDurationMilliseconds=response.basicDurationMilliseconds ?? receipt.basicDurationMilliseconds;receipt.digitalHumanDurationMilliseconds=response.digitalHumanDurationMilliseconds ?? receipt.digitalHumanDurationMilliseconds
-        if response.state == .failed || response.state == .expired{receipt.phase = .failed}
-        result.videoGeneration=receipt;result.message=response.state == .ready ? "远端MP4就绪，须显式回收为待核素材；点数不是现金实耗":"已查询原百度ID，未重新提交；原单位用量和现金账单分开核对";return result
+        if !collected && (response.state == .failed || response.state == .expired){receipt.phase = .failed}
+        if collected {result.state=job.state;result.progress=job.progress;result.billingUnknown=job.billingUnknown}
+        result.videoGeneration=receipt
+        result.message=collected ? "原MP4已回收为本地素材；本次仅更新原ID远端观察，保留本地结果，点数与现金分开核对":response.state == .ready ? "远端MP4就绪，须显式回收为待核素材；点数不是现金实耗":"已查询原百度ID，未重新提交；原单位用量和现金账单分开核对"
+        return result
     }
 }

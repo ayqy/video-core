@@ -62,7 +62,7 @@ public enum RemoteJobs {
         guard ["jobs query","worker run"].contains(command),profile.kind==BaiduVideoRules.kind else{throw VideoError.permission("完整百度回执仅供原任务查询，不作为取消或其它协议响应")}
         return try repository.transaction{db in
             let current=try checkedTarget(original:original,profile:profile,database:db,principal:principal,command:command,ownerOnly:ownerOnly)
-            let changed=try BaiduVideoRules.applyQuery(response,to:current)
+            let changed=try BaiduVideoRules.applyQuery(response,to:current,observing:original)
             db.jobs[db.jobs.firstIndex(where:{$0.id==current.id && $0.workspaceID==current.workspaceID})!]=changed
             return changed
         }

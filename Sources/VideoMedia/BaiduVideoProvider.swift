@@ -43,7 +43,7 @@ public enum BaiduVideoProvider {
         let context=try authorized(repository:repository,workspaceID:workspaceID,jobID:jobID,principal:principal,command:"baidu query")
         let response=try await query(profile:context.profile,job:context.job)
         try Task.checkCancellation()
-        return try update(repository:repository,original:context.job,profile:context.profile,principal:principal,command:"baidu query"){job,_ in job=try BaiduVideoRules.applyQuery(response,to:job)}
+        return try acceptQuery(response,repository:repository,original:context.job,profile:context.profile,principal:principal,command:"baidu query")
     }
     public static func querySnapshot(profile:ProviderProfile,job:Job) async throws->RemoteSnapshot {try await query(profile:profile,job:job).snapshot(job:job)}
     /// Only query requests repeat. material POST is never reached by this method.
@@ -68,14 +68,9 @@ public enum BaiduVideoProvider {
         }
         let response=try await query(profile:context.profile,job:context.job)
         try Task.checkCancellation()
-        guard response.state == .ready,let address=response.videoAddress else{_ = try update(repository:repository,original:context.job,profile:context.profile,principal:principal,command:"baidu collect"){job,_ in job=try BaiduVideoRules.applyQuery(response,to:job)};throw VideoError.unavailable("百度原任务尚无可回收的有效MP4；未创建新请求")}
-        let token=Codec.id(),now=Date()
-        let claimed=try update(repository:repository,original:context.job,profile:context.profile,principal:principal,command:"baidu collect"){job,_ in
-            guard var receipt=job.videoGeneration else{throw VideoError.permission("原任务生成凭据不可用")}
-            guard job.outputAssetIDs?.isEmpty ?? true else{throw VideoError.conflict("原任务已回收，请读取已有素材")}
-            guard receipt.collectionToken==nil || (receipt.collectionExpiresAt ?? .distantPast)<=now else{throw VideoError.unavailable("原成片已有回收进程，等待原结果，不能重复下载")}
-            job=try BaiduVideoRules.applyQuery(response,to:job);receipt=job.videoGeneration!;receipt.collectionToken=token;receipt.collectionExpiresAt=now.addingTimeInterval(240);job.videoGeneration=receipt
-        }
+        guard response.state == .ready,let address=response.videoAddress else{_ = try acceptQuery(response,repository:repository,original:context.job,profile:context.profile,principal:principal,command:"baidu collect");throw VideoError.unavailable("百度原任务尚无可回收的有效MP4；未创建新请求")}
+        let token=Codec.id()
+        let claimed=try claimCollection(response,repository:repository,original:context.job,profile:context.profile,principal:principal,token:token)
         defer{try? releaseCollection(repository:repository,original:claimed,profile:context.profile,principal:principal,token:token)}
         let url=try BaiduVideoRules.safeHTTPS(address,allowQuery:true),maximum=256*1024*1024
         let configuration=URLSessionConfiguration.ephemeral;configuration.httpShouldSetCookies=false;configuration.httpCookieStorage=nil;configuration.urlCache=nil;configuration.timeoutIntervalForResource=180
@@ -97,6 +92,24 @@ public enum BaiduVideoProvider {
         return try update(repository:repository,original:claimed,profile:context.profile,principal:principal,command:"baidu collect"){job,db in
             guard job.videoGeneration?.collectionToken==token,(job.videoGeneration?.collectionExpiresAt ?? .distantPast)>Date(),job.outputAssetIDs?.isEmpty ?? true else{throw VideoError.conflict("原任务回收权已变化或过期，未覆盖已有结果")}
             db.assets.append(asset);db.evidence.append(evidence);job.outputAssetIDs=[asset.id];job.videoGeneration?.phase = .collected;job.videoGeneration?.collectionToken=nil;job.videoGeneration?.collectionExpiresAt=nil;job.state = .billingPending;job.updatedAt=Date();job.message="真实MP4已回收为本地待核素材；可在普通编辑器与精确文字混合。现金须对账，尚未通过权利/声音/整片审核"
+        }
+    }
+    /// The same accepted-query CAS is used by refresh and a not-yet-ready collect.
+    static func acceptQuery(_ response:BaiduQueryResponse,repository:Repository,original:Job,profile:ProviderProfile,principal:String,command:String)throws->Job {
+        guard ["baidu query","baidu collect"].contains(command) else{throw VideoError.permission("此回包只属于原百度查询或回收")}
+        return try update(repository:repository,original:original,profile:profile,principal:principal,command:command){job,_ in
+            job=try BaiduVideoRules.applyQuery(response,to:job,observing:original)
+        }
+    }
+    /// Claim the ready response and its download lease atomically. Later download
+    /// completion/cleanup uses the live token, not this query's frozen sequence.
+    static func claimCollection(_ response:BaiduQueryResponse,repository:Repository,original:Job,profile:ProviderProfile,principal:String,token:String,now:Date=Date())throws->Job {
+        guard response.state == .ready,response.videoAddress != nil,!token.isEmpty else{throw VideoError.invalid("回收领取需原成片就绪和有效租约")}
+        return try update(repository:repository,original:original,profile:profile,principal:principal,command:"baidu collect"){job,_ in
+            guard var receipt=job.videoGeneration else{throw VideoError.permission("原任务生成凭据不可用")}
+            guard job.outputAssetIDs?.isEmpty ?? true else{throw VideoError.conflict("原任务已回收，请读取已有素材")}
+            guard receipt.collectionToken==nil || (receipt.collectionExpiresAt ?? .distantPast)<=now else{throw VideoError.unavailable("原成片已有回收进程，等待原结果，不能重复下载")}
+            job=try BaiduVideoRules.applyQuery(response,to:job,observing:original);receipt=job.videoGeneration!;receipt.collectionToken=token;receipt.collectionExpiresAt=now.addingTimeInterval(240);job.videoGeneration=receipt
         }
     }
     private static func verifyCollected(job:Job,database:Database,repository:Repository)throws {

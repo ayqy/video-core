@@ -2,6 +2,72 @@ import XCTest
 @testable import VideoCore
 
 final class BaiduVideoRulesTests:XCTestCase {
+    func testPublicQueryObservationRejectsEveryChangedOriginalBinding()throws {
+        var(db,w,project,profile,quote)=try fixture()
+        let prepared=try BaiduVideoRules.prepare(database:&db,workspaceID:w.id,projectID:project.id,profile:profile,input:input(),quote:quote,requestID:"bound-query",principal:"owner")
+        let accepted=try BaiduVideoRules.applyCreated(.accepted("1717153286267015037"),to:prepared.job),before=try Codec.digest(accepted)
+        let changes:[(inout Job)->Void]=[
+            {$0.id="another-job"},{$0.workspaceID="another-workspace"},{$0.projectID="another-project"},
+            {$0.revisionID="another-revision"},{$0.digest=String(repeating:"b",count:64)},
+            {$0.requestKey="another-request"},{$0.quote.provider="another-provider"},{$0.remoteID="1717153286267015038"},
+            {$0.createdAt=$0.createdAt.addingTimeInterval(1)},{$0.quote.id="another-quote"},{$0.quote.upper=Money(999)},
+            {$0.videoGeneration?.inputDigest=String(repeating:"b",count:64)},
+            {$0.videoGeneration?.contractVersion="another-contract"},{$0.videoGeneration?.model="another-model"},
+            {$0.videoGeneration?.startedAt=Date(timeIntervalSince1970:1000)}
+        ]
+        for (index,change) in changes.enumerated() {
+            var mismatched=accepted;change(&mismatched)
+            // Identical local counter/phase/empty lease cannot bind another task.
+            XCTAssertEqual(mismatched.videoGeneration?.querySequence,accepted.videoGeneration?.querySequence)
+            XCTAssertThrowsError(try BaiduVideoRules.applyQuery(BaiduQueryResponse(state:.running,progress:0.4),to:accepted,observing:mismatched),"binding \(index)")
+            XCTAssertEqual(try Codec.digest(accepted),before)
+        }
+    }
+    func testLegacyQueryReceiptAdvancesPersistedSequenceEvenAtSameTime()throws {
+        var(db,w,project,profile,quote)=try fixture()
+        let prepared=try BaiduVideoRules.prepare(database:&db,workspaceID:w.id,projectID:project.id,profile:profile,input:input(),quote:quote,requestID:"query-sequence",principal:"owner")
+        var original=try BaiduVideoRules.applyCreated(.accepted("1717153286267015037"),to:prepared.job)
+        let raw=try Codec.data(try XCTUnwrap(original.videoGeneration)),object=try XCTUnwrap(try JSONSerialization.jsonObject(with:raw) as? [String:Any])
+        XCTAssertNil(object["querySequence"])
+        original.videoGeneration=try Codec.decoder().decode(VideoGenerationReceipt.self,from:raw)
+        XCTAssertNil(original.videoGeneration?.querySequence)
+        let now=Date().addingTimeInterval(10),response=BaiduQueryResponse(state:.running,progress:0.4,points:7.5)
+        let first=try BaiduVideoRules.applyQuery(response,to:original,observing:original,now:now)
+        XCTAssertEqual(first.videoGeneration?.querySequence,1)
+        let restored=try Codec.decoder().decode(Job.self,from:Codec.data(first))
+        let second=try BaiduVideoRules.applyQuery(response,to:restored,observing:restored,now:now)
+        XCTAssertEqual(second.videoGeneration?.querySequence,2)
+        XCTAssertEqual(second.videoGeneration?.checkedAt,first.videoGeneration?.checkedAt)
+        XCTAssertThrowsError(try BaiduVideoRules.applyQuery(response,to:second,observing:first,now:now))
+    }
+    func testQuerySequenceRejectsNegativeAndExhaustedReceiptWithoutOverflow()throws {
+        var(db,w,project,profile,quote)=try fixture()
+        let prepared=try BaiduVideoRules.prepare(database:&db,workspaceID:w.id,projectID:project.id,profile:profile,input:input(),quote:quote,requestID:"query-limit",principal:"owner")
+        let accepted=try BaiduVideoRules.applyCreated(.accepted("1717153286267015037"),to:prepared.job)
+        for invalid in [-1,Int.max] {
+            var original=accepted;original.videoGeneration?.querySequence=invalid
+            let before=try Codec.digest(original)
+            XCTAssertThrowsError(try BaiduVideoRules.applyQuery(BaiduQueryResponse(state:.running,progress:0.4),to:original,observing:original))
+            XCTAssertEqual(try Codec.digest(original),before)
+        }
+    }
+    func testCollectedLocalFactsSurviveEveryFreshSupplierQueryState()throws {
+        var(db,w,project,profile,quote)=try fixture()
+        let prepared=try BaiduVideoRules.prepare(database:&db,workspaceID:w.id,projectID:project.id,profile:profile,input:input(),quote:quote,requestID:"collected-query",principal:"owner")
+        var original=try BaiduVideoRules.applyCreated(.accepted("1717153286267015037"),to:prepared.job)
+        original.videoGeneration?.phase = .collected;original.outputAssetIDs=["isolated-source-id"]
+        original.state = .billingPending;original.progress=1;original.actual=Money(1);original.billingUnknown=false
+        let now=Date().addingTimeInterval(10)
+        for state in [BaiduQueryResponse.State.queued,.running,.ready,.failed,.expired,.unknown] {
+            let response=BaiduQueryResponse(state:state,progress:0.4,videoAddress:state == .ready ? "https://cdn.example.com/result.mp4":nil,points:12.25,basicDurationMilliseconds:61250,errorCode:state == .expired ? 31001:nil)
+            let changed=try BaiduVideoRules.applyQuery(response,to:original,observing:original,now:now)
+            XCTAssertEqual(changed.videoGeneration?.phase,.collected);XCTAssertEqual(changed.outputAssetIDs,original.outputAssetIDs)
+            XCTAssertEqual(changed.state,original.state);XCTAssertEqual(changed.progress,1);XCTAssertFalse(changed.billingUnknown)
+            XCTAssertEqual(changed.actual,original.actual);XCTAssertEqual(changed.remoteID,original.remoteID);XCTAssertEqual(changed.requestKey,original.requestKey)
+            XCTAssertEqual(changed.videoGeneration?.points,12.25);XCTAssertEqual(changed.videoGeneration?.basicDurationMilliseconds,61250)
+            XCTAssertEqual(changed.videoGeneration?.querySequence,1);XCTAssertEqual(changed.remoteCheckedAt,now)
+        }
+    }
     private func input()->BaiduVideoInput {BaiduVideoInput(segments:[.init(text:"输入和输出共同占用上下文容量，请在真实界面对照复现并理解边界。"),.init(type:.image,url:"https://example.com/owned.png")])}
     private func fixture()throws->(Database,Workspace,Project,ProviderProfile,Quote) {
         var db=Database();let w=Workspace(name:"百度本地合同夹具",owner:"owner"),product=Product(workspaceID:w.id,sku:"course",name:"课程",checkout:"https://example.com/course",audience:"初学者",task:"理解上下文",outcome:"复现",prerequisite:"",scope:"输入输出",prices:[Price(money:Money(1),from:Date(timeIntervalSince1970:0),source:"产品页",verified:true)])

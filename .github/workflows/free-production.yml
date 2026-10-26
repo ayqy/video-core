@@ -170,7 +170,7 @@ jobs:
           # Each full suite is reviewed against its exact source inventory.
           # The import-only selection must not run installed-system TTS on CI.
           suites = {
-              ('VideoCoreTests', 'BaiduVideoRulesTests'): (14, None),
+              ('VideoCoreTests', 'BaiduVideoRulesTests'): (18, None),
               ('VideoCoreTests', 'EditorPracticeTests'): (13, None),
               ('VideoCoreTests', 'MacCommerceRulesTests'): (8, None),
               ('VideoCoreTests', 'SpeechTests'): (40, None),
@@ -194,7 +194,7 @@ jobs:
               ('VideoCoreTests', 'AgentWorkerTests'): (6, None),
               ('VideoCoreTests', 'AgentContractTests'): (11, None),
               ('VideoCoreTests', 'AgentPreviewTests'): (11, None),
-              ('VideoMediaTests', 'BaiduVideoProviderTests'): (21, None),
+              ('VideoMediaTests', 'BaiduVideoProviderTests'): (27, None),
               ('VideoMediaTests', 'SpeechProjectProductionTests'): (5, (
                   'testNormalImportedAudioAttachChecksRealBytesAndKeepsHumanReviewPending',
                   'testImported22050AudioKeepsContainerTailAndChecksMacCommitAfterDecode')),
@@ -224,7 +224,7 @@ jobs:
               filters.append('^' + re.escape(target) + r'\.' + re.escape(suite) +
                              '/(?:' + '|'.join(re.escape(method) for method in selected) + ')$')
           expected = len(expected_methods)
-          assert expected == sum(method_counts.values()) == 377
+          assert expected == sum(method_counts.values()) == 387
           print('affected_suite_methods=' + str(method_counts))
           print('system_tts_methods=not_selected; import_only_methods=2')
           try:
