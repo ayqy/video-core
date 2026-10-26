@@ -20,6 +20,7 @@ import time
 import uuid
 
 from codex_events import JsonLines, ProtocolError
+from codex_broker import FilePin as SkillFilePin, PinnedSkill
 
 
 @dataclass(frozen=True)
@@ -62,7 +63,9 @@ class ExactPolicy:
                 return isinstance(json.loads(content), dict)
             except ValueError:
                 return False
-        return tool == "skill" and values.get("skill") == "video"
+        # Legacy membership-only policies have no reviewed Skill directory/pins.
+        # Skill loading is available only through the explicit complete contract.
+        return False
 
 
 @dataclass(frozen=True)
@@ -111,7 +114,8 @@ class PinnedPolicy:
     foreground default; it never extends consume's separate whole-run deadline.
     Completion describes authorization/lifecycle only, never business success.
     """
-    def __init__(self, directory: Path, commands: tuple[str, ...], pins: tuple[FilePin, ...], *, allow_skill: bool = False):
+    def __init__(self, directory: Path, commands: tuple[str, ...], pins: tuple[FilePin, ...], *, allow_skill: bool = False,
+                 skill_directory: Path | None = None):
         self.directory = Path(directory)
         if (not self.directory.is_absolute() or not self.directory.is_dir() or
                 self.directory != self.directory.resolve() or
@@ -122,7 +126,12 @@ class PinnedPolicy:
                 any(not isinstance(p, FilePin) for p in pins) or len({p.path for p in pins}) != len(pins) or
                 not isinstance(allow_skill, bool)):
             raise ValueError("invalid_pinned_policy")
+        if skill_directory is not None and (not allow_skill or not isinstance(skill_directory, Path)):
+            raise ValueError("invalid_pinned_skill_directory")
         self.commands, self.pins, self.allow_skill = commands, pins, allow_skill
+        self.skill_directory = (skill_directory or self.directory / ".qwen/skills/video") if allow_skill else None
+        if self.skill_directory is not None and not self.skill_directory.is_relative_to(self.directory):
+            raise ValueError("pinned_skill_outside_directory")
         self._exact = ExactPolicy(self.directory, frozenset(commands))
         self._position = 0
         self._pending = None
@@ -140,6 +149,10 @@ class PinnedPolicy:
             raise ValueError("pinned_directory_changed")
         for pin in self.pins:
             pin.verify()
+        if self.skill_directory is not None:
+            skill_pins = tuple(SkillFilePin(pin.path, pin.sha256) for pin in self.pins
+                               if pin.path.is_relative_to(self.skill_directory))
+            PinnedSkill(self.skill_directory, skill_pins).verify()
 
     def begin(self) -> None:
         if self._started or self.failed or self._reserved or self._observed:
@@ -262,8 +275,8 @@ def create_isolated_settings(directory: Path, home: Path, runtime: Path, *, mode
         "model": {"name": model},
         "modelProviders": {"openai": [{"id": model, "baseUrl": "https://api.deepseek.com", "envKey": env_key}]},
         "security": {"auth": {"selectedType": "openai"}},
-        "permissions": {"ask": ["Bash", "Edit"], "allow": ["Skill(video)"]},
-        "tools": {"core": ["run_shell_command", "write_file", "skill"]},
+        "permissions": {"ask": ["Bash", "Edit"], "allow": []},
+        "tools": {"core": ["run_shell_command", "write_file"]},
         "telemetry": {"enabled": False},
     }
     if strict_policy is not None:
@@ -552,9 +565,12 @@ def run_qwen(prompt: str, policy: ExactPolicy | PinnedPolicy, home: Path, runtim
     root = policy.directory.resolve()
     if any(not path.resolve().is_relative_to(root) or path.resolve() == root for path in (home, runtime)):
         raise ValueError("宿主目录不属于本次工作区")
-    core_tools = ["run_shell_command", "write_file", "skill"]
+    core_tools = ["run_shell_command", "write_file"]
     max_calls = 30
     if isinstance(policy, PinnedPolicy):
+        if policy.allow_skill and policy.skill_directory != root / ".qwen/skills/video":
+            raise ValueError("native_skill_directory_mismatch")
+        policy._verify_pins()
         for path in (home, runtime, home / "settings.json"):
             if any(p.is_symlink() for p in (path, *path.parents)):
                 raise ValueError("严格宿主配置不能使用符号链接")

@@ -20,7 +20,7 @@ import time
 import uuid
 
 from codex_events import JsonLines, ProtocolError, parse_object
-from install import host_manifests
+from install import host_manifests, complete_host_package_fingerprints
 from qwen_stream import PinnedPolicy, _PolicyRefused, _terminate_group
 
 
@@ -552,6 +552,9 @@ def _configuration(policy, settings, skill_plugin):
             not skill_plugin.is_relative_to(policy.directory) or
             any(p.is_symlink() for p in (skill_plugin, *skill_plugin.parents))):
         raise ValueError("reviewed_local_skill_plugin_required")
+    if policy.skill_directory != skill_plugin / "skills/video":
+        raise ValueError("native_skill_directory_mismatch")
+    policy._verify_pins()
     files = []
     for index, path in enumerate(skill_plugin.rglob("*")):
         if index >= 128 or path.is_symlink():
@@ -578,6 +581,7 @@ def _configuration(policy, settings, skill_plugin):
         outer, inner = skill_plugin/name, skill_plugin/"skills/video"/name
         if outer not in files or inner not in files or digests[outer] != digests[inner]:
             raise ValueError("plugin_license_or_notice_not_same_source")
+    complete_host_package_fingerprints(skill_plugin, "claude")
 
 
 def run_claude(prompt, policy: PinnedPolicy, settings: Path, *, seconds=110,

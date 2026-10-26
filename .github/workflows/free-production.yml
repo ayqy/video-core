@@ -92,6 +92,30 @@ jobs:
           python3 -B Integrations/expressive_tts.py --help
           python3 -B Integrations/prepare_cosyvoice.py --help
 
+      - name: Check complete shared Skill and host permission rules
+        shell: bash
+        run: |
+          python3 -B - <<'PY'
+          import sys, unittest
+          sys.path.insert(0, 'Integrations')
+          modules = ['test_codex_events', 'test_codex_broker', 'test_codex_production',
+                     'test_qwen_stream', 'test_claude_stream', 'check_install', 'test_discover']
+          suite = unittest.TestSuite(unittest.defaultTestLoader.loadTestsFromName(name) for name in modules)
+          def identities(node):
+              for item in node:
+                  if isinstance(item, unittest.TestSuite):
+                      yield from identities(item)
+                  else:
+                      yield item.id()
+          expected = list(identities(suite))
+          assert expected and len(expected) == len(set(expected)) == suite.countTestCases()
+          result = unittest.TextTestRunner(verbosity=1).run(suite)
+          assert result.wasSuccessful() and result.testsRun == len(expected) and not result.skipped
+          print('complete_host_rule_methods=' + str(len(expected)))
+          print('model_request=not_run; account_change=not_run; full_host_acceptance=needs_review')
+          PY
+          python3 -B Integrations/check_package.py
+
       - name: Prepare normal media tools
         shell: bash
         run: |

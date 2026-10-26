@@ -116,7 +116,7 @@ assert sys.stdin.readline()==''
 
 class ClaudeStreamTests(unittest.TestCase):
     def setUp(self):
-        base = Path.cwd()/'.cache-host17/claude-rules'
+        base = Path.cwd()/'.cache/round60/claude-rules'
         base.mkdir(parents=True, exist_ok=True)
         self.temporary = tempfile.TemporaryDirectory(dir=base)
         self.root = Path(self.temporary.name).resolve()
@@ -133,7 +133,13 @@ class ClaudeStreamTests(unittest.TestCase):
 
     def policy(self, *, skill=False, pins=()):
         installer=Path(__file__).with_name('install.py').resolve()
-        return PinnedPolicy(self.root, ('rtk proxy video schema',), (self.pin(self.input), self.pin(installer), *pins), allow_skill=skill)
+        dependencies = (self.pin(self.input), self.pin(installer), *pins)
+        if skill:
+            plugin, files = self.plugin()
+            known = {pin.path for pin in dependencies}
+            dependencies += tuple(self.pin(path) for path in files if path not in known)
+        return PinnedPolicy(self.root, ('rtk proxy video schema',), dependencies, allow_skill=skill,
+                            skill_directory=self.root/'plugin/skills/video' if skill else None)
 
     def run_peer(self, mode):
         return consume([sys.executable,str(self.script),mode,str(self.input)], 'bounded native user task',
@@ -432,12 +438,8 @@ time.sleep(.1)
 
     def plugin(self):
         plugin=self.root/'plugin'
-        manifest=plugin/'.claude-plugin/plugin.json';manifest.parent.mkdir(parents=True)
-        manifest.write_text(json.dumps(host_manifests('claude','1.0.0')['.claude-plugin/plugin.json']))
-        skill=plugin/'skills/video/SKILL.md';skill.parent.mkdir(parents=True);skill.write_text('reviewed Skill')
-        for name in ('LICENSE','NOTICE'):
-            (plugin/name).write_text('same source '+name)
-            (skill.parent/name).write_text('same source '+name)
+        if not plugin.exists():
+            native_package.package(Path(__file__).parent/'skills/video',plugin,'claude','1.0.0')
         return plugin,tuple(p for p in plugin.rglob('*') if p.is_file())
 
     def testNormalEntryBuildsOfficialIsolatedArgumentsWithoutChangingHome(self):
@@ -496,6 +498,34 @@ time.sleep(.1)
         self.assertFalse(result['execution_complete'])
         self.assertEqual(result['decisions'],[])
         self.assertTrue(result['cleanup']['passed'])
+
+    def testEveryMissingFormalSkillFileRefusesBeforeNextNativePermission(self):
+        settings=self.root/'settings.json'
+        create_isolated_settings(self.policy(skill=True),settings)
+        plugin,files=self.plugin()
+        skill=plugin/'skills/video'
+        for reference in tuple(p for p in skill.rglob('*') if p.is_file()):
+            policy=self.policy(skill=True,pins=(self.pin(settings),))
+            original=reference.read_bytes()
+            with self.subTest(missing=reference.relative_to(skill)):
+                reference.unlink()
+                with self.assertRaises((OSError,ValueError)):_configuration(policy,settings,plugin)
+            reference.write_bytes(original)
+
+    def testCompletePluginStillRejectsUnreviewedEmptyDirectoryAndAnotherSkillPath(self):
+        settings=self.root/'settings.json'
+        create_isolated_settings(self.policy(skill=True),settings)
+        plugin,_=self.plugin()
+        policy=self.policy(skill=True,pins=(self.pin(settings),))
+        extra=plugin/'unreviewed';extra.mkdir()
+        with self.assertRaises(ValueError):_configuration(policy,settings,plugin)
+        extra.rmdir()
+        other=self.root/'other/skills/video'
+        import shutil
+        shutil.copytree(plugin/'skills/video',other)
+        pins=tuple(self.pin(p) for p in other.rglob('*') if p.is_file())+(self.pin(settings),)
+        wrong=PinnedPolicy(self.root,('rtk proxy video schema',),pins,allow_skill=True,skill_directory=other)
+        with self.assertRaisesRegex(ValueError,'native_skill_directory_mismatch'):_configuration(wrong,settings,plugin)
 
     def testConfigurationSizeIsCheckedBeforeHashAndDuplicateJsonKeysAreRejected(self):
         path=self.root/'settings.json';path.write_bytes(b'x'*65537)

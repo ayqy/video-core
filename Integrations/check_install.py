@@ -6,6 +6,8 @@ import io
 import json
 import os
 import shutil
+import subprocess
+import sys
 import tempfile
 import unittest
 from unittest import mock
@@ -202,10 +204,10 @@ class CompleteHostPackageTests(unittest.TestCase):
         _, target, previous = self.installed()
         new = self.package(version="1.1.0", changed=True)
         validate = self.installer.host_package_fingerprints
-        def fail_new_readback(path, host):
+        def fail_new_readback(path, host, *, historical=False):
             if path == target and json.loads((target / ".claude-plugin/plugin.json").read_text())["version"] == "1.1.0":
                 raise ValueError("Injected published manifest/Skill readback failure")
-            return validate(path, host)
+            return validate(path, host, historical=historical)
         with mock.patch.object(self.installer, "host_package_fingerprints", fail_new_readback), self.assertRaises(ValueError):
             self.installer.install_package(new, target, "claude", update_from=previous)
         self.assertEqual(self.fingerprint(target), previous)
@@ -253,6 +255,128 @@ class CompleteHostPackageTests(unittest.TestCase):
         with mock.patch("sys.argv", ["install.py", "--host", "codex", "--destination", str(legacy)]), contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(self.installer.main(), 0)
         self.assertEqual(self.installer.fingerprints(legacy), self.installer.fingerprints(self.skill))
+
+
+    def testMissingFormalFilesCannotBeNewSkillOrGeneratedHostPackage(self):
+        source=self.root/'candidate-skill'
+        shutil.copytree(self.skill,source)
+        for path in tuple(p for p in source.rglob('*') if p.is_file()):
+            original=path.read_bytes()
+            with self.subTest(missing=path.relative_to(source)):
+                path.unlink()
+                for dry_run in (False,True):
+                    target=self.root/'never-created/skill'
+                    with self.assertRaises((OSError,ValueError)):
+                        self.installer.install(source,target,dry_run=dry_run)
+                    self.assertFalse(target.parent.exists())
+                target=self.root/'never-packaged/host'
+                with self.assertRaises((OSError,ValueError)):
+                    self.packager.package(source,target,'claude','1.0.0')
+                self.assertFalse(target.parent.exists())
+            path.write_bytes(original)
+
+    def testIdempotentSkillInstallVerifyAndDryRunRejectUnknownEmptyDirectoryWithoutWrites(self):
+        target=self.root/'same-installed-skill'
+        self.installer.install(self.skill,target)
+        extra=target/'unreviewed';extra.mkdir()
+        def inventory():
+            return {path.relative_to(target).as_posix():None if path.is_dir() else path.read_bytes()
+                    for path in target.rglob('*')}
+        before=inventory()
+        for options in ({},{'verify':True},{'dry_run':True}):
+            with self.subTest(options=options):
+                with self.assertRaises(ValueError):self.installer.install(self.skill,target,**options)
+                self.assertEqual(inventory(),before)
+                self.assertEqual(list(target.parent.glob('.video-install-*')),[])
+        extra.rmdir()
+        for options in ({},{'verify':True},{'dry_run':True}):
+            with self.subTest(valid_options=options):
+                self.assertIn('一致',self.installer.install(self.skill,target,**options))
+                self.assertEqual(self.installer.complete_skill_fingerprints(target),self.installer.fingerprints(self.skill))
+
+    def testEveryRouteRejectsSelfConsistentIncompleteOrExtraSkill(self):
+        for host in self.packager.HOSTS:
+            source=self.package(host)
+            skill=source/self.installer.skill_relative(host)
+            reference=skill/'references/narration-writing.md'
+            original=reference.read_bytes()
+            for kind in ('missing','extra-file','extra-empty-directory'):
+                extra=skill/'unreviewed'
+                with self.subTest(host=host,kind=kind):
+                    if kind=='missing':reference.unlink()
+                    elif kind=='extra-file':extra.write_text('unreviewed')
+                    else:extra.mkdir()
+                    with self.assertRaises((OSError,ValueError)):
+                        self.installer.host_package_fingerprints(source,host)
+                    for dry_run in (False,True):
+                        target=self.root/('never-'+host)/'target'
+                        with self.assertRaises((OSError,ValueError)):
+                            self.installer.install_package(source,target,host,dry_run=dry_run)
+                        self.assertFalse(target.parent.exists())
+                if kind=='missing':reference.write_bytes(original)
+                elif kind=='extra-file':extra.unlink()
+                else:extra.rmdir()
+
+    def testHistoricalFiveFileSkillCanBeFingerprintedUpgradedAndExplicitlyRolledBack(self):
+        target=self.root/'old-installed-skill'
+        shutil.copytree(self.skill,target)
+        (target/'references/narration-writing.md').unlink()
+        original=self.installer.fingerprints(target)
+        previous=self.installer.fingerprint_digest(original)
+        self.installer.install(self.skill,target,update_from=previous)
+        current=self.installer.fingerprint_digest(self.installer.fingerprints(target))
+        self.assertEqual(self.installer.complete_skill_fingerprints(target),self.installer.fingerprints(self.skill))
+        self.installer.rollback(target,previous,current)
+        self.assertEqual(self.installer.fingerprints(target),original)
+        with self.assertRaises(ValueError):self.installer.complete_skill_fingerprints(target)
+        with self.assertRaises(ValueError):self.installer.install(target,self.root/'not-a-new-current-skill')
+
+    def testEveryHistoricalHostPackageCanUpgradeAndRestoreItsExactFiveFileVersion(self):
+        for host in self.packager.HOSTS:
+            source=self.package(host)
+            target=self.root/('legacy-installed-'+host)
+            shutil.copytree(source,target)
+            (target/self.installer.skill_relative(host)/'references/narration-writing.md').unlink()
+            historical=lambda root:self.installer.host_package_fingerprints(root,host,historical=True)
+            original=historical(target)
+            previous=self.installer.fingerprint_digest(original)
+            with self.subTest(host=host):
+                args=['install.py','--host',host,'--host-package','--destination',str(target),'--fingerprint']
+                with mock.patch('sys.argv',args),contextlib.redirect_stdout(io.StringIO()) as stream:
+                    self.assertEqual(self.installer.main(),0)
+                self.assertEqual(stream.getvalue().strip(),previous)
+                self.installer.install_package(source,target,host,update_from=previous)
+                current=self.fingerprint(target,host)
+                self.installer.rollback_package(target,previous,current,host)
+                self.assertEqual(historical(target),original)
+                with self.assertRaises(ValueError):self.installer.host_package_fingerprints(target,host)
+                with self.assertRaises(ValueError):self.installer.install_package(target,self.root/('not-new-'+host),host)
+
+    def testExternalBusinessDirectoryLoadsInstallerAndAllHostPackagesWithoutPythonPath(self):
+        code='''import importlib.util,sys
+from pathlib import Path
+integrations,output=map(Path,sys.argv[1:])
+def load(name):
+ spec=importlib.util.spec_from_file_location('outside_'+name,integrations/(name+'.py'))
+ module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module);return module
+packager,installer=load('package'),load('install')
+source=integrations/'skills/video'
+for host in installer.HOSTS:
+ package=output/(host+'-package')
+ packager.package(source,package,host,'1.0.0',dry_run=True)
+ assert not package.exists()
+ packager.package(source,package,host,'1.0.0')
+ target=output/(host+'-installed')
+ installer.install_package(package,target,host)
+ assert installer.host_package_fingerprints(target,host)==installer.host_package_fingerprints(package,host)
+ installer.install(source,output/(host+'-skill'))
+print('external_import_and_install: 6 routes passed')
+'''
+        output=self.root/'outside-business';output.mkdir()
+        result=subprocess.run([sys.executable,'-I','-B','-c',code,str(Path(__file__).parent.resolve()),str(output)],
+                              cwd=output,capture_output=True,text=True,timeout=30)
+        self.assertEqual(result.returncode,0,result.stderr)
+        self.assertEqual(result.stdout.strip(),'external_import_and_install: 6 routes passed')
 
 
 def main():

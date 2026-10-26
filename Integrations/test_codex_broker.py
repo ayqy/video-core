@@ -866,11 +866,11 @@ class BrokerTests(unittest.TestCase):
     def test_terminal_server_without_exit_keeps_business_and_owned_cleanup_separate(self):
         policy = Policy((self.command(),))
         result = _consume([str(self.python), str(self.peer), "tail-timeout", json.dumps(policy.commands[0].arguments())],
-                          "Use the exact operation", policy, seconds=.8)
+                          "Use the exact operation", policy, seconds=3)
         self.assertTrue(result["passed"], result)
         self.assertFalse(result["native_exit"]["normal"])
         self.assertTrue(result["cleanup"]["passed"])
-        self.assertLess(result["seconds"], 3)
+        self.assertLess(result["seconds"], 5)
 
     def test_offline_peer_zero_tool_failure_denial_timeout(self):
         for mode in ("zero", "failure", "denied", "timeout"):

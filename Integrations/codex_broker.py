@@ -23,6 +23,7 @@ import time
 
 from codex_events import (JsonLines, ProtocolError, is_account_status_notification,
                           is_turn_moderation_status, parse_object, safe_error)
+from skill_contract import verify_skill
 
 
 VERSION = "codex-cli 0.159.2"
@@ -142,40 +143,16 @@ class PinnedSkill:
     pins: tuple[FilePin, ...]
 
     def verify(self) -> dict:
-        root = _path(self.directory)
-        expected = {"SKILL.md", "LICENSE", "NOTICE", "agents/openai.yaml", "references/protocol.md",
-                    "references/narration-writing.md"}
-        directories = {"agents", "references"}
-        if (not root.is_dir() or not isinstance(self.pins, tuple) or len(self.pins) != len(expected) or
+        if (not isinstance(self.pins, tuple) or
                 any(not isinstance(pin, FilePin) for pin in self.pins)):
             raise ProtocolError("video_skill_complete_pins_required")
-        actual, total = {}, 0
-        for count, path in enumerate(root.rglob("*"), 1):
-            if count > len(expected) + len(directories):
-                raise ProtocolError("video_skill_layout_refused")
-            _path(path)
-            relative = path.relative_to(root).as_posix()
-            info = path.stat()
-            if path.is_dir():
-                if relative not in directories:
-                    raise ProtocolError("video_skill_layout_refused")
-                continue
-            if not path.is_file() or info.st_nlink != 1 or relative not in expected:
-                raise ProtocolError("video_skill_layout_refused")
-            total += info.st_size
-            if not 0 < info.st_size <= 256 * 1024 or total > 1024 * 1024:
-                raise ProtocolError("video_skill_byte_bound")
-            actual[path] = relative
-        if set(actual.values()) != expected or {pin.path for pin in self.pins} != set(actual):
-            raise ProtocolError("video_skill_complete_pins_required")
+        try:
+            value = verify_skill(self.directory, tuple((pin.path, pin.sha256) for pin in self.pins))
+        except ValueError as error:
+            raise ProtocolError(str(error)) from error
         for pin in self.pins:
             pin.verify()
-        entry = root / "SKILL.md"
-        if not entry.read_bytes().startswith(b"---\nname: video\n"):
-            raise ProtocolError("video_skill_identity_refused")
-        package = {actual[pin.path]: pin.sha256 for pin in self.pins}
-        digest = hashlib.sha256(json.dumps(package, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
-        return {"name": "video", "path": str(entry), "sha256": package["SKILL.md"], "package_sha256": digest}
+        return value
 
     def input(self) -> dict:
         value = self.verify()

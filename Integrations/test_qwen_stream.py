@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import selectors
+import shutil
 import signal
 import subprocess
 import sys
@@ -26,9 +27,10 @@ user=json.loads(sys.stdin.readline());assert user['type']=='user'
 if mode=='stall':time.sleep(20)
 command='rtk proxy video schema'+(' --extra' if mode=='deny' else '')
 request={'type':'control_request','request_id':'permission-one','request':{'subtype':'can_use_tool','tool_name':'run_shell_command','tool_use_id':'call-one','input':{'command':command}}}
+if mode=='unbound-skill':request['request'].update(tool_name='skill',input={'skill':'video'})
 print(json.dumps(request),flush=True)
 reply=json.loads(sys.stdin.readline());assert reply['response']['request_id']=='permission-one'
-assert reply['response']['response']['behavior']==('deny' if mode=='deny' else 'allow')
+assert reply['response']['response']['behavior']==('deny' if mode in ('deny','unbound-skill') else 'allow')
 print(json.dumps({'type':'result','subtype':'success','is_error':False}),flush=True)
 assert sys.stdin.readline()==''
 '''
@@ -36,7 +38,7 @@ assert sys.stdin.readline()==''
 
 class QwenStreamTests(unittest.TestCase):
     def setUp(self):
-        base = Path.cwd() / ".cache" / "qwen-check" / "test-temp"
+        base = Path.cwd() / ".cache" / "round60" / "qwen-check" / "test-temp"
         base.mkdir(parents=True, exist_ok=True)
         self.temporary = tempfile.TemporaryDirectory(dir=base)
         self.root = Path(self.temporary.name)
@@ -58,6 +60,18 @@ class QwenStreamTests(unittest.TestCase):
         self.assertEqual(result["decisions"], [{"tool_use_id": "call-one", "allowed": True}])
         self.assertTrue(result["cleanup"]["passed"])
         self.assertTrue(result["execution_complete"])
+
+    def testMembershipOnlyEntryCannotExposeOrAuthorizeAnUnboundSkill(self):
+        home,runtime=self.root/'home',self.root/'runtime'
+        create_isolated_settings(self.root,home,runtime)
+        with patch('qwen_stream.consume',return_value={}) as consumer:
+            run_qwen('not sent to a host',self.policy,home,runtime)
+        arguments=consumer.call_args.args[0]
+        self.assertEqual(arguments[arguments.index('--core-tools')+1:],['run_shell_command','write_file'])
+        result=consume(self.peer('unbound-skill'),'local protocol only',self.policy,seconds=3)
+        self.assertEqual(result['decisions'],[{'tool_use_id':'call-one','allowed':False}])
+        self.assertFalse(result['execution_complete'])
+        self.assertTrue(result['cleanup']['passed'])
 
     def testUnreadingNativeStdinCannotBlockParentDeadline(self):
         script=self.root/'unreading-peer.py'
@@ -239,7 +253,9 @@ time.sleep(.1)
         settings = json.loads((home / "settings.json").read_text())
         self.assertIs(type(settings["$version"]), int)
         self.assertEqual(settings["$version"], 4)
-        self.assertEqual(settings["permissions"], {"ask": ["Bash", "Edit"], "allow": ["Skill(video)"]})
+        self.assertEqual(settings["permissions"], {"ask": ["Bash", "Edit"], "allow": []})
+        self.assertEqual(settings["tools"], {"core": ["run_shell_command", "write_file"]})
+        self.assertFalse(self.policy.allows({"subtype":"can_use_tool","tool_name":"skill","input":{"skill":"video"}}))
         self.assertEqual(settings["modelProviders"]["openai"][0]["envKey"], "DEEPSEEK_API_KEY")
         with self.assertRaises(ValueError):
             create_isolated_settings(self.root, home, runtime)
@@ -289,7 +305,7 @@ assert sys.stdin.readline()==''
 class PinnedQwenPolicyTests(unittest.TestCase):
     """Only a local protocol peer is used; it never executes a tool or model."""
     def setUp(self):
-        base = Path.cwd() / ".cache" / "qwen-check" / "test-temp"
+        base = Path.cwd() / ".cache" / "round60" / "qwen-check" / "test-temp"
         base.mkdir(parents=True, exist_ok=True)
         self.temporary = tempfile.TemporaryDirectory(dir=base)
         self.root = Path(self.temporary.name).resolve()
@@ -302,7 +318,14 @@ class PinnedQwenPolicyTests(unittest.TestCase):
         self.temporary.cleanup()
 
     def policy(self, **kwargs):
-        return PinnedPolicy(self.root, self.commands, (FilePin(self.fixed, self.digest),), **kwargs)
+        pins = [FilePin(self.fixed, self.digest)]
+        if kwargs.get("allow_skill"):
+            skill = self.root / ".qwen/skills/video"
+            if not skill.exists():
+                shutil.copytree(Path(__file__).parent / "skills/video", skill)
+            pins.extend(FilePin(p, hashlib.sha256(p.read_bytes()).hexdigest())
+                        for p in skill.rglob("*") if p.is_file())
+        return PinnedPolicy(self.root, self.commands, tuple(pins), **kwargs)
 
     def request(self, command=None, identifier="one", **values):
         return {"subtype": "can_use_tool", "tool_name": "run_shell_command", "tool_use_id": identifier,
@@ -767,6 +790,52 @@ sys.stdout.write('{"output_tokens":1}}');sys.stdout.flush()
         other = {**request, "input": {"skill": "other"}}
         self.assertFalse(self.policy(allow_skill=True).allows(other))
 
+    def testSkillNeedsActualCompleteDirectoryAndEveryCallerPin(self):
+        with self.assertRaises((OSError, ValueError)):
+            PinnedPolicy(self.root, self.commands, (FilePin(self.fixed, self.digest),), allow_skill=True)
+        self.policy(allow_skill=True)
+        skill = self.root / ".qwen/skills/video"
+        files = tuple(p for p in skill.rglob("*") if p.is_file())
+        for missing in files:
+            with self.subTest(missing=missing.relative_to(skill)), self.assertRaises(ValueError):
+                pins = (FilePin(self.fixed, self.digest),) + tuple(
+                    FilePin(p, hashlib.sha256(p.read_bytes()).hexdigest()) for p in files if p != missing)
+                PinnedPolicy(self.root, self.commands, pins, allow_skill=True)
+
+    def testChangedOrUnreviewedSkillTreeCannotGrantNextTool(self):
+        request = {"subtype": "can_use_tool", "tool_name": "skill", "tool_use_id": "skill-one",
+                   "input": {"skill": "video"}}
+        skill = self.root / ".qwen/skills/video"
+        for kind in ("missing", "changed", "extra-file", "extra-empty-directory", "hardlink", "symlink"):
+            policy = self.policy(allow_skill=True)
+            reference = skill / "references/narration-writing.md"
+            original = reference.read_bytes()
+            extra = skill / "unreviewed"
+            with self.subTest(kind=kind):
+                if kind == "missing": reference.unlink()
+                elif kind == "changed": reference.write_bytes(original + b"changed")
+                elif kind == "extra-file": extra.write_text("unreviewed")
+                elif kind == "extra-empty-directory": extra.mkdir()
+                elif kind == "hardlink": os.link(reference, extra)
+                else: extra.symlink_to(reference)
+                self.assertFalse(policy.allows(request))
+                self.assertTrue(policy.failed)
+            if extra.is_dir(): extra.rmdir()
+            elif extra.exists() or extra.is_symlink(): extra.unlink()
+            if kind in ("missing", "changed"): reference.write_bytes(original)
+
+    def testQwenEntryCannotLoadAnotherPinnedSkillDirectory(self):
+        skill = self.root / "reviewed-elsewhere"
+        shutil.copytree(Path(__file__).parent / "skills/video", skill)
+        pins = tuple(FilePin(p, hashlib.sha256(p.read_bytes()).hexdigest())
+                     for p in skill.rglob("*") if p.is_file())
+        policy = PinnedPolicy(self.root, self.commands, pins, allow_skill=True, skill_directory=skill)
+        home, runtime = self.root / "home", self.root / "runtime"
+        create_isolated_settings(self.root, home, runtime, strict_policy=policy)
+        with patch("qwen_stream.consume") as consumer, self.assertRaisesRegex(ValueError, "native_skill_directory_mismatch"):
+            run_qwen("not sent to a host", policy, home, runtime)
+        consumer.assert_not_called()
+
     def testPolicyIsSingleInvocationAndRequiresDistinctFiniteCommandsAndPins(self):
         policy = self.policy()
         policy.begin()
@@ -806,7 +875,7 @@ sys.stdout.write('{"output_tokens":1}}');sys.stdout.flush()
                 elif variant == "tools":settings["tools"]["core"].append("write_file")
                 elif variant == "hooks":settings["hooks"] = {"unreviewed": "not executed"}
                 else:
-                    (self.root / ".qwen").mkdir()
+                    (self.root / ".qwen").mkdir(exist_ok=True)
                     (self.root / ".qwen" / "settings.json").write_text("{}")
                 config.write_text(json.dumps(settings))
                 with patch("qwen_stream.consume") as local_contract:

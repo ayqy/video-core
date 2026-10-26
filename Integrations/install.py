@@ -3,6 +3,7 @@
 from __future__ import annotations
 import argparse
 import hashlib
+import importlib.util
 import json
 import re
 import shutil
@@ -10,6 +11,11 @@ import stat
 import sys
 import tempfile
 from pathlib import Path
+
+
+_skill_spec = importlib.util.spec_from_file_location("video_complete_skill_contract", Path(__file__).with_name("skill_contract.py"))
+_skill_contract = importlib.util.module_from_spec(_skill_spec)
+_skill_spec.loader.exec_module(_skill_contract)
 
 HOSTS = ("codex", "claude", "gemini", "grok", "deepseek-codex", "deepseek-qwen")
 VERSION = r"[0-9]+\.[0-9]+\.[0-9]+(?:-[a-z0-9.-]+)?"
@@ -55,6 +61,17 @@ def fingerprints(root: Path) -> dict[str, str]:
     return values
 
 
+def complete_skill_fingerprints(root: Path) -> dict[str, str]:
+    """Current source requires the same complete reviewed Skill on every host.
+
+    fingerprints remains a historical reader: an explicitly fingerprint-bound
+    previous installation must remain readable and recoverable during upgrades.
+    """
+    values = fingerprints(root)
+    _skill_contract.verify_skill(root, tuple((root / name, digest) for name, digest in values.items()))
+    return values
+
+
 def fingerprint_digest(values: dict[str, str]) -> str:
     return hashlib.sha256(json.dumps(values, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
@@ -93,10 +110,10 @@ def _json_object(pairs):
     return result
 
 
-def host_package_fingerprints(root: Path, host: str) -> dict[str, str]:
+def host_package_fingerprints(root: Path, host: str, *, historical=False) -> dict[str, str]:
     relative = skill_relative(host)
     values = tree_fingerprints(root)
-    skill = fingerprints(root / relative)
+    skill = (fingerprints if historical else complete_skill_fingerprints)(root / relative)
     for name in ("LICENSE", "NOTICE"):
         if name not in skill or values.get(name) != skill[name]:
             raise ValueError("宿主包根许可/声明须与共用Skill原件相同")
@@ -124,14 +141,18 @@ def host_package_fingerprints(root: Path, host: str) -> dict[str, str]:
     return values
 
 
+def complete_host_package_fingerprints(root: Path, host: str) -> dict[str, str]:
+    return host_package_fingerprints(root, host)
+
+
 def _install(source: Path, destination: Path, validator, *, verify=False, dry_run=False,
-             update_from: str | None = None, label: str) -> str:
+             update_from: str | None = None, label: str, source_validator=None) -> str:
     reject_links(source)
     reject_links(destination)
     source_path, destination_path = source.resolve(), destination.resolve()
     if source_path == destination_path or source_path in destination_path.parents or destination_path in source_path.parents:
         raise ValueError("源和安装目标不能相同、互为祖先或互相包含")
-    expected = validator(source)
+    expected = (source_validator or validator)(source)
     current = None
     backup = None
     if update_from is not None and not re.fullmatch(r"[a-f0-9]{64}", update_from):
@@ -143,6 +164,8 @@ def _install(source: Path, destination: Path, validator, *, verify=False, dry_ru
         if update_from is not None and fingerprint_digest(current) != update_from:
             raise ValueError("原安装在核对后已变化；不覆盖用户修改，请重新审查")
         if current == expected:
+            if (source_validator or validator)(destination) != expected:
+                raise ValueError("已有安装未通过当前完整目录校验，未修改原安装")
             return "已有安装内容完全一致"
         if update_from is None:
             raise ValueError("目标含不同内容，保留原安装；请审查后用--update-from绑定原指纹")
@@ -163,7 +186,7 @@ def _install(source: Path, destination: Path, validator, *, verify=False, dry_ru
     try:
         payload = stage / "payload"
         shutil.copytree(source, payload)
-        if validator(payload) != expected:
+        if (source_validator or validator)(payload) != expected:
             raise ValueError("暂存完整文件校验失败，未安装")
         try:
             reject_links(destination)
@@ -178,7 +201,7 @@ def _install(source: Path, destination: Path, validator, *, verify=False, dry_ru
             payload.rename(destination)
             status = destination.stat()
             published_identity = (status.st_dev, status.st_ino)
-            if validator(destination) != expected:
+            if (source_validator or validator)(destination) != expected:
                 raise ValueError("安装后完整文件校验失败，恢复原安装")
             if backup is not None:
                 if backup.exists() or backup.is_symlink():
@@ -213,13 +236,14 @@ def _install(source: Path, destination: Path, validator, *, verify=False, dry_ru
 def install(source: Path, destination: Path, *, verify=False, dry_run=False,
             update_from: str | None = None) -> str:
     return _install(source, destination, fingerprints, verify=verify, dry_run=dry_run,
-                    update_from=update_from, label="共用Skill")
+                    update_from=update_from, label="共用Skill", source_validator=complete_skill_fingerprints)
 
 
 def install_package(source: Path, destination: Path, host: str, *, verify=False, dry_run=False,
                     update_from: str | None = None) -> str:
-    return _install(source, destination, lambda root: host_package_fingerprints(root, host),
-                    verify=verify, dry_run=dry_run, update_from=update_from, label="完整宿主包")
+    return _install(source, destination, lambda root: host_package_fingerprints(root, host, historical=True),
+                    verify=verify, dry_run=dry_run, update_from=update_from, label="完整宿主包",
+                    source_validator=lambda root: complete_host_package_fingerprints(root, host))
 
 
 def _rollback(destination: Path, previous_digest: str, expected_current: str, validator, installer, *, dry_run=False) -> str:
@@ -233,13 +257,16 @@ def _rollback(destination: Path, previous_digest: str, expected_current: str, va
 
 
 def rollback(destination: Path, previous_digest: str, expected_current: str, *, dry_run=False) -> str:
-    return _rollback(destination, previous_digest, expected_current, fingerprints, install, dry_run=dry_run)
+    return _rollback(destination, previous_digest, expected_current, fingerprints,
+                     lambda source, target, **options: _install(source, target, fingerprints,
+                         label="共用Skill", **options), dry_run=dry_run)
 
 
 def rollback_package(destination: Path, previous_digest: str, expected_current: str, host: str, *, dry_run=False) -> str:
     return _rollback(destination, previous_digest, expected_current,
-                     lambda root: host_package_fingerprints(root, host),
-                     lambda source, target, **options: install_package(source, target, host, **options), dry_run=dry_run)
+                     lambda root: host_package_fingerprints(root, host, historical=True),
+                     lambda source, target, **options: _install(source, target,
+                         lambda root: host_package_fingerprints(root, host, historical=True), label="完整宿主包", **options), dry_run=dry_run)
 
 
 def main():
@@ -259,7 +286,7 @@ def main():
         destination = args.destination.absolute()
         if args.package_source and not args.host_package:
             raise ValueError("--package-source必须显式配合--host-package，不推断整包覆盖范围")
-        validator = (lambda root: host_package_fingerprints(root, args.host)) if args.host_package else fingerprints
+        validator = (lambda root: host_package_fingerprints(root, args.host, historical=True)) if args.host_package else fingerprints
         if args.fingerprint:
             if args.verify or args.dry_run or args.update_from or args.rollback_from or args.package_source:
                 raise ValueError("--fingerprint只读，不能与更新/回滚/验证或源包组合")

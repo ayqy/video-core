@@ -14,6 +14,8 @@
 
 安装示例：`python3 Integrations/install.py --host codex --destination <项目>/.agents/skills/video`。目标不覆盖已有修改；重复安装同一内容会验证通过，内容不同则保留原文件并报错。`--dry-run`只校验，`--verify`核对现有安装。`--host deepseek-codex`与`--host deepseek-qwen`只标识实际工具宿主，不改provider或读取API Key。Qwen项目安装示例：`python3 Integrations/install.py --host deepseek-qwen --destination <项目>/.qwen/skills/video`。
 
+当前正式Skill为六件：`SKILL.md`、`LICENSE`、`NOTICE`、`agents/openai.yaml`、`references/protocol.md`及`references/narration-writing.md`。新装、更新和六条宿主路由的打包共用同一完整目录校验，缺件、未知文件/目录、链接或超界文件均拒绝。旧五件安装仍可只读回读原指纹、按该指纹升级，并通过显式上一版指纹恢复其原始内容；历史回滚不表示旧包满足当前六件运行契约。
+
 ### 有版本绑定的更新与回滚
 
 先用同一安装命令的 `--fingerprint` 回读当前完整技能目录的 SHA-256 指纹，审查新旧 Skill 差异。使用 `--update-from <原指纹>` 才会更新不同内容；可以先同时加 `--dry-run`。原安装若在审查后变化，更新明确拒绝。成功更新保留与原指纹绑定的上一版目录，不覆盖用户修改，也不更改宿主模型、认证或全局设置。技能内容、安装路径、宿主发现与运行权限是独立状态，文件更新不声称当前模型会话已重新加载。
@@ -54,7 +56,7 @@ Claude的3-turn/0.10美元上限会话与缩减后的1-turn/0.01美元上限探�
 
 调用方使用`create_isolated_settings`在当前工作区内创建新的独立`QWEN_HOME`和运行目录；只传已有环境变量的名称，由原生Qwen消费凭据，不迁移全局设置。兼容的`ExactPolicy`仅核精确Shell成员、工作目录及显式允许的JSON文件，不提供命令顺序或文件身份保证。原生`Bash(pattern)`包含前缀匹配，不能当成完整命令相等；PreToolUse异常时可能放行，也不作为独立强制门禁。
 
-需要固定有限链时使用`PinnedPolicy(directory, commands=(...), pins=(FilePin(绝对路径, SHA256), ...))`，每个命令仅执行一次且须按顺序完成。调用者先固定审查过的解释器、二进制、脚本、Skill及输入原件，再将同一`strict_policy`传给`create_isolated_settings`；`run_qwen`核对实际工具和许可配置后才启动。严格模式不暴露文件写工具，只有显式`allow_skill=True`才允许video Skill，并逐次询问。原生工具开始、许可和完成事件由消费器本身核对，不能仅靠调用方额外callback补审；拒绝、未完成、文件变化或顺序不符不标许可链完成。
+需要固定有限链时使用`PinnedPolicy(directory, commands=(...), pins=(FilePin(绝对路径, SHA256), ...))`，每个命令仅执行一次且须按顺序完成。调用者先固定审查过的解释器、二进制、脚本、Skill及输入原件，再将同一`strict_policy`传给`create_isolated_settings`；`run_qwen`核对实际工具和许可配置后才启动。严格模式不暴露文件写工具，只有显式`allow_skill=True`且六件实际Skill均有pin才允许video Skill，并逐次询问；默认绑定本次工作目录的`.qwen/skills/video`，原生Qwen入口拒绝其它技能路径。完整目录在构造、许可和生命周期复核中持续校验。兼容的`ExactPolicy`保留原精确Shell和显式JSON写能力，不自动许可或暴露Skill；需要Skill时改用完整的严格入口。原生工具开始、许可和完成事件由消费器本身核对，不能仅靠调用方额外callback补审；拒绝、未完成、文件变化或顺序不符不标许可链完成。
 
 原生Shell可选的`timeout`只接受严格整数1—120000毫秒，不接受布尔、浮点、字符串或未知字段，也不延长消费端父进程的硬期限；其余精确命令、目录、顺序和许可生命周期检查保持。
 
@@ -90,7 +92,7 @@ Claude的3-turn/0.10美元上限会话与缩减后的1-turn/0.01美元上限探�
 
 普通本地制作可显式选用`codex_production.py`的`LocalProductionPolicy`，再交给同一`run_codex`消费。调用者先审定最多32个有序`LocalStep`、输入模板、源文件和实际CLI的`FilePin`，指定新的本地工作区及恢复目录；模型只能提交下一步名称、固定cwd和完整计划摘要，不能提交命令行、JSON内容、ID或路径。`ResultBinding`仅将先前经过严格校验的原生回执字段绑定到审定模板；每个写步骤先预检再实际执行，逐次核对退出状态及业务封套。
 
-需要显式调用共用Skill时，先在业务项目的原生技能目录安装同源5件包，再以`PinnedSkill(directory, pins)`固定`SKILL.md`、`LICENSE`、`NOTICE`、`agents/openai.yaml`和`references/protocol.md`，传给`run_codex(..., skill=...)`。入口拒绝未知文件/目录、链接、缺件和改名；逐事件、发起请求前与调用完成后复核全部文件。MCP隔离门后，独立`skills/list(forceReload=true)`必须回读精确路径、`name=video`、启用及无目录错误，才发送固定原生`skill`输入。目录识别、输入提交、模型工具调用和实际业务结果分别记录，不把发送请求本身叫作已加载或制作成功。Agent文字只留长度与摘要，不保存私密会话正文；该接口没有开放模型读文件、Shell或额外执行权限。
+需要显式调用共用Skill时，先在业务项目的原生技能目录安装同源6件包，再以`PinnedSkill(directory, pins)`固定全部六件（包括完整解说写作参考），传给`run_codex(..., skill=...)`。入口拒绝未知文件/目录、链接、缺件和改名；逐事件、发起请求前与调用完成后复核全部文件。MCP隔离门后，独立`skills/list(forceReload=true)`必须回读精确路径、`name=video`、启用及无目录错误，才发送固定原生`skill`输入。目录识别、输入提交、模型工具调用和实际业务结果分别记录，不把发送请求本身叫作已加载或制作成功。Agent文字只留长度与摘要，不保存私密会话正文；该接口没有开放模型读文件、Shell或额外执行权限。
 
 回合完成后，消费端关闭stdin，在原父期限内最多再读取2秒完整尾流并等待退出；合法被动尾通知可保留，畸形尾流或终态后工具请求仍拒绝。原生退出码、双流EOF及是否自然退出单列于`native_exit`，不与`cleanup.passed`混同。服务器继续运行、超时或异常时仍按原owned进程组清理，业务是否完成继续由原完整工具生命周期与回执合同判断，不要求持久服务器必须自然退出。
 
@@ -112,7 +114,7 @@ Qwen终态由共用有界JSONL解析器核对完整EOF、重复键、非有限�
 
 `claude_stream.py`通过本机官方Claude CLI的stdio SDK初始化和`can_use_tool`消费相同的`PinnedPolicy`。仅接受审定的原生`Bash`输入，或显式本地插件的`Skill(video:video)`；允许回执返回原始`updatedInput`，不应用宿主建议的权限变更。工具ID、请求顺序、原生结果与同一session逐项绑定；未知事件、额外字段、后台执行、文件变更及清理无法证明均拒绝。初始化账户元数据与`apiKeySource`不输出，也不作为认证成功。
 
-正常入口`run_claude`不改变HOME或全局配置。解释器、官方CLI和本次配置须有文件pin，关闭用户/项目设置、MCP、Hook和会话持久化，只以`--plugin-dir`加载审定目录。带Skill时，目录只接受固定manifest与同源Skill文件，调用期持续检查完整布局及文件pin；不接受其他插件、Hook或MCP文件。初始化成功和本地规则通过不表示后端认证或模型业务已通过，真实调用必须另记证据。[官方stdio许可语义](https://github.com/anthropics/claude-agent-sdk-python/blob/main/src/claude_agent_sdk/_internal/query.py)、[显式本地插件](https://code.claude.com/docs/en/agent-sdk/plugins)。
+正常入口`run_claude`不改变HOME或全局配置。启用Skill时，`PinnedPolicy(..., allow_skill=True, skill_directory=plugin/"skills/video")`显式绑定实际插件内完整六件的目录及其全部pin；原生入口核对所载插件与该目录相同，并保留完整manifest和外层许可核验。解释器、官方CLI和本次配置须有文件pin，关闭用户/项目设置、MCP、Hook和会话持久化，只以`--plugin-dir`加载审定目录。带Skill时，目录只接受固定manifest与同源Skill文件，调用期持续检查完整布局及文件pin；不接受其他插件、Hook或MCP文件。初始化成功和本地规则通过不表示后端认证或模型业务已通过，真实调用必须另记证据。[官方stdio许可语义](https://github.com/anthropics/claude-agent-sdk-python/blob/main/src/claude_agent_sdk/_internal/query.py)、[显式本地插件](https://code.claude.com/docs/en/agent-sdk/plugins)。
 
 `test_claude_stream.py`使用本地协议peer核许可拒绝、输入/身份绑定、生命周期及配置变更；不联系模型或账户。
 

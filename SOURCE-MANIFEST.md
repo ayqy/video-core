@@ -2,10 +2,10 @@
 
 VideoFree source export · package_free.py · version 1
 
-生成时间：2026-10-27 01:15:16 北京时间
+生成时间：2026-10-27 02:18:37 北京时间
 
-- 源码与必要元数据：228个文件；3286654字节（不含本清单）。
-- 整体内容指纹：`4a4483f9ee3a64da72b8344a5061a8b4e5c8e6230a9cb4f7d890c4eb66bf29c0`。
+- 源码与必要元数据：229个文件；3306629字节（不含本清单）。
+- 整体内容指纹：`783206b62fbca36366ebd5986efe4e11ea8bc79a2a127c01940d1ba6c9c1ad70`。
 - 来源：受控原始工程中的逐文件白名单；Package.swift与唯一免费制作workflow来自Distribution/Free精确模板，README由发行脚本生成。
 - 本包不含.git，不可作为新业务checkout；本清单生成过程不执行构建、设备验收、签名安装或公共上传，各阶段以独立证据为准。
 - 排除：App、VideoGame、VideoCartoon、Premium、高级实现运行时测试、私有仓库地址、凭据、客户数据、缓存、日志及媒体过程产物。
@@ -14,13 +14,13 @@ VideoFree source export · package_free.py · version 1
 
 | SHA-256 | 字节数 | 包内路径 / 原工程来源 |
 |---|---:|---|
-| fcd8cdd4482444f912d0f7b97d893a2849f3b4c858ca26a295ddd476959ce9ff | 16576 | .github/workflows/free-production.yml |
-| 657d1e41716c0e58c0e5072cee94060c103394dd4dc26ead7dbc851d8e85a00a | 31765 | Integrations/README.md |
+| 373f5bde399dc015ea3ca107c96a3fe4a554af3f5f57c86a7627313b26b2336b | 17851 | .github/workflows/free-production.yml |
+| 565c6ff716b8330c8cf0c4df9d01f26b7c44933192742de3149eff8e8ec8caa3 | 32802 | Integrations/README.md |
 | 2ff174ec064ca614f24e8ba67ae5c7042a2caa883af162bafd27a8a4520d5ed7 | 26522 | Integrations/asset_reuse.py |
-| be0a15cd8fcb9b33fe92f2898a9ee53aa20f9722b368abd19e0a7a5ef924bc42 | 18066 | Integrations/check_install.py |
+| 91f902f9ceedb5b26bfae07ecd097aa47fb9e69b807eae6ff289153770655142 | 25400 | Integrations/check_install.py |
 | 8cae02411044ade544a6877a000d5790ff7b17d6ab781294a8aa737ea6ef8fe0 | 6866 | Integrations/check_package.py |
-| 6b023bbea18e28cd1491c65300db60b7d552172153e03e679d526566a9edfc2d | 32762 | Integrations/claude_stream.py |
-| df3cbe2e240015256421aeb0f84ecdc5ef8de032c2ac63694dd9c9e1105a0829 | 54060 | Integrations/codex_broker.py |
+| 97be2d4d0e162985ee2ef10c122aeb6a76d963c96f654d4d9af20e8f91b91898 | 33011 | Integrations/claude_stream.py |
+| 6cc00ddf935965adfe6af3dc9eefad870f3ecc59f8d8b87b33556cb737ee7359 | 52552 | Integrations/codex_broker.py |
 | 7ecc56e44b3df5afd221e617549ae8f3f9a1d9847b72ac572fa2f2c0d2ae5ca2 | 12512 | Integrations/codex_events.py |
 | 331a2efd301fd9cf623d76e9e47bf85f3fa43fb8d1b6b3281831e418013075f0 | 41267 | Integrations/codex_production.py |
 | a7c3eef63ba036caa939577e231d5b78eab80ca8e0e9f2eeb47286ab453bc011 | 1771 | Integrations/cosyvoice-cpu-lock.txt |
@@ -29,13 +29,14 @@ VideoFree source export · package_free.py · version 1
 | 5c647aa4023be1aff66c0fcf4166fe41bf9e8d54039f800b46d80ec8f43d86e7 | 30722 | Integrations/examples/free_production.py |
 | 8ef21896ef8881ba4a74edc20745dd12278681a1945b450662ab19f6f61bbe10 | 5387 | Integrations/expressive_tts.md |
 | 7b02e8b4e3bd5abf2f91640c9c853f45d3131b504e8d421604c93f3dd00c3267 | 14197 | Integrations/expressive_tts.py |
-| f17393a51167b7998ad0e18817bc65c7bf74d750fa57f0d2b727d1ab9cfeda0f | 15088 | Integrations/install.py |
+| f3cda5bceed4b2f2cd8832e427fdf6b83e9ecbaa4ff1fc7beaf3805bfb4573f7 | 16732 | Integrations/install.py |
 | 62f9d807ade91cb2bac3b92933ee0dbf5d957fb52619f6e4979c905d0da8527f | 3842 | Integrations/narration_reference.py |
-| 5a2742408ea0c2e1ce512f90d6d349252e7493095b4b0317fb51551b7bd21f7f | 3621 | Integrations/package.py |
+| 6c9e7b8a1b3a447b36d1356701559016a2ad5990499ce6c404af7314d420e5d8 | 3636 | Integrations/package.py |
 | dc9835697ac4f3491c29cecd309bd4430b29196137c96b032f4fa310dad0b6c8 | 11371 | Integrations/pencil_production.py |
 | 480c2ac1a04ca2c8ae97e976ac9af1db2d2cb950ac96dbacde28cf5d05689558 | 9603 | Integrations/prepare_cosyvoice.py |
 | e52450d73342e5a84f4a3c51051886c69df0ebb9dce685cc31e26791353c9211 | 19716 | Integrations/production_motion.py |
-| b1ef18523b83d30355099becb5b5622680202cedfe0ae2728c8d4dbdf228df6b | 30729 | Integrations/qwen_stream.py |
+| ebd4a31e6f3c7a6c73bb384798969e652e376bcd80d1d172e6c38ec697177cdd | 31843 | Integrations/qwen_stream.py |
+| 3a68886794331a87603a955eeb41b48754c01d65051bea7ff03b3b4d717bc6c1 | 2828 | Integrations/skill_contract.py |
 | cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30 | 11358 | Integrations/skills/video/LICENSE |
 | 1dbab07b005a071618dc75a2e3cd3b68fccfba4c235d4818238a18cdbfcdb052 | 358 | Integrations/skills/video/NOTICE |
 | 6957c49c210ade4d9cd6a76e57c379934cecc837c76b476cdc62e169c75065c9 | 4666 | Integrations/skills/video/SKILL.md |
@@ -43,14 +44,14 @@ VideoFree source export · package_free.py · version 1
 | 21e6e4098e9e7d8a2549de1094c0801e105bfeffbdc76f07df31f268475542d0 | 6548 | Integrations/skills/video/references/narration-writing.md |
 | 3b816e75deb8d443f0881b6a01c7721c7e85305988a7bc2d56ed6b825ad58397 | 5553 | Integrations/skills/video/references/protocol.md |
 | 0614484a5056b4c576593e250c5d58dfedf0cd1b7e8c34e16cfc8266210f246c | 15192 | Integrations/test_asset_reuse.py |
-| 68f8008e245c59161295a10d3c577d944548844cb6bbf6114a621857e1385798 | 30671 | Integrations/test_claude_stream.py |
-| 5b35d942ccb821697e2b1c61e338e825d79987fab00d4d83b9f89459e55d2268 | 64108 | Integrations/test_codex_broker.py |
+| 5445bb3a7631b593015148bff31a49bcc1d881c199f4eb94bddc8104b9deafe4 | 32261 | Integrations/test_claude_stream.py |
+| b7aefaa995a4d9b348197865d5ef309d7f704484ee379f92c9a39256716f93cb | 64107 | Integrations/test_codex_broker.py |
 | 863aeaab77ca998dd2f928a8e0feeac9cf21b6aaf61bd5dd25bea1f9decfa771 | 9771 | Integrations/test_codex_events.py |
 | 0984ebf332a60489d46380fd8601ae2dce4bdc92cabaf0919321492943285453 | 29945 | Integrations/test_codex_production.py |
 | a6be5192e921223a3bd3a5c0b0750d80c2abfac439bc2bedb5282f65ba85fca6 | 8905 | Integrations/test_discover.py |
 | a746b63b68954816b49a4e666e3472eeb9700e3c96c85047d87fd7d2e9c99b12 | 7488 | Integrations/test_pencil_production.py |
 | 5e371767fdd7f3828665ceec23bd573c81e885fa565e8e77d25e1acfa02d5910 | 10373 | Integrations/test_production_motion.py |
-| 4521e9f2b792c2b0167b13651cbfd74d237d9c9d0c8c53e67a5d79a039a099e7 | 48707 | Integrations/test_qwen_stream.py |
+| f82ae813561cfb2e11d718349d474eae4fb21ddd0da5b8056c0b11be3f372f18 | 53105 | Integrations/test_qwen_stream.py |
 | eaa46095a00b9e4fd00c12defe2e076d84c6c58ee6eebffac3e0c34a4e9f0859 | 29882 | Integrations/tests/test_expressive_tts.py |
 | cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30 | 11358 | LICENSE |
 | c369f09e50d62d1a1c8eff1500888667ff7a192d0fdc7b32d39c800dfa1e9721 | 1597 | NOTICE |
