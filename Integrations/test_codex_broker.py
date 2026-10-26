@@ -204,12 +204,99 @@ class BrokerTests(unittest.TestCase):
         root = self.root / "skill"
         values = {"SKILL.md": "---\nname: video\n---\nPublic test-only instructions.\n",
                   "LICENSE": "Test license", "NOTICE": "Test notice", "agents/openai.yaml": "name: video\n",
-                  "references/protocol.md": "Test protocol\n"}
+                  "references/protocol.md": "Test protocol\n",
+                  "references/narration-writing.md": "Test narration guidance\n"}
         for name, text in values.items():
             path = root / name
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(text)
         return PinnedSkill(root, tuple(self.pin(root/name) for name in values))
+
+    def test_current_complete_repository_skill_is_accepted_with_all_six_pins(self):
+        root = Path(__file__).resolve().parent / "skills/video"
+        files = tuple(sorted(path for path in root.rglob("*") if path.is_file()))
+        expected = {"SKILL.md", "LICENSE", "NOTICE", "agents/openai.yaml", "references/protocol.md",
+                    "references/narration-writing.md"}
+        self.assertEqual({path.relative_to(root).as_posix() for path in files}, expected)
+        skill = PinnedSkill(root, tuple(self.pin(path) for path in files))
+        value = skill.verify()
+        self.assertEqual(value["name"], "video")
+        self.assertEqual(value["path"], str(root/"SKILL.md"))
+        self.assertEqual(value["sha256"], self.pin(root/"SKILL.md").sha256)
+        self.assertEqual(skill.input(), {"type": "skill", "name": "video", "path": str(root/"SKILL.md")})
+        changed_pin = FilePin(root/"references/narration-writing.md", "0"*64)
+        changed = tuple(changed_pin if pin.path == changed_pin.path else pin for pin in skill.pins)
+        with self.assertRaisesRegex(ValueError, "file_pin_mismatch"):
+            PinnedSkill(root, changed).verify()
+
+    def test_legacy_five_file_skill_is_incomplete_before_any_business(self):
+        skill = self.skill()
+        reference = skill.directory/"references/narration-writing.md"
+        reference.unlink()
+        legacy = PinnedSkill(skill.directory, tuple(pin for pin in skill.pins if pin.path != reference))
+        policy = Policy((self.command(),))
+        with self.assertRaisesRegex(ProtocolError, "video_skill_complete_pins_required"):
+            Broker(policy, "bounded task", deadline=time.monotonic()+5, skill=legacy)
+        self.assertEqual(policy.used, 0)
+
+    def test_complete_skill_requires_unique_pins_for_the_narration_reference(self):
+        skill = self.skill()
+        reference = skill.directory/"references/narration-writing.md"
+        without_reference = tuple(pin for pin in skill.pins if pin.path != reference)
+        for pins in (without_reference, without_reference + (without_reference[0],)):
+            with self.subTest(pin_count=len(pins)):
+                policy = Policy((self.command(),))
+                with self.assertRaisesRegex(ProtocolError, "video_skill_complete_pins_required"):
+                    Broker(policy, "bounded task", deadline=time.monotonic()+5,
+                           skill=PinnedSkill(skill.directory, pins))
+                self.assertEqual(policy.used, 0)
+
+    def test_narration_reference_mutation_before_turn_is_refused(self):
+        skill = self.skill()
+        policy = Policy((self.command(),))
+        broker = Broker(policy, "bounded task", deadline=time.monotonic()+5, skill=skill)
+        broker.receive({"id": 1, "result": {}})
+        (skill.directory/"references/narration-writing.md").write_text("changed guidance")
+        with self.assertRaisesRegex(ValueError, "file_pin_mismatch"):
+            broker.receive({"id": 4, "result": {"data": [], "nextCursor": None}})
+        self.assertFalse(broker.skill_submitted)
+        self.assertEqual(policy.used, 0)
+
+    def test_unknown_reference_is_rejected_even_when_caller_pins_it(self):
+        skill = self.skill()
+        unknown = skill.directory/"references/unknown.md"
+        unknown.write_text("unknown instructions")
+        complete_with_extra = PinnedSkill(skill.directory, skill.pins + (self.pin(unknown),))
+        for candidate in (skill, complete_with_extra):
+            with self.subTest(pin_count=len(candidate.pins)):
+                policy = Policy((self.command(),))
+                with self.assertRaises(ProtocolError):
+                    Broker(policy, "bounded task", deadline=time.monotonic()+5, skill=candidate)
+                self.assertEqual(policy.used, 0)
+
+    def test_narration_reference_hardlink_is_refused(self):
+        skill = self.skill()
+        reference = skill.directory/"references/narration-writing.md"
+        os.link(reference, self.root/"linked-narration.md")
+        policy = Policy((self.command(),))
+        with self.assertRaisesRegex(ProtocolError, "video_skill_layout_refused"):
+            Broker(policy, "bounded task", deadline=time.monotonic()+5, skill=skill)
+        self.assertEqual(policy.used, 0)
+
+    def test_complete_skill_retains_per_file_and_total_byte_bounds(self):
+        skill = self.skill()
+        reference = skill.directory/"references/narration-writing.md"
+        reference.write_bytes(b"")
+        with self.assertRaisesRegex(ProtocolError, "video_skill_byte_bound"):
+            skill.verify()
+        reference.write_bytes(b"x"*(256*1024+1))
+        with self.assertRaisesRegex(ProtocolError, "video_skill_byte_bound"):
+            skill.verify()
+        for pin in skill.pins:
+            pin.path.write_bytes(b"x"*(200*1024))
+        bounded_pins = tuple(self.pin(pin.path) for pin in skill.pins)
+        with self.assertRaisesRegex(ProtocolError, "video_skill_byte_bound"):
+            PinnedSkill(skill.directory, bounded_pins).verify()
 
     def test_explicit_skill_input_is_fixed_and_does_not_change_tool_or_permission_contract(self):
         skill = self.skill()

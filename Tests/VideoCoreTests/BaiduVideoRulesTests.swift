@@ -35,6 +35,34 @@ final class BaiduVideoRulesTests:XCTestCase {
         XCTAssertThrowsError(try BaiduVideoRules.queryResponse(Data("{\"error_code\":0,\"data\":{\"statusCode\":1,\"progress\":1}}".utf8)))
         XCTAssertEqual(try BaiduVideoRules.createResponse(Data("{\"error_code\":30901,\"error_msg\":\"vendor text is not echoed\"}".utf8)),.rejected(30901))
     }
+    func testQuerySystemErrorsCannotBecomeTaskStatesOrExposeVendorText()throws {
+        let privateText="vendor-private-token-and-address-must-not-be-echoed"
+        for code in [1,2,4,6,15,17,18,19,100,110,111,282000,30901,999999] {
+            // Even apparently complete task data cannot override a failed query.
+            let object:[String:Any]=["error_code":code,"error_msg":privateText,"data":["statusCode":"1","progress":1,"videoAddr":"https://cdn.example.com/result.mp4","points":0]]
+            let payload=try JSONSerialization.data(withJSONObject:object)
+            XCTAssertThrowsError(try BaiduVideoRules.queryResponse(payload),"system code \(code)"){error in
+                XCTAssertEqual((error as? VideoError)?.code,(code==110 || code==111) ? "permission_required":"unavailable")
+                XCTAssertTrue(error.localizedDescription.contains("原状态、用量"))
+                XCTAssertTrue(error.localizedDescription.contains("未重新提交"))
+                XCTAssertFalse(error.localizedDescription.contains(privateText))
+                XCTAssertFalse(error.localizedDescription.contains("cdn.example.com"))
+            }
+        }
+        let expired=try BaiduVideoRules.queryResponse(Data("{\"error_code\":31001,\"error_msg\":\"vendor-private-token-and-address-must-not-be-echoed\"}".utf8))
+        XCTAssertEqual(expired.state,.expired);XCTAssertEqual(expired.errorCode,31001)
+    }
+    func testSuccessfulQueryStillDistinguishesDocumentedTaskStatesFromSystemErrors()throws {
+        let states:[(String,BaiduQueryResponse.State)]=[("0",.queued),("3",.running),("15",.failed),("30701",.failed),("30702",.failed),("30703",.failed),("282000",.failed),("30901",.failed),("31001",.expired),("999",.unknown)]
+        for (status,expected) in states {
+            let object:[String:Any]=["error_code":0,"data":["statusCode":status,"progress":0.6,"points":7.5,"basicDuration":12345,"digitalHumanDuration":42]]
+            let payload=try JSONSerialization.data(withJSONObject:object)
+            let response=try BaiduVideoRules.queryResponse(payload)
+            XCTAssertEqual(response.state,expected,"task status \(status)")
+            XCTAssertNil(response.errorCode);XCTAssertEqual(response.progress,0.6)
+            XCTAssertEqual(response.points,Decimal(string:"7.5"));XCTAssertEqual(response.basicDurationMilliseconds,12345);XCTAssertEqual(response.digitalHumanDurationMilliseconds,42)
+        }
+    }
     func testSubmissionIntentIsStoredBeforeNetworkAndRepeatedUnknownRequestNeverSubmits()throws {
         var(db,w,project,profile,quote)=try fixture();let first=try BaiduVideoRules.prepare(database:&db,workspaceID:w.id,projectID:project.id,profile:profile,input:input(),quote:quote,requestID:"original",principal:"owner")
         XCTAssertTrue(first.shouldSubmit);XCTAssertEqual(first.job.state,.unknownRemote);XCTAssertEqual(first.job.videoGeneration?.phase,.submissionStarted);XCTAssertEqual(first.job.attempt,1);XCTAssertNil(first.job.remoteID);XCTAssertTrue(first.job.billingUnknown)

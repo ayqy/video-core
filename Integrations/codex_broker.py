@@ -143,7 +143,8 @@ class PinnedSkill:
 
     def verify(self) -> dict:
         root = _path(self.directory)
-        expected = {"SKILL.md", "LICENSE", "NOTICE", "agents/openai.yaml", "references/protocol.md"}
+        expected = {"SKILL.md", "LICENSE", "NOTICE", "agents/openai.yaml", "references/protocol.md",
+                    "references/narration-writing.md"}
         directories = {"agents", "references"}
         if (not root.is_dir() or not isinstance(self.pins, tuple) or len(self.pins) != len(expected) or
                 any(not isinstance(pin, FilePin) for pin in self.pins)):

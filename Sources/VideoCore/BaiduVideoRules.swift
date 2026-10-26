@@ -138,12 +138,23 @@ public enum BaiduVideoRules {
     public static func queryResponse(_ data:Data)throws->BaiduQueryResponse {
         struct Envelope:Decodable {struct Result:Decodable{var statusCode:String;var progress:Double;var videoAddr:String?;var points:Decimal?;var basicDuration:Int64?;var digitalHumanDuration:Int64?};var error_code:Int;var data:Result?}
         guard data.count<=1_048_576,let response=try? Codec.decoder().decode(Envelope.self,from:data) else{throw VideoError.unavailable("百度查询响应合同不符；不改变原任务或重复提交")}
-        if response.error_code != 0{return BaiduQueryResponse(state:response.error_code==31001 ? .expired:.failed,errorCode:response.error_code)}
+        // error_code describes the query request, not the original task. Only
+        // the documented expired-ID response establishes a task outcome here.
+        // Authentication, limits and transient failures must not turn an
+        // already accepted task into a failed generation or advance its receipt.
+        if response.error_code != 0 {
+            guard response.error_code==31001 else{throw querySystemError(response.error_code)}
+            return BaiduQueryResponse(state:.expired,errorCode:response.error_code)
+        }
         guard let result=response.data,result.progress.isFinite,(0...1).contains(result.progress),result.points.map({!$0.isNaN && $0>=0}) ?? true,[result.basicDuration,result.digitalHumanDuration].compactMap({$0}).allSatisfy({$0>=0}) else{throw VideoError.unavailable("百度进度或原单位用量未确认，保留原任务待核")}
         let state:BaiduQueryResponse.State
         switch result.statusCode{case "0":state = .queued;case "3":state = .running;case "1":state = .ready;case "15","30701","30702","30703","282000","30901":state = .failed;case "31001":state = .expired;default:state = .unknown}
         if state == .ready{guard result.progress==1,let url=result.videoAddr,!url.isEmpty else{throw VideoError.unavailable("百度完成状态缺少完整视频地址；不可标记已回收")};_ = try safeHTTPS(url,allowQuery:true)}
         return BaiduQueryResponse(state:state,progress:result.progress,videoAddress:state == .ready ? result.videoAddr:nil,points:result.points,basicDurationMilliseconds:result.basicDuration,digitalHumanDurationMilliseconds:result.digitalHumanDuration)
+    }
+    private static func querySystemError(_ code:Int)->VideoError {
+        if code==110 || code==111 {return .permission("百度原任务查询凭据失效或过期；请重新绑定同一服务后查询原ID。原状态、用量与费用保留，未重新提交")}
+        return .unavailable("百度原任务查询未确认（系统错误码\(code)）；原状态、用量与预算保留，请稍后查询原ID，未重新提交")
     }
     /// Persist intent BEFORE the sole potentially billed request. A returned false is
     /// a receipt replay and must never trigger another material POST.
@@ -196,6 +207,11 @@ public enum BaiduVideoRules {
         result.videoGeneration=receipt;result.updatedAt=now;return result
     }
     public static func applyQuery(_ response:BaiduQueryResponse,to job:Job,now:Date=Date())throws->Job {
+        // Keep the same boundary for SDK callers constructing a response:
+        // a system failure cannot be relabelled as a task failure or success.
+        if let code=response.errorCode,code != 0 {
+            guard code==31001,response.state == .expired else{throw querySystemError(code)}
+        }
         guard var receipt=job.videoGeneration else{throw VideoError.conflict("原任务缺少百度生成凭据")};var result=try JobOperations.applyRemote(response.snapshot(job:job,now:now),to:job,now:now)
         receipt.checkedAt=now;receipt.points=response.points ?? receipt.points;receipt.basicDurationMilliseconds=response.basicDurationMilliseconds ?? receipt.basicDurationMilliseconds;receipt.digitalHumanDurationMilliseconds=response.digitalHumanDurationMilliseconds ?? receipt.digitalHumanDurationMilliseconds
         if response.state == .failed || response.state == .expired{receipt.phase = .failed}
