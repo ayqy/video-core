@@ -154,13 +154,14 @@ jobs:
               ('VideoCoreTests', 'ContentServiceRulesTests'): (18, None),
               ('VideoCoreTests', 'SpeechProjectRulesTests'): (12, None),
               ('VideoCoreTests', 'ProviderRulesTests'): (14, None),
-              ('VideoCoreTests', 'ProductFactsTests'): (8, None),
+              ('VideoCoreTests', 'ProductFactsTests'): (20, None),
               ('VideoMediaTests', 'AudioMixMediaTests'): (7, None),
               ('VideoMediaTests', 'ScriptJobsTests'): (22, None),
               ('VideoCoreTests', 'AgentJobAccessTests'): (9, None),
               ('VideoCoreTests', 'JobOperationTests'): (17, None),
               ('VideoCoreTests', 'AgentWorkerTests'): (6, None),
-              ('VideoCoreTests', 'AgentContractTests'): (8, None),
+              ('VideoCoreTests', 'AgentContractTests'): (9, None),
+              ('VideoCoreTests', 'AgentPreviewTests'): (11, None),
               ('VideoMediaTests', 'BaiduVideoProviderTests'): (7, None),
               ('VideoMediaTests', 'SpeechProjectProductionTests'): (5, (
                   'testNormalImportedAudioAttachChecksRealBytesAndKeepsHumanReviewPending',
@@ -191,7 +192,7 @@ jobs:
               filters.append('^' + re.escape(target) + r'\.' + re.escape(suite) +
                              '/(?:' + '|'.join(re.escape(method) for method in selected) + ')$')
           expected = len(expected_methods)
-          assert expected == sum(method_counts.values()) == 209
+          assert expected == sum(method_counts.values()) == 233
           print('affected_suite_methods=' + str(method_counts))
           print('system_tts_methods=not_selected; import_only_methods=2')
           try:

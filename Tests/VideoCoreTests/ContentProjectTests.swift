@@ -382,4 +382,223 @@ final class ProductFactsTests:XCTestCase {
         replay.generation=saved.generation
         XCTAssertEqual(try Codec.data(replay),savedBytes)
     }
+
+    func testFactImpactListsChangedTextCaptionAndCTAWithoutReusingHistoricalConfirmation()throws {
+        var(database,workspace,product,project)=try fixture()
+        project.revisions[0].scenes[0].body=product.name+"标价99元"
+        project.revisions[0].scenes[0].narration="请核对 CNY 99"
+        project.revisions[0].cta="打开 "+product.checkout
+        project.revisions[0].review.digest=try project.current.contentDigest()
+        let revision=project.current,topic=TeachingTopic(workspaceID:workspace.id,name:"规则用事实稿",audience:"读者",task:"核对",knowledge:"标价",hook:"如何核对？",outcome:"记录",prerequisite:"无",proof:"对照来源",boundary:"只核记录")
+        let input=TeachingInput(topic:topic,contentContext:ContentContext(workspaceID:workspace.id,name:"规则用上下文"),grammar:.practice,sources:[],aspect:.landscape)
+        var document=TeachingDocument(workspaceID:workspace.id,input:input,revision:revision,beats:[],template:NarrativeTemplate(workspaceID:workspace.id,name:"规则模板"),style:StyleKit(workspaceID:workspace.id,name:"规则样式"))
+        document.projectID=project.id;document.confirmedDigest=try revision.contentDigest()
+        var foreignDocument=document;foreignDocument.id=Codec.id();foreignDocument.workspaceID="foreign-workspace"
+        var otherProjectDocument=document;otherProjectDocument.id=Codec.id();otherProjectDocument.projectID="other-project"
+        var otherVersionDocument=document;otherVersionDocument.id=Codec.id();otherVersionDocument.revision.id="other-version"
+        database.projects=[project];database.teachingDocuments=[document,foreignDocument,otherProjectDocument,otherVersionDocument]
+        product.prices[0].money=Money(200);product.prices[0].verified=false
+        try database.saveProductFacts(product,workspaceID:workspace.id)
+        let before=try Codec.data(database),report=try database.projectFactImpact(projectID:project.id,workspaceID:workspace.id)
+        let historical=try XCTUnwrap(report.revisions.first{$0.revisionID==revision.id})
+        XCTAssertEqual(historical.factStatus,.changed);XCTAssertTrue(historical.requiresRecheck)
+        XCTAssertFalse(historical.currentFactsVerified);XCTAssertTrue(historical.historicalReviewComplete)
+        XCTAssertTrue(historical.historicalReviewDigestMatches);XCTAssertFalse(historical.historicalReviewReusableForCurrentFacts)
+        XCTAssertEqual(historical.references.map(\.field),[.body,.narration,.caption,.cta])
+        XCTAssertEqual(historical.references[2].captionID,revision.scenes[0].captions[0].id)
+        XCTAssertEqual(historical.references[0].sceneID,revision.scenes[0].id)
+        XCTAssertEqual(historical.references.last?.matchedFacts,["checkout"])
+        XCTAssertEqual(historical.teachingConfirmations.map(\.documentID),[document.id])
+        XCTAssertTrue(try XCTUnwrap(historical.teachingConfirmations.first).confirmed)
+        XCTAssertFalse(try XCTUnwrap(historical.teachingConfirmations.first).reusableForCurrentFacts)
+        XCTAssertEqual(try Codec.data(database),before)
+        XCTAssertTrue(try XCTUnwrap(database.teachingDocuments?.first).confirmed)
+    }
+
+    func testFactImpactSeparatesPreviewFromStoredDeliveryAndOmitsPrivatePublicationFields()throws {
+        var(database,workspace,product,project)=try fixture()
+        let revision=project.current,digest=try revision.contentDigest()
+        let quote=Quote(projectID:project.id,revisionID:revision.id,digest:digest,upper:Money(0),unit:"CNY",provider:"native",expiresAt:.distantFuture)
+        var preview=Job(workspaceID:workspace.id,projectID:project.id,revisionID:revision.id,digest:digest,requestKey:"unit-preview",quote:quote)
+        preview.state = .needsReview;preview.artifacts=[Artifact(path:"private-preview.mp4",mime:"video/mp4",bytes:10,sha256:String(repeating:"a",count:64),revision:revision.id)]
+        var exported=preview;exported.id=Codec.id();exported.state = .succeeded;exported.requestKey="unit-exported"
+        // This is an isolated record-shape fixture, never real export evidence.
+        let record=ProductionDeliveryRecord(revisionID:revision.id,contentDigest:digest,jobID:exported.id,artifactHashes:["video/mp4":String(repeating:"b",count:64)],destinationName:"unit-only",at:Date())
+        project.deliveryRecords=[record];database.projects=[project];database.jobs=[preview,exported]
+        database.publications[0].remoteContentID="unit-private-remote";database.publications[0].accountReference="unit-private-account"
+        product.prices[0].money=Money(200);try database.saveProductFacts(product,workspaceID:workspace.id)
+        let report=try database.projectFactImpact(projectID:project.id,workspaceID:workspace.id)
+        let item=try XCTUnwrap(report.revisions.first{$0.revisionID==revision.id})
+        XCTAssertEqual(item.jobs.map(\.state),[.needsReview,.succeeded])
+        XCTAssertFalse(item.jobs[0].hasRecordedDelivery);XCTAssertTrue(item.jobs[1].hasRecordedDelivery)
+        XCTAssertEqual(item.jobs[0].artifacts[0].mime,"video/mp4");XCTAssertEqual(item.jobs[0].artifacts[0].sha256,String(repeating:"a",count:64))
+        XCTAssertEqual(item.deliveries.first?.recordID,record.id);XCTAssertEqual(item.deliveries.first?.state,"files_exported")
+        XCTAssertEqual(item.deliveries.first?.artifactHashes,record.artifactHashes)
+        XCTAssertEqual(item.publications.first?.id,database.publications[0].id);XCTAssertTrue(item.publications[0].stale)
+        let encoded=String(decoding:try Codec.data(report),as:UTF8.self)
+        for privateValue in ["private-preview.mp4","unit-private-remote","unit-private-account","accountReference","remoteContentID"] {XCTAssertFalse(encoded.contains(privateValue))}
+        XCTAssertTrue(report.disclaimer.contains("needs_review"));XCTAssertTrue(report.disclaimer.contains("files_exported"))
+    }
+
+    func testFactImpactForOrdinaryMediaProjectIsEmptyAndReadOnly()throws {
+        var(database,workspace,_,_)=try fixture()
+        let ordinary=Project(workspaceID:workspace.id,name:"普通素材",revision:try Planner.create(workspaceID:workspace.id,name:"普通素材"))
+        database.projects.append(ordinary);database.generation=99
+        let before=try Codec.data(database),now=Date(timeIntervalSince1970:1_790_000_000)
+        let report=try database.projectFactImpact(projectID:ordinary.id,workspaceID:workspace.id,now:now)
+        XCTAssertTrue(report.revisions.isEmpty);XCTAssertEqual(report.checkedAt,now)
+        XCTAssertEqual(try Codec.data(database),before);XCTAssertEqual(database.generation,99)
+    }
+
+    func testFactImpactMissingLocalFactsDoesNotUseForeignProductWithSameID()throws {
+        var(database,workspace,product,project)=try fixture()
+        let other=Workspace(name:"另一空间",owner:"other");database.workspaces.append(other)
+        product.workspaceID=other.id;product.name="不得泄露的他人资料";database.products=[product]
+        let before=try Codec.data(database),report=try database.projectFactImpact(projectID:project.id,workspaceID:workspace.id)
+        let item=try XCTUnwrap(report.revisions.first)
+        XCTAssertEqual(item.factStatus,.missing);XCTAssertTrue(item.requiresRecheck);XCTAssertFalse(item.currentFactsVerified)
+        XCTAssertFalse(String(decoding:try Codec.data(report),as:UTF8.self).contains(product.name))
+        XCTAssertEqual(try Codec.data(database),before)
+    }
+
+    func testFactImpactRejectsForeignOrAmbiguousProjectAndRevisionWithoutMutation()throws {
+        let(base,workspace,_,project)=try fixture(),other=Workspace(name:"其它工作区",owner:"other")
+        var database=base;database.workspaces.append(other)
+        let before=try Codec.data(database)
+        XCTAssertThrowsError(try database.projectFactImpact(projectID:project.id,workspaceID:other.id))
+        XCTAssertThrowsError(try database.projectFactImpact(projectID:"missing",workspaceID:workspace.id))
+        XCTAssertEqual(try Codec.data(database),before)
+        database.projects.append(project)
+        let duplicate=try Codec.data(database)
+        XCTAssertThrowsError(try database.projectFactImpact(projectID:project.id,workspaceID:workspace.id))
+        XCTAssertEqual(try Codec.data(database),duplicate)
+        database=base;database.projects[0].revisions[0].product?.workspaceID=other.id
+        XCTAssertThrowsError(try database.projectFactImpact(projectID:project.id,workspaceID:workspace.id))
+    }
+
+    func testFactImpactFiltersJobsDeliveriesAndTeachingByExactVersionScope()throws {
+        var(database,workspace,product,project)=try fixture()
+        let revision=project.current,digest=try revision.contentDigest(),other=Workspace(name:"其它工作区",owner:"other")
+        let quote=Quote(projectID:project.id,revisionID:revision.id,digest:digest,upper:Money(0),unit:"CNY",provider:"native",expiresAt:.distantFuture)
+        let original=Job(workspaceID:workspace.id,projectID:project.id,revisionID:revision.id,digest:digest,requestKey:"unit-original",quote:quote)
+        var foreign=original;foreign.id=Codec.id();foreign.workspaceID=other.id
+        var wrongProject=original;wrongProject.id=Codec.id();wrongProject.projectID="other-project"
+        var wrongRevision=original;wrongRevision.id=Codec.id();wrongRevision.revisionID="other-revision"
+        database.jobs=[original,foreign,wrongProject,wrongRevision]
+        let wrongRecord=ProductionDeliveryRecord(revisionID:"other-revision",contentDigest:digest,jobID:original.id,artifactHashes:[:],destinationName:"unit-only",at:Date())
+        project.deliveryRecords=[wrongRecord];database.projects=[project]
+        var foreignPublication=database.publications[0];foreignPublication.id=Codec.id();foreignPublication.workspaceID=other.id;database.publications.append(foreignPublication)
+        product.prices[0].money=Money(200);try database.saveProductFacts(product,workspaceID:workspace.id)
+        let item=try XCTUnwrap(database.projectFactImpact(projectID:project.id,workspaceID:workspace.id).revisions.first)
+        XCTAssertEqual(item.jobs.map(\.jobID),[original.id]);XCTAssertFalse(item.jobs[0].hasRecordedDelivery)
+        XCTAssertTrue(item.deliveries.isEmpty);XCTAssertEqual(item.publications.count,1)
+    }
+
+    func testFactImpactUnchangedTagsMatchFactsButDoNotGrantMissingReview()throws {
+        var(database,workspace,product,project)=try fixture()
+        project.revisions[0].review=Review();database.projects=[project]
+        product.tags=["只更新标签"];database.products=[product]
+        let item=try XCTUnwrap(database.projectFactImpact(projectID:project.id,workspaceID:workspace.id).revisions.first)
+        XCTAssertEqual(item.factStatus,.current);XCTAssertTrue(item.currentFactsVerified)
+        XCTAssertFalse(item.requiresRecheck);XCTAssertTrue(item.references.isEmpty)
+        XCTAssertFalse(item.historicalReviewComplete);XCTAssertFalse(item.historicalReviewReusableForCurrentFacts)
+    }
+
+    func testFactImpactSameRevisionIDCannotReuseConfirmationForDifferentDocumentContent()throws {
+        var(database,workspace,_,project)=try fixture()
+        let topic=TeachingTopic(workspaceID:workspace.id,name:"规则用文稿",audience:"读者",task:"核对",knowledge:"标价",hook:"怎样核对？",outcome:"记录",prerequisite:"无",proof:"对照",boundary:"仅规则")
+        let input=TeachingInput(topic:topic,contentContext:ContentContext(workspaceID:workspace.id,name:"规则上下文"),grammar:.practice,sources:[],aspect:.landscape)
+        var document=TeachingDocument(workspaceID:workspace.id,input:input,revision:project.current,beats:[],template:NarrativeTemplate(workspaceID:workspace.id,name:"规则模板"),style:StyleKit(workspaceID:workspace.id,name:"规则样式"))
+        document.projectID=project.id;document.revision.scenes[0].body="文稿中另一个内容，不能借相同ID复用确认"
+        document.confirmedDigest=try document.revision.contentDigest();database.teachingDocuments=[document]
+        let item=try XCTUnwrap(database.projectFactImpact(projectID:project.id,workspaceID:workspace.id).revisions.first)
+        XCTAssertEqual(item.factStatus,.current);XCTAssertFalse(item.requiresRecheck)
+        let confirmation=try XCTUnwrap(item.teachingConfirmations.first)
+        XCTAssertTrue(confirmation.confirmed);XCTAssertFalse(confirmation.reusableForCurrentFacts)
+        XCTAssertTrue(try XCTUnwrap(database.teachingDocuments?.first).confirmed)
+    }
+
+    func testFactImpactCurrentUnverifiedOrExpiredPriceStillRequiresRecheck()throws {
+        let(base,workspace,_,project)=try fixture(),now=Date(timeIntervalSince1970:1_790_000_000)
+        for expired in [false,true] {
+            var database=base
+            if expired {database.products[0].prices[0].until=now}else{database.products[0].prices[0].verified=false}
+            database.projects[0].revisions[0].product=database.products[0]
+            let item=try XCTUnwrap(database.projectFactImpact(projectID:project.id,workspaceID:workspace.id,now:now).revisions.first)
+            XCTAssertEqual(item.factStatus,.current);XCTAssertFalse(item.currentFactsVerified)
+            XCTAssertTrue(item.requiresRecheck);XCTAssertFalse(item.references.isEmpty)
+            XCTAssertFalse(item.historicalReviewReusableForCurrentFacts)
+        }
+    }
+
+    func testFactImpactUpdatedSnapshotStillFindsOldCaptionAfterNormalPriceSave()throws {
+        let(base,workspace,original,project)=try fixture()
+        for verified in [false,true] {
+            var database=base,changed=original
+            changed.prices[0].money=Money(200);changed.prices[0].verified=verified
+            let oldBytes=try Codec.data(database.projects[0].current)
+            try database.saveProductFacts(changed,workspaceID:workspace.id)
+            let updated=database.projects[0],before=try Codec.data(database)
+            XCTAssertEqual(updated.current.parentID,project.current.id)
+            XCTAssertEqual(updated.current.product?.prices[0].money,Money(200))
+            XCTAssertEqual(updated.current.scenes[0].captions[0].text,"原资料标价99元")
+            let report=try database.projectFactImpact(projectID:project.id,workspaceID:workspace.id)
+            let current=try XCTUnwrap(report.revisions.first{$0.isCurrentRevision})
+            XCTAssertEqual(current.factStatus,.current);XCTAssertEqual(current.currentFactsVerified,verified)
+            XCTAssertTrue(current.requiresRecheck);XCTAssertTrue(current.hasPotentialHistoricalReferences)
+            let caption=try XCTUnwrap(current.references.first{$0.captionID==updated.current.scenes[0].captions[0].id})
+            XCTAssertEqual(caption.field,.caption);XCTAssertEqual(caption.text,"原资料标价99元")
+            XCTAssertTrue(caption.matchedFacts.contains("price"));XCTAssertEqual(caption.historicalRevisionIDs,[project.current.id])
+            XCTAssertTrue(caption.summary.contains("可能沿用旧事实"))
+            XCTAssertFalse(current.historicalReviewReusableForCurrentFacts)
+            let historical=try XCTUnwrap(report.revisions.first{$0.revisionID==project.current.id})
+            XCTAssertEqual(historical.factStatus,.changed);XCTAssertTrue(historical.historicalReviewComplete)
+            XCTAssertFalse(historical.historicalReviewReusableForCurrentFacts)
+            XCTAssertEqual(try Codec.data(database.projects[0].revisions[0]),oldBytes)
+            XCTAssertEqual(try Codec.data(database),before)
+            if verified {
+                var corrected=updated.current.scenes[0];corrected.body="原资料标价200元";corrected.narration="原资料标价200元";corrected.captions[0].text="原资料标价200元"
+                database.projects[0]=try Editor.apply([.replaceScene(corrected.id,corrected)],to:updated,baseRevision:updated.current.id,assets:[],message:"单测中人工修正旧引用")
+                let resolved=try XCTUnwrap(database.projectFactImpact(projectID:project.id,workspaceID:workspace.id).revisions.first{$0.isCurrentRevision})
+                XCTAssertFalse(resolved.hasPotentialHistoricalReferences);XCTAssertFalse(resolved.requiresRecheck)
+                XCTAssertTrue(resolved.references.isEmpty)
+            }
+        }
+    }
+
+    func testFactImpactUsesOnlyOwnAncestorsForOldNameURLAndPriceHints()throws {
+        var(database,workspace,original,project)=try fixture()
+        var replacement=original;replacement.name="更新后的资料名";replacement.checkout="https://example.org/new-course";replacement.prices[0].money=Money(200)
+        let old=project.current
+        var sibling=old;sibling.id=Codec.id();sibling.parentID=old.id;sibling.number=2;sibling.product?.prices[0].money=Money(77)
+        var changed=Editor.updateFacts(replacement,project:project)
+        changed.revisions.insert(sibling,at:1)
+        changed.revisions[changed.revisions.count-1].scenes[0].body=original.name+" "+original.checkout+"；另列77元和66元"
+        changed.revisions[changed.revisions.count-1].scenes[0].narration=""
+        changed.revisions[changed.revisions.count-1].scenes[0].captions=[]
+        changed.revisions[changed.revisions.count-1].cta=""
+        var other=project;other.id=Codec.id();other.revisions[0].product?.prices[0].money=Money(66)
+        database.projects=[changed,other];database.products=[replacement]
+        let before=try Codec.data(database),report=try database.projectFactImpact(projectID:project.id,workspaceID:workspace.id)
+        let current=try XCTUnwrap(report.revisions.first{$0.isCurrentRevision})
+        XCTAssertEqual(current.factStatus,.current);XCTAssertTrue(current.currentFactsVerified)
+        XCTAssertTrue(current.requiresRecheck);XCTAssertTrue(current.hasPotentialHistoricalReferences)
+        let reference=try XCTUnwrap(current.references.first)
+        XCTAssertEqual(reference.matchedFacts,["name","checkout"])
+        XCTAssertEqual(reference.historicalRevisionIDs,[old.id]);XCTAssertFalse(reference.historicalRevisionIDs.contains(sibling.id))
+        XCTAssertEqual(current.references.count,1)
+        XCTAssertEqual(try Codec.data(database),before)
+    }
+
+    func testFactImpactPriceReferencesRequireCorrectCurrencyAndExactAmount()throws {
+        var(database,workspace,product,project)=try fixture()
+        let texts=["共有99项","标价199元","99美元","USD 99","$99","99.5元","abcCNY99","99 CNYABC","JPY ¥99","¥99 JPY","USD 99元","JPY99元","CNY 99","￥99.00","99元","99 CNY"]
+        project.revisions[0].scenes=texts.map { Scene(title:"单位规则",body:$0,durationFrames:60) }
+        for index in project.revisions[0].scenes.indices {project.revisions[0].scenes[index].narration=""}
+        project.revisions[0].cta="";database.projects=[project]
+        product.prices[0].money=Money(200);database.products=[product]
+        let item=try XCTUnwrap(database.projectFactImpact(projectID:project.id,workspaceID:workspace.id).revisions.first)
+        XCTAssertEqual(item.references.map(\.text),Array(texts.suffix(4)))
+        XCTAssertTrue(item.references.allSatisfy{$0.matchedFacts==["price"] && $0.field == .body})
+    }
 }

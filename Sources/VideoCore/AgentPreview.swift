@@ -19,6 +19,9 @@ public enum AgentPreview {
         func project()throws->Project { let p=try database.project(projectID ?? "");guard p.workspaceID==w.id else {throw VideoError.permission("项目不属于所选工作区")};return p }
         func job()throws->Job { guard let j=database.jobs.first(where:{$0.id==text("job_id") && $0.workspaceID==w.id})else{throw VideoError.notFound("任务不属于所选工作区")};return j }
         switch command {
+        case "projects facts-impact":
+            let impact = try database.projectFactImpact(projectID: text("project_id"), workspaceID: w.id)
+            return try Codec.decoder().decode(AgentValue.self, from: Codec.data(impact))
         case "knowledge compare":
             let p = try project()
             guard p.current.id == text("base_revision") else { throw VideoError.conflict("知识对照目标版本已变化，请重新读取当前工程") }

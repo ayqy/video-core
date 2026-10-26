@@ -3,6 +3,18 @@ import XCTest
 
 final class AgentContractTests: XCTestCase {
     private func data(_ value: AgentValue) throws -> Data { try Codec.data(value) }
+    func testFactImpactIsStrictOwnerOnlyReadWithoutNetworkOrMutation() throws {
+        let command="projects facts-impact",descriptor=try AgentContract.describe(command)
+        XCTAssertFalse(descriptor.writes);XCTAssertFalse(descriptor.network)
+        XCTAssertEqual(descriptor.permission,.workspaceOwner);XCTAssertEqual(descriptor.idempotency,"read_only")
+        let input:AgentValue = .object(["workspace_id":.string("w"),"project_id":.string("p")])
+        XCTAssertNoThrow(try AgentContract.validate(command:command,data:data(input)))
+        XCTAssertThrowsError(try AgentContract.validate(command:command,data:data(.object(["workspace_id":.string("w")]))))
+        XCTAssertThrowsError(try AgentContract.validate(command:command,data:data(.object(["workspace_id":.string("w"),"project_id":.string("p"),"now":.string("future")]))))
+        let workspace=Workspace(name:"本地资料",owner:"owner")
+        XCTAssertNoThrow(try AgentContract.authorize(command:command,workspace:workspace,principal:"owner"))
+        XCTAssertThrowsError(try AgentContract.authorize(command:command,workspace:workspace,principal:"reader",projectID:"p"))
+    }
     func testRequiredCommandFieldsAreCheckedBeforeDryRunCanSucceed() throws {
         XCTAssertThrowsError(try AgentContract.validate(command: "render submit", data: Data("{}".utf8)))
         XCTAssertThrowsError(try AgentContract.validate(command: "products list", data: Data("{\"workspace_id\":\"w\",\"typo\":1}".utf8)))

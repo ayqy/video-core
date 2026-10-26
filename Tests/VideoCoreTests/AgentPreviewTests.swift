@@ -2,6 +2,17 @@ import XCTest
 import VideoCore
 
 final class AgentPreviewTests:XCTestCase {
+    func testFactImpactPreviewIsReadOnlyAndRejectsForeignProjectAndDelegatedReaders() throws {
+        let (database,workspace,project)=try fixture(),before=try Codec.data(database)
+        let input=try Codec.data(AgentValue.object(["workspace_id":.string(workspace.id),"project_id":.string(project.id)]))
+        let result=try AgentPreview.evaluate(command:"projects facts-impact",data:input,database:database,principal:workspace.owner)
+        XCTAssertEqual(result.object?["projectID"],.string(project.id))
+        XCTAssertEqual(try Codec.data(database),before)
+        XCTAssertThrowsError(try AgentPreview.evaluate(command:"projects facts-impact",data:input,database:database,principal:"reader"))
+        let foreign=try Codec.data(AgentValue.object(["workspace_id":.string(workspace.id),"project_id":.string("other-project")]))
+        XCTAssertThrowsError(try AgentPreview.evaluate(command:"projects facts-impact",data:foreign,database:database,principal:workspace.owner))
+        XCTAssertEqual(try Codec.data(database),before)
+    }
     func fixture()throws->(Database,Workspace,Project) {
         var db=Database();let w=Workspace(name:"作者",owner:"local-owner");db.workspaces=[w]
         let product=Product(workspaceID:w.id,sku:"existing",name:"已有课程",checkout:"https://example.com",audience:"学习者",task:"复现",outcome:"可完成",prerequisite:"无",scope:"软件",prices:[Price(money:Money(99),source:"原页",verified:true)])
