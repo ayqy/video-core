@@ -17,6 +17,89 @@ final class ScriptJobsTests:XCTestCase {
         let job=try repository.transaction{try ScriptJobRules.prepare(database:&$0,workspaceID:"w",projectID:project.id,profile:profile,evidence:[],brief:"解释已选内容",quote:quote,requestKey:"original-paid-intent",principal:"owner")}.job
         return(repository,job)
     }
+    private func remoteFixture()throws->(Repository,Job,ProviderProfile) {
+        let root=FileManager.default.temporaryDirectory.appendingPathComponent("remote-job-"+Codec.id(),isDirectory:true),repository=try Repository(root:root)
+        var workspace=Workspace(name:"查询工作区",owner:"owner")
+        let revision=try Planner.create(workspaceID:workspace.id,name:"普通知识",aspect:.landscape,scenes:[Scene(title:"原内容",body:"内容保留")]),project=Project(workspaceID:workspace.id,name:"原工程",revision:revision)
+        let profile=ProviderProfile(name:"未联网状态规则",endpoint:"https://status.example.com",model:"declared-status",supportedParameters:[],keyReference:"unused-opaque-reference",kind:"video-job-v1",statusPath:"/jobs/status",cancelPath:"/jobs/cancel")
+        let quote=Quote(projectID:project.id,revisionID:revision.id,digest:try revision.contentDigest(),upper:Money(9),unit:"CNY",provider:profile.id,expiresAt:Date().addingTimeInterval(600),confirmed:true)
+        var job=Job(workspaceID:workspace.id,projectID:project.id,revisionID:revision.id,digest:try revision.contentDigest(),requestKey:"PRIVATE_ORIGINAL_REQUEST",quote:quote)
+        job.remoteID="PRIVATE_ORIGINAL_REMOTE";job.state = .unknownRemote;job.billingUnknown=true
+        job.artifacts=[Artifact(path:"/private-original/video.mp4",mime:"video/mp4",bytes:12,sha256:String(repeating:"a",count:64),revision:revision.id)]
+        workspace.grants=[Grant(principal:"editor",role:.collaborator,projectIDs:[project.id],revisionIDs:[revision.id],expiresAt:Date().addingTimeInterval(600))]
+        try repository.transaction{$0.workspaces=[workspace];$0.projects=[project];$0.providers=[profile];$0.jobs=[job]}
+        return(repository,try repository.read().jobs[0],profile)
+    }
+    func testRemoteProfileParameterSetsAreStableAcrossPersistenceAndRejectRealChanges()throws {
+        let(repository,job,original)=try remoteFixture();defer{try? FileManager.default.removeItem(at:repository.root)}
+        var profile=original;profile.supportedParameters=["temperature","top_p","max_tokens","seed"]
+        try repository.transaction{$0.providers=[profile]}
+        for _ in 0..<12 {
+            let read=try repository.read()
+            XCTAssertEqual(try RemoteJobs.checkedTarget(original:job,profile:profile,database:read,principal:"owner",command:"jobs query").id,job.id)
+            XCTAssertEqual(try RemoteJobs.profileIdentity(read.providers[0]),try RemoteJobs.profileIdentity(profile))
+        }
+        var changed=try repository.read();changed.providers[0].supportedParameters.remove("seed")
+        XCTAssertThrowsError(try RemoteJobs.checkedTarget(original:job,profile:profile,database:changed,principal:"owner",command:"jobs query"))
+    }
+    func testRemoteReplyRejectsRevokedAuthorityAndChangedBindingWithoutWritingGeneration()throws {
+        for mode in 0..<7 {
+            let(repository,original,profile)=try remoteFixture();defer{try? FileManager.default.removeItem(at:repository.root)}
+            try repository.transaction{db in
+                switch mode {
+                case 0:db.workspaces[0].owner="new-owner"
+                case 1:db.workspaces[0].grants[0].revoked=true
+                case 2:db.providers[0].endpoint="https://replacement.example.com"
+                case 3:db.jobs[0].remoteID="replacement-remote"
+                case 4:db.jobs[0].quote.upper=Money(1)
+                case 5:db.jobs=[]
+                default:db.projects[0].revisions[0].scenes[0].body="changed content"
+                }
+            }
+            let before=try Codec.digest(repository.read()),response=RemoteSnapshot(remoteID:original.remoteID!,requestKey:original.requestKey,state:.running,progress:0.6)
+            XCTAssertThrowsError(try RemoteJobs.accept(response,original:original,profile:profile,repository:repository,principal:mode==1 ? "editor":"owner",command:"jobs query"),"mode \(mode)")
+            XCTAssertEqual(try Codec.digest(repository.read()),before,"rejected reply changed DB/generation \(mode)")
+        }
+    }
+    func testRemoteReplyUsesLiveBillingAndRestrictedStatusWithoutFinancialOrPathDisclosure()throws {
+        let(repository,original,profile)=try remoteFixture();defer{try? FileManager.default.removeItem(at:repository.root)}
+        try repository.transaction{db in
+            db.jobs[0]=try JobOperations.reconcile(db.jobs[0],record:BillingRecord(id:"PRIVATE_BILL",kind:.charge,money:Money(4),source:"规则账单"))
+            db.jobs[0]=try JobOperations.reconcile(db.jobs[0],record:BillingRecord(id:"PRIVATE_REFUND",kind:.refundRequested,money:Money(2),source:"规则退款"))
+            db.jobs[0].state = .cancelRequested
+        }
+        let response=RemoteSnapshot(remoteID:original.remoteID!,requestKey:original.requestKey,state:.running,progress:0.7)
+        let updated=try RemoteJobs.accept(response,original:original,profile:profile,repository:repository,principal:"editor",command:"jobs query")
+        XCTAssertEqual(updated.state,.cancelRequested);XCTAssertEqual(updated.actual?.amount,4);XCTAssertEqual(updated.refundPending?.amount,2)
+        XCTAssertEqual(updated.billing?.count,2);XCTAssertEqual(updated.id,original.id);XCTAssertEqual(updated.requestKey,original.requestKey)
+        let db=try repository.read(),restricted=try AgentJobAccess.status(jobID:original.id,workspaceID:original.workspaceID,database:db,principal:"editor")
+        let value=try restricted.value();guard let object=value.object else{return XCTFail("missing scoped object")}
+        XCTAssertEqual(Set(object.keys),Set(["id","projectID","revisionID","state","progress","artifacts"]))
+        let raw=String(decoding:try Codec.data(value),as:UTF8.self)
+        for privateValue in ["PRIVATE_ORIGINAL_REQUEST","PRIVATE_ORIGINAL_REMOTE","PRIVATE_BILL","PRIVATE_REFUND","/private-original/","CNY","quote","refundPending","actual"] {XCTAssertFalse(raw.contains(privateValue),privateValue)}
+        guard case .owner(let owner)=try AgentJobAccess.status(jobID:original.id,workspaceID:original.workspaceID,database:db,principal:"owner") else{return XCTFail("owner details removed")}
+        XCTAssertEqual(owner.actual?.amount,4);XCTAssertEqual(owner.billing?.count,2)
+    }
+    func testRemoteOwnerOnlyCommitKeepsMacAndWorkerBoundariesAfterOwnershipChange()throws {
+        let(repository,original,profile)=try remoteFixture();defer{try? FileManager.default.removeItem(at:repository.root)}
+        let response=RemoteSnapshot(remoteID:original.remoteID!,requestKey:original.requestKey,state:.running,progress:0.2)
+        let before=try Codec.digest(repository.read())
+        XCTAssertThrowsError(try RemoteJobs.accept(response,original:original,profile:profile,repository:repository,principal:"editor",command:"jobs query",ownerOnly:true))
+        XCTAssertThrowsError(try RemoteJobs.accept(response,original:original,profile:profile,repository:repository,principal:"editor",command:"worker run"))
+        XCTAssertEqual(try Codec.digest(repository.read()),before)
+        let result=try RemoteJobs.accept(response,original:original,profile:profile,repository:repository,principal:"owner",command:"worker run")
+        XCTAssertEqual(result.remoteID,original.remoteID);XCTAssertEqual(result.state,.running)
+    }
+    func testPrecancelledRepositoryQueryAndCancelNeverAccessCredentialsOrChangeJob()async throws {
+        let(repository,job,_)=try remoteFixture();defer{try? FileManager.default.removeItem(at:repository.root)}
+        let before=try Codec.digest(repository.read())
+        for cancel in [false,true] {
+            let task=Task {withUnsafeCurrentTask{$0?.cancel()};return try await (cancel ? RemoteJobs.cancel(repository:repository,workspaceID:job.workspaceID,jobID:job.id,principal:"owner"):RemoteJobs.query(repository:repository,workspaceID:job.workspaceID,jobID:job.id,principal:"owner"))}
+            do{_ = try await task.value;XCTFail("precancelled remote operation ran")}
+            catch{XCTAssertTrue(error is CancellationError)}
+            XCTAssertEqual(try Codec.digest(repository.read()),before)
+        }
+    }
     private func absent(_ url:URL)->Bool{!FileManager.default.fileExists(atPath:url.path)}
     func testCandidateCancellationAfterStagingPublishesNothingAndKeepsOldDraft()throws {
         let(repository,job)=try fixture();defer{try? FileManager.default.removeItem(at:repository.root)}

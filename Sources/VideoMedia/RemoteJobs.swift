@@ -4,6 +4,55 @@ import VideoCore
 /// Explicit adapter for a user-configured server implementing our job-status DTO.
 /// A chat-completions URL is not silently treated as an asynchronous job API.
 public enum RemoteJobs {
+    /// Repository-backed callers recheck the current grant and immutable target
+    /// inside the same transaction that accepts the remote response.
+    public static func query(repository:Repository,workspaceID:String,jobID:String,principal:String,authorizationCommand:String="jobs query",ownerOnly:Bool=false) async throws -> Job {
+        guard ["jobs query","worker run"].contains(authorizationCommand) else{throw VideoError.invalid("远端查询调用身份无效")}
+        return try await operate(repository:repository,workspaceID:workspaceID,jobID:jobID,principal:principal,command:authorizationCommand,cancel:false,ownerOnly:ownerOnly)
+    }
+    public static func cancel(repository:Repository,workspaceID:String,jobID:String,principal:String,ownerOnly:Bool=false) async throws -> Job {
+        return try await operate(repository:repository,workspaceID:workspaceID,jobID:jobID,principal:principal,command:"jobs remote-cancel",cancel:true,ownerOnly:ownerOnly)
+    }
+    private static func operate(repository:Repository,workspaceID:String,jobID:String,principal:String,command:String,cancel:Bool,ownerOnly:Bool) async throws -> Job {
+        try Task.checkCancellation()
+        let database=try repository.read()
+        guard let original=database.jobs.first(where:{$0.id==jobID && $0.workspaceID==workspaceID}),
+              let profile=database.providers.first(where:{$0.id==original.quote.provider}) else{throw VideoError.notFound("原任务或服务配置不可用")}
+        _ = try checkedTarget(original:original,profile:profile,database:database,principal:principal,command:command,ownerOnly:ownerOnly)
+        let prepared:Job
+        if cancel {
+            try requireCancellationSupport(profile:profile)
+            prepared=try repository.transaction{db in
+                let current=try checkedTarget(original:original,profile:profile,database:db,principal:principal,command:command,ownerOnly:ownerOnly)
+                let changed=JobRules.cancel(current)
+                db.jobs[db.jobs.firstIndex(where:{$0.id==current.id && $0.workspaceID==workspaceID})!]=changed
+                return changed
+            }
+        }else{prepared=original}
+        try Task.checkCancellation()
+        let snapshot=try await (cancel ? self.cancel(profile:profile,job:prepared):self.query(profile:profile,job:prepared))
+        try Task.checkCancellation()
+        return try accept(snapshot,original:prepared,profile:profile,repository:repository,principal:principal,command:command,ownerOnly:ownerOnly)
+    }
+    static func checkedTarget(original:Job,profile:ProviderProfile,database:Database,principal:String,command:String,ownerOnly:Bool=false)throws->Job {
+        if ownerOnly {guard try database.workspace(original.workspaceID).owner==principal else{throw VideoError.permission("原任务操作仅限当前工作区所有者")}}
+        let current=try AgentJobAccess.remoteTarget(original:original,database:database,principal:principal,command:command)
+        guard let live=database.providers.first(where:{$0.id==profile.id}),try profileIdentity(live)==profileIdentity(profile) else{throw VideoError.conflict("原服务配置已变化，未写入旧响应")}
+        return current
+    }
+    static func profileIdentity(_ profile:ProviderProfile)throws->String {
+        var fields=try Codec.decoder().decode([String:AgentValue].self,from:Codec.data(profile))
+        fields["supportedParameters"] = .array(profile.supportedParameters.sorted().map{.string($0)})
+        return try Codec.digest(fields)
+    }
+    static func accept(_ snapshot:RemoteSnapshot,original:Job,profile:ProviderProfile,repository:Repository,principal:String,command:String,ownerOnly:Bool=false)throws->Job {
+        try repository.transaction{db in
+            let current=try checkedTarget(original:original,profile:profile,database:db,principal:principal,command:command,ownerOnly:ownerOnly)
+            let changed=try JobOperations.applyRemote(snapshot,to:current)
+            db.jobs[db.jobs.firstIndex(where:{$0.id==current.id && $0.workspaceID==current.workspaceID})!]=changed
+            return changed
+        }
+    }
     public static func query(profile: ProviderProfile, job: Job) async throws -> RemoteSnapshot {
         if profile.kind==BaiduVideoRules.kind {return try await BaiduVideoProvider.querySnapshot(profile:profile,job:job)}
         return try await request(profile:profile,job:job,cancel:false)

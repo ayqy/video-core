@@ -34,4 +34,15 @@ public struct AgentWorkerPlan: Codable, Equatable, Sendable {
             database.jobs[i].state = .interrupted;database.jobs[i].lease=nil;database.jobs[i].updatedAt=now;database.jobs[i].message="有限worker停止或超时；保留原任务与缓存，可显式续跑"
         }
     }
+    /// Repository callers use this scoped form and commit only when it returns
+    /// true. A shared worker request key never grants access to another workspace.
+    public static func interruptOwned(database:inout Database,owner:String,workspaceID:String,principal:String,now:Date=Date())throws->Bool {
+        let workspaces=database.workspaces.filter{$0.id==workspaceID}
+        guard !owner.isEmpty,workspaces.count==1,workspaces.first?.owner==principal else{throw VideoError.permission("原worker工作区所有者权限已变化，未中断任何任务")}
+        var changed=false
+        for i in database.jobs.indices where database.jobs[i].workspaceID==workspaceID && database.jobs[i].state == .running && database.jobs[i].quote.provider=="native" && database.jobs[i].lease?.owner==owner {
+            database.jobs[i].state = .interrupted;database.jobs[i].lease=nil;database.jobs[i].updatedAt=now;database.jobs[i].message="有限worker停止或超时；保留原任务与缓存，可显式续跑";changed=true
+        }
+        return changed
+    }
 }

@@ -44,7 +44,7 @@ enum FiniteWorker {
         if command=="worker status" || command=="worker stop" {
             let id=values["worker_id"]?.string ?? "",ticket=try store.read(id)
             guard ticket.plan.workspaceID==workspaceID,ticket.principal==principal else{throw VideoError.permission("worker不属于此本机身份或工作区")}
-            if command=="worker stop" {try store.stop(id);try repository.transaction{AgentWorkerPlan.interruptOwned(database:&$0,owner:"worker:"+id)};_ = try store.update(id){if ["pending","running"].contains($0.state){$0.state="stop_requested"}}}
+            if command=="worker stop" {try store.stop(id);try interrupt(repository:repository,workspaceID:workspaceID,principal:principal,owner:"worker:"+id);_ = try store.update(id){if ["pending","running"].contains($0.state){$0.state="stop_requested"}}}
             return try response(store.read(id),requestID:requestID)
         }
         func integer(_ name:String,_ fallback:Int)->Int {if case .number(let value)=values[name] {return NSDecimalNumber(decimal:value).intValue};return fallback}
@@ -74,14 +74,14 @@ enum FiniteWorker {
         if existing.state=="running" {throw VideoError.conflict("原worker异常退出；查原job租约后，用新worker request_id显式续跑")}
         let selected=try plan.select(database:repository.read(),principal:principal),deadline=Date().addingTimeInterval(Double(plan.timeoutSeconds))
         _ = try store.update(id){$0.state="running";$0.deadline=deadline;$0.pid=getpid()}
-        defer {try? repository.transaction{AgentWorkerPlan.interruptOwned(database:&$0,owner:"worker:"+id)};if let ticket=try? store.read(id),ticket.state=="running" {_ = try? store.update(id){$0.state="interrupted"}}}
+        defer {try? interrupt(repository:repository,workspaceID:workspaceID,principal:principal,owner:"worker:"+id);if let ticket=try? store.read(id),ticket.state=="running" {_ = try? store.update(id){$0.state="interrupted"}}}
         // The hard bound also covers a blocked native export/provider call. Leases are
         // invalidated first, so a late result cannot overwrite the original job.
         let timer=DispatchSource.makeTimerSource(queue:.global(qos:.utility))
         timer.schedule(deadline:.now()+Double(plan.timeoutSeconds)+2)
         timer.setEventHandler {
             guard let latest=try? store.read(id),["running","stop_requested"].contains(latest.state) else{return}
-            try? store.stop(id);try? repository.transaction{AgentWorkerPlan.interruptOwned(database:&$0,owner:"worker:"+id)}
+            try? store.stop(id);try? interrupt(repository:repository,workspaceID:workspaceID,principal:principal,owner:"worker:"+id)
             if let terminal=try? store.update(id,{$0.state="timed_out"}),let output=try? Codec.data(try response(terminal,requestID:requestID)){FileHandle.standardOutput.write(output);FileHandle.standardOutput.write(Data("\n".utf8))}
             _exit(8)
         };timer.resume();defer{timer.cancel()}
@@ -94,25 +94,31 @@ enum FiniteWorker {
                 switch plan.action(for:job) {
                 case .skip(let note):_ = try store.update(id){$0.outcomes.append(WorkerOutcome(jobID:jobID,state:"skipped",note:note))}
                 case .query:
-                    guard let provider=try repository.read().providers.first(where:{$0.id==job.quote.provider}) else{throw VideoError.unavailable("原远端服务配置不可用，保留原任务和预算")}
-                    let snapshot=try await RemoteJobs.query(profile:provider,job:job)
-                    let state=try repository.transaction{db->String in guard let i=db.jobs.firstIndex(where:{$0.id==jobID && $0.workspaceID==workspaceID}) else{throw VideoError.notFound("原任务不存在")};db.jobs[i]=try JobOperations.applyRemote(snapshot,to:db.jobs[i]);return db.jobs[i].state.rawValue}
+                    let refreshed=try await RemoteJobs.query(repository:repository,workspaceID:workspaceID,jobID:jobID,principal:principal,authorizationCommand:"worker run")
+                    let state=refreshed.state.rawValue
                     _ = try store.update(id){$0.outcomes.append(WorkerOutcome(jobID:jobID,state:state,note:"只查询原远端ID/幂等键；未重新提交或免除费用"))}
                 case .run:
                     while try repository.read().jobs.contains(where:{$0.quote.provider=="native" && $0.state == .running && ($0.lease?.expiresAt ?? .distantPast)>Date()}) {
                         if store.stopped(id) || Date()>=deadline {break};try await Task.sleep(nanoseconds:250_000_000)
                     }
                     if store.stopped(id) || Date()>=deadline {break}
-                    try repository.transaction {db in guard let i=db.jobs.firstIndex(where:{$0.id==jobID && $0.workspaceID==workspaceID}) else{throw VideoError.notFound("原任务不存在")};db.jobs[i]=JobOperations.recoverExpired(db.jobs[i]);if plan.resumeInterrupted && [.interrupted,.failed].contains(db.jobs[i].state){db.jobs[i]=try JobRules.recover(db.jobs[i])}}
-                    let result=try await LocalJobExecutor.run(repository:repository,jobID:jobID,owner:"worker:"+id){_ in if store.stopped(id) || Date()>=deadline {try? repository.transaction{AgentWorkerPlan.interruptOwned(database:&$0,owner:"worker:"+id)}}}
+                    try repository.transaction {db in guard try db.workspace(workspaceID).owner==principal else{throw VideoError.permission("工作区所有者已变化，未恢复原任务")};guard let i=db.jobs.firstIndex(where:{$0.id==jobID && $0.workspaceID==workspaceID}) else{throw VideoError.notFound("原任务不存在")};db.jobs[i]=JobOperations.recoverExpired(db.jobs[i]);if plan.resumeInterrupted && [.interrupted,.failed].contains(db.jobs[i].state){db.jobs[i]=try JobRules.recover(db.jobs[i])}}
+                    let result=try await LocalJobExecutor.run(repository:repository,jobID:jobID,owner:"worker:"+id){_ in if store.stopped(id) || Date()>=deadline {try? interrupt(repository:repository,workspaceID:workspaceID,principal:principal,owner:"worker:"+id)}}
                     _ = try store.update(id){$0.outcomes.append(WorkerOutcome(jobID:jobID,state:result.state.rawValue,note:"原任务产物已生成；仍需人工完整看听审核"))}
                 }
             } catch {let note=(error as? VideoError)?.localizedDescription ?? "原任务执行中断，未重新提交";_ = try store.update(id){$0.outcomes.append(WorkerOutcome(jobID:jobID,state:(error as? VideoError)?.code ?? "interrupted",note:note))}}
         }
         let stopped=store.stopped(id),expired=Date()>=deadline
-        if stopped || expired {try repository.transaction{AgentWorkerPlan.interruptOwned(database:&$0,owner:"worker:"+id)}}
+        if stopped || expired {try interrupt(repository:repository,workspaceID:workspaceID,principal:principal,owner:"worker:"+id)}
         let terminal=try store.update(id){$0.state=expired ? "timed_out":stopped ? "stopped":"completed"}
         return try response(terminal,requestID:requestID)
+    }
+    private static func interrupt(repository:Repository,workspaceID:String,principal:String,owner:String)throws {
+        // Avoid creating a database generation for a query-only or already-finished worker.
+        guard try repository.read().jobs.contains(where:{$0.workspaceID==workspaceID && $0.state == .running && $0.quote.provider=="native" && $0.lease?.owner==owner}) else{return}
+        try repository.transaction{db in
+            guard try AgentWorkerPlan.interruptOwned(database:&db,owner:owner,workspaceID:workspaceID,principal:principal) else{throw VideoError.conflict("原worker已无可清理租约，未写入数据库")}
+        }
     }
     private static func response(_ ticket:WorkerTicket,requestID:String)throws->AgentValue {
         let result=try Codec.decoder().decode(AgentValue.self,from:Codec.data(ticket))

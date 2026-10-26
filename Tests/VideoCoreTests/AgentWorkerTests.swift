@@ -29,4 +29,33 @@ final class AgentWorkerTests:XCTestCase {
         XCTAssertThrowsError(try JobOperations.finish(db.jobs[0],token:token,artifacts:[Artifact(path:"exports/file.mp4",mime:"video/mp4",bytes:10,sha256:String(repeating:"a",count:64),revision:job.revisionID)]))
         let resumed=try JobRules.recover(db.jobs[0]);XCTAssertEqual(resumed.id,job.id);XCTAssertEqual(resumed.requestKey,job.requestKey)
     }
+    func testScopedWorkerInterruptionRejectsRevokedOwnerWithoutAnyDatabaseChange()throws {
+        var(db,w,job)=try fixture();job=try JobOperations.claim(job,owner:"worker:original");db.jobs=[job]
+        db.workspaces[0].owner="replacement-owner"
+        let before=try Codec.digest(db)
+        XCTAssertThrowsError(try AgentWorkerPlan.interruptOwned(database:&db,owner:"worker:original",workspaceID:w.id,principal:"owner"))
+        XCTAssertEqual(try Codec.digest(db),before);XCTAssertEqual(db.jobs[0].state,.running)
+        XCTAssertEqual(db.jobs[0].lease?.token,job.lease?.token)
+        XCTAssertThrowsError(try AgentWorkerPlan.interruptOwned(database:&db,owner:"worker:original",workspaceID:"missing-workspace",principal:"replacement-owner"))
+        XCTAssertEqual(try Codec.digest(db),before)
+    }
+    func testScopedWorkerInterruptionCannotAffectSameLeaseOwnerInAnotherWorkspaceAndRepeatsAreUnchanged()throws {
+        var(db,w,job)=try fixture();let(otherDB,otherWorkspace,otherOriginal)=try fixture()
+        job=try JobOperations.claim(job,owner:"worker:shared-request")
+        let foreign=try JobOperations.claim(otherOriginal,owner:"worker:shared-request")
+        db.workspaces.append(otherWorkspace);db.projects.append(contentsOf:otherDB.projects);db.products.append(contentsOf:otherDB.products)
+        var remote=job;remote.id=Codec.id();remote.quote.provider="external-provider"
+        var queued=job;queued.id=Codec.id();queued.state = .queued
+        var otherLease=job;otherLease.id=Codec.id();otherLease.lease?.owner="worker:another-request"
+        var noLease=job;noLease.id=Codec.id();noLease.lease=nil
+        db.jobs=[job,foreign,remote,queued,otherLease,noLease]
+        let unaffected=try Codec.digest(Array(db.jobs.dropFirst())),generation=db.generation
+        XCTAssertTrue(try AgentWorkerPlan.interruptOwned(database:&db,owner:"worker:shared-request",workspaceID:w.id,principal:"owner"))
+        XCTAssertEqual(db.jobs[0].state,.interrupted);XCTAssertNil(db.jobs[0].lease)
+        XCTAssertEqual(db.jobs[0].id,job.id);XCTAssertEqual(db.jobs[0].requestKey,job.requestKey)
+        XCTAssertEqual(try Codec.digest(Array(db.jobs.dropFirst())),unaffected);XCTAssertEqual(db.generation,generation)
+        let once=try Codec.digest(db)
+        XCTAssertFalse(try AgentWorkerPlan.interruptOwned(database:&db,owner:"worker:shared-request",workspaceID:w.id,principal:"owner"))
+        XCTAssertEqual(try Codec.digest(db),once)
+    }
 }
