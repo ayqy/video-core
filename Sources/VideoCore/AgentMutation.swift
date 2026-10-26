@@ -46,9 +46,9 @@ public enum AgentMutationExecutor {
         switch command {
         case "workspaces create":let workspace=Workspace(name:text("name"),owner:principal);database.workspaces.append(workspace);result=try encoded(workspace)
         case "products import":
-            let product=try decode("product",Product.self);guard product.workspaceID==workspaceID else{throw VideoError.permission("产品工作区不符")};try scope(database.products,id:\.id,workspace:\.workspaceID,requested:product.id);try product.validate();try DependencyRules.validateMappings(product:product,assets:database.assets,evidence:database.evidence)
-            if let index=database.products.firstIndex(where:{$0.id==product.id}) {if database.products[index] != product {let factsChanged = !database.products[index].hasSameFacts(as:product);database.products[index]=product;if factsChanged{for p in database.projects.indices where database.projects[p].workspaceID==workspaceID && database.projects[p].current.product?.id==product.id {database.projects[p]=Editor.updateFacts(product,project:database.projects[p]);for i in database.publications.indices where database.publications[i].projectID==database.projects[p].id {database.publications[i].stale=true}}}}}
-            else {guard !database.products.contains(where:{$0.workspaceID==workspaceID && $0.sku==product.sku}) else{throw VideoError.conflict("已有同SKU产品，请更新原产品ID")};database.products.append(product)};result = .string(product.id)
+            let product=try decode("product",Product.self)
+            try database.saveProductFacts(product,workspaceID:workspaceID)
+            result = .string(product.id)
         case "evidence add":
             let evidence=try decode("evidence",Evidence.self);guard evidence.workspaceID==workspaceID,!evidence.title.isEmpty,!evidence.source.isEmpty,!evidence.owner.isEmpty else{throw VideoError.invalid("证据工作区、标题、来源或权利人不完整")};try scope(database.evidence,id:\.id,workspace:\.workspaceID,requested:evidence.id)
             if let id=evidence.assetID {guard database.assets.contains(where:{$0.id==id && $0.workspaceID==workspaceID}) else{throw VideoError.permission("证据所附素材不属于此工作区")}}

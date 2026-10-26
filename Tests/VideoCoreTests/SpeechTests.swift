@@ -160,6 +160,118 @@ final class SpeechTests: XCTestCase {
         XCTAssertEqual(saved.current.scenes[0].captions, metadata.captions)
     }
 
+    func testOrdinarySceneSpeedChangesRevokeVoiceAndCaptionApprovalsWhileKeepingSourcesAndHistory() throws {
+        let (project, scene, voiceAsset) = try captionFixture()
+        for kind in [SceneKind.explanation, .image, .video] {
+            var original = scene
+            original.kind = kind
+            var assets = [voiceAsset]
+            if kind != .explanation {
+                let visual = Asset(workspaceID: "w", name: "isolated-visual-reference", hash: "isolated-visual-reference",
+                    ext: kind == .image ? "png" : "mov", bytes: 100, mediaType: kind == .image ? "image" : "video", durationFrames: 120)
+                assets.append(visual); original.assetID = visual.id
+            }
+            var prior = project
+            var revision = prior.current; revision.scenes = [original]
+            revision.review.digest = try revision.contentDigest(); prior.revisions[0] = revision
+            let priorDigest = try Codec.digest(prior)
+            for speed in [0.5, 2.0] {
+                var supplied = original; supplied.speed = speed
+                XCTAssertEqual(try supplied.speechDigest(), try original.speechDigest(), "成片变速不改源配音输入摘要")
+                let saved = try Editor.apply([.replaceScene(original.id, supplied)], to: prior,
+                    baseRevision: prior.current.id, assets: assets, message: "隔离普通镜头成片变速")
+                let result = saved.current.scenes[0]
+                var expectedVoice = original.voice; expectedVoice?.listened = false
+                var expectedCaptions = original.captions
+                for index in expectedCaptions.indices { expectedCaptions[index].confirmed = false }
+                XCTAssertEqual(result.voice, expectedVoice); XCTAssertEqual(result.captions, expectedCaptions)
+                XCTAssertEqual(result.speechPlan, original.speechPlan); XCTAssertEqual(result.narration, original.narration)
+                XCTAssertEqual(result.assetID, original.assetID); XCTAssertEqual(result.durationFrames, original.durationFrames)
+                XCTAssertEqual(result.sourceStartFrame, original.sourceStartFrame)
+                XCTAssertEqual(result.timelineFrames, Int((Double(original.durationFrames) / speed).rounded()))
+                XCTAssertFalse(saved.current.review.complete); XCTAssertNil(saved.current.review.digest)
+                XCTAssertEqual(try Codec.digest(saved.revisions[0]), try Codec.digest(revision))
+                XCTAssertEqual(try Codec.digest(prior), priorDigest)
+            }
+        }
+    }
+
+    func testPitchPreservationChangeRevokesVoiceAndCaptionsAtOriginalAndChangedSpeed() throws {
+        let (project, scene, asset) = try captionFixture()
+        for speed in [1.0, 1.5] {
+            var original = scene; original.speed = speed
+            var prior = project
+            var revision = prior.current; revision.scenes = [original]
+            revision.review.digest = try revision.contentDigest(); prior.revisions[0] = revision
+            var supplied = original; supplied.preservePitch = false
+            let saved = try Editor.apply([.replaceScene(original.id, supplied)], to: prior,
+                baseRevision: prior.current.id, assets: [asset], message: "隔离成片变调设置")
+            let result = saved.current.scenes[0]
+            XCTAssertFalse(result.preservePitch); XCTAssertFalse(result.voice!.listened)
+            XCTAssertTrue(result.captions.allSatisfy { !$0.confirmed })
+            XCTAssertEqual(result.voice?.assetID, original.voice?.assetID)
+            XCTAssertEqual(result.voice?.textDigest, original.voice?.textDigest)
+            XCTAssertEqual(result.voice?.durationFrames, original.voice?.durationFrames)
+            XCTAssertEqual(result.captions.map(\.text), original.captions.map(\.text))
+            XCTAssertEqual(try Codec.digest(saved.revisions[0]), try Codec.digest(revision))
+        }
+    }
+
+    func testRecordingIdentityChangesCannotCarryVoiceOrSubtitleApprovals() throws {
+        let (project, scene, asset) = try captionFixture()
+        var otherAsset = asset; otherAsset.id = Codec.id()
+        var replacements: [VoiceTake] = []
+        var take = scene.voice!; take.assetID = otherAsset.id; replacements.append(take)
+        take = scene.voice!; take.method = "other-recording-method"; replacements.append(take)
+        take = scene.voice!; take.durationFrames = 90; replacements.append(take)
+        take = scene.voice!; take.textDigest = "different-audio-input-digest"; replacements.append(take)
+        for replacement in replacements {
+            var supplied = scene; supplied.voice = replacement
+            let saved = try Editor.apply([.replaceScene(scene.id, supplied)], to: project,
+                baseRevision: project.current.id, assets: [asset, otherAsset], message: "隔离实际配音身份变化")
+            var expected = replacement; expected.listened = false
+            XCTAssertEqual(saved.current.scenes[0].voice, expected)
+            XCTAssertTrue(saved.current.scenes[0].captions.allSatisfy { !$0.confirmed })
+            XCTAssertEqual(saved.current.scenes[0].narration, scene.narration)
+            XCTAssertEqual(saved.current.scenes[0].speechPlan, scene.speechPlan)
+            XCTAssertEqual(try Codec.digest(saved.revisions[0]), try Codec.digest(project.current))
+        }
+    }
+
+    func testAddingOrRemovingRecordingRequiresFreshSubtitleApproval() throws {
+        let (project, scene, asset) = try captionFixture()
+        var removed = scene; removed.voice = nil
+        let withoutVoice = try Editor.apply([.replaceScene(scene.id, removed)], to: project,
+            baseRevision: project.current.id, assets: [asset], message: "隔离解除配音")
+        XCTAssertNil(withoutVoice.current.scenes[0].voice)
+        XCTAssertTrue(withoutVoice.current.scenes[0].captions.allSatisfy { !$0.confirmed })
+        var supplied = withoutVoice.current.scenes[0]
+        supplied.voice = scene.voice; supplied.captions = scene.captions
+        let rebound = try Editor.apply([.replaceScene(scene.id, supplied)], to: withoutVoice,
+            baseRevision: withoutVoice.current.id, assets: [asset], message: "隔离重新绑定配音")
+        XCTAssertFalse(rebound.current.scenes[0].voice!.listened)
+        XCTAssertTrue(rebound.current.scenes[0].captions.allSatisfy { !$0.confirmed })
+        XCTAssertEqual(rebound.current.scenes[0].voice?.assetID, asset.id)
+        XCTAssertEqual(try Codec.digest(rebound.revisions[0]), try Codec.digest(project.current))
+        XCTAssertEqual(try Codec.digest(rebound.revisions[1]), try Codec.digest(withoutVoice.current))
+    }
+
+    func testMusicChangesKeepUnchangedSourceVoiceAndCaptionApprovalsButRevokeWholeFilmReview() throws {
+        let (project, scene, asset) = try captionFixture()
+        var music = asset; music.id = Codec.id(); music.name = "isolated-music-reference"
+        for gain in [0.0, 0.1, 2.0] {
+            var supplied = scene; supplied.musicGain = gain
+            let saved = try Editor.apply([.replaceScene(scene.id, supplied), .music(music.id)], to: project,
+                baseRevision: project.current.id, assets: [asset, music], message: "隔离新增或调整配乐")
+            XCTAssertEqual(saved.current.musicAssetID, music.id)
+            XCTAssertEqual(saved.current.scenes[0].musicGain, gain)
+            XCTAssertEqual(saved.current.scenes[0].voice, scene.voice)
+            XCTAssertEqual(saved.current.scenes[0].captions, scene.captions)
+            XCTAssertFalse(saved.current.review.complete); XCTAssertNil(saved.current.review.digest)
+            XCTAssertEqual(try Codec.digest(saved.revisions[0]), try Codec.digest(project.current))
+        }
+    }
+
     func testSavedCaptionDraftCanBeReheardAndConfirmedWithoutAnotherContentInvalidation() throws {
         let (project, scene, asset) = try captionFixture()
         var captions = scene.captions; captions[0].text = "接口。"

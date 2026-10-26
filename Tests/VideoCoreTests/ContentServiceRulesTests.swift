@@ -90,6 +90,43 @@ final class ContentServiceRulesTests:XCTestCase {
         let otherQuote=try quote(db)
         XCTAssertThrowsError(try ScriptJobRules.prepare(database:&db,workspaceID:"w",projectID:p.id,profile:profile,evidence:[],brief:"按真实材料解释",quote:otherQuote,requestKey:"changed-key",principal:"owner"))
     }
+    func testPersistedMultiParameterProfileCanPrepareAndReplayOneOriginalScriptIntent()throws {
+        var initial=try database()
+        initial.providers[0].supportedParameters=["max_tokens","temperature","response_format"]
+        let profile=initial.providers[0],project=initial.projects[0],frozen=try quote(initial)
+        let root=FileManager.default.temporaryDirectory.appendingPathComponent(Codec.id(),isDirectory:true)
+        defer{try? FileManager.default.removeItem(at:root)}
+        let repository=try Repository(root:root)
+        try repository.transaction{$0=initial}
+        var firstID:String?
+        for index in 0..<24 {
+            let result=try repository.transaction{db in
+                try ScriptJobRules.prepare(database:&db,workspaceID:"w",projectID:project.id,profile:profile,evidence:[],brief:"按真实材料解释",quote:frozen,requestKey:"persisted-parameter-set",principal:"owner")
+            }
+            XCTAssertEqual(result.shouldSubmit,index==0)
+            if index==0{firstID=result.job.id}
+            XCTAssertEqual(result.job.id,firstID)
+            XCTAssertEqual(result.job.requestKey,"persisted-parameter-set")
+            XCTAssertEqual(result.job.quote.id,frozen.id)
+            XCTAssertEqual(try repository.read().jobs.count,1)
+        }
+    }
+    func testChangedLiveProfileStillRejectsScriptBeforeStoringAnyPaidIntent()throws {
+        let original=try database(),profile=original.providers[0],project=original.projects[0],frozen=try quote(original)
+        let changes:[(inout ProviderProfile)->Void]=[
+            {$0.endpoint="https://replacement.example.com/chat/completions"},
+            {$0.model="replacement-model"},{$0.keyReference="replacement-local-reference"},
+            {$0.allowsUpload=false},{$0.maxOutput+=1},{$0.idempotency=true},
+            {$0.supportedParameters=["temperature"]},{$0.capabilities?.repairLimit=1}
+        ]
+        for (index,change) in changes.enumerated() {
+            var changed=original;change(&changed.providers[0])
+            let before=try Codec.data(changed)
+            XCTAssertThrowsError(try ScriptJobRules.prepare(database:&changed,workspaceID:"w",projectID:project.id,profile:profile,evidence:[],brief:"按真实材料解释",quote:frozen,requestKey:"changed-profile-\(index)",principal:"owner"))
+            XCTAssertEqual(try Codec.data(changed),before)
+            XCTAssertTrue(changed.jobs.isEmpty)
+        }
+    }
     func testChangedBodyOrEvidenceCannotUseFrozenQuote()throws {
         var db=try database();let q=try quote(db),p=db.projects[0],profile=db.providers[0]
         XCTAssertThrowsError(try ScriptJobRules.prepare(database:&db,workspaceID:"w",projectID:p.id,profile:profile,evidence:[],brief:"与已冻结报价不同",quote:q,requestKey:"new-key",principal:"owner"))

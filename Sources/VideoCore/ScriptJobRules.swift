@@ -29,7 +29,7 @@ public enum ScriptJobRules {
     }
     public static func prepare(database:inout Database,workspaceID:String,projectID:String,profile:ProviderProfile,evidence:[Evidence],brief:String,quote:Quote,requestKey:String,principal:String,now:Date=Date())throws->(job:Job,shouldSubmit:Bool) {
         guard try database.workspace(workspaceID).owner==principal,
-              let live=database.providers.first(where:{$0.id==profile.id}),try Codec.digest(live)==Codec.digest(profile) else{throw VideoError.permission("原服务配置或本机工作区所有者权限已变化")}
+              let live=database.providers.first(where:{$0.id==profile.id}),try ProviderRules.profileIdentity(live)==ProviderRules.profileIdentity(profile) else{throw VideoError.permission("原服务配置或本机工作区所有者权限已变化")}
         let project=try database.project(projectID)
         guard project.workspaceID==workspaceID else{throw VideoError.permission("工程不属于当前工作区")}
         for selected in evidence {guard let current=database.evidence.first(where:{$0.id==selected.id && $0.workspaceID==workspaceID}),try current.contentDigest()==selected.contentDigest() else{throw VideoError.conflict("所选上传证据已变化，请重新核对输入与报价")}}

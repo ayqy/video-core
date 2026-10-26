@@ -38,6 +38,7 @@ final class ScriptJobsTests:XCTestCase {
             let read=try repository.read()
             XCTAssertEqual(try RemoteJobs.checkedTarget(original:job,profile:profile,database:read,principal:"owner",command:"jobs query").id,job.id)
             XCTAssertEqual(try RemoteJobs.profileIdentity(read.providers[0]),try RemoteJobs.profileIdentity(profile))
+            XCTAssertEqual(try RemoteJobs.profileIdentity(read.providers[0]),try ProviderRules.profileIdentity(profile))
         }
         var changed=try repository.read();changed.providers[0].supportedParameters.remove("seed")
         XCTAssertThrowsError(try RemoteJobs.checkedTarget(original:job,profile:profile,database:changed,principal:"owner",command:"jobs query"))

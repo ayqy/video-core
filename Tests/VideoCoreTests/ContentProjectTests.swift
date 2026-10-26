@@ -242,3 +242,144 @@ final class ContentProjectTests:XCTestCase {
         XCTAssertTrue(DependencyRules.diff(revision:tampered,assets:[a,other],evidence:[]).contains{$0.reason == .permission})
     }
 }
+
+final class ProductFactsTests:XCTestCase {
+    private func fixture()throws->(Database,Workspace,Product,Project) {
+        let workspace=Workspace(name:"事实更新规则空间",owner:"owner")
+        let product=Product(workspaceID:workspace.id,sku:"source-course",name:"规则用已有资料",checkout:"https://example.org/course",audience:"学习者",task:"核对标价",outcome:"记录原始来源",prerequisite:"无",scope:"公开资料",prices:[Price(money:Money(99),from:.distantPast,source:"规则用价格来源",verified:true)])
+        var scene=Scene(title:"核对原页面",body:"原资料标价99元",durationFrames:60)
+        scene.showPrice=true;scene.captions=[Caption(text:"原资料标价99元",startFrame:0,endFrame:60,confirmed:true)]
+        var revision=Revision(product:product,purpose:.education,aspect:.landscape,scenes:[scene],cta:"查看原页面",change:"规则用已核版本")
+        revision.dependencies=try DependencyRules.freeze(revision:revision,assets:[],evidence:[])
+        revision.review.text=true;revision.review.rights=true;revision.review.fullPreview=true;revision.review.sound=true;revision.review.captions=true;revision.review.digest=try revision.contentDigest()
+        let project=Project(workspaceID:workspace.id,name:"已有事实工程",revision:revision)
+        let publication=Publication(workspaceID:workspace.id,projectID:project.id,revisionID:revision.id,platform:"规则用导出包",accountReference:"",aiLabel:false,commercialLabel:false,rightsChecked:false,ctaPermitted:false,channelAuthorized:false,trackingCode:"",title:"旧版本材料",description:"仅为规则夹具，不代表真实远端发布")
+        var database=Database();database.workspaces=[workspace];database.products=[product];database.projects=[project];database.publications=[publication]
+        return(database,workspace,product,project)
+    }
+
+    func testUnchangedSaveDoesNotRevokeReviewOrAppendRevision()throws {
+        var(database,workspace,product,_)=try fixture()
+        let before=try Codec.data(database),digest=try Codec.digest(product)
+        try database.saveProductFacts(product,workspaceID:workspace.id)
+        XCTAssertEqual(try Codec.data(database),before)
+        try database.saveProductFacts(product,workspaceID:workspace.id,previousDigest:digest)
+        XCTAssertEqual(try Codec.data(database),before)
+    }
+
+    func testTagsOnlySavePersistsTagsWithoutInvalidatingContentOrDelivery()throws {
+        var(database,workspace,product,_)=try fixture()
+        let projects=try Codec.data(database.projects),publications=try Codec.data(database.publications),digest=try Codec.digest(product)
+        product.tags=["待整理","作者标签"]
+        try database.saveProductFacts(product,workspaceID:workspace.id,previousDigest:digest)
+        XCTAssertEqual(database.products[0].tags,product.tags)
+        XCTAssertEqual(try Codec.data(database.projects),projects)
+        XCTAssertEqual(try Codec.data(database.publications),publications)
+        XCTAssertTrue(database.projects[0].current.review.complete)
+    }
+
+    func testPriceChangeInvalidatesOnlyBoundWorkspaceProjectsAndOldDelivery()throws {
+        var(database,workspace,product,project)=try fixture()
+        let otherWorkspace=Workspace(name:"另一工作区",owner:"other")
+        let ordinary=Project(workspaceID:workspace.id,name:"普通素材工程",revision:try Planner.create(workspaceID:workspace.id,name:"普通素材工程"))
+        var otherProduct=product;otherProduct.id=Codec.id();otherProduct.workspaceID=otherWorkspace.id
+        let unrelated=Project(workspaceID:otherWorkspace.id,name:"另一资料工程",revision:Revision(product:otherProduct,purpose:.education,aspect:.landscape,scenes:[Scene(title:"其它",body:"其它资料")],cta:""))
+        let unrelatedPublication=Publication(workspaceID:otherWorkspace.id,projectID:unrelated.id,revisionID:unrelated.current.id,platform:"规则用导出包",accountReference:"",aiLabel:false,commercialLabel:false,rightsChecked:false,ctaPermitted:false,channelAuthorized:false,trackingCode:"",title:"另一旧版",description:"")
+        database.workspaces.append(otherWorkspace);database.products.append(otherProduct);database.projects += [ordinary,unrelated];database.publications.append(unrelatedPublication)
+        let originalRevision=try Codec.data(project.current),ordinaryBytes=try Codec.data(ordinary),unrelatedBytes=try Codec.data(unrelated),unrelatedDelivery=try Codec.data(unrelatedPublication)
+        product.prices[0].money=Money(200);product.prices[0].verified=false
+        try database.saveProductFacts(product,workspaceID:workspace.id,previousDigest:Codec.digest(database.products[0]))
+        let updated=database.projects[0]
+        XCTAssertEqual(updated.revisions.count,2);XCTAssertEqual(updated.current.parentID,project.current.id)
+        XCTAssertEqual(updated.current.number,project.current.number+1)
+        XCTAssertEqual(updated.current.product,product);XCTAssertFalse(updated.current.review.complete)
+        XCTAssertFalse(updated.current.review.text);XCTAssertFalse(updated.current.review.captions)
+        XCTAssertFalse(updated.current.scenes[0].captions[0].confirmed)
+        XCTAssertEqual(try Codec.data(updated.revisions[0]),originalRevision)
+        XCTAssertTrue(database.publications[0].stale)
+        XCTAssertEqual(database.publications[0].revisionID,project.current.id)
+        XCTAssertEqual(try Codec.data(database.projects[1]),ordinaryBytes)
+        XCTAssertEqual(try Codec.data(database.projects[2]),unrelatedBytes)
+        XCTAssertEqual(try Codec.data(database.publications[1]),unrelatedDelivery)
+        let once=try Codec.data(database)
+        try database.saveProductFacts(product,workspaceID:workspace.id)
+        XCTAssertEqual(try Codec.data(database),once)
+    }
+
+    func testSourceAndAudienceChangesAlsoInvalidatePreviouslyConfirmedFacts()throws {
+        let(base,workspace,product,_)=try fixture()
+        var changed=product;changed.audience="另一实际受众";changed.checkout="https://example.org/new-source"
+        var database=base
+        try database.saveProductFacts(changed,workspaceID:workspace.id)
+        XCTAssertEqual(database.projects[0].current.product?.audience,changed.audience)
+        XCTAssertEqual(database.projects[0].current.product?.checkout,changed.checkout)
+        XCTAssertFalse(database.projects[0].current.review.complete)
+        XCTAssertTrue(database.publications[0].stale)
+    }
+
+    func testEditorDigestDetectsChangedRemovedOrUnexpectedExistingRecord()throws {
+        let(base,workspace,product,_)=try fixture(),digest=try Codec.digest(product)
+        var changed=product;changed.prices[0].money=Money(200)
+        var database=base
+        try database.saveProductFacts(changed,workspaceID:workspace.id)
+        let changedBytes=try Codec.data(database)
+        XCTAssertThrowsError(try database.saveProductFacts(product,workspaceID:workspace.id,previousDigest:digest))
+        XCTAssertEqual(try Codec.data(database),changedBytes)
+        XCTAssertThrowsError(try database.saveProductFacts(changed,workspaceID:workspace.id,previousDigest:nil))
+        XCTAssertEqual(try Codec.data(database),changedBytes)
+        database.products=[];let removed=try Codec.data(database)
+        XCTAssertThrowsError(try database.saveProductFacts(product,workspaceID:workspace.id,previousDigest:digest))
+        XCTAssertEqual(try Codec.data(database),removed)
+        try database.saveProductFacts(product,workspaceID:workspace.id,previousDigest:nil)
+        XCTAssertEqual(database.products,[product])
+    }
+
+    func testWorkspaceAndForeignIdentityChecksDoNotMutateAnyRecord()throws {
+        var(database,workspace,product,_)=try fixture()
+        let other=Workspace(name:"另一个真实空间",owner:"other");database.workspaces.append(other)
+        let before=try Codec.data(database)
+        XCTAssertThrowsError(try database.saveProductFacts(product,workspaceID:other.id))
+        XCTAssertEqual(try Codec.data(database),before)
+        product.workspaceID=other.id
+        XCTAssertThrowsError(try database.saveProductFacts(product,workspaceID:other.id))
+        XCTAssertEqual(try Codec.data(database),before)
+        product.id=Codec.id();product.workspaceID="missing-workspace"
+        XCTAssertThrowsError(try database.saveProductFacts(product,workspaceID:product.workspaceID))
+        XCTAssertEqual(try Codec.data(database),before)
+        XCTAssertEqual(database.products[0].workspaceID,workspace.id)
+    }
+
+    func testDuplicateSKUAndInvalidMappedSourcesFailBeforeMutation()throws {
+        var(database,workspace,product,_)=try fixture()
+        let before=try Codec.data(database)
+        var duplicate=product;duplicate.id=Codec.id()
+        XCTAssertThrowsError(try database.saveProductFacts(duplicate,workspaceID:workspace.id))
+        XCTAssertEqual(try Codec.data(database),before)
+        product.courseMappings=[CourseMapping(title:"缺失素材",knowledge:"核对",audience:"学习者",task:"记录",outcome:"核对记录",prerequisite:"无",assetID:"missing",rangeKind:.whole)]
+        XCTAssertThrowsError(try database.saveProductFacts(product,workspaceID:workspace.id))
+        XCTAssertEqual(try Codec.data(database),before)
+    }
+
+    func testNormalAgentImportUsesSharedInvalidationWithReplayAndOwnerAuthorization()throws {
+        let(base,workspace,product,_)=try fixture()
+        let root=FileManager.default.temporaryDirectory.appendingPathComponent("fact-save-"+UUID().uuidString)
+        defer{try? FileManager.default.removeItem(at:root)}
+        let repository=try Repository(root:root);try repository.transaction{$0=base}
+        var changed=product;changed.prices[0].money=Money(200);changed.prices[0].verified=false
+        let value=try Codec.decoder().decode(AgentValue.self,from:Codec.data(changed))
+        let data=try Codec.data(AgentValue.object(["workspace_id":.string(workspace.id),"product":value]))
+        let before=try Codec.data(repository.read())
+        XCTAssertThrowsError(try repository.performAgentMutation(command:"products import",data:data,principal:"other",requestID:"denied"))
+        XCTAssertEqual(try Codec.data(repository.read()),before)
+        let first=try repository.performAgentMutation(command:"products import",data:data,principal:"owner",requestID:"fact-once")
+        let saved=try repository.read()
+        XCTAssertEqual(saved.projects[0].revisions.count,2);XCTAssertTrue(saved.publications[0].stale)
+        XCTAssertFalse(saved.projects[0].current.review.complete)
+        let savedBytes=try Codec.data(saved)
+        XCTAssertEqual(try repository.performAgentMutation(command:"products import",data:data,principal:"owner",requestID:"fact-once"),first)
+        var replay=try repository.read()
+        XCTAssertEqual(replay.generation,saved.generation+1)
+        replay.generation=saved.generation
+        XCTAssertEqual(try Codec.data(replay),savedBytes)
+    }
+}

@@ -41,9 +41,7 @@ public enum RemoteJobs {
         return current
     }
     static func profileIdentity(_ profile:ProviderProfile)throws->String {
-        var fields=try Codec.decoder().decode([String:AgentValue].self,from:Codec.data(profile))
-        fields["supportedParameters"] = .array(profile.supportedParameters.sorted().map{.string($0)})
-        return try Codec.digest(fields)
+        try ProviderRules.profileIdentity(profile)
     }
     static func accept(_ snapshot:RemoteSnapshot,original:Job,profile:ProviderProfile,repository:Repository,principal:String,command:String,ownerOnly:Bool=false)throws->Job {
         try repository.transaction{db in

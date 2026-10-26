@@ -55,6 +55,50 @@ public struct CourseMapping: Codable, Identifiable, Equatable, Sendable {
     }
 }
 
+public extension Database {
+    /// The caller authorizes access before this transaction-local mutation. CLI imports
+    /// replace the current record; editor windows additionally compare their saved digest.
+    mutating func saveProductFacts(_ product: Product, workspaceID: String) throws {
+        try storeProductFacts(product, workspaceID: workspaceID, checkPrevious: false, previousDigest: nil)
+    }
+
+    mutating func saveProductFacts(_ product: Product, workspaceID: String, previousDigest: String?) throws {
+        try storeProductFacts(product, workspaceID: workspaceID, checkPrevious: true, previousDigest: previousDigest)
+    }
+
+    private mutating func storeProductFacts(_ product: Product, workspaceID: String, checkPrevious: Bool, previousDigest: String?) throws {
+        _ = try workspace(workspaceID)
+        guard product.workspaceID == workspaceID,
+              !products.contains(where: { $0.id == product.id && $0.workspaceID != workspaceID }) else {
+            throw VideoError.permission("既有事实ID不属于当前工作区")
+        }
+        try product.validate()
+        try DependencyRules.validateMappings(product: product, assets: assets, evidence: evidence)
+        guard !products.contains(where: { $0.workspaceID == workspaceID && $0.sku == product.sku && $0.id != product.id }) else {
+            throw VideoError.conflict("已有同标识资料，请更新原事实ID")
+        }
+        guard let index = products.firstIndex(where: { $0.id == product.id && $0.workspaceID == workspaceID }) else {
+            guard !checkPrevious || previousDigest == nil else { throw VideoError.conflict("原事实已移除") }
+            products.append(product)
+            return
+        }
+        let original = products[index]
+        if checkPrevious {
+            guard previousDigest == (try Codec.digest(original)) else { throw VideoError.conflict("既有事实已在其他窗口变化，请重新打开") }
+        }
+        guard original != product else { return }
+        let factsChanged = !original.hasSameFacts(as: product)
+        products[index] = product
+        guard factsChanged else { return }
+        for index in projects.indices where projects[index].workspaceID == workspaceID && projects[index].current.product?.id == product.id {
+            projects[index] = Editor.updateFacts(product, project: projects[index])
+            for publication in publications.indices where publications[publication].workspaceID == workspaceID && publications[publication].projectID == projects[index].id {
+                publications[publication].stale = true
+            }
+        }
+    }
+}
+
 public struct FrozenDependency: Codable, Identifiable, Sendable {
     public enum Kind: String, Codable, Sendable { case asset, evidence, mapping }
     public var id: String

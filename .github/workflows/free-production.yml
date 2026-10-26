@@ -149,10 +149,12 @@ jobs:
               ('VideoCoreTests', 'BaiduVideoRulesTests'): (8, None),
               ('VideoCoreTests', 'EditorPracticeTests'): (13, None),
               ('VideoCoreTests', 'MacCommerceRulesTests'): (8, None),
-              ('VideoCoreTests', 'SpeechTests'): (24, None),
+              ('VideoCoreTests', 'SpeechTests'): (29, None),
               ('VideoCoreTests', 'AudioMixRulesTests'): (14, None),
-              ('VideoCoreTests', 'ContentServiceRulesTests'): (16, None),
+              ('VideoCoreTests', 'ContentServiceRulesTests'): (18, None),
               ('VideoCoreTests', 'SpeechProjectRulesTests'): (11, None),
+              ('VideoCoreTests', 'ProviderRulesTests'): (14, None),
+              ('VideoCoreTests', 'ProductFactsTests'): (8, None),
               ('VideoMediaTests', 'AudioMixMediaTests'): (7, None),
               ('VideoMediaTests', 'ScriptJobsTests'): (18, None),
               ('VideoCoreTests', 'AgentJobAccessTests'): (9, None),
@@ -168,7 +170,15 @@ jobs:
           expected_methods = set()
           filters = []
           for (target, suite), (source_count, selection) in suites.items():
-              source = (root / 'Tests' / target / (suite + '.swift')).read_text()
+              source_name = 'ContentProjectTests.swift' if suite == 'ProductFactsTests' else suite + '.swift'
+              source = (root / 'Tests' / target / source_name).read_text()
+              if suite == 'ProductFactsTests':
+                  declaration = re.search(r'(?m)^final class ProductFactsTests\s*:\s*XCTestCase\s*\{', source)
+                  assert declaration, 'ProductFactsTests declaration missing'
+                  source = source[declaration.end():]
+                  following = re.search(r'(?m)^(?:final )?class \w+\s*:', source)
+                  if following:
+                      source = source[:following.start()]
               methods = re.findall(r'(?m)^[ \t]*(?:@\w+(?:\([^\n)]*\))?[ \t]+)*func[ \t]+(test\w+)[ \t]*\(', source)
               assert len(methods) == len(set(methods)) == source_count, (target, suite, methods)
               selected = list(selection) if selection is not None else methods
@@ -178,7 +188,7 @@ jobs:
               filters.append('^' + re.escape(target) + r'\.' + re.escape(suite) +
                              '/(?:' + '|'.join(re.escape(method) for method in selected) + ')$')
           expected = len(expected_methods)
-          assert expected == sum(method_counts.values()) == 161
+          assert expected == sum(method_counts.values()) == 190
           print('affected_suite_methods=' + str(method_counts))
           print('system_tts_methods=not_selected; import_only_methods=2')
           try:

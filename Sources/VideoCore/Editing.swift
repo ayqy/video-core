@@ -81,6 +81,19 @@ public enum Editor {
                     if scene.voice?.assetID == old.voice?.assetID || scene.voice?.textDigest != (try? scene.speechDigest()) { scene.voice = nil }
                     for j in scene.captions.indices { scene.captions[j].confirmed = false }; revision.invalidated += ["该镜头配音", "字幕对齐", "口型与节奏"]
                 }
+                // The speech digest describes the source recording inputs. It does
+                // not describe the speed/pitch transformation used by the renderer,
+                // or identify a replacement recording of the same words. Approval
+                // flags alone remain independent editorial changes; adding music
+                // does not revoke an unchanged source voice's listening approval.
+                var oldVoiceIdentity = old.voice, newVoiceIdentity = scene.voice
+                oldVoiceIdentity?.listened = false
+                newVoiceIdentity?.listened = false
+                if old.speed != scene.speed || old.preservePitch != scene.preservePitch || oldVoiceIdentity != newVoiceIdentity {
+                    scene.voice?.listened = false
+                    for j in scene.captions.indices { scene.captions[j].confirmed = false }
+                    revision.invalidated += ["实际配音、成片变速或变调与声音字幕重新复核"]
+                }
                 if try SpeechRules.captionContentDigest(old.captions) != SpeechRules.captionContentDigest(scene.captions) {
                     scene.voice?.listened = false
                     for j in scene.captions.indices { scene.captions[j].confirmed = false }
