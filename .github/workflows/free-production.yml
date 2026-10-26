@@ -146,7 +146,7 @@ jobs:
           # Each full suite is reviewed against its exact source inventory.
           # The import-only selection must not run installed-system TTS on CI.
           suites = {
-              ('VideoCoreTests', 'BaiduVideoRulesTests'): (12, None),
+              ('VideoCoreTests', 'BaiduVideoRulesTests'): (14, None),
               ('VideoCoreTests', 'EditorPracticeTests'): (13, None),
               ('VideoCoreTests', 'MacCommerceRulesTests'): (8, None),
               ('VideoCoreTests', 'SpeechTests'): (34, None),
@@ -167,7 +167,7 @@ jobs:
               ('VideoCoreTests', 'AgentWorkerTests'): (6, None),
               ('VideoCoreTests', 'AgentContractTests'): (11, None),
               ('VideoCoreTests', 'AgentPreviewTests'): (11, None),
-              ('VideoMediaTests', 'BaiduVideoProviderTests'): (18, None),
+              ('VideoMediaTests', 'BaiduVideoProviderTests'): (21, None),
               ('VideoMediaTests', 'SpeechProjectProductionTests'): (5, (
                   'testNormalImportedAudioAttachChecksRealBytesAndKeepsHumanReviewPending',
                   'testImported22050AudioKeepsContainerTailAndChecksMacCommitAfterDecode')),
