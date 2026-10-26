@@ -10,6 +10,43 @@ public struct MusicGainSegment: Equatable, Sendable {
 /// Deterministic accompaniment envelopes shared by rendering and UI descriptions.
 /// Duck only the audible, real voice interval. A muted scene is silent on all tracks.
 public enum AudioMixRules {
+    /// The IR allows 0...2, whereas AVAudioMix volume parameters allow only 0...1.
+    /// Use one scale for every track, then restore it once on the mixed Float32 PCM.
+    /// This is rendering headroom, not source normalization or an automatic limiter.
+    public static func mixerHeadroom(scenes: [Scene], fps: Int) throws -> Double {
+        guard (1...120).contains(fps) else { throw VideoError.invalid("混音帧率无效") }
+        var result = 1.0
+        for scene in scenes {
+            try validate(scene, fps: fps)
+            for cue in scene.classicArtwork?.audioCues ?? [] {
+                guard cue.gain.isFinite, (0...1).contains(cue.gain) else { throw VideoError.invalid("游戏音效音量超出0到1范围") }
+            }
+            if !scene.muted { result = max(result, max(scene.voiceGain, max(scene.sourceGain, scene.musicGain))) }
+        }
+        return result
+    }
+
+    public static func mixerVolume(_ requested: Double, headroom: Double) throws -> Double {
+        guard headroom.isFinite, (1...2).contains(headroom), requested.isFinite,
+              (0...2).contains(requested), requested <= headroom else { throw VideoError.invalid("混音增益或统一余量无效") }
+        return requested / headroom
+    }
+
+    /// Check the actual restored samples before AAC can hide an upstream overload.
+    /// Validate the whole buffer first, so a rejected buffer remains unchanged.
+    public static func restoreMixedPCM(_ samples: inout [Float], headroom: Double) throws {
+        guard headroom.isFinite, (1...2).contains(headroom), !samples.isEmpty,
+              samples.count <= 8 * 1024 * 1024 else { throw VideoError.invalid("混音PCM缓冲或统一余量无效") }
+        for sample in samples {
+            let restored = Float(Double(sample) * headroom)
+            guard restored.isFinite else { throw VideoError.review("实际混音含非有限采样，未送入AAC编码") }
+            guard abs(restored) < 1 else { throw VideoError.review("实际混音在AAC编码前达到满幅过载，请降低分轨音量并重做、听审") }
+        }
+        if headroom > 1 {
+            for index in samples.indices { samples[index] = Float(Double(samples[index]) * headroom) }
+        }
+    }
+
     public static func musicEnvelope(scenes: [Scene], fps: Int) throws -> [MusicGainSegment] {
         guard (1...120).contains(fps) else { throw VideoError.invalid("混音帧率无效") }
         var cursor = 0.0

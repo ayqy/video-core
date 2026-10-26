@@ -77,6 +77,7 @@ public final class MediaRenderer: @unchecked Sendable {
         } catch { try? FileManager.default.removeItem(at:final); throw error }
     }
     private func mix(video:URL,final:URL,revision r:Revision,repository:Repository,database:Database,progress: @escaping @Sendable (Double) throws -> Void) async throws {
+        let headroom=try AudioMixRules.mixerHeadroom(scenes:r.scenes,fps:r.fps)
         let preparationDirectory=repository.root.appendingPathComponent("cache/audio-preparation-"+Codec.id(),isDirectory:true)
         try FileManager.default.createDirectory(at:preparationDirectory,withIntermediateDirectories:true)
         defer {try? FileManager.default.removeItem(at:preparationDirectory)}
@@ -90,24 +91,55 @@ public final class MediaRenderer: @unchecked Sendable {
                     guard let asset=database.assets.first(where:{$0.id==cue.assetID && $0.workspaceID==r.workspaceID}) else{throw VideoError.notFound("场景游戏录音已缺失")}
                     let offset=try Self.sceneAudioTime(frames:cue.startFrame,fps:r.fps,speed:s.speed)
                     let length=try Self.sceneAudioTime(frames:cue.durationFrames,fps:r.fps,speed:s.speed)
-                    let parameter=try await addAudio(repository.assetURL(asset),to:composition,at:CMTimeAdd(at,offset),sourceStart:.zero,sourceFrames:cue.durationFrames,targetDuration:length,fps:r.fps,gain:Float(cue.gain),preservePitch:s.preservePitch,preparationDirectory:preparationDirectory)
+                    let parameter=try await addAudio(repository.assetURL(asset),to:composition,at:CMTimeAdd(at,offset),sourceStart:.zero,sourceFrames:cue.durationFrames,targetDuration:length,fps:r.fps,gain:cue.gain,headroom:headroom,preservePitch:s.preservePitch,preparationDirectory:preparationDirectory)
                     parameters.append(parameter)
                 }
-                if let take=s.voice,let a=database.assets.first(where:{$0.id==take.assetID}) { let p=try await addAudio(repository.assetURL(a),to:composition,at:at,sourceStart:.zero,sourceFrames:take.durationFrames,targetDuration:try Self.sceneAudioTime(frames:take.durationFrames,fps:r.fps,speed:s.speed),fps:r.fps,gain:Float(s.voiceGain),preservePitch:s.preservePitch,preparationDirectory:preparationDirectory); parameters.append(p) }
-                if let aid=s.assetID,let a=database.assets.first(where:{$0.id==aid}),s.kind == .video,s.sourceGain>0 { if !(try await AVURLAsset(url:repository.assetURL(a)).loadTracks(withMediaType:.audio)).isEmpty { let envelope=try AudioMixRules.sourceEnvelope(scene:s,fps:r.fps);let p=try await addAudio(repository.assetURL(a),to:composition,at:at,sourceStart:CMTime(value:Int64(s.sourceStartFrame),timescale:Int32(r.fps)),sourceFrames:s.durationFrames,targetDuration:span,fps:r.fps,gain:Float(s.sourceGain),preservePitch:s.preservePitch,preparationDirectory:preparationDirectory,envelope:envelope); parameters.append(p) } }
+                if let take=s.voice,let a=database.assets.first(where:{$0.id==take.assetID}) { let p=try await addAudio(repository.assetURL(a),to:composition,at:at,sourceStart:.zero,sourceFrames:take.durationFrames,targetDuration:try Self.sceneAudioTime(frames:take.durationFrames,fps:r.fps,speed:s.speed),fps:r.fps,gain:s.voiceGain,headroom:headroom,preservePitch:s.preservePitch,preparationDirectory:preparationDirectory); parameters.append(p) }
+                if let aid=s.assetID,let a=database.assets.first(where:{$0.id==aid}),s.kind == .video,s.sourceGain>0 { if !(try await AVURLAsset(url:repository.assetURL(a)).loadTracks(withMediaType:.audio)).isEmpty { let envelope=try AudioMixRules.sourceEnvelope(scene:s,fps:r.fps);let p=try await addAudio(repository.assetURL(a),to:composition,at:at,sourceStart:CMTime(value:Int64(s.sourceStartFrame),timescale:Int32(r.fps)),sourceFrames:s.durationFrames,targetDuration:span,fps:r.fps,gain:s.sourceGain,headroom:headroom,preservePitch:s.preservePitch,preparationDirectory:preparationDirectory,envelope:envelope); parameters.append(p) } }
             }; cursor += s.timelineFrames
         }
-        if let aid=r.musicAssetID,let a=database.assets.first(where:{$0.id==aid}),let track=composition.addMutableTrack(withMediaType:.audio,preferredTrackID:kCMPersistentTrackID_Invalid) { let music=AVURLAsset(url:repository.assetURL(a)); guard let src=try await music.loadTracks(withMediaType:.audio).first else { throw VideoError.invalid("配乐没有音轨") }; let duration=try await music.load(.duration); guard duration.seconds>0 else { throw VideoError.invalid("配乐时长无效") }; var t=CMTime.zero; while t<total { let length=CMTimeMinimum(duration,CMTimeSubtract(total,t)); try track.insertTimeRange(CMTimeRange(start:.zero,duration:length),of:src,at:t); t=CMTimeAdd(t,length) }; let p=AVMutableAudioMixInputParameters(track:track)
-            Self.applyEnvelope(try AudioMixRules.musicEnvelope(scenes:r.scenes,fps:r.fps),to:p,at:.zero)
-            parameters.append(p) }
+        if let aid=r.musicAssetID,let a=database.assets.first(where:{$0.id==aid}) {
+            let music=AVURLAsset(url:repository.assetURL(a))
+            guard let src=try await music.loadTracks(withMediaType:.audio).first else {throw VideoError.invalid("配乐没有音轨")}
+            let duration=try await music.load(.duration)
+            guard duration.seconds.isFinite,duration.seconds>0 else {throw VideoError.invalid("配乐时长无效")}
+            // Keep a continuous looping source timeline outside the final mixer.
+            // OfflineMixer interpolates discontinuities between adjacent ramps on
+            // one track, even when explicit setVolume points report correct values.
+            let musicTimeline=AVMutableComposition()
+            guard let continuous=musicTimeline.addMutableTrack(withMediaType:.audio,preferredTrackID:kCMPersistentTrackID_Invalid) else {throw VideoError.unavailable("配乐连续时间轴不可用")}
+            var t=CMTime.zero
+            while t<total {
+                let length=CMTimeMinimum(duration,CMTimeSubtract(total,t))
+                try continuous.insertTimeRange(CMTimeRange(start:.zero,duration:length),of:src,at:t)
+                t=CMTimeAdd(t,length)
+            }
+            var musicCursor=0
+            for scene in r.scenes {
+                let at=CMTime(value:Int64(musicCursor),timescale:Int32(r.fps))
+                let span=CMTime(value:Int64(scene.timelineFrames),timescale:Int32(r.fps))
+                musicCursor += scene.timelineFrames
+                guard !scene.muted,scene.musicGain>0 else {continue}
+                guard let track=composition.addMutableTrack(withMediaType:.audio,preferredTrackID:kCMPersistentTrackID_Invalid) else {throw VideoError.unavailable("镜头配乐轨道不可用")}
+                // Select the original global window: no per-scene restart or
+                // picture-speed scaling, and music still covers held-frame pauses.
+                try track.insertTimeRange(CMTimeRange(start:at,duration:span),of:continuous,at:at)
+                let p=AVMutableAudioMixInputParameters(track:track)
+                try Self.applyEnvelope(try AudioMixRules.musicEnvelope(scenes:[scene],fps:r.fps),to:p,at:at,headroom:headroom)
+                parameters.append(p)
+            }
+        }
         // An explicit silent AAC floor ensures a standard audio stream even for a user-authored silent lesson.
         let silence=repository.root.appendingPathComponent("cache/silence.caf"); try FileManager.default.createDirectory(at:silence.deletingLastPathComponent(),withIntermediateDirectories:true); try Self.silence(to:silence,seconds:Double(r.frames)/Double(r.fps)); defer { try? FileManager.default.removeItem(at:silence) }
-        parameters.append(try await addAudio(silence,to:composition,at:.zero,sourceStart:.zero,sourceFrames:r.frames,targetDuration:total,fps:r.fps,gain:0,preservePitch:true,preparationDirectory:preparationDirectory))
+        parameters.append(try await addAudio(silence,to:composition,at:.zero,sourceStart:.zero,sourceFrames:r.frames,targetDuration:total,fps:r.fps,gain:0,headroom:headroom,preservePitch:true,preparationDirectory:preparationDirectory))
         let mix=AVMutableAudioMix(); mix.inputParameters=parameters
         // Explicit AAC48kHz output; preset exports may silently choose 44.1kHz or change portrait dimensions.
         let reader=try AVAssetReader(asset:composition);reader.timeRange=CMTimeRange(start:.zero,duration:total)
         let videoOutput=AVAssetReaderTrackOutput(track:dest,outputSettings:nil);videoOutput.alwaysCopiesSampleData=false
-        let audioOutput=AVAssetReaderAudioMixOutput(audioTracks:composition.tracks(withMediaType:.audio),audioSettings:[AVFormatIDKey:kAudioFormatLinearPCM,AVSampleRateKey:48000,AVNumberOfChannelsKey:2,AVLinearPCMBitDepthKey:32,AVLinearPCMIsFloatKey:true,AVLinearPCMIsNonInterleaved:false]);audioOutput.audioMix=mix;audioOutput.alwaysCopiesSampleData=false
+        let audioOutput=AVAssetReaderAudioMixOutput(audioTracks:composition.tracks(withMediaType:.audio),audioSettings:[AVFormatIDKey:kAudioFormatLinearPCM,AVSampleRateKey:48000,AVNumberOfChannelsKey:2,AVLinearPCMBitDepthKey:32,AVLinearPCMIsFloatKey:true,AVLinearPCMIsBigEndianKey:false,AVLinearPCMIsNonInterleaved:false]);audioOutput.audioMix=mix
+        // AVFoundation permits modification only when the reader supplies copied data.
+        // Unity keeps the historical shared-buffer path and does not rewrite samples.
+        audioOutput.alwaysCopiesSampleData=headroom>1
         guard reader.canAdd(videoOutput),reader.canAdd(audioOutput)else{throw VideoError.unavailable("混音读取器不可用")};reader.add(videoOutput);reader.add(audioOutput)
         let writer=try AVAssetWriter(outputURL:final,fileType:.mp4)
         let descriptions=try await sourceTrack.load(.formatDescriptions)
@@ -120,7 +152,7 @@ public final class MediaRenderer: @unchecked Sendable {
             while !videoDone || !audioDone {
                 try Task.checkCancellation();var advanced=false
                 if !videoDone && videoInput.isReadyForMoreMediaData {if let sample=videoOutput.copyNextSampleBuffer(){if CMSampleBufferGetNumSamples(sample)>0{guard videoInput.append(sample)else{throw VideoError.unavailable("合成视频写入失败")};copiedFrames+=1;if copiedFrames%60==0{try progress(0.8+Double(copiedFrames)/Double(r.frames)*0.16)}}}else{videoInput.markAsFinished();videoDone=true};advanced=true}
-                if !audioDone && audioInput.isReadyForMoreMediaData {if let sample=audioOutput.copyNextSampleBuffer(){if CMSampleBufferGetNumSamples(sample)>0{guard audioInput.append(sample)else{throw VideoError.unavailable("混音写入失败")}}}else{audioInput.markAsFinished();audioDone=true};advanced=true}
+                if !audioDone && audioInput.isReadyForMoreMediaData {if let sample=audioOutput.copyNextSampleBuffer(){if CMSampleBufferGetNumSamples(sample)>0{try Self.restoreMixerPCM(sample,headroom:headroom);guard audioInput.append(sample)else{throw VideoError.unavailable("混音写入失败")}}}else{audioInput.markAsFinished();audioDone=true};advanced=true}
                 guard reader.status != .failed,writer.status != .failed else{throw VideoError.unavailable("音画合成失败")}
                 if !advanced{try await Task.sleep(nanoseconds:2_000_000)}
             }
@@ -134,16 +166,20 @@ public final class MediaRenderer: @unchecked Sendable {
         // Audio is not quantized to video frames: even a one-frame effect at 4x retains its positive duration.
         return CMTime(seconds:Double(frames)/Double(fps)/speed,preferredTimescale:60_000)
     }
-    private static func applyEnvelope(_ segments:[MusicGainSegment],to parameters:AVMutableAudioMixInputParameters,at offset:CMTime) {
+    private static func applyEnvelope(_ segments:[MusicGainSegment],to parameters:AVMutableAudioMixInputParameters,at offset:CMTime,headroom:Double) throws {
+        // A track can start well after zero. OfflineMixer primes its first samples
+        // using the earlier volume, so anchor the first requested gain at zero too.
+        // Ramps at the actual scene times still define every later gain change.
+        if let first=segments.first {parameters.setVolume(Float(try AudioMixRules.mixerVolume(first.startGain,headroom:headroom)),at:.zero)}
         for segment in segments {
             let start=CMTimeAdd(offset,CMTime(seconds:segment.startSeconds,preferredTimescale:60000))
             let end=CMTimeAdd(offset,CMTime(seconds:segment.endSeconds,preferredTimescale:60000))
             // Constant intervals must be explicit too: isolated volume points can
             // interpolate toward a later mute and lower earlier, still-audible audio.
-            parameters.setVolumeRamp(fromStartVolume:Float(segment.startGain),toEndVolume:Float(segment.endGain),timeRange:CMTimeRange(start:start,end:end))
+            parameters.setVolumeRamp(fromStartVolume:Float(try AudioMixRules.mixerVolume(segment.startGain,headroom:headroom)),toEndVolume:Float(try AudioMixRules.mixerVolume(segment.endGain,headroom:headroom)),timeRange:CMTimeRange(start:start,end:end))
         }
     }
-    private func addAudio(_ url:URL,to composition:AVMutableComposition,at:CMTime,sourceStart:CMTime,sourceFrames:Int,targetDuration:CMTime,fps:Int,gain:Float,preservePitch:Bool,preparationDirectory:URL,envelope:[MusicGainSegment]?=nil) async throws -> AVMutableAudioMixInputParameters {
+    private func addAudio(_ url:URL,to composition:AVMutableComposition,at:CMTime,sourceStart:CMTime,sourceFrames:Int,targetDuration:CMTime,fps:Int,gain:Double,headroom:Double,preservePitch:Bool,preparationDirectory:URL,envelope:[MusicGainSegment]?=nil) async throws -> AVMutableAudioMixInputParameters {
         let asset=AVURLAsset(url:url); guard let src=try await asset.loadTracks(withMediaType:.audio).first,let track=composition.addMutableTrack(withMediaType:.audio,preferredTrackID:kCMPersistentTrackID_Invalid) else { throw VideoError.invalid("声音素材没有可用音轨") }
         let available=try await asset.load(.duration); let desired=CMTime(value:Int64(sourceFrames),timescale:Int32(fps)); let duration=CMTimeMinimum(desired,CMTimeSubtract(available,sourceStart)); guard duration.seconds>0 else { throw VideoError.invalid("音轨裁切超出范围") }
         var prepared:URL?
@@ -163,8 +199,32 @@ public final class MediaRenderer: @unchecked Sendable {
             track.scaleTimeRange(CMTimeRange(start:at,duration:duration),toDuration:targetDuration)
         }
         let p=AVMutableAudioMixInputParameters(track:track); p.audioTimePitchAlgorithm=preservePitch ? .spectral : .varispeed
-        if let envelope {Self.applyEnvelope(envelope,to:p,at:at)} else {p.setVolume(gain,at:at)}
+        if let envelope {try Self.applyEnvelope(envelope,to:p,at:at,headroom:headroom)} else {p.setVolume(Float(try AudioMixRules.mixerVolume(gain,headroom:headroom)),at:.zero)}
         return p
+    }
+    /// Keep the sample buffer's timestamps, frame count and format unchanged. Its
+    /// data is writable only for the copied-reader path selected above when H > 1.
+    static func restoreMixerPCM(_ sample:CMSampleBuffer,headroom:Double)throws {
+        let frames=CMSampleBufferGetNumSamples(sample)
+        guard frames>0,frames<=4*1024*1024,
+              let description=CMSampleBufferGetFormatDescription(sample),
+              let format=CMAudioFormatDescriptionGetStreamBasicDescription(description)?.pointee,
+              format.mFormatID==kAudioFormatLinearPCM,format.mSampleRate==48000,
+              format.mChannelsPerFrame==2,format.mBitsPerChannel==32,format.mBytesPerFrame==8,
+              format.mFormatFlags & kAudioFormatFlagIsFloat != 0,
+              format.mFormatFlags & kAudioFormatFlagIsBigEndian == 0,
+              format.mFormatFlags & kAudioFormatFlagIsNonInterleaved == 0,
+              let block=CMSampleBufferGetDataBuffer(sample) else {throw VideoError.review("混音读取器未返回约定的48kHz双声道浮点PCM")}
+        let bytes=CMBlockBufferGetDataLength(block)
+        guard bytes==frames*8,bytes<=32*1024*1024 else {throw VideoError.review("混音PCM采样数与缓冲长度不一致")}
+        var values=[Float](repeating:0,count:bytes/MemoryLayout<Float>.size)
+        let readStatus=values.withUnsafeMutableBytes {CMBlockBufferCopyDataBytes(block,atOffset:0,dataLength:bytes,destination:$0.baseAddress!)}
+        guard readStatus==kCMBlockBufferNoErr else {throw VideoError.review("无法读取混音PCM采样")}
+        try AudioMixRules.restoreMixedPCM(&values,headroom:headroom)
+        if headroom>1 {
+            let writeStatus=values.withUnsafeBytes {CMBlockBufferReplaceDataBytes(with:$0.baseAddress!,blockBuffer:block,offsetIntoDestination:0,dataLength:bytes)}
+            guard writeStatus==kCMBlockBufferNoErr else {throw VideoError.review("无法恢复混音请求增益，未送入AAC编码")}
+        }
     }
     /// Avoid OfflineMixer's short, scaled LPCM EOF stall. Reinterpret the actual
     /// selected samples at N/T, drain the converter, then mix the closed file at unity rate.

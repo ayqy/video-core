@@ -134,7 +134,7 @@ jobs:
               log.unlink(missing_ok=True)
           PY
 
-      - name: Check affected speech, provider and practice rules
+      - name: Check affected speech, provider, mixing and practice rules
         shell: bash
         run: |
           python3 - <<'PY'
@@ -143,21 +143,44 @@ jobs:
           root = Path(os.environ['GITHUB_WORKSPACE'])
           scratch = Path(os.environ['RUNNER_TEMP']) / 'video-free-build'
           log = Path(os.environ['RUNNER_TEMP']) / 'video-free-rules.log'
-          minimum_methods = {'BaiduVideoRulesTests': 8, 'EditorPracticeTests': 13,
-                             'MacCommerceRulesTests': 8, 'SpeechTests': 24}
+          # Each full suite is reviewed against its exact source inventory.
+          # The import-only selection must not run installed-system TTS on CI.
+          suites = {
+              ('VideoCoreTests', 'BaiduVideoRulesTests'): (8, None),
+              ('VideoCoreTests', 'EditorPracticeTests'): (13, None),
+              ('VideoCoreTests', 'MacCommerceRulesTests'): (8, None),
+              ('VideoCoreTests', 'SpeechTests'): (24, None),
+              ('VideoCoreTests', 'AudioMixRulesTests'): (14, None),
+              ('VideoCoreTests', 'ContentServiceRulesTests'): (13, None),
+              ('VideoCoreTests', 'SpeechProjectRulesTests'): (11, None),
+              ('VideoMediaTests', 'AudioMixMediaTests'): (7, None),
+              ('VideoMediaTests', 'ScriptJobsTests'): (9, None),
+              ('VideoMediaTests', 'SpeechProjectProductionTests'): (5, (
+                  'testNormalImportedAudioAttachChecksRealBytesAndKeepsHumanReviewPending',
+                  'testImported22050AudioKeepsContainerTailAndChecksMacCommitAfterDecode')),
+          }
           method_counts = {}
-          for suite, minimum in minimum_methods.items():
-              source = (root / 'Tests/VideoCoreTests' / (suite + '.swift')).read_text()
+          expected_methods = set()
+          filters = []
+          for (target, suite), (source_count, selection) in suites.items():
+              source = (root / 'Tests' / target / (suite + '.swift')).read_text()
               methods = re.findall(r'(?m)^[ \t]*(?:@\w+(?:\([^\n)]*\))?[ \t]+)*func[ \t]+(test\w+)[ \t]*\(', source)
-              assert len(methods) == len(set(methods)) and len(methods) >= minimum, suite
-              method_counts[suite] = len(methods)
-          expected = sum(method_counts.values())
+              assert len(methods) == len(set(methods)) == source_count, (target, suite, methods)
+              selected = list(selection) if selection is not None else methods
+              assert selected and len(selected) == len(set(selected)) and set(selected) <= set(methods), suite
+              method_counts[target + '.' + suite] = len(selected)
+              expected_methods.update((target, suite, method) for method in selected)
+              filters.append('^' + re.escape(target) + r'\.' + re.escape(suite) +
+                             '/(?:' + '|'.join(re.escape(method) for method in selected) + ')$')
+          expected = len(expected_methods)
+          assert expected == sum(method_counts.values()) == 109
           print('affected_suite_methods=' + str(method_counts))
+          print('system_tts_methods=not_selected; import_only_methods=2')
           try:
               with log.open('wb') as stream:
                   result = subprocess.run(['swift', 'test', '--package-path', str(root),
                       '--scratch-path', str(scratch), '--disable-sandbox', '--jobs', '2',
-                      '-c', 'release', '--filter', '|'.join(minimum_methods)],
+                      '-c', 'release', '--filter', '|'.join(filters)],
                       stdout=stream, stderr=subprocess.STDOUT, timeout=900)
               lines = log.read_text(errors='replace').splitlines()
               errors = [line[:700] for line in lines if re.search(r'error:|fatal error:', line, re.I)]
@@ -166,7 +189,38 @@ jobs:
               for line in lines:
                   if re.search(r'Executed \d+ tests?|Test Suite .* (passed|failed)', line):
                       print(line[:700])
-              assert result.returncode == 0, 'Affected speech/provider/practice rules failed'
+              assert result.returncode == 0, 'Affected speech/provider/mixing/practice rules failed'
+              # Check actual per-method starts and passes, not a coincidentally
+              # equal summary count. Handle the Darwin and dotted XCTest names.
+              case_pattern = re.compile(
+                  r"^Test Case '(?:-\[(?:(?P<objc_target>\w+)\.)?(?P<objc_suite>\w+) "
+                  r"(?P<objc_method>test\w+)\]|(?:(?P<swift_target>\w+)\.)?"
+                  r"(?P<swift_suite>\w+)\.(?P<swift_method>test\w+))' "
+                  r"(?P<event>started|passed|failed|skipped)\b")
+              started, passed = [], []
+              for line in lines:
+                  match = case_pattern.match(line)
+                  if match is None:
+                      assert not (line.startswith("Test Case '") and
+                                  re.search(r"' (started|passed|failed|skipped)\b", line)), line[:700]
+                      continue
+                  suite = match['objc_suite'] or match['swift_suite']
+                  method = match['objc_method'] or match['swift_method']
+                  target = match['objc_target'] or match['swift_target']
+                  if target is None:
+                      candidates = {item[0] for item in expected_methods if item[1:] == (suite, method)}
+                      assert len(candidates) == 1, (suite, method)
+                      target = candidates.pop()
+                  identity = (target, suite, method)
+                  assert identity in expected_methods, ('Unexpected test executed', identity)
+                  if match['event'] == 'started':
+                      started.append(identity)
+                  elif match['event'] == 'passed':
+                      passed.append(identity)
+                  else:
+                      raise AssertionError(('Test did not pass', identity, match['event']))
+              assert len(started) == expected and set(started) == expected_methods, ('Missing/duplicate starts', sorted(expected_methods - set(started)))
+              assert len(passed) == expected and set(passed) == expected_methods, ('Missing/duplicate passes', sorted(expected_methods - set(passed)))
               counts = [int(value) for value in re.findall(r'Executed (\d+) tests?', '\n'.join(lines))]
               assert expected in counts, 'Affected rule execution did not cover all declared methods'
               print('affected_rules=passed; distinct_tests=' + str(expected))

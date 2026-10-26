@@ -71,4 +71,36 @@ final class SpeechProjectProductionTests: XCTestCase {
         do{_=try await producer.perform(changed,repository:repo,principal:"owner");XCTFail("tampered source must fail")}catch{}
         XCTAssertEqual(frozen,try Codec.digest(repo.read()))
     }
+
+    @MainActor func testImported22050AudioKeepsContainerTailAndChecksMacCommitAfterDecode() async throws {
+        let(repo,original)=try fixture();defer{try? FileManager.default.removeItem(at:repo.root)}
+        let url=repo.root.appendingPathComponent("container-boundary.wav")
+        let format=AVAudioFormat(standardFormatWithSampleRate:22050,channels:1)!
+        let buffer=AVAudioPCMBuffer(pcmFormat:format,frameCapacity:80128)!
+        buffer.frameLength=80128
+        for i in 0..<80128 {buffer.floatChannelData![0][i]=Float(sin(Double(i)*2*Double.pi*440/22050)*0.1)}
+        do {let file=try AVAudioFile(forWriting:url,settings:format.settings);try file.write(from:buffer)}
+        var asset=try await MaterialImporter.importFile(url,workspaceID:original.workspaceID,repository:repo)
+        let evidence=Evidence(workspaceID:original.workspaceID,title:"原容器跨帧测试音",source:"authored PCM, not speech-quality evidence",claim:"complete source integrity only",owner:"test",commercialAllowed:false,uploadConsent:false,verified:true,assetID:asset.id)
+        asset.evidenceID=evidence.id
+        try repo.transaction{$0.assets.append(asset);$0.evidence.append(evidence)}
+        var request=original;request.assetID=asset.id;request.plan.voiceIdentifier=nil
+        XCTAssertEqual(asset.durationFrames,110)
+        let sourceHash=Codec.hash(try Data(contentsOf:repo.assetURL(asset)))
+        let before=try Codec.digest(repo.read());var commitReached=false
+        do {
+            _=try await SpeechProjectProduction().perform(request,repository:repo,principal:"owner",authorizeChanges:{_,_,_ in
+                commitReached=true;throw VideoError.permission("editor permission denied at normal Mac commit")
+            })
+            XCTFail("the normal commit permission must still be required")
+        } catch {guard case VideoError.permission = error else {XCTFail("must finish source decode before commit denial: \(error)");return}}
+        XCTAssertTrue(commitReached);XCTAssertEqual(before,try Codec.digest(repo.read()))
+        XCTAssertTrue(try repo.read().agentReplayRecords?.isEmpty ?? true)
+        let result=try await SpeechProjectProduction().perform(request,repository:repo,principal:"owner")
+        let data=try repo.read();let current=data.projects[0].current.scenes[0]
+        XCTAssertEqual(result.object?["state"],.string("needs_review"))
+        XCTAssertEqual(current.voice?.durationFrames,110);XCTAssertEqual(current.durationFrames,110)
+        XCTAssertFalse(current.voice!.listened);XCTAssertTrue(current.captions.allSatisfy{!$0.confirmed})
+        XCTAssertEqual(sourceHash,Codec.hash(try Data(contentsOf:repo.assetURL(asset))))
+    }
 }

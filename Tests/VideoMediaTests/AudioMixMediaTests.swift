@@ -51,6 +51,43 @@ final class AudioMixMediaTests:XCTestCase {
         for i in lower..<upper {let phase=2 * .pi * frequency*Double(i)/48000;s += values[i]*sin(phase);c += values[i]*cos(phase)}
         return 2*sqrt(s*s+c*c)/Double(upper-lower)
     }
+
+    func testCopiedMixerPCMRetainsTimestampsFramesAndRejectsWrongFormat()throws {
+        func buffer(channels:UInt32=2)throws->CMSampleBuffer {
+            var format=AudioStreamBasicDescription(mSampleRate:48000,mFormatID:kAudioFormatLinearPCM,mFormatFlags:kAudioFormatFlagIsFloat | kAudioFormatFlagIsPacked,mBytesPerPacket:channels*4,mFramesPerPacket:1,mBytesPerFrame:channels*4,mChannelsPerFrame:channels,mBitsPerChannel:32,mReserved:0)
+            var description:CMAudioFormatDescription?
+            XCTAssertEqual(CMAudioFormatDescriptionCreate(allocator:kCFAllocatorDefault,asbd:&format,layoutSize:0,layout:nil,magicCookieSize:0,magicCookie:nil,extensions:nil,formatDescriptionOut:&description),noErr)
+            var block:CMBlockBuffer?
+            let values:[Float]=channels==2 ? [0.1,-0.2,0.3,-0.4]:[0.1,0.3]
+            let bytes=values.count*MemoryLayout<Float>.size
+            XCTAssertEqual(CMBlockBufferCreateWithMemoryBlock(allocator:kCFAllocatorDefault,memoryBlock:nil,blockLength:bytes,blockAllocator:kCFAllocatorDefault,customBlockSource:nil,offsetToData:0,dataLength:bytes,flags:0,blockBufferOut:&block),kCMBlockBufferNoErr)
+            let owned=try XCTUnwrap(block)
+            XCTAssertEqual(values.withUnsafeBytes{CMBlockBufferReplaceDataBytes(with:$0.baseAddress!,blockBuffer:owned,offsetIntoDestination:0,dataLength:bytes)},kCMBlockBufferNoErr)
+            var timing=CMSampleTimingInfo(duration:CMTime(value:1,timescale:48000),presentationTimeStamp:CMTime(value:37,timescale:30),decodeTimeStamp:.invalid)
+            var size=Int(channels)*4,sample:CMSampleBuffer?
+            XCTAssertEqual(CMSampleBufferCreateReady(allocator:kCFAllocatorDefault,dataBuffer:owned,formatDescription:try XCTUnwrap(description),sampleCount:2,sampleTimingEntryCount:1,sampleTimingArray:&timing,sampleSizeEntryCount:1,sampleSizeArray:&size,sampleBufferOut:&sample),noErr)
+            return try XCTUnwrap(sample)
+        }
+        func samples(_ sample:CMSampleBuffer)throws->[Float] {
+            let block=try XCTUnwrap(CMSampleBufferGetDataBuffer(sample)),bytes=CMBlockBufferGetDataLength(block)
+            var values=[Float](repeating:0,count:bytes/4)
+            XCTAssertEqual(values.withUnsafeMutableBytes{CMBlockBufferCopyDataBytes(block,atOffset:0,dataLength:bytes,destination:$0.baseAddress!)},kCMBlockBufferNoErr)
+            return values
+        }
+        let sample=try buffer(),before=try samples(sample)
+        let pts=CMSampleBufferGetPresentationTimeStamp(sample),duration=CMSampleBufferGetDuration(sample)
+        try MediaRenderer.restoreMixerPCM(sample,headroom:1)
+        XCTAssertEqual(try samples(sample).map(\.bitPattern),before.map(\.bitPattern))
+        try MediaRenderer.restoreMixerPCM(sample,headroom:2)
+        XCTAssertEqual(try samples(sample),before.map{Float(Double($0)*2)})
+        XCTAssertEqual(CMSampleBufferGetNumSamples(sample),2)
+        XCTAssertEqual(CMTimeCompare(CMSampleBufferGetPresentationTimeStamp(sample),pts),0)
+        XCTAssertEqual(CMTimeCompare(CMSampleBufferGetDuration(sample),duration),0)
+        let mono=try buffer(channels:1),monoBefore=try samples(mono)
+        XCTAssertThrowsError(try MediaRenderer.restoreMixerPCM(mono,headroom:2))
+        XCTAssertEqual(try samples(mono),monoBefore)
+    }
+
     func testActualAACDucksOnlyDuringVoiceRestoresMusicAndMutesWholeScene()async throws {
         let root=FileManager.default.temporaryDirectory.appendingPathComponent("actual-mix-rules-"+Codec.id())
         try FileManager.default.createDirectory(at:root,withIntermediateDirectories:true);defer{try? FileManager.default.removeItem(at:root)}
@@ -193,6 +230,137 @@ final class AudioMixMediaTests:XCTestCase {
         XCTAssertEqual(rendered.artifacts.count,4)
         XCTAssertEqual(revision.scenes[0].sourceStartFrame,30);XCTAssertEqual(revision.scenes[0].sourceGain,0.6)
         XCTAssertFalse(revision.review.sound);XCTAssertFalse(revision.review.complete,"校准信号和测量不能代替人工审核")
+    }
+
+    func testActualThreeTrackAACPreservesOneOnePointFiveAndTwoGainRatios()async throws {
+        let root=FileManager.default.temporaryDirectory.appendingPathComponent("three-track-gain-ratios-"+Codec.id())
+        try FileManager.default.createDirectory(at:root,withIntermediateDirectories:true)
+        defer{try? FileManager.default.removeItem(at:root)}
+        let sourceFile=root.appendingPathComponent("source.caf"),voiceFile=root.appendingPathComponent("voice.caf"),musicFile=root.appendingPathComponent("music.caf")
+        // Frequencies separate the actual decoded tracks. This synthetic fixture
+        // proves signal gain and timing, never narration quality or listening.
+        try tone(sourceFile,seconds:2,frequency:613,level:0.08)
+        try tone(voiceFile,seconds:0.5,frequency:997,level:0.08)
+        try tone(musicFile,seconds:2,frequency:400,level:0.08)
+        let sourceBytes=try Data(contentsOf:sourceFile),voiceBytes=try Data(contentsOf:voiceFile),musicBytes=try Data(contentsOf:musicFile)
+        let repo=try Repository(root:root.appendingPathComponent("workspace"))
+        let sourceTone=try repo.ingest(sourceBytes,name:"source.caf",workspaceID:"w",mediaType:"audio",durationFrames:60)
+        var base=VideoCore.Scene(title:"校准源片",body:"隔离校准",durationFrames:60);base.musicGain=1
+        var baseRevision=try Planner.create(workspaceID:"w",name:"源片",aspect:.landscape,scenes:[base]);baseRevision.musicAssetID=sourceTone.id
+        baseRevision.dependencies=try DependencyRules.freeze(revision:baseRevision,assets:[sourceTone],evidence:[])
+        try repo.transaction { db in
+            var workspace=Workspace(name:"音量比例规则",owner:"rules");workspace.id="w"
+            db.workspaces=[workspace];db.assets=[sourceTone];db.projects=[Project(workspaceID:"w",name:"源片",revision:baseRevision)]
+        }
+        let sourceResult=try await MediaRenderer().render(revision:baseRevision,repository:repo,output:root.appendingPathComponent("source-output"))
+        let sourceMovie=URL(fileURLWithPath:try XCTUnwrap(sourceResult.artifacts.first{$0.mime=="video/mp4"}).path)
+        let sourceMovieBytes=try Data(contentsOf:sourceMovie)
+        let video=try repo.ingest(sourceMovieBytes,name:"source.mp4",workspaceID:"w",mediaType:"video",durationFrames:60)
+        let voice=try repo.ingest(voiceBytes,name:"voice.caf",workspaceID:"w",mediaType:"audio",durationFrames:15)
+        let music=try repo.ingest(musicBytes,name:"music.caf",workspaceID:"w",mediaType:"audio",durationFrames:60)
+        let gains=[1.0,1.5,2.0]
+        func scene(_ gain:Double,muted:Bool=false)throws->VideoCore.Scene {
+            var scene=VideoCore.Scene(title:"三轨比例",body:"只验证声音信号",narration:"隔离信号",durationFrames:45)
+            scene.kind = .video;scene.assetID=video.id;scene.sourceStartFrame=15;scene.sourceEndFrame=60;scene.pauseFrames=15
+            scene.voiceGain=gain;scene.sourceGain=gain;scene.musicGain=gain;scene.muted=muted
+            scene.voice=VoiceTake(assetID:voice.id,textDigest:try scene.speechDigest(),durationFrames:15,method:"isolated_test_tone")
+            return scene
+        }
+        var scenes=try gains.map{try scene($0)}
+        scenes.append(try scene(2,muted:true));scenes.append(try scene(1.5))
+        var revision=try Planner.create(workspaceID:"w",name:"三轨音量比例",aspect:.landscape,scenes:scenes);revision.musicAssetID=music.id
+        let assets=[sourceTone,video,voice,music]
+        revision.dependencies=try DependencyRules.freeze(revision:revision,assets:assets,evidence:[])
+        try repo.transaction {db in db.assets=assets;db.projects.append(Project(workspaceID:"w",name:"三轨音量比例",revision:revision))}
+        let before=try Codec.digest(repo.read())
+        let rendered=try await MediaRenderer().render(revision:revision,repository:repo,output:root.appendingPathComponent("output"))
+        let movie=URL(fileURLWithPath:try XCTUnwrap(rendered.artifacts.first{$0.mime=="video/mp4"}).path)
+        let inspection=try await MediaInspection.inspect(movie)
+        XCTAssertEqual(inspection.audioCodec,"aac ");XCTAssertEqual(inspection.sampleRate,48000)
+        XCTAssertEqual(inspection.duration,10,accuracy:1.0/48000)
+        let samples=try await decodedMono(movie)
+        XCTAssertEqual(samples.count,480000)
+        var voiceLevels:[Double]=[],sourceLevels:[Double]=[],musicLevels:[Double]=[]
+        for index in gains.indices {
+            let start=Double(index)*2
+            let voiceLevel=try amplitude(samples,from:start+0.15,to:start+0.35,frequency:997)
+            let sourceDuck=try amplitude(samples,from:start+0.15,to:start+0.35,frequency:613)
+            let sourceLevel=try amplitude(samples,from:start+0.9,to:start+1.3,frequency:613)
+            let musicDuck=try amplitude(samples,from:start+0.15,to:start+0.35,frequency:400)
+            let musicLevel=try amplitude(samples,from:start+0.9,to:start+1.3,frequency:400)
+            XCTAssertGreaterThan(voiceLevel,0.03);XCTAssertGreaterThan(sourceLevel,0.03);XCTAssertGreaterThan(musicLevel,0.03)
+            XCTAssertEqual(sourceDuck/sourceLevel,0.3,accuracy:0.03)
+            XCTAssertEqual(musicDuck/musicLevel,0.3,accuracy:0.03)
+            XCTAssertGreaterThan(try amplitude(samples,from:start+0.39,to:start+0.47,frequency:997),voiceLevel*0.9,"恢复增益不能截断最后80毫秒")
+            XCTAssertLessThan(try amplitude(samples,from:start+1.6,to:start+1.9,frequency:613),0.001,"原片不能延入停顿")
+            XCTAssertLessThan(try amplitude(samples,from:start+1.6,to:start+1.9,frequency:997),0.001)
+            XCTAssertEqual(try amplitude(samples,from:start+1.6,to:start+1.9,frequency:400)/musicLevel,1,accuracy:0.03)
+            voiceLevels.append(voiceLevel);sourceLevels.append(sourceLevel);musicLevels.append(musicLevel)
+        }
+        for levels in [voiceLevels,sourceLevels,musicLevels] {
+            XCTAssertEqual(levels[1]/levels[0],1.5,accuracy:0.05)
+            XCTAssertEqual(levels[2]/levels[0],2,accuracy:0.05,"0到2工程请求必须体现为实际幅度，不能被1钳住")
+        }
+        for frequency in [400.0,613,997] {
+            XCTAssertLessThan(try amplitude(samples,from:6.2,to:7.8,frequency:frequency),0.001,"相邻静音镜头不能留下前景声音")
+        }
+        let resumedMusic=try amplitude(samples,from:8.9,to:9.3,frequency:400)
+        let resumedSource=try amplitude(samples,from:8.9,to:9.3,frequency:613)
+        XCTAssertEqual(try amplitude(samples,from:8.15,to:8.35,frequency:400)/resumedMusic,0.3,accuracy:0.03,"静音后新景必须立即使用明确duck增益")
+        XCTAssertEqual(try amplitude(samples,from:8.15,to:8.35,frequency:613)/resumedSource,0.3,accuracy:0.03)
+        XCTAssertEqual(resumedMusic/musicLevels[0],1.5,accuracy:0.05)
+        XCTAssertEqual(try amplitude(samples,from:8.15,to:8.35,frequency:997)/voiceLevels[0],1.5,accuracy:0.05)
+        XCTAssertEqual(try Codec.digest(repo.read()),before)
+        for (asset,bytes) in [(sourceTone,sourceBytes),(video,sourceMovieBytes),(voice,voiceBytes),(music,musicBytes)] {
+            XCTAssertEqual(try Data(contentsOf:repo.assetURL(asset)),bytes)
+        }
+        XCTAssertEqual(revision.scenes.map(\.voiceGain),gains+[2,1.5])
+        XCTAssertFalse(revision.review.sound);XCTAssertFalse(revision.review.complete)
+    }
+
+    func testActualBoostOverloadAndCancellationCleanPreparedAudioWithoutChangingSources()async throws {
+        let root=FileManager.default.temporaryDirectory.appendingPathComponent("mix-boost-failure-"+Codec.id())
+        try FileManager.default.createDirectory(at:root,withIntermediateDirectories:true)
+        defer{try? FileManager.default.removeItem(at:root)}
+        for overload in [true,false] {
+            let name=overload ? "overload":"cancelled"
+            let source=root.appendingPathComponent(name+".caf")
+            try tone(source,seconds:overload ? 1:2,frequency:997,level:overload ? 0.9:0.12)
+            let bytes=try Data(contentsOf:source),repo=try Repository(root:root.appendingPathComponent(name))
+            let voiceFrames=overload ? 30:60
+            let asset=try repo.ingest(bytes,name:name+".caf",workspaceID:"w",mediaType:"audio",durationFrames:voiceFrames)
+            var scene=VideoCore.Scene(title:"过载与取消边界",body:"隔离信号，不是作品",narration:"校准",durationFrames:voiceFrames)
+            scene.voiceGain=2;scene.preservePitch=false
+            if !overload {scene.speed=0.5;scene.pauseFrames=30}
+            scene.voice=VoiceTake(assetID:asset.id,textDigest:try scene.speechDigest(),durationFrames:voiceFrames,method:"isolated_test_tone")
+            var revision=try Planner.create(workspaceID:"w",name:name,aspect:.landscape,scenes:[scene])
+            revision.dependencies=try DependencyRules.freeze(revision:revision,assets:[asset],evidence:[])
+            try repo.transaction {db in
+                var workspace=Workspace(name:name,owner:"rules");workspace.id="w"
+                db.workspaces=[workspace];db.assets=[asset];db.projects=[Project(workspaceID:"w",name:name,revision:revision)]
+            }
+            let before=try Codec.digest(repo.read()),output=repo.root.appendingPathComponent("output")
+            do {
+                _=try await MediaRenderer().render(revision:revision,repository:repo,output:output) { value in
+                    if !overload && value>=0.8 {throw CancellationError()}
+                }
+                XCTFail(overload ? "真实满幅过载必须在编码前拒绝":"混音阶段取消必须退出")
+            } catch {
+                if overload {
+                    guard case VideoError.review(let message)=error else {XCTFail("应由实际混合PCM过载门拒绝：\(error)");continue}
+                    XCTAssertTrue(message.contains("AAC编码前达到满幅过载"),message)
+                } else {XCTAssertTrue(error is CancellationError,"实际取消不应伪装为编码成功：\(error)")}
+            }
+            XCTAssertFalse(FileManager.default.fileExists(atPath:output.appendingPathComponent("video.mp4").path))
+            XCTAssertFalse(FileManager.default.fileExists(atPath:output.appendingPathComponent("working.mp4").path))
+            let cache=repo.root.appendingPathComponent("cache")
+            let remaining=try FileManager.default.contentsOfDirectory(at:cache,includingPropertiesForKeys:nil)
+            XCTAssertFalse(remaining.contains{$0.lastPathComponent.hasPrefix("audio-preparation-") || $0.lastPathComponent=="silence.caf"})
+            XCTAssertEqual(try Codec.digest(repo.read()),before)
+            XCTAssertEqual(try Data(contentsOf:repo.assetURL(asset)),bytes)
+            XCTAssertEqual(try Data(contentsOf:source),bytes)
+            XCTAssertFalse(revision.review.sound);XCTAssertFalse(revision.review.complete)
+        }
     }
 
     func testActual44100MonoAndStereoSlowPCMRetainsRoundedVoiceTailAndSilence()async throws {

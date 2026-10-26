@@ -23,29 +23,46 @@ public enum SecureCredentials {
 public enum ProviderClient {
     /// Only a returned but malformed response may be repaired, and only within an explicitly frozen two-attempt quote.
     /// Transport uncertainty and HTTP failures never cause another paid POST.
-    public static func script(profile:ProviderProfile,product:VideoCore.Product,evidence:[Evidence],brief:String,requestKey:String?=nil,quote:Quote?=nil,onAttempt:(@Sendable (ProviderAttempt) async throws -> Void)?=nil) async throws -> String {
-        try await execute(profile:profile,requestKey:requestKey,quote:quote,onAttempt:onAttempt){previous in try ProviderRules.body(profile:profile,product:product,evidence:evidence,brief:brief,previous:previous)}
+    public static func script(profile:ProviderProfile,product:VideoCore.Product,evidence:[Evidence],brief:String,requestKey:String?=nil,quote:Quote?=nil,deadline:Date?=nil,onAttempt:(@Sendable (ProviderAttempt) async throws -> Void)?=nil) async throws -> String {
+        try await execute(profile:profile,requestKey:requestKey,quote:quote,deadline:deadline,onAttempt:onAttempt){previous in try ProviderRules.body(profile:profile,product:product,evidence:evidence,brief:brief,previous:previous)}
     }
-    public static func script(profile:ProviderProfile,revision:Revision,evidence:[Evidence],brief:String,requestKey:String?=nil,quote:Quote?=nil,onAttempt:(@Sendable (ProviderAttempt) async throws -> Void)?=nil) async throws -> String {
-        try await execute(profile:profile,requestKey:requestKey,quote:quote,onAttempt:onAttempt){previous in try ProviderRules.body(profile:profile,revision:revision,evidence:evidence,brief:brief,previous:previous)}
+    public static func script(profile:ProviderProfile,revision:Revision,evidence:[Evidence],brief:String,requestKey:String?=nil,quote:Quote?=nil,deadline:Date?=nil,onAttempt:(@Sendable (ProviderAttempt) async throws -> Void)?=nil) async throws -> String {
+        try await execute(profile:profile,requestKey:requestKey,quote:quote,deadline:deadline,onAttempt:onAttempt){previous in try ProviderRules.body(profile:profile,revision:revision,evidence:evidence,brief:brief,previous:previous)}
     }
-    private static func execute(profile:ProviderProfile,requestKey:String?,quote:Quote?,onAttempt:(@Sendable (ProviderAttempt) async throws -> Void)?,makeBody:(String?)throws->Data) async throws -> String {
+    private static func execute(profile:ProviderProfile,requestKey:String?,quote:Quote?,deadline suppliedDeadline:Date?,onAttempt:(@Sendable (ProviderAttempt) async throws -> Void)?,makeBody:(String?)throws->Data) async throws -> String {
+        let started=Date(),allowed=ScriptJobRules.executionAttempts(profile:profile,quote:quote,now:started)
+        let deadline=min(suppliedDeadline ?? .distantFuture,ScriptJobRules.executionDeadline(profile:profile,quote:quote,now:started))
+        func checkDeadline()throws {
+            try Task.checkCancellation()
+            guard deadline.timeIntervalSince1970.isFinite,Date()<deadline else {throw VideoError.unavailable("脚本请求已超过明确执行期限；保留原任务与费用，不继续付费或保存晚到结果")}
+        }
+        try checkDeadline()
         let initial=try makeBody(nil)
         let url=URL(string:profile.endpoint)!,credential=try SecureCredentials.read(profile.keyReference)
         let originalKey=requestKey ?? Codec.id()
-        let allowed=ProviderRules.mayRepair(profile:profile,quote:quote) ? 2:1
         let config=URLSessionConfiguration.ephemeral;config.httpShouldSetCookies=false;config.httpCookieStorage=nil;config.urlCache=nil
+        config.timeoutIntervalForRequest=ScriptJobRules.requestTimeoutSeconds
+        config.timeoutIntervalForResource=ScriptJobRules.requestTimeoutSeconds
         let session=URLSession(configuration:config,delegate:SameOriginGuard(origin:url),delegateQueue:nil);defer{session.invalidateAndCancel()}
+        let timer=Task {
+            let remaining=max(0,deadline.timeIntervalSinceNow)
+            do{try await Task.sleep(nanoseconds:UInt64(remaining * 1_000_000_000))}catch{return}
+            session.invalidateAndCancel()
+        }
+        defer{timer.cancel()}
         var previous:String?
         for number in 1...allowed {
+            try checkDeadline()
             let body=number==1 ? initial:try makeBody(previous)
             if number>1 {guard ProviderRules.mayRepair(profile:profile,quote:quote) else{throw VideoError.review("修复前报价已失效；已收到的结果与费用保留待核")}}
             var receipt=ProviderAttempt(id:originalKey+"-attempt-\(number)",number:number,inputDigest:Codec.hash(body),capabilityVersion:profile.capabilities?.version)
             try await onAttempt?(receipt)
-            var request=URLRequest(url:url,timeoutInterval:60);request.httpMethod="POST";request.setValue("Bearer "+credential,forHTTPHeaderField:"Authorization");request.setValue("application/json",forHTTPHeaderField:"Content-Type");request.httpBody=body
+            try checkDeadline()
+            var request=URLRequest(url:url,timeoutInterval:min(ScriptJobRules.requestTimeoutSeconds,deadline.timeIntervalSinceNow));request.httpMethod="POST";request.setValue("Bearer "+credential,forHTTPHeaderField:"Authorization");request.setValue("application/json",forHTTPHeaderField:"Content-Type");request.httpBody=body
             if profile.idempotency {request.setValue(receipt.id,forHTTPHeaderField:"Idempotency-Key")}
             let data:Data,response:URLResponse
-            do{(data,response)=try await session.data(for:request)}catch{throw VideoError.unavailable("远端响应不确定，可能已消耗；先查询原任务或对账，不自动重交")}
+            do{(data,response)=try await session.data(for:request)}catch{try Task.checkCancellation();throw VideoError.unavailable("远端响应不确定，可能已消耗；先查询原任务或对账，不自动重交")}
+            try checkDeadline()
             guard let http=response as? HTTPURLResponse,(200..<300).contains(http.statusCode),data.count<=2*1024*1024 else{throw VideoError.unavailable("模型未返回有效响应，保留已占用预算待对账；不自动重交")}
             receipt.respondedAt=Date()
             let result=(try? JSONSerialization.jsonObject(with:data)) as? [String:Any]
@@ -53,6 +70,7 @@ public enum ProviderClient {
             if let n=usage?["prompt_tokens"] as? Int,(0...100000000).contains(n) {receipt.inputTokens=n}
             if let n=usage?["completion_tokens"] as? Int,(0...100000000).contains(n) {receipt.outputTokens=n}
             try await onAttempt?(receipt)
+            try checkDeadline()
             let first=(result?["choices"] as? [[String:Any]])?.first
             let message=first?["message"] as? [String:Any]
             let text=message?["content"] as? String ?? ""

@@ -54,11 +54,99 @@ final class ContentServiceRulesTests:XCTestCase {
     func testUnknownTransportAndCancelDoNotEraseSpendOrEnableRetry()throws {
         var db=try database();let p=db.projects[0],profile=db.providers[0],q=try quote(db)
         let first=try ScriptJobRules.prepare(database:&db,workspaceID:"w",projectID:p.id,profile:profile,evidence:[],brief:"按真实材料解释",quote:q,requestKey:"lost-response",principal:"owner").job
-        let unknown=ScriptJobRules.interrupted(first)
+        let unknown=ScriptJobRules.interrupted(first,executionToken:first.lease?.token)
         XCTAssertEqual(unknown.state,.unknownRemote);XCTAssertEqual(unknown.exposure.amount,3);XCTAssertTrue(unknown.billingUnknown)
         let cancelled=JobRules.cancel(first)
         XCTAssertEqual(cancelled.state,.cancelRequested);XCTAssertEqual(cancelled.exposure.amount,3);XCTAssertTrue(cancelled.billingUnknown)
         XCTAssertThrowsError(try ScriptJobRules.record(first.providerAttempts![0],in:cancelled))
+    }
+    func testSecondRepositoryOpeningKeepsActiveScriptAndAcceptsOriginalResponse()throws {
+        let root=FileManager.default.temporaryDirectory.appendingPathComponent(Codec.id(),isDirectory:true)
+        defer{try? FileManager.default.removeItem(at:root)}
+        let first=try Repository(root:root),initial=try database(),now=Date(),p=initial.projects[0],profile=initial.providers[0],q=try quote(initial)
+        try first.transaction{$0=initial}
+        let prepared=try first.transaction{try ScriptJobRules.prepare(database:&$0,workspaceID:"w",projectID:p.id,profile:profile,evidence:[],brief:"按真实材料解释",quote:q,requestKey:"live-original",principal:"owner",now:now)}.job
+        let second=try Repository(root:root)
+        try second.transaction{db in for i in db.jobs.indices{db.jobs[i]=JobOperations.recoverExpired(db.jobs[i],now:now.addingTimeInterval(1))}}
+        var receipt=try XCTUnwrap(prepared.providerAttempts?.first);receipt.respondedAt=now.addingTimeInterval(2)
+        try first.transaction{db in db.jobs[0]=try ScriptJobRules.record(receipt,in:db.jobs[0],executionToken:try XCTUnwrap(prepared.lease).token,now:now.addingTimeInterval(2))}
+        let actual=try second.read().jobs
+        XCTAssertEqual(actual.count,1);XCTAssertEqual(actual[0].id,prepared.id);XCTAssertEqual(actual[0].requestKey,"live-original")
+        XCTAssertEqual(actual[0].state,.running)
+        // The repository's ISO-8601 codec persists whole seconds. Compare the
+        // complete persisted representations, including the lease identity,
+        // rather than comparing unpersisted subsecond Date values.
+        XCTAssertEqual(try Codec.data(actual[0].providerAttempts?.first),try Codec.data(Optional(receipt)))
+        XCTAssertEqual(try Codec.data(actual[0].lease),try Codec.data(prepared.lease));XCTAssertEqual(actual[0].exposure.amount,3)
+    }
+    func testScriptLeaseUsesSameFiniteRequestBudgetAndRepairDoesNotRenewIt()throws {
+        var db=try database();db.providers[0].capabilities?.repairLimit=1
+        let now=Date(timeIntervalSince1970:Date().timeIntervalSince1970.rounded(.down)),profile=db.providers[0],p=db.projects[0]
+        func budgeted(_ attempts:Int)throws->Quote{
+            try EstimateBreakdown(version:"official",specification:ScriptJobRules.specification(profile:profile,revision:p.current,evidence:[],brief:"按真实材料解释"),source:"已核实官方现金单价",validFrom:.distantPast,expiresAt:now.addingTimeInterval(3600),lines:[RateLine(label:"最大输入输出",quantity:1,unit:"次",price:Money(3),attempts:attempts)],excluded:[]).quote(project:p,provider:profile.id,confirmed:true,now:now)
+        }
+        XCTAssertEqual(ScriptJobRules.executionDeadline(profile:profile,quote:try budgeted(1),now:now).timeIntervalSince(now),60)
+        let fractionalNow=now.addingTimeInterval(0.75)
+        let singleDeadline=ScriptJobRules.executionDeadline(profile:profile,quote:try budgeted(1),now:fractionalNow)
+        XCTAssertEqual(singleDeadline,now.addingTimeInterval(60))
+        XCTAssertLessThanOrEqual(singleDeadline.timeIntervalSince(fractionalNow),60)
+        let q=try budgeted(2),prepared=try ScriptJobRules.prepare(database:&db,workspaceID:"w",projectID:p.id,profile:profile,evidence:[],brief:"按真实材料解释",quote:q,requestKey:"one-repair",principal:"owner",now:fractionalNow).job
+        let lease=try XCTUnwrap(prepared.lease)
+        XCTAssertEqual(lease.expiresAt.timeIntervalSince(now),120)
+        XCTAssertLessThanOrEqual(lease.expiresAt.timeIntervalSince(fractionalNow),120)
+        let root=FileManager.default.temporaryDirectory.appendingPathComponent(Codec.id(),isDirectory:true)
+        defer{try? FileManager.default.removeItem(at:root)}
+        let repository=try Repository(root:root)
+        try repository.transaction{$0=db}
+        XCTAssertEqual(try repository.read().jobs[0].lease?.expiresAt,lease.expiresAt)
+        XCTAssertEqual(JobOperations.recoverExpired(prepared,now:lease.expiresAt.addingTimeInterval(-0.001)).state,.running)
+        let second=ProviderAttempt(id:prepared.requestKey+"-attempt-2",number:2,inputDigest:String(repeating:"b",count:64),capabilityVersion:profile.capabilities?.version,startedAt:now.addingTimeInterval(61))
+        let recorded=try ScriptJobRules.record(second,in:prepared,executionToken:lease.token,now:now.addingTimeInterval(61))
+        XCTAssertEqual(recorded.lease?.expiresAt,lease.expiresAt)
+        let expired=JobOperations.recoverExpired(recorded,now:lease.expiresAt)
+        XCTAssertEqual(expired.state,.unknownRemote);XCTAssertNil(expired.lease);XCTAssertEqual(expired.id,prepared.id);XCTAssertEqual(expired.exposure.amount,6)
+        XCTAssertThrowsError(try ScriptJobRules.record(second,in:recorded,executionToken:lease.token,now:lease.expiresAt))
+        XCTAssertThrowsError(try ScriptJobRules.record(second,in:expired,executionToken:lease.token,now:lease.expiresAt))
+    }
+    func testScriptCallbackRejectsWrongExecutionOwnerTokenAndRemovedLease()throws {
+        var db=try database();let profile=db.providers[0],p=db.projects[0],q=try quote(db)
+        let job=try ScriptJobRules.prepare(database:&db,workspaceID:"w",projectID:p.id,profile:profile,evidence:[],brief:"按真实材料解释",quote:q,requestKey:"bound-owner",principal:"owner").job
+        let receipt=try XCTUnwrap(job.providerAttempts?.first),token=try XCTUnwrap(job.lease).token
+        XCTAssertThrowsError(try ScriptJobRules.record(receipt,in:job))
+        XCTAssertThrowsError(try ScriptJobRules.record(receipt,in:job,executionToken:"another-token"))
+        var other=job;other.lease?.owner="other-owner"
+        XCTAssertThrowsError(try ScriptJobRules.record(receipt,in:other,executionToken:token))
+        XCTAssertEqual(try Codec.digest(ScriptJobRules.interrupted(other,executionToken:token)),try Codec.digest(other))
+        other=job;other.lease=nil
+        XCTAssertThrowsError(try ScriptJobRules.record(receipt,in:other,executionToken:token))
+        XCTAssertEqual(try Codec.digest(ScriptJobRules.interrupted(job,executionToken:"another-token")),try Codec.digest(job))
+    }
+    func testScriptInterruptionReleasesOnlyItsOwnLeaseAndKeepsOriginalSpend()throws {
+        var db=try database();let profile=db.providers[0],p=db.projects[0],q=try quote(db)
+        let job=try ScriptJobRules.prepare(database:&db,workspaceID:"w",projectID:p.id,profile:profile,evidence:[],brief:"按真实材料解释",quote:q,requestKey:"unknown-original",principal:"owner").job
+        let token=try XCTUnwrap(job.lease).token
+        let unknown=ScriptJobRules.interrupted(job,executionToken:token)
+        XCTAssertEqual(unknown.state,.unknownRemote);XCTAssertNil(unknown.lease);XCTAssertEqual(unknown.exposure.amount,3)
+        var receipt=try XCTUnwrap(job.providerAttempts?.first);receipt.respondedAt=Date()
+        let responded=try ScriptJobRules.record(receipt,in:job,executionToken:token)
+        let failedStructure=ScriptJobRules.interrupted(responded,executionToken:token)
+        XCTAssertEqual(failedStructure.state,.billingPending);XCTAssertTrue(failedStructure.billingUnknown);XCTAssertNil(failedStructure.lease)
+        XCTAssertEqual(failedStructure.id,job.id);XCTAssertEqual(failedStructure.quote.id,job.quote.id);XCTAssertTrue(failedStructure.artifacts.isEmpty)
+    }
+    func testCompletingCandidateRequiresOriginalLiveLeaseAndKeepsReviewPending()throws {
+        var db=try database();let profile=db.providers[0],p=db.projects[0],q=try quote(db)
+        let job=try ScriptJobRules.prepare(database:&db,workspaceID:"w",projectID:p.id,profile:profile,evidence:[],brief:"按真实材料解释",quote:q,requestKey:"candidate-original",principal:"owner").job
+        let token=try XCTUnwrap(job.lease).token
+        let artifact=Artifact(path:"/draft.txt",mime:"text/plain",bytes:9,sha256:String(repeating:"a",count:64),revision:job.revisionID)
+        let result=try ScriptJobRules.completingDraft(job,artifact:artifact,executionToken:token)
+        XCTAssertEqual(result.state,.billingPending);XCTAssertNil(result.lease);XCTAssertTrue(result.billingUnknown);XCTAssertNil(result.actual)
+        XCTAssertEqual(result.id,job.id);XCTAssertEqual(result.requestKey,job.requestKey);XCTAssertEqual(result.artifacts.count,1)
+        XCTAssertThrowsError(try ScriptJobRules.completingDraft(job,artifact:artifact,executionToken:"other"))
+        XCTAssertThrowsError(try ScriptJobRules.completingDraft(JobRules.cancel(job),artifact:artifact,executionToken:token))
+        XCTAssertThrowsError(try ScriptJobRules.completingDraft(result,artifact:artifact,executionToken:token))
+        XCTAssertThrowsError(try ScriptJobRules.completingDraft(job,artifact:artifact,executionToken:token,now:try XCTUnwrap(job.lease).expiresAt))
+        var bad=artifact;bad.revision="other";XCTAssertThrowsError(try ScriptJobRules.completingDraft(job,artifact:bad,executionToken:token))
+        bad=artifact;bad.bytes=120001;XCTAssertThrowsError(try ScriptJobRules.completingDraft(job,artifact:bad,executionToken:token))
     }
     func testBudgetBoundBeforePaidIntentAndMonthlyUnknownReservation()throws {
         var db=try database();db.budget=BudgetPolicy(project:Money(2),month:Money(200))
