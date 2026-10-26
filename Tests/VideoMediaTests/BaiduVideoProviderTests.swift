@@ -19,6 +19,15 @@ final class BaiduVideoProviderTests:XCTestCase {
         }
         return(repository,prepared.job,profile,asset,try XCTUnwrap(prepared.permit))
     }
+    private func acceptedFixture()throws->(Repository,Job,ProviderProfile,Asset) {
+        let(repository,original,profile,asset)=try fixture()
+        let accepted=try repository.transaction{db->Job in
+            db.jobs[0]=try BaiduVideoRules.applyCreated(.accepted("1717153286267015037"),to:db.jobs[0])
+            return db.jobs[0]
+        }
+        XCTAssertEqual(accepted.id,original.id)
+        return(repository,accepted,profile,asset)
+    }
     func testBaiduAcceptedReplyUsesLiveBillingAndPreservesOriginalSource()throws {
         let(repository,original,profile,asset)=try fixture();defer{try? FileManager.default.removeItem(at:repository.root)}
         let bytes=try Data(contentsOf:repository.assetURL(asset))
@@ -194,5 +203,76 @@ final class BaiduVideoProviderTests:XCTestCase {
             XCTAssertThrowsError(try BaiduVideoProvider.handleSubmissionFailure(repository:repository,original:original,profile:profile,principal:"owner",permit:permit,wasCancelled:true))
             XCTAssertEqual(try Codec.digest(repository.read()),before);XCTAssertEqual(try Data(contentsOf:repository.assetURL(asset)),bytes)
         }
+    }
+    func testCommonBaiduQueryKeepsFullUsageAndLiveCashLedgerWithoutCollectingAssets()throws {
+        let(repository,original,profile,asset)=try acceptedFixture();defer{try? FileManager.default.removeItem(at:repository.root)}
+        try repository.transaction{db in
+            db.jobs[0]=try JobOperations.reconcile(db.jobs[0],record:BillingRecord(id:"query-rule-charge",kind:.charge,money:Money(2),source:"隔离回包规则账单，不是供应商交易"))
+            db.jobs[0]=try JobOperations.reconcile(db.jobs[0],record:BillingRecord(id:"query-rule-refund",kind:.refundRequested,money:Money(1),source:"隔离回包规则申请"))
+        }
+        // Parsed official-contract bytes only; no network, credential or paid request.
+        let response=try BaiduVideoRules.queryResponse(Data("{\"error_code\":0,\"data\":{\"statusCode\":\"1\",\"progress\":1,\"videoAddr\":\"https://cdn.example.com/result.mp4\",\"points\":12.25,\"basicDuration\":61250,\"digitalHumanDuration\":0}}".utf8))
+        let before=try repository.read(),bytes=try Data(contentsOf:repository.assetURL(asset)),ledger=try Codec.digest(before.jobs[0].billing)
+        let changed=try RemoteJobs.acceptBaiduQuery(response,original:original,profile:profile,repository:repository,principal:"owner",command:"jobs query",ownerOnly:true)
+        XCTAssertEqual(changed.state,.billingPending);XCTAssertEqual(changed.videoGeneration?.points,Decimal(string:"12.25"));XCTAssertEqual(changed.videoGeneration?.basicDurationMilliseconds,61250);XCTAssertEqual(changed.videoGeneration?.digitalHumanDurationMilliseconds,0)
+        XCTAssertNotNil(changed.videoGeneration?.checkedAt);XCTAssertEqual(changed.videoGeneration?.checkedAt,changed.remoteCheckedAt);XCTAssertEqual(changed.actual,Money(2));XCTAssertEqual(changed.refundPending,Money(1));XCTAssertEqual(try Codec.digest(changed.billing),ledger)
+        XCTAssertEqual(changed.id,original.id);XCTAssertEqual(changed.remoteID,original.remoteID);XCTAssertEqual(changed.requestKey,original.requestKey);XCTAssertEqual(try Codec.digest(changed.quote),try Codec.digest(original.quote));XCTAssertTrue(changed.artifacts.isEmpty);XCTAssertNil(changed.outputAssetIDs)
+        let after=try repository.read();var expected=before;expected.jobs[0]=changed;expected.generation=after.generation
+        XCTAssertEqual(after.generation,before.generation+1);XCTAssertEqual(try Codec.digest(after),try Codec.digest(expected));XCTAssertEqual(try Data(contentsOf:repository.assetURL(asset)),bytes)
+    }
+    func testCommonBaiduQueryKeepsOmittedUsageAndMarksExpiredReceiptFailed()throws {
+        let(repository,original,profile,asset)=try acceptedFixture();defer{try? FileManager.default.removeItem(at:repository.root)}
+        let first=try RemoteJobs.acceptBaiduQuery(BaiduQueryResponse(state:.running,progress:0.4,points:Decimal(string:"7.5"),basicDurationMilliseconds:12345,digitalHumanDurationMilliseconds:42),original:original,profile:profile,repository:repository,principal:"owner",command:"worker run")
+        XCTAssertEqual(first.state,.running)
+        let changed=try RemoteJobs.acceptBaiduQuery(BaiduQueryResponse(state:.expired),original:original,profile:profile,repository:repository,principal:"owner",command:"worker run")
+        XCTAssertEqual(changed.state,.failed);XCTAssertEqual(changed.videoGeneration?.phase,.failed);XCTAssertEqual(changed.videoGeneration?.points,Decimal(string:"7.5"));XCTAssertEqual(changed.videoGeneration?.basicDurationMilliseconds,12345);XCTAssertEqual(changed.videoGeneration?.digitalHumanDurationMilliseconds,42)
+        XCTAssertNotNil(changed.videoGeneration?.checkedAt);XCTAssertEqual(changed.videoGeneration?.checkedAt,changed.remoteCheckedAt);XCTAssertTrue(changed.billingUnknown);XCTAssertNil(changed.actual);XCTAssertEqual(changed.exposure,original.quote.upper)
+        XCTAssertEqual(changed.remoteID,original.remoteID);XCTAssertEqual(changed.requestKey,original.requestKey);XCTAssertEqual(try repository.read().assets.map(\.id),[asset.id])
+    }
+    func testCommonBaiduQueryRejectsRevokedAuthorityAndChangedOriginalWithoutWriting()throws {
+        let mutations:[(inout Database)->Void]=[
+            {$0.workspaces[0].owner="replacement-owner"},{$0.providers[0].keyReference="replacement-reference"},
+            {$0.jobs[0].remoteID="1717153286267015038"},{$0.jobs[0].requestKey="replacement-request"},
+            {$0.jobs[0].quote.upper=Money(1)},{$0.jobs[0].workspaceID="other-workspace"},
+            {$0.projects[0].revisions[0].scenes[0].body="changed-original-content"}
+        ]
+        for mutation in mutations {
+            let(repository,original,profile,asset)=try acceptedFixture();defer{try? FileManager.default.removeItem(at:repository.root)}
+            try repository.transaction{mutation(&$0)}
+            let before=try Codec.digest(repository.read()),bytes=try Data(contentsOf:repository.assetURL(asset))
+            for command in ["jobs query","worker run"] {
+                XCTAssertThrowsError(try RemoteJobs.acceptBaiduQuery(BaiduQueryResponse(state:.running,progress:0.7,points:99),original:original,profile:profile,repository:repository,principal:"owner",command:command))
+                XCTAssertEqual(try Codec.digest(repository.read()),before)
+            }
+            XCTAssertEqual(try Data(contentsOf:repository.assetURL(asset)),bytes)
+        }
+    }
+    func testCommonBaiduQueryRetainsScopedDTOAndMacOwnerOnlyWorkerPermissions()throws {
+        let(repository,original,profile,_)=try acceptedFixture();defer{try? FileManager.default.removeItem(at:repository.root)}
+        try repository.transaction{$0.workspaces[0].grants=[Grant(principal:"editor",role:.collaborator,projectIDs:[original.projectID],revisionIDs:[original.revisionID],expiresAt:Date().addingTimeInterval(600))]}
+        let response=BaiduQueryResponse(state:.running,progress:0.6,points:12,basicDurationMilliseconds:5000)
+        _ = try RemoteJobs.acceptBaiduQuery(response,original:original,profile:profile,repository:repository,principal:"editor",command:"jobs query")
+        let database=try repository.read(),before=try Codec.digest(database)
+        let restricted=try AgentJobAccess.status(jobID:original.id,workspaceID:original.workspaceID,database:database,principal:"editor"),value=try restricted.value()
+        guard let object=value.object else{return XCTFail("missing scoped job object")}
+        XCTAssertEqual(Set(object.keys),Set(["id","projectID","revisionID","state","progress","artifacts"]))
+        let raw=String(decoding:try Codec.data(value),as:UTF8.self)
+        for field in ["points","basicDurationMilliseconds","digitalHumanDurationMilliseconds","videoGeneration","remoteID","requestKey","quote","actual","refundPending"]{XCTAssertFalse(raw.contains(field))}
+        XCTAssertThrowsError(try RemoteJobs.acceptBaiduQuery(response,original:original,profile:profile,repository:repository,principal:"editor",command:"jobs query",ownerOnly:true))
+        XCTAssertThrowsError(try RemoteJobs.acceptBaiduQuery(response,original:original,profile:profile,repository:repository,principal:"editor",command:"worker run"))
+        XCTAssertEqual(try Codec.digest(repository.read()),before)
+        let worker=try RemoteJobs.acceptBaiduQuery(response,original:original,profile:profile,repository:repository,principal:"owner",command:"worker run")
+        XCTAssertEqual(worker.videoGeneration?.points,12);XCTAssertEqual(worker.remoteID,original.remoteID)
+        try repository.transaction{$0.workspaces[0].grants[0].revoked=true}
+        let revoked=try Codec.digest(repository.read())
+        XCTAssertThrowsError(try RemoteJobs.acceptBaiduQuery(response,original:original,profile:profile,repository:repository,principal:"editor",command:"jobs query"))
+        XCTAssertEqual(try Codec.digest(repository.read()),revoked)
+    }
+    func testCommonBaiduQueryCannotInventIDOrTurnQueryResponseIntoCancellation()throws {
+        let(repository,original,profile,_)=try fixture();defer{try? FileManager.default.removeItem(at:repository.root)}
+        let before=try Codec.digest(repository.read()),response=BaiduQueryResponse(state:.running,progress:0.5,points:12)
+        XCTAssertThrowsError(try RemoteJobs.acceptBaiduQuery(response,original:original,profile:profile,repository:repository,principal:"owner",command:"jobs query"))
+        XCTAssertThrowsError(try RemoteJobs.acceptBaiduQuery(response,original:original,profile:profile,repository:repository,principal:"owner",command:"jobs remote-cancel"))
+        XCTAssertEqual(try Codec.digest(repository.read()),before);XCTAssertNil(try repository.read().jobs[0].remoteID);XCTAssertEqual(try repository.read().jobs[0].requestKey,original.requestKey)
     }
 }

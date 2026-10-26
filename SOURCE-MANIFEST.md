@@ -2,10 +2,10 @@
 
 VideoFree source export · package_free.py · version 1
 
-生成时间：2026-10-26 20:01:00 北京时间
+生成时间：2026-10-26 21:33:12 北京时间
 
-- 源码与必要元数据：228个文件；3260415字节（不含本清单）。
-- 整体内容指纹：`1d6243e74c558eaa3ca8423410ff62f756ae566e977714735ae4806b459e3b82`。
+- 源码与必要元数据：228个文件；3270903字节（不含本清单）。
+- 整体内容指纹：`99900aac2e282e5295578a872d848e41a38bb52d0a3d1c0db903f5adc2ffb197`。
 - 来源：受控原始工程中的逐文件白名单；Package.swift与唯一免费制作workflow来自Distribution/Free精确模板，README由发行脚本生成。
 - 本包不含.git，不可作为新业务checkout；本清单生成过程不执行构建、设备验收、签名安装或公共上传，各阶段以独立证据为准。
 - 排除：App、VideoGame、VideoCartoon、Premium、高级实现运行时测试、私有仓库地址、凭据、客户数据、缓存、日志及媒体过程产物。
@@ -14,7 +14,7 @@ VideoFree source export · package_free.py · version 1
 
 | SHA-256 | 字节数 | 包内路径 / 原工程来源 |
 |---|---:|---|
-| 665e6f4d2b1c177f8b4d22829b6cd66cbaf072b1620f27e0eed9a38278d994f4 | 16576 | .github/workflows/free-production.yml |
+| 2782e611f1dd53dfa2c7d70ae579776bb2bbb4ec8ab1c6b8300a7c6729803455 | 16576 | .github/workflows/free-production.yml |
 | 657d1e41716c0e58c0e5072cee94060c103394dd4dc26ead7dbc851d8e85a00a | 31765 | Integrations/README.md |
 | 2ff174ec064ca614f24e8ba67ae5c7042a2caa883af162bafd27a8a4520d5ed7 | 26522 | Integrations/asset_reuse.py |
 | be0a15cd8fcb9b33fe92f2898a9ee53aa20f9722b368abd19e0a7a5ef924bc42 | 18066 | Integrations/check_install.py |
@@ -151,7 +151,7 @@ VideoFree source export · package_free.py · version 1
 | b6ecc97e5f3e179f6c4daf869b94f8e8310868d84336400e11e57f0e9dff44fd | 2742 | Sources/VideoMedia/PluginXPCServer.swift |
 | 9b5a83d4b5f2d3ee77ca26d518268e9bd25b01d767d43d558b30d32a1948814a | 2806 | Sources/VideoMedia/Preview.swift |
 | 4eccc0ef4b35ea271e2ce6333c42c694567e76617cab5e83238ac601879e5af2 | 8745 | Sources/VideoMedia/ProviderClient.swift |
-| 9c80080ade73a448694ce6835b8199dc344542f8bdee2e21295f948b77b0a7bc | 8252 | Sources/VideoMedia/RemoteJobs.swift |
+| a84728bb8f5d8e9aa18709af34151c9a3fc5ec357e92087b7880b8ab58c20988 | 9605 | Sources/VideoMedia/RemoteJobs.swift |
 | 418ae5f27a83a61f614262685bd3633606d025f14221c27c1955d9d3e3a8906d | 9142 | Sources/VideoMedia/RemoteSceneModule.swift |
 | f2f52a2d58c433b8e9c5c701ab197dc8ca278f4ed376e5d0f1a628b249ad88ee | 5891 | Sources/VideoMedia/RenderInvocation.swift |
 | 39086f663d5e770c4aca64e985134266495a507216cd253df1ddf36ac146b87e | 36099 | Sources/VideoMedia/RenderModules.swift |
@@ -223,7 +223,7 @@ VideoFree source export · package_free.py · version 1
 | fa21976b33dfc558041a027f2077a16d4229d4ee8327ec3f9290bb3094141f2e | 15333 | Tests/VideoCoreTests/UpstreamLicenseTests.swift |
 | 7ba0ca151fe677d9a3e081af45a3e9c0cbc725c82549e6b7b8193ef2cfbb8a3e | 24793 | Tests/VideoCoreTests/WorkspaceAccessTests.swift |
 | a344a70774c890700be24568b9ae35a6b650f29e716c378149d7f8faf6250b41 | 35505 | Tests/VideoMediaTests/AudioMixMediaTests.swift |
-| ee6050d9d98df55e591faaf95ea316c1fff07fc3c027d455891c6afe8a444cdd | 19756 | Tests/VideoMediaTests/BaiduVideoProviderTests.swift |
+| 8eade89c3bff40794f016083d167da9c1f6e431c40b4e3954873afd4d8e37a57 | 28891 | Tests/VideoMediaTests/BaiduVideoProviderTests.swift |
 | 04c765d5be6d04f06db5752c8b0beef1dad8cda87a0be1193be63fa17318f8da | 4089 | Tests/VideoMediaTests/BubbleArtworkMediaTests.swift |
 | 15461b7c907cec2daec99da315bb9bd452129f71ddfa0a3786831936228571d1 | 11647 | Tests/VideoMediaTests/CinemaSubtitleTests.swift |
 | babe72b95be35cbcaae633771f37e397b4970bddc7eecc51ea23c3b228932909 | 4695 | Tests/VideoMediaTests/ContentProjectMediaTests.swift |

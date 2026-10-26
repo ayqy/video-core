@@ -30,6 +30,13 @@ public enum RemoteJobs {
             }
         }else{prepared=original}
         try Task.checkCancellation()
+        if !cancel,profile.kind==BaiduVideoRules.kind {
+            // The common Mac/CLI/worker query must retain the supplier's original
+            // units and receipt lifecycle, not narrow the response to status only.
+            let response=try await BaiduVideoProvider.query(profile:profile,job:prepared)
+            try Task.checkCancellation()
+            return try acceptBaiduQuery(response,original:prepared,profile:profile,repository:repository,principal:principal,command:command,ownerOnly:ownerOnly)
+        }
         let snapshot=try await (cancel ? self.cancel(profile:profile,job:prepared):self.query(profile:profile,job:prepared))
         try Task.checkCancellation()
         return try accept(snapshot,original:prepared,profile:profile,repository:repository,principal:principal,command:command,ownerOnly:ownerOnly)
@@ -47,6 +54,15 @@ public enum RemoteJobs {
         try repository.transaction{db in
             let current=try checkedTarget(original:original,profile:profile,database:db,principal:principal,command:command,ownerOnly:ownerOnly)
             let changed=try JobOperations.applyRemote(snapshot,to:current)
+            db.jobs[db.jobs.firstIndex(where:{$0.id==current.id && $0.workspaceID==current.workspaceID})!]=changed
+            return changed
+        }
+    }
+    static func acceptBaiduQuery(_ response:BaiduQueryResponse,original:Job,profile:ProviderProfile,repository:Repository,principal:String,command:String,ownerOnly:Bool=false)throws->Job {
+        guard ["jobs query","worker run"].contains(command),profile.kind==BaiduVideoRules.kind else{throw VideoError.permission("完整百度回执仅供原任务查询，不作为取消或其它协议响应")}
+        return try repository.transaction{db in
+            let current=try checkedTarget(original:original,profile:profile,database:db,principal:principal,command:command,ownerOnly:ownerOnly)
+            let changed=try BaiduVideoRules.applyQuery(response,to:current)
             db.jobs[db.jobs.firstIndex(where:{$0.id==current.id && $0.workspaceID==current.workspaceID})!]=changed
             return changed
         }
