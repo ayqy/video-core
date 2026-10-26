@@ -77,6 +77,18 @@ final class SpeechProjectRulesTests: XCTestCase {
         var other=t;other.textDigest="wrong";XCTAssertThrowsError(try SpeechProjectRules.apply(q,asset:a,evidence:e,take:other,captions:c,database:&d,principal:"owner"))
         XCTAssertEqual(before,try Codec.digest(d))
     }
+    func testDedicatedAttachRejectsShortenedOrExtendedTakeWithoutCommittingMetadata() throws {
+        var (d,q)=try fixture();q.extendScene=true
+        let (asset,evidence,take,captions)=try production(q,frames:90)
+        let before=try Codec.data(d)
+        for frames in [0,89,91] {
+            var incomplete=take;incomplete.durationFrames=frames
+            XCTAssertThrowsError(try SpeechProjectRules.apply(q,asset:asset,evidence:evidence,take:incomplete,captions:captions,database:&d,principal:"owner")) { error in
+                XCTAssertEqual((error as? VideoError)?.code,"needs_review")
+            }
+            XCTAssertEqual(try Codec.data(d),before)
+        }
+    }
     func testPostGenerationStaleRevisionAndRevokedWriterCannotCommit() throws {
         var (d,q)=try fixture();q.extendScene=true;let (a,e,t,c)=try production(q,frames:90)
         d.workspaces[0].grants=[Grant(principal:"writer",role:.collaborator,projectIDs:[q.projectID],revisionIDs:[q.baseRevision],expiresAt:Date().addingTimeInterval(300))]

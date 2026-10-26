@@ -29,16 +29,38 @@ public enum ScriptJobs {
         let transmission=ScriptTransmission()
         do {
             let text=try await ProviderClient.script(profile:profile,revision:project.current,evidence:evidence,brief:brief,requestKey:requestKey,quote:quote,deadline:lease.expiresAt,onTransmissionStarted:{transmission.markStarted()},onAttempt:{receipt in
-                try repository.transaction{db in
-                    guard try db.workspace(workspaceID).owner==principal,let i=db.jobs.firstIndex(where:{$0.id==job.id && $0.digest==job.digest}) else{throw VideoError.permission("原任务权限已撤销")}
-                    db.jobs[i]=try ScriptJobRules.record(receipt,in:db.jobs[i],executionToken:lease.token)
-                }
+                try recordAttempt(receipt,job:job,profile:profile,evidence:evidence,brief:brief,repository:repository,principal:principal,executionToken:lease.token)
             })
             let draft=try prepareDraft(text:text,job:job,repository:repository,principal:principal)
             return try publishDraft(draft,repository:repository)
         }catch{
             try? handleFailure(repository:repository,job:job,principal:principal,executionToken:lease.token,transmissionStarted:transmission.hasStarted)
             throw error
+        }
+    }
+    /// Re-authorize the original paid input before every attempt and receipt.
+    /// This also runs before a repair POST; revoking upload consent or replacing
+    /// the live profile cannot leave an older captured permission effective.
+    static func recordAttempt(_ receipt:ProviderAttempt,job:Job,profile:ProviderProfile,evidence:[Evidence],brief:String,repository:Repository,principal:String,executionToken:String,now:Date=Date())throws {
+        try repository.transaction{database in
+            guard try database.workspace(job.workspaceID).owner==principal,
+                  let index=database.jobs.firstIndex(where:{$0.id==job.id && $0.workspaceID==job.workspaceID && $0.projectID==job.projectID && $0.revisionID==job.revisionID && $0.digest==job.digest && $0.requestKey==job.requestKey}),
+                  try Codec.digest(database.jobs[index].quote)==Codec.digest(job.quote),
+                  let liveProfile=database.providers.first(where:{$0.id==profile.id}),
+                  try ProviderRules.profileIdentity(liveProfile)==ProviderRules.profileIdentity(profile) else{throw VideoError.permission("原任务、服务配置或工作区权限已变化，停止后续付费请求")}
+            let current=database.jobs[index],project=try database.project(job.projectID)
+            try ScriptJobRules.authorizeExecution(current,token:executionToken,now:now)
+            guard project.workspaceID==job.workspaceID,project.current.id==job.revisionID,
+                  try project.current.contentDigest()==job.digest else{throw VideoError.conflict("原生成内容版本已变化，请重新核对输入和报价")}
+            var selected:[Evidence]=[]
+            for original in evidence {
+                guard let live=database.evidence.first(where:{$0.id==original.id && $0.workspaceID==job.workspaceID}),
+                      try live.contentDigest()==original.contentDigest() else{throw VideoError.permission("原上传证据或许可已变化，停止后续付费请求")}
+                selected.append(live)
+            }
+            let initial=try ProviderRules.body(profile:liveProfile,revision:project.current,evidence:selected,brief:brief,now:now)
+            guard current.providerAttempts?.first?.inputDigest==Codec.hash(initial) else{throw VideoError.conflict("原生成输入摘要已变化，不能继续付费修复")}
+            database.jobs[index]=try ScriptJobRules.record(receipt,in:current,executionToken:executionToken,now:now)
         }
     }
     static func handleFailure(repository:Repository,job:Job,principal:String,executionToken:String,transmissionStarted:Bool)throws {

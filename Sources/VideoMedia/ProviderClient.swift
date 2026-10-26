@@ -38,7 +38,11 @@ public enum ProviderClient {
         }
         try checkDeadline()
         let initial=try makeBody(nil)
-        let url=URL(string:profile.endpoint)!,credential=try SecureCredentials.read(profile.keyReference)
+        let url=URL(string:profile.endpoint)!
+        // Check before storing any attempt, then re-read after each asynchronous
+        // authority callback. A revoked/rotated credential cannot remain cached
+        // across the explicitly budgeted repair.
+        _=try SecureCredentials.read(profile.keyReference)
         let originalKey=requestKey ?? Codec.id()
         let config=URLSessionConfiguration.ephemeral;config.httpShouldSetCookies=false;config.httpCookieStorage=nil;config.urlCache=nil
         config.timeoutIntervalForRequest=ScriptJobRules.requestTimeoutSeconds
@@ -58,6 +62,7 @@ public enum ProviderClient {
             var receipt=ProviderAttempt(id:originalKey+"-attempt-\(number)",number:number,inputDigest:Codec.hash(body),capabilityVersion:profile.capabilities?.version)
             try await onAttempt?(receipt)
             try checkDeadline()
+            let credential=try SecureCredentials.read(profile.keyReference)
             var request=URLRequest(url:url,timeoutInterval:min(ScriptJobRules.requestTimeoutSeconds,deadline.timeIntervalSinceNow));request.httpMethod="POST";request.setValue("Bearer "+credential,forHTTPHeaderField:"Authorization");request.setValue("application/json",forHTTPHeaderField:"Content-Type");request.httpBody=body
             if profile.idempotency {request.setValue(receipt.id,forHTTPHeaderField:"Idempotency-Key")}
             let data:Data,response:URLResponse

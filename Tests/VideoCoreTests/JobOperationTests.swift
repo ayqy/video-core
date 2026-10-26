@@ -7,6 +7,17 @@ final class JobOperationTests: XCTestCase {
         return Project(workspaceID:"w",name:"演示",revision:Revision(product:p,purpose:.course,aspect:.portrait,scenes:[Scene(title:"完整",body:"内容")],cta:"了解已有课程"))
     }
     func job(provider: String = "native") throws -> Job { let p=project(); return Job(workspaceID:"w",projectID:p.id,revisionID:p.current.id,digest:try p.current.contentDigest(),requestKey:"once",quote:Quote(projectID:p.id,revisionID:p.current.id,digest:try p.current.contentDigest(),upper:Money(90),unit:"CNY",provider:provider,expiresAt:Date().addingTimeInterval(1000),confirmed:true)) }
+    private func partialRefundJob()throws->Job {
+        var j=try job(provider:"remote");j.remoteID="original";j.state = .cancelled
+        j.createdAt=Date(timeIntervalSince1970:1_700_000_000);j.updatedAt=j.createdAt
+        let events:[(String,BillingRecord.Kind,Decimal,String)]=[("charge",.charge,12,"消耗凭据"),("requested",.refundRequested,5,"退款申请凭据"),("received",.refundReceived,3,"退款到账凭据")]
+        for (index,event) in events.enumerated(){j=try JobOperations.reconcile(j,record:BillingRecord(id:event.0,kind:event.1,money:Money(event.2),source:event.3,at:j.createdAt.addingTimeInterval(Double(index+1))))}
+        return j
+    }
+    private func report(_ amount:Money?,to job:Job,state:RemoteSnapshot.State = .cancelled)throws->Job {
+        let checkedAt=(job.remoteCheckedAt ?? job.updatedAt).addingTimeInterval(1)
+        return try JobOperations.applyRemote(RemoteSnapshot(remoteID:"original",requestKey:job.requestKey,state:state,progress:0.5,actual:amount,checkedAt:checkedAt),to:job,now:checkedAt)
+    }
     func testOriginalUnitDecimalEstimateAndExpiry() throws {
         let now=Date(); let d=EstimateBreakdown(version:"official-2026",specification:"720p 12段 每段一次+两次重试",source:"管理员核对的官方单价",validFrom:now.addingTimeInterval(-10),expiresAt:now.addingTimeInterval(100),lines:[RateLine(label:"镜头",quantity:1,unit:"段",price:Money(Decimal(string:"2.48")!),count:12,attempts:3)],excluded:["配音与人工不包含"])
         XCTAssertEqual(try d.total().amount,Decimal(string:"89.28")); let p=project();let q=try d.quote(project:p,provider:"supplier",confirmed:true,now:now); XCTAssertEqual(q.attempts,3)
@@ -84,6 +95,92 @@ final class JobOperationTests: XCTestCase {
         let unfinished=try JobOperations.applyRemote(RemoteSnapshot(remoteID:"original",requestKey:j.requestKey,state:.running,progress:0.6),to:final)
         XCTAssertTrue(unfinished.billingUnknown)
         XCTAssertEqual(unfinished.exposure.amount,90)
+    }
+    func testLateZeroGrossOrOverrunReportNeverReplacesReceiptNetOrPartialRefund()throws {
+        let original=try partialRefundJob(),ledger=try Codec.data(original.billing)
+        for amount in [Decimal(0),Decimal(12),Decimal(100)] {
+            let updated=try report(Money(amount),to:original)
+            XCTAssertEqual(updated.state,.cancelled)
+            XCTAssertEqual(updated.actual,Money(9));XCTAssertEqual(updated.refundPending,Money(2))
+            XCTAssertEqual(try Codec.data(updated.billing),ledger)
+            XCTAssertEqual(updated.remoteReportedActual,Money(amount));XCTAssertTrue(updated.billingUnknown)
+            XCTAssertEqual(updated.exposure,Money(max(90,amount)))
+            XCTAssertEqual(updated.id,original.id);XCTAssertEqual(updated.requestKey,original.requestKey)
+            XCTAssertEqual(try Codec.data(updated.quote),try Codec.data(original.quote))
+            XCTAssertTrue(updated.artifacts.isEmpty)
+        }
+    }
+    func testLowerReportsRetainUnresolvedUpperUntilOriginalTerminalConfirmsNet()throws {
+        let original=try partialRefundJob(),ledger=try Codec.data(original.billing)
+        var updated=try report(Money(100),to:original)
+        updated=try report(Money(12),to:updated,state:.running)
+        updated=try report(Money(0),to:updated)
+        XCTAssertEqual(updated.remoteReportedActual,Money(100));XCTAssertEqual(updated.exposure,Money(100));XCTAssertTrue(updated.billingUnknown)
+        let checked=try XCTUnwrap(updated.remoteCheckedAt).addingTimeInterval(1)
+        XCTAssertThrowsError(try JobOperations.applyRemote(RemoteSnapshot(remoteID:"different",requestKey:updated.requestKey,state:.cancelled,progress:1,actual:Money(9),checkedAt:checked),to:updated,now:checked))
+        updated=try report(Money(9),to:updated)
+        XCTAssertEqual(updated.remoteID,"original");XCTAssertEqual(updated.remoteReportedActual,Money(9))
+        XCTAssertEqual(updated.actual,Money(9));XCTAssertEqual(updated.refundPending,Money(2))
+        XCTAssertFalse(updated.billingUnknown);XCTAssertEqual(updated.exposure,Money(9))
+        XCTAssertFalse(updated.message.contains("不一致"));XCTAssertTrue(updated.message.contains("仍须审核"))
+        XCTAssertEqual(try Codec.data(updated.billing),ledger)
+    }
+    func testMissingOrLiveNetReportCannotResolveExistingRemoteDifference()throws {
+        var updated=try report(Money(100),to:partialRefundJob(),state:.unknown)
+        updated=try report(nil,to:updated)
+        XCTAssertEqual(updated.state,.cancelled);XCTAssertTrue(updated.billingUnknown)
+        XCTAssertEqual(updated.remoteReportedActual,Money(100));XCTAssertEqual(updated.exposure,Money(100))
+        updated=try report(Money(9),to:updated,state:.running)
+        XCTAssertTrue(updated.billingUnknown);XCTAssertEqual(updated.remoteReportedActual,Money(100));XCTAssertEqual(updated.exposure,Money(100))
+        let before=try Codec.data(updated),checked=try XCTUnwrap(updated.remoteCheckedAt)
+        XCTAssertThrowsError(try JobOperations.applyRemote(RemoteSnapshot(remoteID:"original",requestKey:updated.requestKey,state:.cancelled,progress:1,actual:Money(9),checkedAt:checked.addingTimeInterval(-1)),to:updated,now:checked))
+        XCTAssertEqual(try Codec.data(updated),before)
+    }
+    func testNewRefundApplicationKeepsObservedOverrunAndBlocksMoreBudget()throws {
+        var updated=try report(Money(100),to:partialRefundJob(),state:.failed)
+        let application=BillingRecord(id:"second-request",kind:.refundRequested,money:Money(2),source:"追加退款申请凭据",at:updated.updatedAt.addingTimeInterval(1))
+        updated=try JobOperations.reconcile(updated,record:application)
+        XCTAssertEqual(updated.actual,Money(9));XCTAssertEqual(updated.refundPending,Money(4))
+        XCTAssertEqual(updated.remoteReportedActual,Money(100));XCTAssertTrue(updated.billingUnknown);XCTAssertEqual(updated.exposure,Money(100))
+        XCTAssertEqual(updated.billing?.count,4)
+        let p=project();updated.projectID=p.id
+        let q=Quote(projectID:p.id,revisionID:p.current.id,digest:try p.current.contentDigest(),upper:Money(1),unit:"CNY",provider:"remote",expiresAt:Date().addingTimeInterval(600),confirmed:true)
+        XCTAssertThrowsError(try JobRules.submit(workspaceID:"w",project:p,quote:q,requestKey:"extra",existing:[updated],budget:BudgetPolicy(project:Money(100),month:Money(1000))))
+    }
+    func testOnlyNewReceiptNetMatchingReportedAmountResolvesDifference()throws {
+        var charge=try report(Money(12),to:partialRefundJob())
+        charge=try JobOperations.reconcile(charge,record:BillingRecord(id:"additional-charge",kind:.charge,money:Money(3),source:"新增消耗凭据",at:charge.updatedAt.addingTimeInterval(1)))
+        XCTAssertEqual(charge.actual,Money(12));XCTAssertEqual(charge.refundPending,Money(2));XCTAssertFalse(charge.billingUnknown);XCTAssertEqual(charge.exposure,Money(12))
+        var refund=try report(Money(6),to:partialRefundJob())
+        refund=try JobOperations.reconcile(refund,record:BillingRecord(id:"additional-request",kind:.refundRequested,money:Money(1),source:"新增退款申请",at:refund.updatedAt.addingTimeInterval(1)))
+        XCTAssertTrue(refund.billingUnknown);XCTAssertEqual(refund.actual,Money(9));XCTAssertEqual(refund.refundPending,Money(3))
+        refund=try JobOperations.reconcile(refund,record:BillingRecord(id:"additional-received",kind:.refundReceived,money:Money(3),source:"新增到账凭据",at:refund.updatedAt.addingTimeInterval(1)))
+        XCTAssertEqual(refund.actual,Money(6));XCTAssertNil(refund.refundPending);XCTAssertFalse(refund.billingUnknown);XCTAssertEqual(refund.exposure,Money(6))
+        var zero=try report(Money(9),to:partialRefundJob(),state:.running)
+        XCTAssertTrue(zero.billingUnknown)
+        zero=try JobOperations.reconcile(zero,record:BillingRecord(id:"zero-charge",kind:.charge,money:Money(0),source:"零金额凭据",at:zero.updatedAt.addingTimeInterval(1)))
+        XCTAssertTrue(zero.billingUnknown)
+    }
+    func testBillingReplayPreservesWholeConflictingJobIncludingObservationAndTimestamps()throws {
+        let updated=try report(Money(100),to:partialRefundJob()),before=try Codec.data(updated)
+        for event in try XCTUnwrap(updated.billing) {
+            XCTAssertEqual(try Codec.data(JobOperations.reconcile(updated,record:event)),before)
+            var changed=event;changed.source += "不同"
+            XCTAssertThrowsError(try JobOperations.reconcile(updated,record:changed))
+        }
+        XCTAssertEqual(try Codec.data(updated),before)
+    }
+    func testLegacyJobWithoutReportedAmountDecodesAndWrongCurrencyCannotMutateLedger()throws {
+        let original=try partialRefundJob(),data=try Codec.data(original)
+        let object=try XCTUnwrap(JSONSerialization.jsonObject(with:data) as? [String:Any])
+        XCTAssertNil(object["remoteReportedActual"])
+        let decoded=try Codec.decoder().decode(Job.self,from:data)
+        XCTAssertNil(decoded.remoteReportedActual);XCTAssertEqual(decoded.actual,Money(9));XCTAssertEqual(decoded.refundPending,Money(2));XCTAssertEqual(decoded.exposure,Money(9))
+        XCTAssertThrowsError(try report(Money(100,"USD"),to:decoded))
+        XCTAssertThrowsError(try report(Money(-1),to:decoded))
+        XCTAssertEqual(try Codec.data(decoded),data)
+        let statusOnly=try report(Money(12),to:job(provider:"remote"))
+        XCTAssertNil(statusOnly.billing);XCTAssertEqual(statusOnly.actual,Money(12));XCTAssertFalse(statusOnly.billingUnknown)
     }
     func testFreeNativeRenderIgnoresOnlyExternalCashBudget() throws {
         let revision=try Planner.create(workspaceID:"w",name:"普通免费剪辑",aspect:.landscape,scenes:[Scene(title:"解释",body:"实际本机内容")])

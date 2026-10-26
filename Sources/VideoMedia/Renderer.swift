@@ -26,6 +26,9 @@ public final class MediaRenderer: @unchecked Sendable {
         guard !r.scenes.isEmpty,r.frames>0,r.frames<=54000 else{throw VideoError.review("工程尚无可制作内容或时长超出范围，请添加真实片段后重试")}
         try ManagedInstallRules.authorizeWrite(repositoryRoot:repository.root)
         let start = Date(); let db = try repository.read()
+        for scene in r.scenes {
+            if let take=scene.voice {try SpeechProjectRules.validateCompleteTake(take,workspaceID:r.workspaceID,assets:db.assets)}
+        }
         // Verify every actual dependency, including layer images, voices, music and rights documents.
         // A valid scene cache does not authorize silently changed source bytes.
         let graph=try DependencyRules.freeze(revision:r,assets:db.assets,evidence:db.evidence)

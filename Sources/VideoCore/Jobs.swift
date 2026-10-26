@@ -16,6 +16,10 @@ public struct Artifact: Codable, Identifiable, Sendable {
 public struct Job: Codable, Identifiable, Sendable {
     public var id = Codec.id(); public var workspaceID: String; public var projectID: String; public var revisionID: String; public var digest: String; public var requestKey: String; public var quote: Quote; public var state: JobState = .queued; public var remoteID: String?; public var progress: Double = 0; public var actual: Money?; public var billingUnknown: Bool; public var refundPending: Money?; public var artifacts: [Artifact] = []; public var message = ""; public var createdAt = Date(); public var updatedAt = Date(); public var attempt = 0; public var cacheHit = false
     public var lease: WorkerLease?; public var billing: [BillingRecord]?; public var remoteCheckedAt: Date?
+    /// A supplier observation is not a receipt and has no guaranteed gross/net
+    /// basis. While unresolved, this retains the reported upper amount rather
+    /// than necessarily the latest response; it never replaces a ledger net.
+    public var remoteReportedActual: Money?
     public var providerAttempts:[ProviderAttempt]?
     public var videoGeneration:VideoGenerationReceipt?
     public var outputAssetIDs:[String]?
@@ -27,7 +31,7 @@ public struct Job: Codable, Identifiable, Sendable {
         // of the actual/refund figures shown to the user.
         let unsettled = [.queued, .running, .interrupted, .unknownRemote, .cancelRequested].contains(state)
         if unsettled || billingUnknown {
-            return Money(max(quote.upper.amount, actual?.amount ?? quote.upper.amount), quote.upper.currency)
+            return Money(max(quote.upper.amount, actual?.amount ?? quote.upper.amount, remoteReportedActual?.amount ?? quote.upper.amount), quote.upper.currency)
         }
         return actual ?? quote.upper
     }

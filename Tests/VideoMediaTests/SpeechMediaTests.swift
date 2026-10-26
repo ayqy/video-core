@@ -4,6 +4,29 @@ import VideoCore
 import VideoMedia
 
 final class SpeechMediaTests: XCTestCase {
+    func testRendererRejectsIncompleteHistoricalVoiceBeforeCreatingOutput() async throws {
+        let root=FileManager.default.temporaryDirectory.appendingPathComponent("speech-incomplete-history-"+UUID().uuidString)
+        defer {try? FileManager.default.removeItem(at:root)}
+        let repository=try Repository(root:root.appendingPathComponent("workspace"))
+        let workspace=Workspace(name:"隔离旧配音制作门",owner:"owner")
+        let asset=Asset(workspaceID:workspace.id,name:"registered-source.caf",hash:String(repeating:"a",count:64),ext:"caf",bytes:100,mediaType:"audio",durationFrames:100)
+        var scene=Scene(title:"历史配音",body:"保留完整原音",narration:"句尾不能截断。",durationFrames:120)
+        scene.voice=VoiceTake(assetID:asset.id,textDigest:try scene.speechDigest(),durationFrames:90,method:"imported-recording",listened:false)
+        let revision=try Planner.create(workspaceID:workspace.id,name:"旧版声音",scenes:[scene])
+        let project=Project(workspaceID:workspace.id,name:"旧版声音",revision:revision)
+        try repository.transaction {$0.workspaces=[workspace];$0.assets=[asset];$0.projects=[project]}
+        let before=try Codec.data(repository.read())
+        let output=root.appendingPathComponent("rejected-output")
+        do {
+            _=try await MediaRenderer().render(revision:revision,repository:repository,output:output)
+            XCTFail("不完整的历史 take 不能重新制作")
+        } catch let error as VideoError {
+            XCTAssertEqual(error.code,"needs_review")
+            XCTAssertTrue(error.localizedDescription.contains("完整音频原件"))
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath:output.path))
+        XCTAssertEqual(try Codec.data(repository.read()),before)
+    }
     /// A decoded PCM fixture checks the adapter, not merely arithmetic that mirrors the meter.
     func testReadsActualStereoAudioWithoutCancellingOppositePhaseOrInventingLoudness() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("speech-audio-" + UUID().uuidString)

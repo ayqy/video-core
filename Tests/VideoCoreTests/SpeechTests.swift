@@ -220,21 +220,146 @@ final class SpeechTests: XCTestCase {
     func testRecordingIdentityChangesCannotCarryVoiceOrSubtitleApprovals() throws {
         let (project, scene, asset) = try captionFixture()
         var otherAsset = asset; otherAsset.id = Codec.id()
+        var shorterAsset = asset; shorterAsset.id = Codec.id(); shorterAsset.durationFrames = 90
         var replacements: [VoiceTake] = []
         var take = scene.voice!; take.assetID = otherAsset.id; replacements.append(take)
         take = scene.voice!; take.method = "other-recording-method"; replacements.append(take)
-        take = scene.voice!; take.durationFrames = 90; replacements.append(take)
+        take = scene.voice!; take.assetID = shorterAsset.id; take.durationFrames = 90; replacements.append(take)
         take = scene.voice!; take.textDigest = "different-audio-input-digest"; replacements.append(take)
         for replacement in replacements {
             var supplied = scene; supplied.voice = replacement
             let saved = try Editor.apply([.replaceScene(scene.id, supplied)], to: project,
-                baseRevision: project.current.id, assets: [asset, otherAsset], message: "隔离实际配音身份变化")
+                baseRevision: project.current.id, assets: [asset, otherAsset, shorterAsset], message: "隔离实际配音身份变化")
             var expected = replacement; expected.listened = false
             XCTAssertEqual(saved.current.scenes[0].voice, expected)
             XCTAssertTrue(saved.current.scenes[0].captions.allSatisfy { !$0.confirmed })
             XCTAssertEqual(saved.current.scenes[0].narration, scene.narration)
             XCTAssertEqual(saved.current.scenes[0].speechPlan, scene.speechPlan)
             XCTAssertEqual(try Codec.digest(saved.revisions[0]), try Codec.digest(project.current))
+        }
+    }
+
+    func testNewOrReplacementVoiceRejectsShortenedExtendedAndUnregisteredSourceAtomically() throws {
+        let (project, scene, asset) = try captionFixture()
+        let original = try Codec.digest(project)
+        var invalidTakes: [VoiceTake] = []
+        for frames in [0, 90, 101] {
+            var take = scene.voice!; take.durationFrames = frames; invalidTakes.append(take)
+        }
+        var missing = scene.voice!; missing.assetID = "missing-recording"; invalidTakes.append(missing)
+        for take in invalidTakes {
+            var supplied = scene; supplied.voice = take
+            XCTAssertThrowsError(try Editor.apply([.replaceScene(scene.id, supplied)], to: project,
+                baseRevision: project.current.id, assets: [asset], message: "拒绝不完整配音")) { error in
+                XCTAssertEqual((error as? VideoError)?.code, "needs_review")
+            }
+            supplied.id = Codec.id()
+            XCTAssertThrowsError(try Editor.apply([.insertScene(supplied, 1)], to: project,
+                baseRevision: project.current.id, assets: [asset], message: "拒绝新增不完整配音"))
+            XCTAssertEqual(try Codec.digest(project), original)
+        }
+    }
+
+    func testNewVoiceRequiresSameWorkspaceAudioWithPositiveRegisteredCompleteDuration() throws {
+        let (project, scene, asset) = try captionFixture()
+        var wrongWorkspace = asset; wrongWorkspace.workspaceID = "other-workspace"
+        var wrongType = asset; wrongType.mediaType = "video"
+        var unknownDuration = asset; unknownDuration.durationFrames = nil
+        var zeroDuration = asset; zeroDuration.durationFrames = 0
+        var withoutVoice = scene; withoutVoice.voice = nil
+        var prior = project; prior.revisions[0].scenes = [withoutVoice]
+        for source in [wrongWorkspace, wrongType, unknownDuration, zeroDuration] {
+            XCTAssertThrowsError(try Editor.apply([.replaceScene(scene.id, scene)], to: prior,
+                baseRevision: prior.current.id, assets: [source], message: "拒绝未登记完整声音"))
+        }
+        let restored = try Editor.apply([.replaceScene(scene.id, scene)], to: prior,
+            baseRevision: prior.current.id, assets: [asset], message: "重新绑定完整声音")
+        XCTAssertEqual(restored.current.scenes[0].voice?.durationFrames, asset.durationFrames)
+        XCTAssertFalse(restored.current.scenes[0].voice!.listened)
+    }
+
+    func testHistoricalIncompleteVoiceStaysReadableAndEditableButQualityRejectsNewProduction() throws {
+        var (project, scene, asset) = try captionFixture()
+        scene.voice?.durationFrames = 90
+        project.revisions[0].scenes = [scene]
+        var workspace = Workspace(name: "保留历史配音", owner: "owner"); workspace.id = "w"
+        var database = Database(); database.workspaces = [workspace]; database.assets = [asset]; database.projects = [project]
+        let snapshot = try Codec.data(database)
+        let decoded = try Codec.decoder().decode(Database.self, from: snapshot)
+        try decoded.validate()
+        XCTAssertEqual(try Codec.data(decoded), snapshot)
+        for requireReview in [false, true] {
+            let issues = try Quality.inspect(project.current, database: decoded, requireReview: requireReview)
+            XCTAssertTrue(issues.contains { $0.id == scene.id + "voice_source" })
+        }
+        var metadata = scene; metadata.voice?.listened = false
+        let changedMetadata = try Editor.apply([.replaceScene(scene.id, metadata)], to: project,
+            baseRevision: project.current.id, assets: [asset], message: "保留旧版，仅撤听审")
+        XCTAssertEqual(changedMetadata.current.scenes[0].voice?.durationFrames, 90)
+        var edited = scene; edited.title = "新的画面标题"; edited.speed = 1.25; edited.pauseFrames = 12
+        let saved = try Editor.apply([.replaceScene(scene.id, edited)], to: project,
+            baseRevision: project.current.id, assets: [asset], message: "历史源上的普通编辑")
+        XCTAssertEqual(saved.current.scenes[0].voice?.durationFrames, 90)
+        XCTAssertFalse(saved.current.scenes[0].voice!.listened)
+        XCTAssertEqual(try Codec.data(saved.revisions[0]), try Codec.data(project.current))
+        XCTAssertEqual(try Codec.data(database), snapshot)
+    }
+
+    func testSourceVideoWindowChangesRevokeCaptionsWhileKeepingIndependentNarrationApproval() throws {
+        let (project, scene, voiceAsset) = try captionFixture()
+        let video = Asset(workspaceID: "w", name: "source-video.mov", hash: "isolated-video-reference",
+            ext: "mov", bytes: 100, mediaType: "video", durationFrames: 400)
+        var otherVideo = video; otherVideo.id = Codec.id()
+        var original = scene; original.kind = .video; original.assetID = video.id; original.sourceGain = 1
+        var prior = project; prior.revisions[0].scenes = [original]
+        var changes: [Scene] = []
+        var supplied = original; supplied.assetID = otherVideo.id; changes.append(supplied)
+        supplied = original; supplied.sourceStartFrame = 30; changes.append(supplied)
+        supplied = original; supplied.durationFrames = 110; changes.append(supplied)
+        supplied = original; supplied.kind = .image; changes.append(supplied)
+        supplied = original; supplied.assetID = otherVideo.id; supplied.muted = true; changes.append(supplied)
+        for change in changes {
+            let saved = try Editor.apply([.replaceScene(original.id, change)], to: prior,
+                baseRevision: prior.current.id, assets: [voiceAsset, video, otherVideo], message: "实际原片源变化")
+            XCTAssertEqual(saved.current.scenes[0].voice, original.voice)
+            XCTAssertTrue(saved.current.scenes[0].captions.allSatisfy { !$0.confirmed })
+            XCTAssertEqual(saved.current.scenes[0].captions.map(\.text), original.captions.map(\.text))
+            XCTAssertFalse(saved.current.review.complete)
+            XCTAssertEqual(try Codec.data(saved.revisions[0]), try Codec.data(prior.current))
+        }
+        var mutedPrior = prior; mutedPrior.revisions[0].scenes[0].muted = true
+        var madeAudible = mutedPrior.current.scenes[0]; madeAudible.muted = false; madeAudible.sourceStartFrame = 30
+        let saved = try Editor.apply([.replaceScene(original.id, madeAudible)], to: mutedPrior,
+            baseRevision: mutedPrior.current.id, assets: [voiceAsset, video], message: "改源并启用原片音")
+        XCTAssertEqual(saved.current.scenes[0].voice, original.voice)
+        XCTAssertTrue(saved.current.scenes[0].captions.allSatisfy { !$0.confirmed })
+    }
+
+    func testSourceGainMuteAndSilentWindowChangesKeepIndependentCaptionApprovals() throws {
+        let (project, scene, voiceAsset) = try captionFixture()
+        let video = Asset(workspaceID: "w", name: "silent-source.mov", hash: "isolated-video-reference",
+            ext: "mov", bytes: 100, mediaType: "video", durationFrames: 400)
+        var original = scene; original.kind = .video; original.assetID = video.id; original.sourceGain = 1
+        var prior = project; prior.revisions[0].scenes = [original]
+        var changes: [Scene] = []
+        for gain in [0.0, 0.5, 2.0] {var supplied = original; supplied.sourceGain = gain; changes.append(supplied)}
+        var muted = original; muted.muted = true; changes.append(muted)
+        for change in changes {
+            let saved = try Editor.apply([.replaceScene(original.id, change)], to: prior,
+                baseRevision: prior.current.id, assets: [voiceAsset, video], message: "仅改音量或静音")
+            XCTAssertEqual(saved.current.scenes[0].voice, original.voice)
+            XCTAssertEqual(saved.current.scenes[0].captions, original.captions)
+            XCTAssertFalse(saved.current.review.complete)
+        }
+        for useMute in [false, true] {
+            var silentPrior = prior
+            silentPrior.revisions[0].scenes[0].sourceGain = useMute ? 1 : 0
+            silentPrior.revisions[0].scenes[0].muted = useMute
+            var changed = silentPrior.current.scenes[0]; changed.sourceStartFrame = 30
+            let saved = try Editor.apply([.replaceScene(original.id, changed)], to: silentPrior,
+                baseRevision: silentPrior.current.id, assets: [voiceAsset, video], message: "无原片声的源窗口编辑")
+            XCTAssertEqual(saved.current.scenes[0].voice, original.voice)
+            XCTAssertEqual(saved.current.scenes[0].captions, original.captions)
         }
     }
 

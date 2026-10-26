@@ -242,6 +242,89 @@ final class ScriptJobsTests:XCTestCase {
             XCTAssertEqual(try Codec.digest(repository.read()),before)
         }
     }
+    private func attemptFixture()throws->(Repository,Job,ProviderProfile,[Evidence]) {
+        let(repository,_)=try fixture()
+        try repository.transaction{database in
+            database.jobs=[];database.providers[0].capabilities?.repairLimit=1
+            database.evidence=[Evidence(workspaceID:"w",title:"本地规则证据",source:"author-rule-only",claim:"仅为上传撤销规则",owner:"owner",commercialAllowed:false,uploadConsent:true,verified:true)]
+        }
+        let database=try repository.read(),profile=database.providers[0],project=database.projects[0],evidence=database.evidence
+        let quote=try EstimateBreakdown(version:"rule-two",specification:ScriptJobRules.specification(profile:profile,revision:project.current,evidence:evidence,brief:"解释已选内容"),source:"本地规则费用，不代表供应商账单",validFrom:.distantPast,expiresAt:Date().addingTimeInterval(600),lines:[RateLine(label:"两次规则预算",quantity:1,unit:"次",price:Money(3),attempts:2)],excluded:[]).quote(project:project,provider:profile.id,confirmed:true)
+        let job=try repository.transaction{try ScriptJobRules.prepare(database:&$0,workspaceID:"w",projectID:project.id,profile:profile,evidence:evidence,brief:"解释已选内容",quote:quote,requestKey:"original-repair",principal:"owner")}.job
+        return(repository,job,profile,evidence)
+    }
+    func testRevokingCredentialAfterPreparedReceiptPreventsTransmission()async throws {
+        let(repository,_)=try fixture();defer{try? FileManager.default.removeItem(at:repository.root)}
+        var profile=try repository.read().providers[0];profile.keyReference="revoke-before-send-"+Codec.id()
+        let reference=profile.keyReference
+        try SecureCredentials.save("local-rule-value",reference:reference);defer{SecureCredentials.remove(reference)}
+        let boundary=ScriptTestTransmissionCount(),revision=try repository.read().projects[0].current
+        do {
+            _=try await ProviderClient.script(profile:profile,revision:revision,evidence:[],brief:"撤销后的凭据不能传输",onTransmissionStarted:{boundary.record()},onAttempt:{_ in try SecureCredentials.revoke(reference)})
+            XCTFail("revoked credential entered transport")
+        }catch let error as VideoError {XCTAssertTrue(error.localizedDescription.contains("模型凭据不可用"))}
+        XCTAssertEqual(boundary.value,0);XCTAssertFalse(SecureCredentials.contains(reference))
+    }
+    func testScriptRepairRechecksLiveProfileEvidenceAndContentWithoutRejectedWrites()throws {
+        for mode in 0..<10 {
+            let(repository,job,profile,evidence)=try attemptFixture();defer{try? FileManager.default.removeItem(at:repository.root)}
+            let token=try XCTUnwrap(job.lease).token
+            var first=try XCTUnwrap(job.providerAttempts?.first);first.respondedAt=Date()
+            try ScriptJobs.recordAttempt(first,job:job,profile:profile,evidence:evidence,brief:"解释已选内容",repository:repository,principal:"owner",executionToken:token)
+            try repository.transaction{database in
+                switch mode {
+                case 0:database.providers[0].allowsUpload=false
+                case 1:database.providers[0].keyReference="rebound-reference"
+                case 2:database.providers[0].model="different-model"
+                case 3:database.providers[0].capabilities?.version="changed-contract"
+                case 4:database.evidence[0].uploadConsent=false
+                case 5:database.evidence[0].verified=false
+                case 6:database.evidence[0].claim="改过的实际内容"
+                case 7:database.evidence[0].expiresAt=Date().addingTimeInterval(-1)
+                case 8:database.evidence=[]
+                default:
+                    let original=database.projects[0]
+                    database.projects[0]=try Editor.apply([.cta("正常变更创作目标")],to:original,baseRevision:original.current.id,assets:[],message:"正常编辑")
+                }
+            }
+            let before=try Codec.data(repository.read())
+            let repair=ProviderAttempt(id:job.requestKey+"-attempt-2",number:2,inputDigest:Codec.hash(Data("有界修复".utf8)),capabilityVersion:profile.capabilities?.version)
+            XCTAssertThrowsError(try ScriptJobs.recordAttempt(repair,job:job,profile:profile,evidence:evidence,brief:"解释已选内容",repository:repository,principal:"owner",executionToken:token),"mode \(mode)")
+            XCTAssertEqual(try Codec.data(repository.read()),before)
+            XCTAssertEqual(try repository.read().jobs[0].providerAttempts?.count,1)
+        }
+    }
+    func testOriginalResponseThenSingleRepairKeepsIdentityAndUnknownSpend()throws {
+        let(repository,job,profile,evidence)=try attemptFixture();defer{try? FileManager.default.removeItem(at:repository.root)}
+        let token=try XCTUnwrap(job.lease).token
+        var first=try XCTUnwrap(job.providerAttempts?.first);first.respondedAt=Date();first.inputTokens=20
+        try ScriptJobs.recordAttempt(first,job:job,profile:profile,evidence:evidence,brief:"解释已选内容",repository:repository,principal:"owner",executionToken:token)
+        let repair=ProviderAttempt(id:job.requestKey+"-attempt-2",number:2,inputDigest:Codec.hash(Data("唯一结构修复".utf8)),capabilityVersion:profile.capabilities?.version)
+        try ScriptJobs.recordAttempt(repair,job:job,profile:profile,evidence:evidence,brief:"解释已选内容",repository:repository,principal:"owner",executionToken:token)
+        let saved=try repository.read().jobs[0]
+        XCTAssertEqual(saved.id,job.id);XCTAssertEqual(saved.requestKey,job.requestKey);XCTAssertEqual(saved.providerAttempts?.count,2)
+        XCTAssertEqual(saved.providerAttempts?.first?.inputTokens,20);XCTAssertEqual(saved.attempt,2);XCTAssertTrue(saved.billingUnknown);XCTAssertNil(saved.actual)
+        var third=repair;third.id=job.requestKey+"-attempt-3";third.number=3
+        let before=try Codec.data(repository.read())
+        XCTAssertThrowsError(try ScriptJobs.recordAttempt(third,job:job,profile:profile,evidence:evidence,brief:"解释已选内容",repository:repository,principal:"owner",executionToken:token))
+        XCTAssertEqual(try Codec.data(repository.read()),before)
+    }
+    func testLateRemoteBillCannotOverwriteLivePartialRefundLedger()throws {
+        for amount:Decimal in [0,12,100] {
+            let(repository,original,profile)=try remoteFixture();defer{try? FileManager.default.removeItem(at:repository.root)}
+            try repository.transaction{database in
+                for record in [BillingRecord(id:"rule-charge",kind:.charge,money:Money(12),source:"本地账单规则"),BillingRecord(id:"rule-refund-request",kind:.refundRequested,money:Money(5),source:"本地申请规则"),BillingRecord(id:"rule-refund-received",kind:.refundReceived,money:Money(3),source:"本地到账规则")] {
+                    database.jobs[0]=try JobOperations.reconcile(database.jobs[0],record:record)
+                }
+            }
+            let ledger=try Codec.data(repository.read().jobs[0].billing)
+            let response=RemoteSnapshot(remoteID:original.remoteID!,requestKey:original.requestKey,state:.cancelled,progress:0.8,actual:Money(amount))
+            let updated=try RemoteJobs.accept(response,original:original,profile:profile,repository:repository,principal:"owner",command:"jobs query")
+            XCTAssertEqual(updated.actual?.amount,9);XCTAssertEqual(updated.refundPending?.amount,2);XCTAssertEqual(try Codec.data(updated.billing),ledger)
+            XCTAssertEqual(updated.remoteReportedActual?.amount,amount);XCTAssertTrue(updated.billingUnknown);XCTAssertGreaterThanOrEqual(updated.exposure.amount,max(9,amount))
+        }
+    }
+
 }
 private final class ScriptTestTransmissionCount:@unchecked Sendable {
     private let lock=NSLock();private var count=0

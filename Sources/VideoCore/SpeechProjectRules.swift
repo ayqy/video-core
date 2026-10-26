@@ -33,6 +33,17 @@ public struct SpeechProjectRequest: Codable, Sendable {
 
 public enum SpeechProjectRules {
     public static let command = "speech synthesize"
+    /// A take always refers to the complete registered recording. Playback speed
+    /// changes its presentation length, never the number of selected source frames.
+    /// Historical snapshots remain decodable; editing a new take and producing a
+    /// new artifact must both enforce this boundary.
+    public static func validateCompleteTake(_ take: VoiceTake, workspaceID: String, assets: [Asset]) throws {
+        guard let asset=assets.first(where:{$0.id==take.assetID && $0.workspaceID==workspaceID}),
+              asset.mediaType=="audio",let frames=asset.durationFrames,frames>0,
+              take.durationFrames==frames else {
+            throw VideoError.review("配音须引用同工作区已登记时长的完整音频原件；请重新绑定完整配音，禁止截短句尾")
+        }
+    }
     /// Replay checks authorization too, but permits the original revision after success.
     public static func authorize(_ request: SpeechProjectRequest, database: Database, principal: String) throws -> Project {
         try request.validate()
@@ -51,8 +62,9 @@ public enum SpeechProjectRules {
     /// Caller must verify the actual CAS bytes before this atomic metadata commit.
     @discardableResult public static func apply(_ request: SpeechProjectRequest, asset: Asset, evidence: Evidence, take: VoiceTake, captions: [Caption], database: inout Database, principal: String) throws -> Project {
         let scene=try prepare(request,database:database,principal:principal)
+        try validateCompleteTake(take,workspaceID:request.workspaceID,assets:[asset])
         guard asset.workspaceID==request.workspaceID,asset.mediaType=="audio",asset.bytes>0,asset.hash.count==64,asset.evidenceID==evidence.id,evidence.assetID==asset.id,evidence.workspaceID==request.workspaceID,
-              take.assetID==asset.id,take.durationFrames>0,asset.durationFrames==take.durationFrames,!take.listened,captions.allSatisfy({!$0.confirmed && $0.alignment=="estimated_sentence_no_word_timestamps"}) else { throw VideoError.invalid("真实配音、源凭据、未听审或估计字幕状态不一致") }
+              !take.listened,captions.allSatisfy({!$0.confirmed && $0.alignment=="estimated_sentence_no_word_timestamps"}) else { throw VideoError.invalid("真实配音、源凭据、未听审或估计字幕状态不一致") }
         if let importedID=request.assetID {
             guard importedID==asset.id,take.method=="imported-recording",let stored=database.assets.first(where:{$0.id==asset.id}),try Codec.digest(stored)==Codec.digest(asset),let rights=database.evidence.first(where:{$0.id==evidence.id}),try Codec.digest(rights)==Codec.digest(evidence),evidence.usable(commercial:database.projects.first(where:{$0.id==request.projectID})!.current.purpose != .education) else {throw VideoError.permission("导入配音源、工作区许可或适用使用范围已变化或未核对")}
         } else {

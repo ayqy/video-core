@@ -70,15 +70,56 @@ public enum JobOperations {
         func sum(_ k:BillingRecord.Kind)->Decimal { entries.filter{$0.kind==k}.map{$0.money.amount}.reduce(0,+) }
         let charge=sum(.charge), requested=sum(.refundRequested), refunded=sum(.refundReceived)
         guard refunded<=charge, requested<=charge, refunded<=requested else { throw VideoError.invalid("退款不能超过确认消耗；到账退款须有先前申请记录") }
-        j.billing=entries; j.actual=Money(charge-refunded,record.money.currency); j.refundPending=requested>refunded ? Money(requested-refunded,record.money.currency):nil; j.billingUnknown=false; j.updatedAt=record.at; return j
+        j.billing=entries; j.actual=Money(charge-refunded,record.money.currency); j.refundPending=requested>refunded ? Money(requested-refunded,record.money.currency):nil
+        // A new receipt is authoritative for the net ledger, but an unrelated
+        // event cannot silently resolve a different supplier observation. An
+        // exact replay above also preserves that unresolved observation.
+        if record.kind == .refundRequested {
+            // An application is not money received and cannot settle an
+            // outstanding discrepancy, even when it has a new event ID.
+            j.billingUnknown=job.billingUnknown || (j.remoteReportedActual.map{$0 != j.actual} ?? false)
+        }else if let reported=j.remoteReportedActual {
+            let changedNet=job.actual != j.actual
+            j.billingUnknown=reported != j.actual || (job.billingUnknown && !changedNet)
+        }else {j.billingUnknown=false}
+        if j.billingUnknown {
+            j.message=(j.remoteReportedActual.map{$0 != j.actual} ?? false)
+                ? "已核账单与服务报费不一致；实际及待退款按凭据保留，继续占用预算，请核对原任务差额"
+                : "实际及待退款按凭据保留；最终费用仍待核对，继续占用预算"
+        }
+        else if job.remoteReportedActual != nil {j.message="已按凭据核对实际费用；服务报费与净实际额一致，退款申请与到账仍分开记录"}
+        j.updatedAt=record.at; return j
     }
     public static func applyRemote(_ snapshot: RemoteSnapshot, to job: Job, now: Date = Date()) throws -> Job {
         guard job.quote.provider != "native", snapshot.requestKey==job.requestKey, job.remoteID == nil || job.remoteID==snapshot.remoteID, !snapshot.remoteID.isEmpty, snapshot.progress.isFinite,(0...1).contains(snapshot.progress), snapshot.checkedAt <= now.addingTimeInterval(60), snapshot.checkedAt >= job.createdAt.addingTimeInterval(-60) else { throw VideoError.conflict("远端响应不属于原任务或时间/进度无效") }
         if let checked=job.remoteCheckedAt, snapshot.checkedAt<checked { throw VideoError.conflict("远端响应早于已核状态") }
         var j=job; j.remoteID=snapshot.remoteID; j.remoteCheckedAt=snapshot.checkedAt; j.updatedAt=now; j.progress=snapshot.progress
         switch snapshot.state { case .queued:j.state = job.state == .cancelRequested ? .cancelRequested:.queued; case .running:j.state = job.state == .cancelRequested ? .cancelRequested:.running; case .succeeded:j.state = .billingPending; j.message="远端制作完成，需核对产物/实际账单，尚未通过看听审核"; case .failed:j.state = .failed; case .cancelled:j.state = .cancelled; case .unknown:j.state = .unknownRemote }
-        if let actual=snapshot.actual { guard actual.currency==j.quote.upper.currency,actual.amount>=0,!actual.amount.isNaN else { throw VideoError.invalid("远端账单币种/金额不符") }; j.actual=actual; j.billingUnknown=false }
+        if let actual=snapshot.actual {
+            guard actual.currency==j.quote.upper.currency,actual.amount>=0,!actual.amount.isNaN else { throw VideoError.invalid("远端账单币种/金额不符") }
+            if (j.billing ?? []).isEmpty {
+                // Preserve the original status-only service contract when the
+                // user has not reconciled any receipt-backed ledger entries.
+                j.remoteReportedActual=actual;j.actual=actual;j.billingUnknown=false
+            }else {
+                // Do not infer whether the supplier's number includes refunds.
+                // A lower observation cannot settle an unresolved higher one;
+                // the original task's terminal report must match the net ledger.
+                let unresolved=job.billingUnknown && job.remoteReportedActual != job.actual
+                let terminal=[RemoteSnapshot.State.succeeded,.failed,.cancelled].contains(snapshot.state)
+                let confirmsNet=terminal && actual==j.actual
+                let retained=unresolved && !confirmsNet ? max(job.remoteReportedActual?.amount ?? actual.amount,actual.amount):actual.amount
+                j.remoteReportedActual=Money(retained,actual.currency)
+                j.billingUnknown=j.remoteReportedActual != j.actual
+            }
+        }
         if [.queued, .running, .unknown].contains(snapshot.state) { j.billingUnknown=true }
+        if !(j.billing ?? []).isEmpty,j.remoteReportedActual != nil,j.remoteReportedActual != j.actual {
+            j.billingUnknown=true
+            j.message="已核账单与服务报费不一致；实际及待退款按凭据保留，继续占用预算，请核对原任务差额"
+        }else if !(j.billing ?? []).isEmpty,!j.billingUnknown,snapshot.actual != nil {
+            j.message="原任务终态报费与已核净实际额一致；实际及待退款按凭据保留，产物仍须审核"
+        }
         return j
     }
 }

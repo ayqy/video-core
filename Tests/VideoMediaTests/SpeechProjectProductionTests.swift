@@ -4,15 +4,19 @@ import VideoCore
 @testable import VideoMedia
 
 final class SpeechProjectProductionTests: XCTestCase {
-    @MainActor private func fixture() throws -> (Repository,SpeechProjectRequest) {
+    @MainActor private func fixture(needsInstalledVoice:Bool=true) throws -> (Repository,SpeechProjectRequest) {
         let root=URL(fileURLWithPath:ProcessInfo.processInfo.environment["SPEECH_TEST_ROOT"] ?? FileManager.default.temporaryDirectory.path).appendingPathComponent("speech-"+Codec.id())
         let repo=try Repository(root:root)
         let w=Workspace(name:"本机中文声音内部检查",owner:"owner")
         let s=Scene(title:"公共品",body:"简化模型",narration:"两位居民共同修桥。每人贡献三枚金币，修桥收益由两人共享。这个简化模型说明，个人激励和共同利益可能不同。",durationFrames:30)
         let p=Project(workspaceID:w.id,name:"中文知识内部开发",revision:Revision(contentContext:.init(workspaceID:w.id,name:"中文知识内部开发"),aspect:.landscape,scenes:[s]))
         try repo.transaction{$0.workspaces=[w];$0.projects=[p]}
-        let voices=SpeechService.voices();let voice=try XCTUnwrap(voices.first(where:{$0.id=="com.apple.voice.compact.zh-CN.Tingting"}) ?? voices.first(where:{$0.language=="zh-CN"}) ?? voices.first,"本机必须已有真实中文声音；测试不下载")
-        var plan=try ChineseSpeech.normalize(s.narration);plan.voiceIdentifier=voice.id;plan.confirmed=true
+        var plan=try ChineseSpeech.normalize(s.narration)
+        if needsInstalledVoice {
+            let voices=SpeechService.voices();let voice=try XCTUnwrap(voices.first(where:{$0.id=="com.apple.voice.compact.zh-CN.Tingting"}) ?? voices.first(where:{$0.language=="zh-CN"}) ?? voices.first,"本机必须已有真实中文声音；测试不下载")
+            plan.voiceIdentifier=voice.id
+        }
+        plan.confirmed=true
         return(repo,SpeechProjectRequest(workspaceID:w.id,projectID:p.id,sceneID:s.id,baseRevision:p.current.id,plan:plan,extendScene:true,timeoutSeconds:90))
     }
     @MainActor func testRealInstalledChineseSpeechBindsCompleteAudioAndReplaysWithoutNewVersion() async throws {
@@ -45,7 +49,7 @@ final class SpeechProjectProductionTests: XCTestCase {
     }
 
     @MainActor func testNormalImportedAudioAttachChecksRealBytesAndKeepsHumanReviewPending() async throws {
-        let(repo,original)=try fixture();defer{try? FileManager.default.removeItem(at:repo.root)}
+        let(repo,original)=try fixture(needsInstalledVoice:false);defer{try? FileManager.default.removeItem(at:repo.root)}
         // This authored test tone verifies source integrity, not Chinese speech quality.
         let url=repo.root.appendingPathComponent("authored-test.wav")
         let format=AVAudioFormat(standardFormatWithSampleRate:48000,channels:1)!
@@ -73,7 +77,7 @@ final class SpeechProjectProductionTests: XCTestCase {
     }
 
     @MainActor func testImported22050AudioKeepsContainerTailAndChecksMacCommitAfterDecode() async throws {
-        let(repo,original)=try fixture();defer{try? FileManager.default.removeItem(at:repo.root)}
+        let(repo,original)=try fixture(needsInstalledVoice:false);defer{try? FileManager.default.removeItem(at:repo.root)}
         let url=repo.root.appendingPathComponent("container-boundary.wav")
         let format=AVAudioFormat(standardFormatWithSampleRate:22050,channels:1)!
         let buffer=AVAudioPCMBuffer(pcmFormat:format,frameCapacity:80128)!

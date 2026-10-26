@@ -26,7 +26,10 @@ public enum Editor {
         revision.id = Codec.id(); revision.parentID = previous.id; revision.number += 1; revision.createdAt = Date(); revision.change = message; revision.review = Review(); revision.invalidated = ["最终导出", "完整预览", "声音确认"]
         for operation in operations {
             switch operation {
-            case .insertScene(let scene, let target): guard (0...revision.scenes.count).contains(target) else { throw VideoError.invalid("插入位置无效") }; try scene.validate(assets: assets); revision.scenes.insert(scene, at: target)
+            case .insertScene(let scene, let target):
+                guard (0...revision.scenes.count).contains(target) else { throw VideoError.invalid("插入位置无效") }
+                if let take=scene.voice {try SpeechProjectRules.validateCompleteTake(take,workspaceID:project.workspaceID,assets:assets)}
+                try scene.validate(assets: assets); revision.scenes.insert(scene, at: target)
             case .replaceScene(let id, var scene):
                 guard let i = revision.scenes.firstIndex(where: { $0.id == id }) else { throw VideoError.notFound("片段不存在") }; let old = revision.scenes[i]; guard !old.locked else { throw VideoError.permission("镜头已锁定，请先解锁再编辑") }; scene.id = id
                 try LayerRules.protectLocked(old:old,new:scene)
@@ -89,10 +92,20 @@ public enum Editor {
                 var oldVoiceIdentity = old.voice, newVoiceIdentity = scene.voice
                 oldVoiceIdentity?.listened = false
                 newVoiceIdentity?.listened = false
+                if oldVoiceIdentity != newVoiceIdentity,let take=scene.voice {
+                    try SpeechProjectRules.validateCompleteTake(take,workspaceID:project.workspaceID,assets:assets)
+                }
                 if old.speed != scene.speed || old.preservePitch != scene.preservePitch || oldVoiceIdentity != newVoiceIdentity {
                     scene.voice?.listened = false
                     for j in scene.captions.indices { scene.captions[j].confirmed = false }
                     revision.invalidated += ["实际配音、成片变速或变调与声音字幕重新复核"]
+                }
+                let sourceWindowChanged=old.kind != scene.kind || old.assetID != scene.assetID || old.sourceStartFrame != scene.sourceStartFrame || old.durationFrames != scene.durationFrames
+                let hadSourceAudio=old.kind == .video && old.assetID != nil && !old.muted && old.sourceGain>0
+                let hasSourceAudio=scene.kind == .video && scene.assetID != nil && !scene.muted && scene.sourceGain>0
+                if sourceWindowChanged && (hadSourceAudio || hasSourceAudio) {
+                    for j in scene.captions.indices {scene.captions[j].confirmed=false}
+                    revision.invalidated += ["原片音轨或源窗口已变化，字幕须重新核对"]
                 }
                 if try SpeechRules.captionContentDigest(old.captions) != SpeechRules.captionContentDigest(scene.captions) {
                     scene.voice?.listened = false
@@ -255,6 +268,10 @@ public enum Quality {
         }
         for s in revision.scenes {
             try s.validate(assets: database.assets.filter{$0.workspaceID==revision.workspaceID})
+            if let take=s.voice {
+                do {try SpeechProjectRules.validateCompleteTake(take,workspaceID:revision.workspaceID,assets:database.assets)}
+                catch {issues.append(QualityIssue(s.id+"voice_source",(error as? VideoError)?.localizedDescription ?? "配音未绑定完整音频原件"))}
+            }
             do {try FontRightsRules.validate(fontName:s.fontName ?? "PingFangSC-Medium",workspaceID:revision.workspaceID,evidenceIDs:s.evidenceIDs,evidence:database.evidence,commercial:commercial,now:now)}
             catch{issues.append(QualityIssue(s.id+"font_rights",(error as? VideoError)?.localizedDescription ?? "镜头字体授权尚未核对"))}
             if s.kind == .simulation || s.kind == .cartoon {
