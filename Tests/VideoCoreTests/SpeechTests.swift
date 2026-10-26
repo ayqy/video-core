@@ -2,6 +2,99 @@ import XCTest
 @testable import VideoCore
 
 final class SpeechTests: XCTestCase {
+    func testCaptionTimelineUsesActualDiscreteSamplesAtNonDivisibleSpeeds() throws {
+        for (speed, start, end, expected) in [(2.0, 31, 61, 16..<31), (1.5, 31, 62, 21..<42),
+                                               (1.1, 33, 67, 30..<61)] {
+            var scene = Scene(title: "字幕映射", body: "保留实际显示的句段", durationFrames: 90)
+            scene.speed = speed
+            scene.captions = [Caption(text: "这句须完整保留。", startFrame: start, endFrame: end)]
+            let mapped = try SpeechRules.captionTimelineRanges(for: scene)
+            XCTAssertEqual(mapped.map(\.frames), [expected])
+            // Linear sampling of the shipped painter is an independent oracle
+            // for the inverse's binary search, including floating-point edges.
+            for frame in 0..<scene.timelineFrames {
+                let source = scene.renderSourceFrame(atTimelineFrame: frame)
+                XCTAssertEqual(mapped[0].frames.contains(frame), start <= source && source < end)
+            }
+        }
+    }
+
+    func testCaptionTimelineSortsLegalUnorderedCuesAndPreservesGapsAndIdentity() throws {
+        var scene = Scene(title: "字幕顺序", body: "两句话之间保留空隙", durationFrames: 90)
+        scene.speed = 1.5
+        let late = Caption(text: "后一句。", startFrame: 31, endFrame: 62, confirmed: true)
+        let early = Caption(text: "前一句。", startFrame: 0, endFrame: 20, confirmed: false)
+        scene.captions = [late, early]
+        let original = scene.captions
+        let mapped = try SpeechRules.captionTimelineRanges(for: scene)
+        XCTAssertEqual(mapped.map(\.caption), [early, late])
+        XCTAssertEqual(mapped.map(\.frames), [0..<14, 21..<42])
+        XCTAssertFalse(mapped.contains { $0.frames.contains(14) || $0.frames.contains(20) })
+        XCTAssertEqual(scene.captions, original, "时间输出不重写作者字幕或确认元数据")
+    }
+
+    func testCaptionTimelineRetainsRoundedTailAndTheShippedPauseMapping() throws {
+        var tail = Scene(title: "句尾", body: "最后一帧仍显示字幕", durationFrames: 123)
+        tail.speed = 2
+        tail.captions = [Caption(text: "最后一句。", startFrame: 56, endFrame: 123)]
+        XCTAssertEqual(tail.timelineFrames, 62)
+        XCTAssertEqual(try SpeechRules.captionTimelineRanges(for: tail).map(\.frames), [28..<62])
+        var roundedDown = Scene(title: "有限输出", body: "不在镜头外增加一帧", durationFrames: 110)
+        roundedDown.speed = 1.5
+        roundedDown.captions = [Caption(text: "完整可见窗。", startFrame: 0, endFrame: 110)]
+        XCTAssertEqual(try SpeechRules.captionTimelineRanges(for: roundedDown).map(\.frames), [0..<73])
+        var pause = Scene(title: "既有停顿映射", body: "按画面实际源帧核对", durationFrames: 9)
+        pause.speed = 4; pause.pauseFrames = 2
+        pause.captions = [Caption(text: "末帧。", startFrame: 8, endFrame: 9)]
+        XCTAssertEqual(pause.timelineFrames, 4)
+        XCTAssertEqual(try SpeechRules.captionTimelineRanges(for: pause).map(\.frames), [2..<3])
+        pause.pauseFrames = 0
+        XCTAssertThrowsError(try SpeechRules.captionTimelineRanges(for: pause))
+    }
+
+    func testCaptionTimelineRejectsInvisibleCueInsteadOfDroppingItsText() throws {
+        var scene = Scene(title: "保留原句", body: "快放也不能省略字幕", durationFrames: 90)
+        scene.speed = 4
+        scene.captions = [Caption(text: "可见一句。", startFrame: 0, endFrame: 1),
+                          Caption(text: "不能省掉这句。", startFrame: 1, endFrame: 2)]
+        let original = scene.captions
+        XCTAssertThrowsError(try SpeechRules.captionTimelineRanges(for: scene)) { error in
+            XCTAssertEqual((error as? VideoError)?.code, "needs_review")
+            XCTAssertTrue(error.localizedDescription.contains("调慢"))
+        }
+        XCTAssertEqual(scene.captions, original)
+    }
+
+    func testCaptionTimelineRejectsInvalidMapInputsBeforeIntegerConversion() throws {
+        let valid = Scene(title: "输入核对", body: "不把非法速度转为整数", durationFrames: 90)
+        for speed in [Double.nan, .infinity, -.infinity, 0, 0.249, 4.001] {
+            var scene = valid; scene.speed = speed
+            XCTAssertThrowsError(try SpeechRules.captionTimelineRanges(for: scene))
+        }
+        for count in [Int.min, -1, 0, 54001, Int.max] {
+            var scene = valid; scene.durationFrames = count
+            XCTAssertThrowsError(try SpeechRules.captionTimelineRanges(for: scene))
+        }
+        for count in [Int.min, -1, 54001, Int.max] {
+            var scene = valid; scene.pauseFrames = count
+            XCTAssertThrowsError(try SpeechRules.captionTimelineRanges(for: scene))
+        }
+    }
+
+    func testQualityBlocksInvisibleCaptionsForBothPreviewAndFormalReview() throws {
+        var scene = Scene(title: "检查字幕", body: "先调好可见时间再制作", durationFrames: 90)
+        scene.speed = 4
+        scene.captions = [Caption(text: "这句不能消失。", startFrame: 1, endFrame: 2)]
+        let revision = try Planner.create(workspaceID: "w", name: "字幕可见性规则", scenes: [scene])
+        let before = try Codec.data(revision)
+        for requireReview in [false, true] {
+            let issues = try Quality.inspect(revision, database: Database(), requireReview: requireReview)
+            let issue = try XCTUnwrap(issues.first { $0.id == scene.id + "caption_ranges" })
+            XCTAssertTrue(issue.message.contains("可见输出帧"))
+        }
+        XCTAssertEqual(try Codec.data(revision), before, "质量门不能替作者修改字幕或伪造确认")
+    }
+
     func testImportedVoiceKeepsCompleteSourceAcrossMeasuredResamplingFrameBoundary() throws {
         // Real 22050Hz source / completed 48000Hz AVAssetReader output from scene02.
         let source = 80128.0 / 22050

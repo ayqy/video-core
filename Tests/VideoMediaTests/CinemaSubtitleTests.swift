@@ -20,6 +20,133 @@ final class CinemaSubtitleTests: XCTestCase {
         Revision(contentContext: ContentContext(workspaceID: "w", name: "电影字幕规则材料"), aspect: aspect, scenes: [scene], cta: "")
     }
 
+    private func srtCues(_ value: String) throws -> [(start: Int, end: Int, text: String)] {
+        func milliseconds(_ value: String) throws -> Int {
+            let fields = value.split { $0 == ":" || $0 == "," }
+            XCTAssertEqual(fields.count, 4)
+            let numbers = try fields.map { try XCTUnwrap(Int($0)) }
+            guard numbers.count == 4 else { throw VideoError.invalid("规则材料的SRT时间无效") }
+            return ((numbers[0] * 60 + numbers[1]) * 60 + numbers[2]) * 1000 + numbers[3]
+        }
+        return try value.components(separatedBy: "\n\n").filter { !$0.isEmpty }.enumerated().map { index, block in
+            let lines = block.components(separatedBy: "\n")
+            XCTAssertGreaterThanOrEqual(lines.count, 3)
+            guard lines.count >= 3 else { throw VideoError.invalid("规则材料的SRT句段无效") }
+            XCTAssertEqual(lines[0], String(index + 1))
+            let bounds = lines[1].components(separatedBy: " --> ")
+            guard bounds.count == 2 else { throw VideoError.invalid("规则材料的SRT区间无效") }
+            let start = try milliseconds(bounds[0]), end = try milliseconds(bounds[1])
+            XCTAssertLessThan(start, end, "不能导出零时长句段")
+            return (start, end, lines.dropFirst(2).joined(separator: "\n"))
+        }
+    }
+
+    private func assertSRTMatchesPainterFramePTS(_ r: Revision) throws {
+        let cues = try srtCues(MediaRenderer.subtitles(r))
+        XCTAssertEqual(cues.map(\.start), cues.map(\.start).sorted())
+        for frame in 0..<r.frames {
+            let (scene, local, _) = ScenePainter.scene(revision: r, frame: frame)
+            let source = scene.renderSourceFrame(atTimelineFrame: local)
+            let expected = scene.captions.first { $0.startFrame <= source && source < $0.endFrame }
+            // Compare rational video PTS against serialized milliseconds with
+            // integer cross-products, without a floating timestamp tolerance.
+            let actual = cues.filter { frame * 1000 >= $0.start * r.fps && frame * 1000 < $0.end * r.fps }
+            XCTAssertEqual(actual.map(\.text), expected.map { [$0.text] } ?? [], "输出帧\(frame)，fps=\(r.fps)")
+        }
+    }
+
+    func testSRTMatchesActualFramePTSForRetimedGapsUnorderedCuesRoundedTailAndPause() throws {
+        let prefix = Scene(title: "封面", body: "封面没有字幕", durationFrames: 3)
+        var fractional = Scene(title: "句段", body: "保持中间停顿", durationFrames: 90)
+        fractional.speed = 1.5
+        fractional.captions = [Caption(text: "后一句。", startFrame: 31, endFrame: 62),
+                               Caption(text: "前一句。", startFrame: 0, endFrame: 20)]
+        var tail = Scene(title: "句尾", body: "保留最后一帧", durationFrames: 123)
+        tail.speed = 2
+        tail.captions = [Caption(text: "最后一句。", startFrame: 56, endFrame: 123)]
+        var pause = Scene(title: "停顿", body: "沿用已有源映射", durationFrames: 9)
+        pause.speed = 4; pause.pauseFrames = 2
+        pause.captions = [Caption(text: "末帧。", startFrame: 8, endFrame: 9)]
+        let r = Revision(contentContext: ContentContext(workspaceID: "w", name: "字幕输出窗"),
+                         aspect: .landscape, scenes: [prefix, fractional, tail, pause])
+        try assertSRTMatchesPainterFramePTS(r)
+        XCTAssertEqual(try srtCues(MediaRenderer.subtitles(r)).map(\.text), ["前一句。", "后一句。", "最后一句。", "末帧。"])
+        XCTAssertEqual(fractional.captions.map(\.text), ["后一句。", "前一句。"], "输出不重排作者原数组")
+    }
+
+    func testSRTMillisecondQuantizationPreservesFrameMembershipAtEverySupportedFPS() throws {
+        let prefix = Scene(title: "前景", body: "累计帧偏移", durationFrames: 5)
+        var scene = Scene(title: "逐帧字幕", body: "相邻句段与空隙", durationFrames: 14)
+        scene.captions = [Caption(text: "第一句。", startFrame: 2, endFrame: 4),
+                          Caption(text: "第二句。", startFrame: 4, endFrame: 7),
+                          Caption(text: "第三句。", startFrame: 10, endFrame: 14)]
+        for fps in 1...120 {
+            var r = Revision(contentContext: ContentContext(workspaceID: "w", name: "毫秒序列化"),
+                             aspect: .landscape, scenes: [prefix, scene])
+            r.fps = fps
+            try assertSRTMatchesPainterFramePTS(r)
+            if fps == 30 {
+                XCTAssertTrue(try MediaRenderer.subtitles(r).contains("00:00:00,233 --> 00:00:00,300"))
+            }
+        }
+    }
+
+    func testRetimedSRTBoundariesMatchVisibleInkInBothPainterEntrypoints() throws {
+        for aspect in Aspect.allCases { for paper in [false, true] {
+            for (speed, start, end, expectedStart, expectedEnd) in [(2.0, 31, 61, 16, 31), (1.5, 31, 62, 21, 42)] {
+                var scene = Scene(title: "四个邻居修路", body: "凑够三枚开工", durationFrames: 90)
+                scene.speed = speed
+                if paper { scene.paperPresentation = PaperPresentation() }
+                scene.captions = [Caption(text: "小陈把自己那枚收了回去。", startFrame: start, endFrame: end)]
+                let r = revision(scene, aspect: aspect)
+                var without = r; without.scenes[0].captions = []
+                let band = paper ? PaperPresentationPainter.Layout(aspect: aspect, mode: .explanation, showPrice: false, showAction: false).caption : ScenePainter.OverlayLayout(width: CGFloat(aspect.width), height: CGFloat(aspect.height), showPrice: false, separateBody: false).captionText
+                let cues = try srtCues(MediaRenderer.subtitles(r))
+                for frame in [expectedStart - 1, expectedStart, expectedEnd - 1, expectedEnd] {
+                    let image = try ScenePainter.image(revision: r, frame: frame)
+                    let empty = try ScenePainter.image(revision: without, frame: frame)
+                    let inkVisible = try region(image, band) != region(empty, band)
+                    let srtVisible = cues.contains { frame * 1000 >= $0.start * r.fps && frame * 1000 < $0.end * r.fps }
+                    XCTAssertEqual(inkVisible, frame >= expectedStart && frame < expectedEnd)
+                    XCTAssertEqual(srtVisible, inkVisible, "外置SRT与实际电影字幕首末帧必须一致")
+                }
+            }
+        }}
+    }
+
+    func testInvisibleCueAndInvalidTimingFailBeforeDirectRendererTouchesExistingOutput() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("subtitle-no-write-" + UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let repo = try Repository(root: root)
+        let output = root.appendingPathComponent("existing-output")
+        try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+        for name in ["video.mp4", "working.mp4", "captions.srt", "cover.png", "publication.txt"] {
+            try Data(("prior-" + name).utf8).write(to: output.appendingPathComponent(name))
+        }
+        func outputBytes() throws -> [String: Data] {
+            try Dictionary(uniqueKeysWithValues: FileManager.default.contentsOfDirectory(atPath: output.path).map {
+                ($0, try Data(contentsOf: output.appendingPathComponent($0)))
+            })
+        }
+        let before = try outputBytes()
+        var scene = Scene(title: "不可见字幕", body: "先调整时间", durationFrames: 90)
+        scene.speed = 4
+        scene.captions = [Caption(text: "这句不能省略。", startFrame: 1, endFrame: 2)]
+        let invisible = revision(scene, aspect: .landscape)
+        XCTAssertThrowsError(try MediaRenderer.subtitles(invisible))
+        var invalid = invisible; invalid.scenes[0].speed = .nan
+        for r in [invisible, invalid] {
+            do {
+                _ = try await MediaRenderer().render(revision: r, repository: repo, output: output)
+                XCTFail("不可见字幕或非法速度不能开始制作")
+            } catch {
+                XCTAssertTrue(error is VideoError)
+            }
+            XCTAssertEqual(try outputBytes(), before, "直接SDK入口也不能先删除或写出旧四件")
+            XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent("cache").path))
+        }
+    }
+
     func testMeasuredChineseAndEnglishLinesAreCenteredAndBottomAnchoredInBothAspects() throws {
         for aspect in Aspect.allCases {
             let rect = PaperPresentationPainter.Layout(aspect: aspect, mode: .explanation, showPrice: false, showAction: false).caption

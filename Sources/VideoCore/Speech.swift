@@ -161,6 +161,42 @@ public enum ChineseSpeech {
 }
 
 public enum SpeechRules {
+    public struct TimelineCaption: Equatable, Sendable {
+        public let caption: Caption
+        /// Half-open output-frame window using the painter's actual source map.
+        public let frames: Range<Int>
+    }
+
+    /// Invert the shipped discrete painter mapping, including rounded clip ends
+    /// and pause frames. Division rounded toward zero can select the previous
+    /// output frame; an algebraic ceil can also differ at floating-point edges.
+    /// Keep the original caption identity/text and return chronological windows.
+    public static func captionTimelineRanges(for scene: Scene) throws -> [TimelineCaption] {
+        guard scene.speed.isFinite, (0.25...4).contains(scene.speed),
+              (1...54000).contains(scene.durationFrames), (0...54000).contains(scene.pauseFrames) else {
+            throw VideoError.invalid("字幕映射的镜头速度或时长无效")
+        }
+        try validateCaptions(scene.captions, durationFrames: scene.durationFrames)
+        let frameCount = scene.timelineFrames
+        func firstFrame(atOrAfter sourceFrame: Int) -> Int {
+            var lower = 0, upper = frameCount
+            while lower < upper {
+                let middle = lower + (upper - lower) / 2
+                if scene.renderSourceFrame(atTimelineFrame: middle) < sourceFrame { lower = middle + 1 }
+                else { upper = middle }
+            }
+            return lower
+        }
+        return try scene.captions.sorted { $0.startFrame < $1.startFrame }.map { caption in
+            let start = firstFrame(atOrAfter: caption.startFrame)
+            let end = firstFrame(atOrAfter: caption.endFrame)
+            guard start < end else {
+                throw VideoError.review("当前变速下有字幕没有可见输出帧，请调慢片段或合并、调整字幕时间后重做；不会省略原文或输出零时长字幕")
+            }
+            return TimelineCaption(caption: caption, frames: start..<end)
+        }
+    }
+
     /// Keep the imported source's complete 30fps span. Completed resampling may
     /// cross a frame boundary by at most 1ms; it must not shorten the voice take.
     /// The caller remains responsible for completed decoding and source integrity.

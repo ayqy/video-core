@@ -309,7 +309,7 @@ public enum Quality {
                 if let voice = s.voice { if voice.textDigest != (try s.speechDigest()) { issues.append(QualityIssue(s.id+"voice", "旁白已修改，旧声音失效")) }; if voice.durationFrames > s.durationFrames { issues.append(QualityIssue(s.id+"voice_length", "配音超出镜头，请延长时长；禁止自动截断")) }; if requireReview && !voice.listened { issues.append(QualityIssue(s.id+"listened", "请试听真实配音后确认")) } }
                 else { issues.append(QualityIssue(s.id+"voice_missing", "尚无真实配音；请录入/生成声音或明确改为无旁白镜头")) }
             }
-            do {try SpeechRules.validateCaptions(s.captions,durationFrames:s.durationFrames)} catch {issues.append(QualityIssue(s.id+"caption_ranges",(error as? VideoError)?.localizedDescription ?? "字幕区间无效"))}
+            do {_ = try SpeechRules.captionTimelineRanges(for:s)} catch {issues.append(QualityIssue(s.id+"caption_ranges",(error as? VideoError)?.localizedDescription ?? "字幕区间或实际输出时间无效"))}
             if requireReview && s.captions.contains(where: { !$0.confirmed }) { issues.append(QualityIssue(s.id+"captions", "字幕时间尚未人工或可靠时间戳确认")) }
             if requireReview && !s.narration.isEmpty {
                 if s.captions.isEmpty { issues.append(QualityIssue(s.id+"captions_missing","有旁白但尚无字幕，请按真实音轨校正")) }

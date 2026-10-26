@@ -23,6 +23,10 @@ public final class MediaRenderer: @unchecked Sendable {
     }
     private func renderBody(revision r: Revision, repository: Repository, output: URL, invocation: RenderInvocation?, progress: @escaping @Sendable (Double) throws -> Void) async throws -> RenderResult {
         try r.validateContext()
+        // Reject an invisible cue before cache/output writes as well as through
+        // the normal Quality gate. Validate timing before computing r.frames,
+        // whose source-speed conversion requires finite, bounded inputs.
+        let subtitleText = try Self.subtitles(r)
         guard !r.scenes.isEmpty,r.frames>0,r.frames<=54000 else{throw VideoError.review("工程尚无可制作内容或时长超出范围，请添加真实片段后重试")}
         try ManagedInstallRules.authorizeWrite(repositoryRoot:repository.root)
         let start = Date(); let db = try repository.read()
@@ -72,7 +76,7 @@ public final class MediaRenderer: @unchecked Sendable {
             generator.appliesPreferredTrackTransform=true;generator.requestedTimeToleranceBefore = .zero;generator.requestedTimeToleranceAfter = .zero
             let cover=output.appendingPathComponent("cover.png")
             try ScenePainter.png(generator.copyCGImage(at:.zero,actualTime:nil)).write(to:cover,options:.atomic)
-            let subtitles=output.appendingPathComponent("captions.srt"); try Self.subtitles(r).write(to:subtitles,atomically:true,encoding:.utf8)
+            let subtitles=output.appendingPathComponent("captions.srt"); try subtitleText.write(to:subtitles,atomically:true,encoding:.utf8)
             let text=output.appendingPathComponent("publication.txt");let note=try Self.publicationNotes(r,audio:audio);try note.write(to:text,atomically:true,encoding:.utf8)
             let refs=try [final,cover,subtitles,text].map { u -> Artifact in let data=try Data(contentsOf:u); let mime:[String:String]=["mp4":"video/mp4","png":"image/png","srt":"application/x-subrip","txt":"text/plain"]; return Artifact(path:u.path,mime:mime[u.pathExtension]!,bytes:data.count,sha256:Codec.hash(data),revision:r.id) }
             let encoderNote=encoding.encoderIdentity.map{"实际H.264编码实现："+$0.identifier+(encoding.canReusePersistentCache ? "":"；依赖身份不完整，不持久复用画面缓存")} ?? "H.264实现身份无法完整确认，使用普通编码且不持久复用画面缓存"
@@ -323,7 +327,33 @@ public final class MediaRenderer: @unchecked Sendable {
         if let snapshot=r.dependencies { lines.append("素材与证据冻结于 "+BeijingTime.string(snapshot.capturedAt));for record in snapshot.records {if let a=record.asset {lines.append("素材：\(a.name)；SHA256 \(a.hash)；所用页：\(record.pageNumbers?.map(String.init).joined(separator:",") ?? "不适用")")};if let e=record.evidence {lines.append("证据：\(e.title)；来源 \(e.source)；权利人 \(e.owner)；授权截止 \(e.expiresAt.map(BeijingTime.string) ?? "未设置（不等于永久许可）")；商用 \(e.commercialAllowed ? "已声明允许，发布前再核":"未确认")")}} } else {lines.append("旧版本未冻结完整依赖，须回工程重建并审核。")}
         return lines.joined(separator:"\n")+"\n"
     }
-    public static func subtitles(_ r:Revision) -> String { var cursor=0,index=0; var result=""; func stamp(_ f:Int)->String { let ms=f*1000/r.fps; return String(format:"%02d:%02d:%02d,%03d",ms/3600000,(ms/60000)%60,(ms/1000)%60,ms%1000) }; for s in r.scenes { for c in s.captions { index += 1; result += "\(index)\n\(stamp(cursor+Int(Double(c.startFrame)/s.speed))) --> \(stamp(cursor+Int(Double(c.endFrame)/s.speed)))\n\(c.text)\n\n" }; cursor += s.timelineFrames }; return result }
+    public static func subtitles(_ r: Revision) throws -> String {
+        guard (1...120).contains(r.fps) else { throw VideoError.invalid("字幕帧率无效") }
+        var cursor = 0, index = 0, result = ""
+        func stamp(_ frame: Int) throws -> String {
+            let (scaled, overflow) = frame.multipliedReportingOverflow(by: 1000)
+            guard frame >= 0, !overflow else { throw VideoError.invalid("字幕时间超出可表示范围") }
+            // SRT has millisecond precision, not acoustic word timestamps.
+            // Floor by <1ms preserves membership at the video's rational frame
+            // PTS. Ceil would hide a fractional-PTS start frame and retain the
+            // exclusive end frame. Supported frame intervals are at least 8ms.
+            let ms = scaled / r.fps
+            return String(format: "%02d:%02d:%02d,%03d", ms / 3600000, (ms / 60000) % 60, (ms / 1000) % 60, ms % 1000)
+        }
+        for scene in r.scenes {
+            let cues = try SpeechRules.captionTimelineRanges(for: scene)
+            let (nextCursor, overflow) = cursor.addingReportingOverflow(scene.timelineFrames)
+            guard !overflow else { throw VideoError.invalid("字幕总时间超出可表示范围") }
+            for cue in cues {
+                let start = try stamp(cursor + cue.frames.lowerBound)
+                let end = try stamp(cursor + cue.frames.upperBound)
+                index += 1
+                result += "\(index)\n\(start) --> \(end)\n\(cue.caption.text)\n\n"
+            }
+            cursor = nextCursor
+        }
+        return result
+    }
 }
 
 public struct MediaInspection:Codable,Sendable {

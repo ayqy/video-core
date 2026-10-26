@@ -173,7 +173,7 @@ jobs:
               ('VideoCoreTests', 'BaiduVideoRulesTests'): (14, None),
               ('VideoCoreTests', 'EditorPracticeTests'): (13, None),
               ('VideoCoreTests', 'MacCommerceRulesTests'): (8, None),
-              ('VideoCoreTests', 'SpeechTests'): (34, None),
+              ('VideoCoreTests', 'SpeechTests'): (40, None),
               ('VideoCoreTests', 'AudioMixRulesTests'): (14, None),
               ('VideoCoreTests', 'ContentServiceRulesTests'): (18, None),
               ('VideoCoreTests', 'ContentProjectTests'): (23, None),
@@ -184,6 +184,9 @@ jobs:
               ('VideoCoreTests', 'SpeechProjectRulesTests'): (12, None),
               ('VideoCoreTests', 'ProviderRulesTests'): (14, None),
               ('VideoCoreTests', 'ProductFactsTests'): (20, None),
+              ('VideoCoreTests', 'DomainTests'): (20, None),
+              ('VideoMediaTests', 'CinemaSubtitleTests'): (12, None),
+              ('VideoMediaTests', 'MediaTests'): (10, None),
               ('VideoMediaTests', 'AudioMixMediaTests'): (7, None),
               ('VideoMediaTests', 'ScriptJobsTests'): (22, None),
               ('VideoCoreTests', 'AgentJobAccessTests'): (9, None),
@@ -205,7 +208,7 @@ jobs:
           for (target, suite), (source_count, selection) in suites.items():
               source_name = 'ContentProjectTests.swift' if suite in {'ContentProjectTests', 'ProductFactsTests'} else suite + '.swift'
               source = (root / 'Tests' / target / source_name).read_text()
-              if suite in {'ContentProjectTests', 'ProductFactsTests'}:
+              if suite in {'ContentProjectTests', 'ProductFactsTests', 'DomainTests'}:
                   declaration = re.search(r'(?m)^final class ' + re.escape(suite) + r'\s*:\s*XCTestCase\s*\{', source)
                   assert declaration, suite + ' declaration missing'
                   source = source[declaration.end():]
@@ -221,7 +224,7 @@ jobs:
               filters.append('^' + re.escape(target) + r'\.' + re.escape(suite) +
                              '/(?:' + '|'.join(re.escape(method) for method in selected) + ')$')
           expected = len(expected_methods)
-          assert expected == sum(method_counts.values()) == 329
+          assert expected == sum(method_counts.values()) == 377
           print('affected_suite_methods=' + str(method_counts))
           print('system_tts_methods=not_selected; import_only_methods=2')
           try:

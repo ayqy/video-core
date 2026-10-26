@@ -30,10 +30,16 @@ final class DomainTests:XCTestCase {
         let n=try Finance.report(orders:[order],cash:[],expenses:[expense],baseline:nil,now:now); XCTAssertNil(n.incrementalEstimate)
     }
     func testImmutableRevisionConflictLockAndVoiceInvalidation() throws {
-        let p=try project(); var s=p.current.scenes[0]; s.narration="AI预算99元"; s.voice=VoiceTake(assetID:"a",textDigest:try s.speechDigest(),durationFrames:20,method:"自备",listened:true)
-        let a=try Editor.apply([.replaceScene(s.id,s)],to:p,baseRevision:p.current.id,assets:[],message:"配音"); var changed=a.current.scenes[0]; changed.narration="AI预算200元"
-        let b=try Editor.apply([.replaceScene(changed.id,changed)],to:a,baseRevision:a.current.id,assets:[],message:"改价"); XCTAssertNil(b.current.scenes[0].voice); XCTAssertEqual(b.revisions[0].scenes[0].narration,""); XCTAssertThrowsError(try Editor.apply([.aspect(.portrait)],to:b,baseRevision:p.current.id,assets:[],message:"冲突"))
-        let locked=try Editor.apply([.lockScene(changed.id,true)],to:b,baseRevision:b.current.id,assets:[],message:"锁定"); XCTAssertThrowsError(try Editor.apply([.replaceScene(changed.id,changed)],to:locked,baseRevision:locked.current.id,assets:[],message:"不应成功"))
+        let p=try project(); var s=p.current.scenes[0]; s.narration="AI预算99元"
+        var audio=Asset(workspaceID:p.workspaceID,name:"complete-fixture.wav",hash:String(repeating:"a",count:64),ext:"wav",bytes:44,mediaType:"audio");audio.durationFrames=20
+        s.voice=VoiceTake(assetID:audio.id,textDigest:try s.speechDigest(),durationFrames:20,method:"自备",listened:true)
+        // An orphan take must still fail. The successful edit uses a complete,
+        // registered same-workspace source, as required by the shipped guard.
+        XCTAssertThrowsError(try Editor.apply([.replaceScene(s.id,s)],to:p,baseRevision:p.current.id,assets:[],message:"未登记声音"))
+        let assets=[audio]
+        let a=try Editor.apply([.replaceScene(s.id,s)],to:p,baseRevision:p.current.id,assets:assets,message:"配音"); var changed=a.current.scenes[0]; changed.narration="AI预算200元"
+        let b=try Editor.apply([.replaceScene(changed.id,changed)],to:a,baseRevision:a.current.id,assets:assets,message:"改价"); XCTAssertNil(b.current.scenes[0].voice); XCTAssertEqual(b.revisions[0].scenes[0].narration,""); XCTAssertThrowsError(try Editor.apply([.aspect(.portrait)],to:b,baseRevision:p.current.id,assets:assets,message:"冲突"))
+        let locked=try Editor.apply([.lockScene(changed.id,true)],to:b,baseRevision:b.current.id,assets:assets,message:"锁定"); XCTAssertThrowsError(try Editor.apply([.replaceScene(changed.id,changed)],to:locked,baseRevision:locked.current.id,assets:assets,message:"不应成功"))
     }
     func testTrimSplitAndSpeedReflow() throws {
         let p=try project(); let id=p.current.scenes[0].id; let split=try Editor.apply([.splitScene(id,60)],to:p,baseRevision:p.current.id,assets:[],message:"拆分"); XCTAssertEqual(split.current.frames,p.current.frames); XCTAssertEqual(split.current.scenes.count,p.current.scenes.count+1)
