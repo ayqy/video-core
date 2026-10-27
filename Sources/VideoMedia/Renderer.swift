@@ -101,7 +101,7 @@ public final class MediaRenderer: @unchecked Sendable {
                     let parameter=try await addAudio(repository.assetURL(asset),to:composition,at:CMTimeAdd(at,offset),sourceStart:.zero,sourceFrames:cue.durationFrames,targetDuration:length,fps:r.fps,gain:cue.gain,headroom:headroom,preservePitch:s.preservePitch,preparationDirectory:preparationDirectory)
                     parameters.append(parameter)
                 }
-                if let take=s.voice,let a=database.assets.first(where:{$0.id==take.assetID}) { let p=try await addAudio(repository.assetURL(a),to:composition,at:at,sourceStart:.zero,sourceFrames:take.durationFrames,targetDuration:try Self.sceneAudioTime(frames:take.durationFrames,fps:r.fps,speed:s.speed),fps:r.fps,gain:s.voiceGain,headroom:headroom,preservePitch:s.preservePitch,preparationDirectory:preparationDirectory); parameters.append(p) }
+                if let take=s.voice,let a=database.assets.first(where:{$0.id==take.assetID}) { let p=try await addAudio(repository.assetURL(a),to:composition,at:at,sourceStart:.zero,sourceFrames:take.durationFrames,targetDuration:try Self.sceneAudioTime(frames:take.durationFrames,fps:r.fps,speed:s.speed),fps:r.fps,gain:s.voiceGain,headroom:headroom,preservePitch:s.preservePitch,preparationDirectory:preparationDirectory,completeVoiceSpeed:s.speed); parameters.append(p) }
                 if let aid=s.assetID,let a=database.assets.first(where:{$0.id==aid}),s.kind == .video,s.sourceGain>0 { if !(try await AVURLAsset(url:repository.assetURL(a)).loadTracks(withMediaType:.audio)).isEmpty { let envelope=try AudioMixRules.sourceEnvelope(scene:s,fps:r.fps);let p=try await addAudio(repository.assetURL(a),to:composition,at:at,sourceStart:CMTime(value:Int64(s.sourceStartFrame),timescale:Int32(r.fps)),sourceFrames:s.durationFrames,targetDuration:span,fps:r.fps,gain:s.sourceGain,headroom:headroom,preservePitch:s.preservePitch,preparationDirectory:preparationDirectory,envelope:envelope); parameters.append(p) } }
             }; cursor += s.timelineFrames
         }
@@ -186,15 +186,29 @@ public final class MediaRenderer: @unchecked Sendable {
             parameters.setVolumeRamp(fromStartVolume:Float(try AudioMixRules.mixerVolume(segment.startGain,headroom:headroom)),toEndVolume:Float(try AudioMixRules.mixerVolume(segment.endGain,headroom:headroom)),timeRange:CMTimeRange(start:start,end:end))
         }
     }
-    private func addAudio(_ url:URL,to composition:AVMutableComposition,at:CMTime,sourceStart:CMTime,sourceFrames:Int,targetDuration:CMTime,fps:Int,gain:Double,headroom:Double,preservePitch:Bool,preparationDirectory:URL,envelope:[MusicGainSegment]?=nil) async throws -> AVMutableAudioMixInputParameters {
+    private func addAudio(_ url:URL,to composition:AVMutableComposition,at:CMTime,sourceStart:CMTime,sourceFrames:Int,targetDuration:CMTime,fps:Int,gain:Double,headroom:Double,preservePitch:Bool,preparationDirectory:URL,envelope:[MusicGainSegment]?=nil,completeVoiceSpeed:Double?=nil) async throws -> AVMutableAudioMixInputParameters {
         let asset=AVURLAsset(url:url); guard let src=try await asset.loadTracks(withMediaType:.audio).first,let track=composition.addMutableTrack(withMediaType:.audio,preferredTrackID:kCMPersistentTrackID_Invalid) else { throw VideoError.invalid("声音素材没有可用音轨") }
         let available=try await asset.load(.duration); let desired=CMTime(value:Int64(sourceFrames),timescale:Int32(fps)); let duration=CMTimeMinimum(desired,CMTimeSubtract(available,sourceStart)); guard duration.seconds>0 else { throw VideoError.invalid("音轨裁切超出范围") }
+        let target:CMTime
+        if let speed=completeVoiceSpeed {
+            // ceil(duration * fps) reserves complete timeline space. It is not
+            // a request to stretch a full source recording to that boundary.
+            // Use this same selected physical duration for the requested rate,
+            // and reject bad metadata instead of cutting a source then stretching it.
+            guard speed.isFinite,(0.25...4).contains(speed),CMTimeCompare(sourceStart,.zero)==0,
+                  available.seconds.isFinite,available.seconds>0,CMTimeCompare(available,desired)<=0,
+                  CMTimeCompare(duration,available)==0 else {
+                throw VideoError.review("完整配音实际时长超过登记边界或原速参数无效；请完整重新导入，禁止裁短后拉长")
+            }
+            target=CMTimeMultiplyByFloat64(duration,multiplier:1/speed)
+            guard target.seconds.isFinite,target.seconds>0 else{throw VideoError.review("完整配音实际播放时长无效")}
+        } else {target=targetDuration}
         var prepared:URL?
-        if !preservePitch,CMTimeCompare(duration,targetDuration) != 0 {
+        if !preservePitch,CMTimeCompare(duration,target) != 0 {
             let descriptions=try await src.load(.formatDescriptions)
             if !descriptions.isEmpty,descriptions.allSatisfy({description in
                 CMAudioFormatDescriptionGetStreamBasicDescription(description)?.pointee.mFormatID == kAudioFormatLinearPCM
-            }) {prepared=try Self.prepareLinearPCM(url,sourceStart:sourceStart,duration:duration,targetDuration:targetDuration,directory:preparationDirectory)}
+            }) {prepared=try Self.prepareLinearPCM(url,sourceStart:sourceStart,duration:duration,targetDuration:target,directory:preparationDirectory)}
         }
         if let prepared {
             let preparedAsset=AVURLAsset(url:prepared)
@@ -203,7 +217,7 @@ public final class MediaRenderer: @unchecked Sendable {
             try track.insertTimeRange(CMTimeRange(start:.zero,duration:preparedDuration),of:preparedTrack,at:at)
         } else {
             try track.insertTimeRange(CMTimeRange(start:sourceStart,duration:duration),of:src,at:at)
-            track.scaleTimeRange(CMTimeRange(start:at,duration:duration),toDuration:targetDuration)
+            track.scaleTimeRange(CMTimeRange(start:at,duration:duration),toDuration:target)
         }
         let p=AVMutableAudioMixInputParameters(track:track); p.audioTimePitchAlgorithm=preservePitch ? .spectral : .varispeed
         if let envelope {try Self.applyEnvelope(envelope,to:p,at:at,headroom:headroom)} else {p.setVolume(Float(try AudioMixRules.mixerVolume(gain,headroom:headroom)),at:.zero)}

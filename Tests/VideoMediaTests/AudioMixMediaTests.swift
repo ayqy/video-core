@@ -363,12 +363,97 @@ final class AudioMixMediaTests:XCTestCase {
         }
     }
 
+    func testUnitSpeedFractionalPCMDoesNotUseCeilingFrameAsStretchTarget()async throws {
+        let root=FileManager.default.temporaryDirectory.appendingPathComponent("unit-speed-fractional-pcm-"+Codec.id())
+        try FileManager.default.createDirectory(at:root,withIntermediateDirectories:true)
+        defer{try? FileManager.default.removeItem(at:root)}
+        // At 30fps this real 1.21-second source needs 37 frames of space, but
+        // reserving that space must not change a requested 1x playback speed.
+        // Stable frequencies measure speed independently of AAC priming delay.
+        let source=root.appendingPathComponent("fractional-stereo.wav")
+        try tone(source,seconds:1.21,frequency:997,sampleRate:48000,channels:2,rightFrequency:1709)
+        let original=try AVAudioFile(forReading:source)
+        XCTAssertEqual(original.length,58080)
+        let bytes=try Data(contentsOf:source),repo=try Repository(root:root.appendingPathComponent("workspace"))
+        let voice=try repo.ingest(bytes,name:source.lastPathComponent,workspaceID:"w",mediaType:"audio",durationFrames:37)
+        var scene=VideoCore.Scene(title:"原速与空间边界",body:"只验证采样速度，非配音或听审。",narration:"隔离校准",durationFrames:60)
+        scene.speed=1;scene.preservePitch=false;scene.voiceGain=0.5
+        scene.voice=VoiceTake(assetID:voice.id,textDigest:try scene.speechDigest(),durationFrames:37,method:"isolated_test_tone")
+        var revision=try Planner.create(workspaceID:"w",name:"原速完整声音",aspect:.landscape,scenes:[scene])
+        revision.dependencies=try DependencyRules.freeze(revision:revision,assets:[voice],evidence:[])
+        try repo.transaction {db in
+            var workspace=Workspace(name:"原速隔离规则",owner:"rules");workspace.id="w"
+            db.workspaces=[workspace];db.assets=[voice];db.projects=[Project(workspaceID:"w",name:"原速隔离规则",revision:revision)]
+        }
+        let before=try Codec.digest(repo.read())
+        let rendered=try await MediaRenderer().render(revision:revision,repository:repo,output:repo.root.appendingPathComponent("output"))
+        let movie=URL(fileURLWithPath:try XCTUnwrap(rendered.artifacts.first{$0.mime=="video/mp4"}).path)
+        let info=try await MediaInspection.inspect(movie),channels=try await decodedStereo(movie)
+        XCTAssertEqual(info.duration,2,accuracy:1.0/48000)
+        XCTAssertEqual(channels.map(\.count),[96000,96000])
+        for (index,frequency) in [997.0,1709.0].enumerated() {
+            let actual=try amplitude(channels[index],from:0.2,to:0.9,frequency:frequency)
+            let ceilingStretched=frequency*1.21/(37.0/30)
+            let wrong=try amplitude(channels[index],from:0.2,to:0.9,frequency:ceilingStretched)
+            XCTAssertGreaterThan(actual,0.045,"1x must preserve the original frequency; ceil frames reserve space rather than stretch the voice")
+            XCTAssertLessThan(wrong,0.006,"The ceil-rounded target must not introduce an unrequested speed/pitch change")
+            XCTAssertGreaterThan(try amplitude(channels[index],from:1.1,to:1.18,frequency:frequency),0.04,"The complete real source tail must remain audible in the AAC samples")
+            XCTAssertLessThan(try amplitude(channels[index],from:1.35,to:1.85,frequency:frequency),0.001)
+        }
+        XCTAssertEqual(try Codec.digest(repo.read()),before)
+        XCTAssertEqual(try Data(contentsOf:source),bytes)
+        XCTAssertEqual(try Data(contentsOf:repo.assetURL(voice)),bytes)
+        XCTAssertEqual(revision.scenes[0].voice?.durationFrames,37)
+        XCTAssertEqual(revision.scenes[0].speed,1)
+        XCTAssertFalse(revision.scenes[0].voice?.listened ?? true)
+        XCTAssertFalse(revision.review.sound);XCTAssertFalse(revision.review.complete)
+    }
+
+    func testCompleteVoiceRejectsPhysicalSourceBeyondRegisteredFrameBoundary()async throws {
+        let root=FileManager.default.temporaryDirectory.appendingPathComponent("physical-voice-beyond-boundary-"+Codec.id())
+        try FileManager.default.createDirectory(at:root,withIntermediateDirectories:true)
+        defer{try? FileManager.default.removeItem(at:root)}
+        let source=root.appendingPathComponent("physical-1.21-seconds.wav")
+        try tone(source,seconds:1.21,frequency:997)
+        let bytes=try Data(contentsOf:source),repo=try Repository(root:root.appendingPathComponent("workspace"))
+        // A bad historical registration and its take agree with one another,
+        // while the actual CAS recording is longer than that one-second boundary.
+        let asset=try repo.ingest(bytes,name:source.lastPathComponent,workspaceID:"w",mediaType:"audio",durationFrames:30)
+        var scene=VideoCore.Scene(title:"完整原音边界",body:"坏历史应保留，但不得裁短后重新制作。",narration:"隔离校准",durationFrames:60)
+        scene.voice=VoiceTake(assetID:asset.id,textDigest:try scene.speechDigest(),durationFrames:30,method:"isolated_test_tone")
+        var revision=try Planner.create(workspaceID:"w",name:"物理原音超界",aspect:.landscape,scenes:[scene])
+        revision.dependencies=try DependencyRules.freeze(revision:revision,assets:[asset],evidence:[])
+        try repo.transaction {db in
+            var workspace=Workspace(name:"物理原音边界",owner:"rules");workspace.id="w"
+            db.workspaces=[workspace];db.assets=[asset];db.projects=[Project(workspaceID:"w",name:"物理原音边界",revision:revision)]
+        }
+        let before=try Codec.digest(repo.read()),output=repo.root.appendingPathComponent("output")
+        do {
+            _=try await MediaRenderer().render(revision:revision,repository:repo,output:output)
+            XCTFail("登记帧与take相同也不能授权截短真实完整原音")
+        } catch {
+            guard case VideoError.review(let message)=error else{XCTFail("应由完整配音物理边界拒绝：\(error)");return}
+            XCTAssertTrue(message.contains("完整配音实际时长超过登记边界"),message)
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath:output.appendingPathComponent("video.mp4").path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath:output.appendingPathComponent("working.mp4").path))
+        XCTAssertEqual(try Codec.digest(repo.read()),before)
+        XCTAssertEqual(try Data(contentsOf:source),bytes)
+        XCTAssertEqual(try Data(contentsOf:repo.assetURL(asset)),bytes)
+        XCTAssertEqual(revision.scenes[0].voice?.durationFrames,30)
+        XCTAssertFalse(revision.scenes[0].voice?.listened ?? true)
+        XCTAssertFalse(revision.review.sound);XCTAssertFalse(revision.review.complete)
+    }
+
     func testActual44100MonoAndStereoSlowPCMRetainsRoundedVoiceTailAndSilence()async throws {
         let root=FileManager.default.temporaryDirectory.appendingPathComponent("slow-native-pcm-calibration-"+Codec.id())
         try FileManager.default.createDirectory(at:root,withIntermediateDirectories:true)
         defer{try? FileManager.default.removeItem(at:root)}
         let sourceSeconds=1.23,sourceRate=44100.0,sourceFrames=54243
-        let voiceFrames=37,speed=0.5,targetVoiceSeconds=Double(voiceFrames)/30/0.5
+        // The 37-frame reservation remains metadata, while 0.5x must transform
+        // the complete physical 1.23-second source to 2.46 seconds, not 37/30/0.5.
+        // The previous expectation is frozen in round-65/audio-speed/red-baseline.md.
+        let voiceFrames=37,speed=0.5,targetVoiceSeconds=sourceSeconds/0.5
         let slowedLeft=997*sourceSeconds/targetVoiceSeconds
         let slowedRight=1709*sourceSeconds/targetVoiceSeconds
         for channelCount in [AVAudioChannelCount(1),AVAudioChannelCount(2)] {
@@ -406,6 +491,7 @@ final class AudioMixMediaTests:XCTestCase {
             XCTAssertGreaterThan(leftTail,channelCount==1 ? 0.035:0.045,"原生44.1k声音最后90毫秒仍在，且0.5增益没有重复应用")
             XCTAssertLessThan(leftTail,0.075,"整备不应提前乘入增益后又改变声轨电平")
             XCTAssertGreaterThan(try amplitude(channels[0],from:0.4,to:0.6,frequency:slowedLeft),0.035)
+            XCTAssertGreaterThan(try amplitude(channels[0],from:0.25,to:2,frequency:997*speed),0.035,"长稳态窗必须保留请求0.5×的物理频率，不能按ceil边界额外变速")
             XCTAssertLessThan(try amplitude(channels[0],from:0.4,to:0.6,frequency:997),0.004,"慢速varispeed须保留其实际变调语义")
             if channelCount==2 {
                 let rightTail=try amplitude(channels[1],from:tailStart,to:tailEnd,frequency:slowedRight)
