@@ -2,10 +2,10 @@
 
 VideoFree source export · package_free.py · version 1
 
-生成时间：2026-10-27 14:55:03 北京时间
+生成时间：2026-10-27 16:34:53 北京时间
 
-- 源码与必要元数据：237个文件；3548787字节（不含本清单）。
-- 整体内容指纹：`aa682a6b75095e5a87b2e4f3153dd643b62ef7b10e7646b97779ed466a1a9c4a`。
+- 源码与必要元数据：238个文件；3566494字节（不含本清单）。
+- 整体内容指纹：`f28a65b68740a3876657a394795f0304f47246405f32ae6432b99202cebdaea9`。
 - 来源：受控原始工程中的逐文件白名单；Package.swift与唯一免费制作workflow来自Distribution/Free精确模板，README由发行脚本生成。
 - 本包不含.git，不可作为新业务checkout；本清单生成过程不执行构建、设备验收、签名安装或公共上传，各阶段以独立证据为准。
 - 排除：App、VideoGame、VideoCartoon、Premium、高级实现运行时测试、私有仓库地址、凭据、客户数据、缓存、日志及媒体过程产物。
@@ -137,7 +137,8 @@ VideoFree source export · package_free.py · version 1
 | 7121ad27352879f52316887ec87d9b806024faf64d2352017a459210363375a1 | 26694 | Sources/VideoCore/WorkspaceAccess.swift |
 | b749e2659c2cae1c87f701cde269ffae44aa3c7059c8406b6230858336445f1e | 13368 | Sources/VideoInstall/VideoInstall.swift |
 | e015b785e0464ee350c19afedd976a1ec5c3f5d13761179b204ac89c8660b500 | 19785 | Sources/VideoMedia/BaiduVideoProvider.swift |
-| e38eb6246bcfe8b0d4436c6a88397cf49afcb21928addcf57ce3c71b490f1055 | 20919 | Sources/VideoMedia/BubbleBuiltinAssets.swift |
+| 0d209127a30e86897466cda960616a33e2fef114f83767f1c78848b7c283de8f | 22935 | Sources/VideoMedia/BubbleBuiltinAssets.swift |
+| d9d4403a087a3eeddac962f9384bf3a43c517ac7cd231b14b9126a45a27c599a | 15691 | Sources/VideoMedia/BubbleKnowledgeBuiltinAssets.swift |
 | 031dfd0aacccf834f8841e52e60aff7078449276a4633043626e30d2d3d76a82 | 7964 | Sources/VideoMedia/CinemaSubtitles.swift |
 | 837aa869c66f58d4d662438328f0d315bfa87b04aff17f84d9d27b5a282bde2b | 8086 | Sources/VideoMedia/ClassicArtworkMedia.swift |
 | 6beff353416b9b4329e20ab3cbd84fcb19d34c8687427feb157b97d00ed63b4d | 10707 | Sources/VideoMedia/ClassicBuiltinAssets.swift |

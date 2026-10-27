@@ -138,11 +138,50 @@ public enum BubbleBuiltinAssets {
         guard try repository.read().workspaces.contains(where: { $0.id == workspaceID }) else {
             throw VideoError.permission("泡泡堂原件只能导入当前已有工作区")
         }
+        return try importPrepared(preparePack(url: url), workspaceID: workspaceID, repository: repository)
+    }
+
+    /// Captured, fully checked input lets an additional real asset pack finish
+    /// its own preflight before this legacy pack performs any CAS/DB write.
+    /// This is not a new public import mode and does not alter its 16 assets.
+    struct PreparedPack {
+        let checked: [String: Data]
+        let durations: [String: Int]
+    }
+
+    static func preparePack(bundle: Bundle) throws -> PreparedPack {
+        try preparePack { name in
+            let file = name as NSString
+            guard let location = bundle.url(forResource: file.deletingPathExtension, withExtension: file.pathExtension, subdirectory: "Bubble")
+                ?? bundle.url(forResource: file.deletingPathExtension, withExtension: file.pathExtension) else {
+                throw VideoError.notFound("泡泡堂原件或统一Q版派生未安装：" + name)
+            }
+            return location
+        }
+    }
+
+    static func preparePack(from directory: URL) throws -> PreparedPack {
+        let values = try directory.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
+        guard values.isDirectory == true, values.isSymbolicLink != true else {
+            throw VideoError.invalid("请选择包含完整泡泡堂原件的普通文件夹")
+        }
+        return try preparePack { directory.appendingPathComponent($0) }
+    }
+
+    private static func preparePack(url: (String) throws -> URL) throws -> PreparedPack {
         // Validate every image, audio and provenance document before the first CAS/DB write.
         var checked: [String: Data] = [:]
         for file in texts + files { checked[file.name] = try checkedData(url(file.name), file: file) }
         for file in derivedImages + [derivedDocument] { checked[file.name] = try checkedData(url(file.name), file: file) }
         let durations = try audioDurations(checked: checked)
+        return PreparedPack(checked: checked, durations: durations)
+    }
+
+    static func importPrepared(_ prepared: PreparedPack, workspaceID: String, repository: Repository) throws -> BubbleImportedPack {
+        guard try repository.read().workspaces.contains(where: { $0.id == workspaceID }) else {
+            throw VideoError.permission("泡泡堂原件只能导入当前已有工作区")
+        }
+        let checked = prepared.checked, durations = prepared.durations
         var rightsData = Data("泡泡堂上游Q版原件来源核对；商用与传播权利待核\n\n".utf8)
         for file in texts {
             rightsData.append(Data(("\n===== " + file.name + " =====\n").utf8))
