@@ -90,6 +90,65 @@ public enum JobOperations {
         else if job.remoteReportedActual != nil {j.message="已按凭据核对实际费用；服务报费与净实际额一致，退款申请与到账仍分开记录"}
         j.updatedAt=record.at; return j
     }
+    private static func remoteObservationVersion(_ job:Job,observing original:Job)throws->Int {
+        let sequence=job.remoteObservationSequence ?? 0,observed=original.remoteObservationSequence ?? 0
+        guard sequence>=0,sequence<Int.max,observed>=0,observed<Int.max else {
+            throw VideoError.conflict("原远端观察版本无效或已达上限；未接受回包")
+        }
+        guard job.id==original.id,job.workspaceID==original.workspaceID,job.projectID==original.projectID,
+              job.revisionID==original.revisionID,job.digest==original.digest,job.requestKey==original.requestKey,
+              job.remoteID==original.remoteID,job.quote.provider==original.quote.provider,job.quote.provider != "native",
+              try Codec.digest(job.createdAt)==Codec.digest(original.createdAt),
+              try Codec.digest(job.quote)==Codec.digest(original.quote),
+              job.videoGeneration==nil,original.videoGeneration==nil else {
+            throw VideoError.conflict("通用远端观察不属于原任务、冻结报价或原ID；百度生成回执须使用其专用观察规则")
+        }
+        guard sequence==observed,job.state==original.state,job.progress==original.progress,
+              try Codec.digest(job.remoteCheckedAt)==Codec.digest(original.remoteCheckedAt),
+              job.remoteReportedActual==original.remoteReportedActual,
+              try Codec.digest(job.lease)==Codec.digest(original.lease),
+              try Codec.digest(job.artifacts)==Codec.digest(original.artifacts),
+              (job.outputAssetIDs ?? [])==(original.outputAssetIDs ?? []) else {
+            throw VideoError.conflict("原任务已有较新观察、取消意图或执行/产物状态；未写入迟到回包，请读取原ID当前结果")
+        }
+        return sequence
+    }
+    /// A local cancellation intent is not a supplier observation and does not
+    /// consume a version. Its state change still invalidates older observations.
+    public static func requestRemoteCancellation(_ job:Job,observing original:Job)throws->Job {
+        _ = try remoteObservationVersion(job,observing:original)
+        return JobRules.cancel(job)
+    }
+    /// Async callers must retain the job observed before transport and use this
+    /// overload. Receipt-backed reconciliation may change cash independently;
+    /// another observation, cancellation intent or execution fact may not.
+    public static func applyRemote(_ snapshot:RemoteSnapshot,to job:Job,observing original:Job,now:Date=Date())throws->Job {
+        let sequence=try remoteObservationVersion(job,observing:original)
+        var result=try applyRemote(snapshot,to:job,now:now)
+        let nonterminal=[RemoteSnapshot.State.queued,.running,.unknown].contains(snapshot.state)
+        if nonterminal,job.state == .cancelRequested {
+            result.state = .cancelRequested
+            result.message="取消仍待原服务确认；未知或进行中的查询不撤销取消意图，费用继续待核"
+        }
+        if nonterminal,job.state == .cancelled {
+            result.state = .cancelled;result.progress=job.progress
+            result.message="保留原任务已确认取消的事实；后续非终态观察不撤销取消，最终费用仍待核"
+        }
+        if nonterminal,(job.billing ?? []).isEmpty,let reported=snapshot.actual {
+            let known=max(job.actual?.amount ?? 0,job.remoteReportedActual?.amount ?? 0)
+            if reported.amount<known {
+                result.actual=job.actual
+                result.remoteReportedActual=Money(known,job.quote.upper.currency)
+                result.billingUnknown=true
+                result.message="已见费用继续保留；进行中或未知的较低报费不代表退款，继续核对原任务账单"
+            }
+        }
+        result.remoteObservationSequence=sequence+1
+        return result
+    }
+    /// Serial application of an already selected observation. Without the
+    /// pre-transport job this overload cannot detect a delayed async response;
+    /// repository query/cancel callers use the observing overload above.
     public static func applyRemote(_ snapshot: RemoteSnapshot, to job: Job, now: Date = Date()) throws -> Job {
         guard job.quote.provider != "native", snapshot.requestKey==job.requestKey, job.remoteID == nil || job.remoteID==snapshot.remoteID, !snapshot.remoteID.isEmpty, snapshot.progress.isFinite,(0...1).contains(snapshot.progress), snapshot.checkedAt <= now.addingTimeInterval(60), snapshot.checkedAt >= job.createdAt.addingTimeInterval(-60) else { throw VideoError.conflict("远端响应不属于原任务或时间/进度无效") }
         if let checked=job.remoteCheckedAt, snapshot.checkedAt<checked { throw VideoError.conflict("远端响应早于已核状态") }

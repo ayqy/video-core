@@ -24,7 +24,7 @@ public enum RemoteJobs {
             try requireCancellationSupport(profile:profile)
             prepared=try repository.transaction{db in
                 let current=try checkedTarget(original:original,profile:profile,database:db,principal:principal,command:command,ownerOnly:ownerOnly)
-                let changed=JobRules.cancel(current)
+                let changed=try JobOperations.requestRemoteCancellation(current,observing:original)
                 db.jobs[db.jobs.firstIndex(where:{$0.id==current.id && $0.workspaceID==workspaceID})!]=changed
                 return changed
             }
@@ -53,7 +53,7 @@ public enum RemoteJobs {
     static func accept(_ snapshot:RemoteSnapshot,original:Job,profile:ProviderProfile,repository:Repository,principal:String,command:String,ownerOnly:Bool=false)throws->Job {
         try repository.transaction{db in
             let current=try checkedTarget(original:original,profile:profile,database:db,principal:principal,command:command,ownerOnly:ownerOnly)
-            let changed=try JobOperations.applyRemote(snapshot,to:current)
+            let changed=try JobOperations.applyRemote(snapshot,to:current,observing:original)
             db.jobs[db.jobs.firstIndex(where:{$0.id==current.id && $0.workspaceID==current.workspaceID})!]=changed
             return changed
         }

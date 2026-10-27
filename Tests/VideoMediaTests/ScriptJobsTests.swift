@@ -30,6 +30,97 @@ final class ScriptJobsTests:XCTestCase {
         try repository.transaction{$0.workspaces=[workspace];$0.projects=[project];$0.providers=[profile];$0.jobs=[job]}
         return(repository,try repository.read().jobs[0],profile)
     }
+    func testDelayedRemoteQueryCannotReplaceSameSecondCancellationAndSpend()throws {
+        for command in ["jobs query","worker run"] {
+            let(repository,_,profile)=try remoteFixture();defer{try? FileManager.default.removeItem(at:repository.root)}
+            try repository.transaction{$0.jobs[0].state = .running;$0.jobs[0].artifacts=[]}
+            let original=try repository.read().jobs[0]
+            let prepared=try repository.transaction{db in db.jobs[0]=JobRules.cancel(db.jobs[0]);return db.jobs[0]}
+            let checked=Date(timeIntervalSince1970:Date().timeIntervalSince1970.rounded(.down))
+            let cancelled=try RemoteJobs.accept(RemoteSnapshot(remoteID:original.remoteID!,requestKey:original.requestKey,state:.cancelled,progress:0.7,actual:Money(7),checkedAt:checked),original:prepared,profile:profile,repository:repository,principal:"owner",command:"jobs remote-cancel")
+            XCTAssertEqual(cancelled.state,.cancelled);XCTAssertEqual(cancelled.actual,Money(7))
+            let before=try Codec.data(repository.read())
+            let delayed=RemoteSnapshot(remoteID:original.remoteID!,requestKey:original.requestKey,state:.failed,progress:0,actual:Money(0),checkedAt:checked)
+            XCTAssertThrowsError(try RemoteJobs.accept(delayed,original:original,profile:profile,repository:repository,principal:"owner",command:command))
+            XCTAssertEqual(try Codec.data(repository.read()),before)
+            let retained=try repository.read().jobs[0]
+            XCTAssertEqual(retained.state,.cancelled);XCTAssertEqual(retained.actual,Money(7));XCTAssertEqual(retained.exposure,Money(7))
+        }
+    }
+    func testDelayedRemoteQueryCannotConsumeNewCancellationIntent()throws {
+        for command in ["jobs query","worker run"] {
+            let(repository,_,profile)=try remoteFixture();defer{try? FileManager.default.removeItem(at:repository.root)}
+            try repository.transaction{$0.jobs[0].state = .running;$0.jobs[0].artifacts=[]}
+            let original=try repository.read().jobs[0]
+            try repository.transaction{$0.jobs[0]=JobRules.cancel($0.jobs[0])}
+            let before=try Codec.data(repository.read())
+            let delayed=RemoteSnapshot(remoteID:original.remoteID!,requestKey:original.requestKey,state:.unknown,progress:0.2,actual:Money(0))
+            XCTAssertThrowsError(try RemoteJobs.accept(delayed,original:original,profile:profile,repository:repository,principal:"owner",command:command))
+            XCTAssertEqual(try Codec.data(repository.read()),before)
+            let retained=try repository.read().jobs[0]
+            XCTAssertEqual(retained.state,.cancelRequested);XCTAssertNil(retained.actual);XCTAssertTrue(retained.billingUnknown)
+        }
+    }
+    func testFreshGenericQueryKeepsCancelledOverrunWithoutInventingRefundReceipt()throws {
+        let(repository,_,profile)=try remoteFixture();defer{try? FileManager.default.removeItem(at:repository.root)}
+        try repository.transaction{$0.jobs[0].state = .cancelRequested;$0.jobs[0].artifacts=[]}
+        let original=try repository.read().jobs[0]
+        let checked=Date(timeIntervalSince1970:Date().timeIntervalSince1970.rounded(.down))
+        let cancelled=try RemoteJobs.accept(RemoteSnapshot(remoteID:original.remoteID!,requestKey:original.requestKey,state:.cancelled,progress:0.7,actual:Money(20),checkedAt:checked),original:original,profile:profile,repository:repository,principal:"owner",command:"jobs remote-cancel")
+        XCTAssertEqual(cancelled.remoteObservationSequence,1)
+        let updated=try RemoteJobs.accept(RemoteSnapshot(remoteID:original.remoteID!,requestKey:original.requestKey,state:.unknown,progress:0.1,actual:Money(0),checkedAt:checked),original:cancelled,profile:profile,repository:repository,principal:"owner",command:"jobs query")
+        XCTAssertEqual(updated.remoteObservationSequence,2);XCTAssertEqual(updated.state,.cancelled)
+        XCTAssertEqual(updated.actual,Money(20));XCTAssertEqual(updated.remoteReportedActual,Money(20));XCTAssertEqual(updated.exposure,Money(20))
+        XCTAssertTrue(updated.billingUnknown);XCTAssertTrue((updated.billing ?? []).isEmpty);XCTAssertNil(updated.refundPending)
+        let persisted=try repository.read().jobs[0]
+        XCTAssertEqual(try Codec.data(persisted),try Codec.data(updated));XCTAssertEqual(persisted.remoteID,original.remoteID)
+        XCTAssertEqual(try Codec.data(persisted.quote),try Codec.data(original.quote))
+    }
+    func testDelayedCancellationReplyCannotOverwriteNewerQueryOrConcurrentRefund()throws {
+        for command in ["jobs query","worker run"] {
+            let(repository,_,profile)=try remoteFixture();defer{try? FileManager.default.removeItem(at:repository.root)}
+            try repository.transaction{$0.jobs[0].state = .cancelRequested;$0.jobs[0].artifacts=[]}
+            let original=try repository.read().jobs[0]
+            let checked=Date(timeIntervalSince1970:Date().timeIntervalSince1970.rounded(.down))
+            _ = try RemoteJobs.accept(RemoteSnapshot(remoteID:original.remoteID!,requestKey:original.requestKey,state:.running,progress:0.8,actual:Money(7),checkedAt:checked),original:original,profile:profile,repository:repository,principal:"owner",command:command)
+            try repository.transaction{db in
+                for event in [BillingRecord(id:"charge",kind:.charge,money:Money(12),source:"本地规则费用凭据"),BillingRecord(id:"request",kind:.refundRequested,money:Money(5),source:"本地规则申请凭据"),BillingRecord(id:"refund",kind:.refundReceived,money:Money(3),source:"本地规则到账凭据")] {db.jobs[0]=try JobOperations.reconcile(db.jobs[0],record:event)}
+            }
+            let before=try Codec.data(repository.read())
+            XCTAssertThrowsError(try RemoteJobs.accept(RemoteSnapshot(remoteID:original.remoteID!,requestKey:original.requestKey,state:.cancelled,progress:0.8,actual:Money(0),checkedAt:checked),original:original,profile:profile,repository:repository,principal:"owner",command:"jobs remote-cancel"))
+            XCTAssertEqual(try Codec.data(repository.read()),before)
+            let retained=try repository.read().jobs[0]
+            XCTAssertEqual(retained.remoteObservationSequence,1);XCTAssertEqual(retained.state,.cancelRequested)
+            XCTAssertEqual(retained.actual,Money(9));XCTAssertEqual(retained.refundPending,Money(2));XCTAssertEqual(retained.billing?.count,3)
+        }
+    }
+    func testFreshUnknownCancelReplyKeepsIntentAndConcurrentReceiptLedger()throws {
+        let(repository,_,profile)=try remoteFixture();defer{try? FileManager.default.removeItem(at:repository.root)}
+        try repository.transaction{$0.jobs[0].state = .cancelRequested}
+        let original=try repository.read().jobs[0]
+        try repository.transaction{db in
+            for event in [BillingRecord(id:"charge",kind:.charge,money:Money(12),source:"本地规则费用凭据"),BillingRecord(id:"request",kind:.refundRequested,money:Money(5),source:"本地规则申请凭据"),BillingRecord(id:"refund",kind:.refundReceived,money:Money(3),source:"本地规则到账凭据")] {db.jobs[0]=try JobOperations.reconcile(db.jobs[0],record:event)}
+        }
+        let ledger=try Codec.data(repository.read().jobs[0].billing)
+        let updated=try RemoteJobs.accept(RemoteSnapshot(remoteID:original.remoteID!,requestKey:original.requestKey,state:.unknown,progress:0.2,actual:Money(0)),original:original,profile:profile,repository:repository,principal:"owner",command:"jobs remote-cancel")
+        XCTAssertEqual(updated.remoteObservationSequence,1);XCTAssertEqual(updated.state,.cancelRequested);XCTAssertTrue(updated.billingUnknown)
+        XCTAssertEqual(updated.actual,Money(9));XCTAssertEqual(updated.refundPending,Money(2));XCTAssertEqual(try Codec.data(updated.billing),ledger)
+        XCTAssertEqual(try Codec.data(updated.artifacts),try Codec.data(original.artifacts));XCTAssertEqual(updated.remoteID,original.remoteID)
+    }
+    func testInvalidRemoteSequenceCannotStoreCancellationIntent()async throws {
+        for invalid in [-1,Int.max] {
+            let(repository,_,_)=try remoteFixture();defer{try? FileManager.default.removeItem(at:repository.root)}
+            try repository.transaction{$0.jobs[0].state = .running;$0.jobs[0].remoteObservationSequence=invalid}
+            let original=try repository.read().jobs[0],before=try Codec.data(repository.read())
+            do {
+                _ = try await RemoteJobs.cancel(repository:repository,workspaceID:original.workspaceID,jobID:original.id,principal:"owner")
+                XCTFail("invalid observation version reached cancellation transport")
+            }catch let problem as VideoError {
+                guard case .conflict = problem else {XCTFail("invalid observation version did not fail before credential access");return}
+            }
+            XCTAssertEqual(try Codec.data(repository.read()),before)
+        }
+    }
     func testRemoteProfileParameterSetsAreStableAcrossPersistenceAndRejectRealChanges()throws {
         let(repository,job,original)=try remoteFixture();defer{try? FileManager.default.removeItem(at:repository.root)}
         var profile=original;profile.supportedParameters=["temperature","top_p","max_tokens","seed"]
@@ -63,11 +154,12 @@ final class ScriptJobsTests:XCTestCase {
         }
     }
     func testRemoteReplyUsesLiveBillingAndRestrictedStatusWithoutFinancialOrPathDisclosure()throws {
-        let(repository,original,profile)=try remoteFixture();defer{try? FileManager.default.removeItem(at:repository.root)}
+        let(repository,_,profile)=try remoteFixture();defer{try? FileManager.default.removeItem(at:repository.root)}
+        try repository.transaction{$0.jobs[0].state = .cancelRequested}
+        let original=try repository.read().jobs[0]
         try repository.transaction{db in
             db.jobs[0]=try JobOperations.reconcile(db.jobs[0],record:BillingRecord(id:"PRIVATE_BILL",kind:.charge,money:Money(4),source:"规则账单"))
             db.jobs[0]=try JobOperations.reconcile(db.jobs[0],record:BillingRecord(id:"PRIVATE_REFUND",kind:.refundRequested,money:Money(2),source:"规则退款"))
-            db.jobs[0].state = .cancelRequested
         }
         let response=RemoteSnapshot(remoteID:original.remoteID!,requestKey:original.requestKey,state:.running,progress:0.7)
         let updated=try RemoteJobs.accept(response,original:original,profile:profile,repository:repository,principal:"editor",command:"jobs query")

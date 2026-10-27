@@ -16,6 +16,10 @@ public struct Artifact: Codable, Identifiable, Sendable {
 public struct Job: Codable, Identifiable, Sendable {
     public var id = Codec.id(); public var workspaceID: String; public var projectID: String; public var revisionID: String; public var digest: String; public var requestKey: String; public var quote: Quote; public var state: JobState = .queued; public var remoteID: String?; public var progress: Double = 0; public var actual: Money?; public var billingUnknown: Bool; public var refundPending: Money?; public var artifacts: [Artifact] = []; public var message = ""; public var createdAt = Date(); public var updatedAt = Date(); public var attempt = 0; public var cacheHit = false
     public var lease: WorkerLease?; public var billing: [BillingRecord]?; public var remoteCheckedAt: Date?
+    /// Accepted observations from the generic remote-job protocol. Older jobs
+    /// omit this field and start at zero; a local cancellation intent is not a
+    /// supplier observation and is checked separately through its live state.
+    public var remoteObservationSequence:Int?
     /// A supplier observation is not a receipt and has no guaranteed gross/net
     /// basis. While unresolved, this retains the reported upper amount rather
     /// than necessarily the latest response; it never replaces a ledger net.

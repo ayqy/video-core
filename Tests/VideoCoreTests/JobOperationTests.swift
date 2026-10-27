@@ -18,6 +18,119 @@ final class JobOperationTests: XCTestCase {
         let checkedAt=(job.remoteCheckedAt ?? job.updatedAt).addingTimeInterval(1)
         return try JobOperations.applyRemote(RemoteSnapshot(remoteID:"original",requestKey:job.requestKey,state:state,progress:0.5,actual:amount,checkedAt:checkedAt),to:job,now:checkedAt)
     }
+    private func observedRemoteFixture()throws->(Job,Date) {
+        let now=Date(timeIntervalSince1970:Date().timeIntervalSince1970.rounded(.down))
+        var j=try job(provider:"remote");j.remoteID="original";j.state = .running;j.progress=0.7
+        j.createdAt=now.addingTimeInterval(-10);j.updatedAt=now;j.quote.upper=Money(9)
+        return(j,now)
+    }
+    private func observedLease(now:Date,owner:String)throws->WorkerLease {
+        let local=try JobOperations.claim(job(),owner:owner,now:now,ttl:100)
+        return try XCTUnwrap(local.lease)
+    }
+    func testObservedRemoteSequenceSupportsLegacyJobsAndRejectsSameSecondStaleReply()throws {
+        let(original,now)=try observedRemoteFixture()
+        let data=try Codec.data(original),decoded=try Codec.decoder().decode(Job.self,from:data)
+        XCTAssertNil((try JSONSerialization.jsonObject(with:data) as? [String:Any])?["remoteObservationSequence"])
+        XCTAssertNil(decoded.remoteObservationSequence)
+        let intent=try JobOperations.requestRemoteCancellation(decoded,observing:decoded)
+        XCTAssertEqual(intent.state,.cancelRequested);XCTAssertNil(intent.remoteObservationSequence)
+        let response=RemoteSnapshot(remoteID:"original",requestKey:original.requestKey,state:.cancelled,progress:0.7,actual:Money(7),checkedAt:now)
+        XCTAssertThrowsError(try JobOperations.applyRemote(response,to:intent,observing:decoded,now:now))
+        let first=try JobOperations.applyRemote(response,to:decoded,observing:decoded,now:now)
+        XCTAssertEqual(first.remoteObservationSequence,1)
+        let old=RemoteSnapshot(remoteID:"original",requestKey:original.requestKey,state:.failed,progress:0,actual:Money(0),checkedAt:now)
+        XCTAssertThrowsError(try JobOperations.applyRemote(old,to:first,observing:decoded,now:now))
+        let next=try JobOperations.applyRemote(response,to:first,observing:first,now:now)
+        XCTAssertEqual(next.remoteObservationSequence,2);XCTAssertEqual(next.remoteID,original.remoteID)
+        XCTAssertEqual(next.actual,Money(7));XCTAssertEqual(next.state,.cancelled)
+        XCTAssertEqual(try Codec.decoder().decode(Job.self,from:Codec.data(next)).remoteObservationSequence,2)
+    }
+    func testObservedRemoteResponseBindsOriginalJobAndEveryFrozenQuoteField()throws {
+        let(current,now)=try observedRemoteFixture()
+        let response=RemoteSnapshot(remoteID:"original",requestKey:current.requestKey,state:.running,progress:0.8,checkedAt:now)
+        let mutations:[(inout Job)->Void]=[
+            {$0.id=Codec.id()},{$0.workspaceID="other"},{$0.projectID="other"},{$0.revisionID="other"},
+            {$0.digest="other"},{$0.requestKey="other"},{$0.remoteID="other"},{$0.remoteID=nil},
+            {$0.createdAt=$0.createdAt.addingTimeInterval(1)},{$0.quote.id=Codec.id()},
+            {$0.quote.projectID="other"},{$0.quote.revisionID="other"},{$0.quote.digest="other"},
+            {$0.quote.provider="other"},{$0.quote.upper=Money(88,"USD")},{$0.quote.unit="points"},
+            {$0.quote.expiresAt=$0.quote.expiresAt.addingTimeInterval(1)},{$0.quote.attempts += 1},
+            {$0.quote.confirmed.toggle()},{$0.quote.createdAt=$0.quote.createdAt.addingTimeInterval(1)},
+            {$0.quote.breakdown=EstimateBreakdown(version:"changed",specification:"changed",source:"本地规则",validFrom:now,expiresAt:now.addingTimeInterval(100),lines:[],excluded:[])},
+            {$0.videoGeneration=VideoGenerationReceipt(inputDigest:String(repeating:"a",count:64))}
+        ]
+        for (index,mutation) in mutations.enumerated() {
+            var unrelated=current;mutation(&unrelated)
+            XCTAssertThrowsError(try JobOperations.applyRemote(response,to:current,observing:unrelated,now:now),"identity \(index)")
+        }
+    }
+    func testObservedRemoteRejectsInvalidVersionOrChangedLifecycleLeaseAndOutputs()throws {
+        let(original,now)=try observedRemoteFixture()
+        let otherLease=try observedLease(now:now,owner:"other")
+        let response=RemoteSnapshot(remoteID:"original",requestKey:original.requestKey,state:.unknown,progress:0.4,checkedAt:now)
+        let mutations:[(inout Job)->Void]=[
+            {$0.remoteObservationSequence=1},{$0.state = .cancelRequested},{$0.progress=0.8},
+            {$0.remoteCheckedAt=now},{$0.remoteReportedActual=Money(1)},
+            {$0.lease=otherLease},
+            {$0.artifacts=[Artifact(path:"local.txt",mime:"text/plain",bytes:1,sha256:String(repeating:"a",count:64),revision:$0.revisionID)]},
+            {$0.outputAssetIDs=["new-local-output"]}
+        ]
+        for (index,mutation) in mutations.enumerated() {
+            var live=original;mutation(&live)
+            XCTAssertThrowsError(try JobOperations.applyRemote(response,to:live,observing:original,now:now),"observation \(index)")
+        }
+        for invalid in [-1,Int.max] {
+            var live=original;live.remoteObservationSequence=invalid
+            XCTAssertThrowsError(try JobOperations.applyRemote(response,to:live,observing:live,now:now))
+            XCTAssertThrowsError(try JobOperations.applyRemote(response,to:original,observing:live,now:now))
+            XCTAssertThrowsError(try JobOperations.requestRemoteCancellation(live,observing:live))
+        }
+        var native=original;native.quote.provider="native"
+        XCTAssertThrowsError(try JobOperations.requestRemoteCancellation(native,observing:native))
+        var baidu=original;baidu.videoGeneration=VideoGenerationReceipt(inputDigest:String(repeating:"a",count:64))
+        XCTAssertThrowsError(try JobOperations.requestRemoteCancellation(baidu,observing:baidu))
+    }
+    func testFreshNonterminalObservationKeepsCancellationAndUnreceiptedOverrun()throws {
+        for local in [JobState.running,.cancelRequested,.cancelled] {
+            for remote in [RemoteSnapshot.State.queued,.running,.unknown] {
+                for reported in [nil,Money(0),Money(5)] as [Money?] {
+                    var(original,now)=try observedRemoteFixture()
+                    original.state=local;original.actual=Money(20);original.remoteReportedActual=Money(20)
+                    original.remoteCheckedAt=now.addingTimeInterval(-1)
+                    let response=RemoteSnapshot(remoteID:"original",requestKey:original.requestKey,state:remote,progress:0.1,actual:reported,checkedAt:now)
+                    let updated=try JobOperations.applyRemote(response,to:original,observing:original,now:now)
+                    XCTAssertEqual(updated.actual,Money(20));XCTAssertEqual(updated.remoteReportedActual,Money(20))
+                    XCTAssertEqual(updated.exposure,Money(20));XCTAssertTrue(updated.billingUnknown)
+                    XCTAssertTrue((updated.billing ?? []).isEmpty);XCTAssertNil(updated.refundPending)
+                    XCTAssertEqual(updated.remoteObservationSequence,1)
+                    if local == .cancelled {XCTAssertEqual(updated.state,.cancelled);XCTAssertEqual(updated.progress,original.progress)}
+                    if local == .cancelRequested {XCTAssertEqual(updated.state,.cancelRequested)}
+                }
+            }
+        }
+        var(original,now)=try observedRemoteFixture();original.actual=Money(20);original.remoteReportedActual=Money(20)
+        let final=try JobOperations.applyRemote(RemoteSnapshot(remoteID:"original",requestKey:original.requestKey,state:.cancelled,progress:0.7,actual:Money(7),checkedAt:now),to:original,observing:original,now:now)
+        XCTAssertEqual(final.actual,Money(7));XCTAssertEqual(final.exposure,Money(7));XCTAssertFalse(final.billingUnknown)
+    }
+    func testObservedRemoteAllowsConcurrentLedgerWithoutLosingLeaseOrRefund()throws {
+        var(original,now)=try observedRemoteFixture();original.state = .cancelRequested
+        original.actual=Money(20);original.remoteReportedActual=Money(20)
+        original.lease=try observedLease(now:now,owner:"original-worker")
+        var live=original
+        for event in [BillingRecord(id:"charge",kind:.charge,money:Money(12),source:"本地规则费用凭据",at:now),BillingRecord(id:"request",kind:.refundRequested,money:Money(5),source:"本地规则申请凭据",at:now.addingTimeInterval(1)),BillingRecord(id:"refund",kind:.refundReceived,money:Money(3),source:"本地规则到账凭据",at:now.addingTimeInterval(2))] {
+            live=try JobOperations.reconcile(live,record:event)
+        }
+        let ledger=try Codec.data(live.billing),lease=try Codec.data(live.lease)
+        let unknown=try JobOperations.applyRemote(RemoteSnapshot(remoteID:"original",requestKey:original.requestKey,state:.unknown,progress:0.3,actual:Money(0),checkedAt:now),to:live,observing:original,now:now)
+        XCTAssertEqual(unknown.state,.cancelRequested);XCTAssertEqual(unknown.actual,Money(9));XCTAssertEqual(unknown.refundPending,Money(2))
+        XCTAssertEqual(try Codec.data(unknown.billing),ledger);XCTAssertEqual(try Codec.data(unknown.lease),lease)
+        XCTAssertEqual(unknown.remoteReportedActual,Money(20));XCTAssertEqual(unknown.exposure,Money(20));XCTAssertTrue(unknown.billingUnknown)
+        let final=try JobOperations.applyRemote(RemoteSnapshot(remoteID:"original",requestKey:original.requestKey,state:.cancelled,progress:0.7,actual:Money(9),checkedAt:now),to:unknown,observing:unknown,now:now)
+        XCTAssertEqual(final.remoteObservationSequence,2);XCTAssertEqual(final.state,.cancelled)
+        XCTAssertEqual(final.actual,Money(9));XCTAssertEqual(final.refundPending,Money(2));XCTAssertFalse(final.billingUnknown)
+        XCTAssertEqual(try Codec.data(final.billing),ledger);XCTAssertEqual(try Codec.data(final.lease),lease)
+    }
     func testOriginalUnitDecimalEstimateAndExpiry() throws {
         let now=Date(); let d=EstimateBreakdown(version:"official-2026",specification:"720p 12段 每段一次+两次重试",source:"管理员核对的官方单价",validFrom:now.addingTimeInterval(-10),expiresAt:now.addingTimeInterval(100),lines:[RateLine(label:"镜头",quantity:1,unit:"段",price:Money(Decimal(string:"2.48")!),count:12,attempts:3)],excluded:["配音与人工不包含"])
         XCTAssertEqual(try d.total().amount,Decimal(string:"89.28")); let p=project();let q=try d.quote(project:p,provider:"supplier",confirmed:true,now:now); XCTAssertEqual(q.attempts,3)
