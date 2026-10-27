@@ -119,4 +119,61 @@ final class PluginPackageTests:XCTestCase {
         func transcript(exit:Bool=true,wrong:Bool=false,healthState:String="idle")throws->Data {var data=Data();for r in requests {let d=PluginDescription(pluginID:wrong ? "other":manifest.module.id,capabilityID:manifest.module.capabilities[0],version:manifest.module.version);let response=PluginRPCResponse(requestID:r.requestID,ok:true,state:r.method == .health ? healthState:"ready",descriptor:d);var object=try JSONSerialization.jsonObject(with:Codec.data(response)) as! [String:Any];object["__video_transport"]=["event":"response","peer_pid":12345];data.append(try JSONSerialization.data(withJSONObject:object));data.append(10)};if exit{data.append(Data("{\"__video_transport\":{\"event\":\"peer_exited\",\"peer_pid\":12345}}\n".utf8))};return data}
         XCTAssertNoThrow(try PluginPackageProbeRules.validate(transcript(),requests:requests,manifest:manifest));XCTAssertThrowsError(try PluginPackageProbeRules.validate(transcript(exit:false),requests:requests,manifest:manifest));XCTAssertThrowsError(try PluginPackageProbeRules.validate(transcript(wrong:true),requests:requests,manifest:manifest));XCTAssertThrowsError(try PluginPackageProbeRules.validate(transcript(healthState:"running"),requests:requests,manifest:manifest));XCTAssertThrowsError(try PluginPackageProbeRules.validate(transcript(healthState:"closing"),requests:requests,manifest:manifest))
     }
+
+    /// Pure protocol DTOs only: these records never authorize a package or claim
+    /// a real peer. Signed native Publisher preflight is verified independently.
+    private func currentProbe(_ id:String,_ schema:Int)throws->(PluginPackageManifest,[PluginRPCRequest],PluginDescription) {
+        let module=PluginManifest(id:id,version:"1.3.0",capabilities:[PluginPackageRules.capabilities[id]!],inputSchema:schema,implementationDigest:String(repeating:"a",count:64),permissions:[])
+        let manifest=PluginPackageManifest(module:module,execution:try PluginExecutionDescriptor(pluginID:id,architecture:"x86_64"),files:[])
+        return(manifest,try PluginPackageProbeRules.requests(now:now),PluginDescription(pluginID:id,capabilityID:module.capabilities[0],version:module.version,inputSchemaVersion:schema))
+    }
+    private func probeTranscript(_ requests:[PluginRPCRequest],_ description:PluginDescription)throws->Data {
+        var data=Data()
+        for request in requests {
+            let reply=PluginRPCResponse(requestID:request.requestID,ok:true,state:request.method == .health ? "idle":"ready",descriptor:description)
+            var object=try JSONSerialization.jsonObject(with:Codec.data(reply)) as! [String:Any]
+            object["__video_transport"]=["event":"response","peer_pid":12345]
+            data.append(try JSONSerialization.data(withJSONObject:object));data.append(10)
+        }
+        data.append(Data("{\"__video_transport\":{\"event\":\"peer_exited\",\"peer_pid\":12345}}\n".utf8));return data
+    }
+    func testCurrentServiceSchemasRequireExplicitPublicationSelectionAndKeepOldDefaults()throws {
+        for (id,schema,legacy) in [("video.game",6,2),("video.cartoon",4,1)] {
+            let (manifest,requests,description)=try currentProbe(id,schema)
+            let transcript=try probeTranscript(requests,description)
+            XCTAssertEqual(try PluginInputCompatibility.publicationSchema(pluginID:id),legacy)
+            XCTAssertEqual(try PluginInputCompatibility.publicationSchema(pluginID:id,requested:String(schema)),schema)
+            XCTAssertNoThrow(try PluginPackageProbeRules.validate(transcript,requests:requests,manifest:manifest))
+            var old=manifest;old.module.inputSchema=legacy
+            XCTAssertThrowsError(try PluginPackageProbeRules.validate(transcript,requests:requests,manifest:old),"Legacy declarations must not silently describe a current service")
+        }
+    }
+    func testCurrentReadOnlyProbeRejectsRealDescriptorContractDrift()throws {
+        for (id,schema) in [("video.game",6),("video.cartoon",4)] {
+            let (manifest,requests,original)=try currentProbe(id,schema)
+            for change in 0..<8 {
+                var description=original
+                switch change {
+                case 0:description.version="9.0.0"
+                case 1:description.inputSchemaVersion=1
+                case 2:description.outputSchemaVersion=2
+                case 3:description.methods.removeLast()
+                case 4:description.capabilityID="other.capability"
+                case 5:description.pluginID="other.plugin"
+                case 6:description.filesystemAccess=true
+                default:description.networkAccess=true
+                }
+                XCTAssertThrowsError(try PluginPackageProbeRules.validate(probeTranscript(requests,description),requests:requests,manifest:manifest),"Descriptor drift \(id) \(change)")
+            }
+        }
+    }
+    func testPublisherProbeWireCannotRequestMakingOrClosingCustomerTasks()throws {
+        let (_,requests,_)=try currentProbe("video.game",6)
+        for method in [PluginMethod.validate,.estimate,.execute,.progress,.cancel] {
+            var changed=requests;changed[1].method=method
+            XCTAssertThrowsError(try PluginPackageProbeRules.input(changed))
+        }
+        var changed=requests;changed[1].taskID="customer-task"
+        XCTAssertThrowsError(try PluginPackageProbeRules.input(changed))
+    }
 }

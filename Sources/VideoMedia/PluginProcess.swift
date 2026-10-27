@@ -33,6 +33,61 @@ public enum PluginNativeCode {
     }
 }
 
+/// Bounded native capture shared by installation self-tests and publisher probes.
+/// The caller verifies executable identity; this adapter grants no execution rights.
+public enum NativeProcessProbe {
+    public static func run(_ executable:URL,_ arguments:[String],root:URL,timeout:TimeInterval=20,includeStderr:Bool=false,inputData:Data?=nil)throws->Data {
+        guard timeout.isFinite,timeout>0,timeout<=30,(inputData?.count ?? 0)<=4096 else {
+            throw VideoError.invalid("原生只读探针的时限或输入超过有限边界")
+        }
+        let fm=FileManager.default,cache=root.appendingPathComponent(".native-probe-"+Codec.id())
+        try fm.createDirectory(at:cache,withIntermediateDirectories:false,attributes:[.posixPermissions:0o700]);defer{try? fm.removeItem(at:cache)}
+        let out=cache.appendingPathComponent("stdout"),err=cache.appendingPathComponent("stderr")
+        guard fm.createFile(atPath:out.path,contents:nil,attributes:[.posixPermissions:0o600]),fm.createFile(atPath:err.path,contents:nil,attributes:[.posixPermissions:0o600]) else{throw VideoError.unavailable("无法建立受保护的原生探针输出")}
+        let stdout=try FileHandle(forWritingTo:out),stderr=try FileHandle(forWritingTo:err)
+        defer{try? stdout.close();try? stderr.close()}
+        let task=Process();task.executableURL=executable;task.arguments=arguments;task.currentDirectoryURL=root
+        task.environment=["PATH":"/usr/bin:/bin:/usr/sbin:/sbin","LANG":"en_US.UTF-8","LC_ALL":"en_US.UTF-8","TMPDIR":cache.path]
+        let stdin=inputData==nil ? nil:Pipe()
+        if let stdin{task.standardInput=stdin}else{task.standardInput=FileHandle.nullDevice};task.standardOutput=stdout;task.standardError=stderr
+        func stop() {
+            if task.isRunning{task.terminate();let limit=Date().addingTimeInterval(1);while task.isRunning && Date()<limit{Thread.sleep(forTimeInterval:0.025)};if task.isRunning{kill(task.processIdentifier,SIGKILL)}}
+            task.waitUntilExit()
+        }
+        try task.run()
+        // A failed pipe write must also reap the launched bridge, never orphan it.
+        defer{stop()}
+        if let inputData,let stdin{try stdin.fileHandleForWriting.write(contentsOf:inputData);try stdin.fileHandleForWriting.close()}
+        let deadline=Date().addingTimeInterval(timeout)
+        while task.isRunning && Date()<deadline {
+            let a=(try? out.resourceValues(forKeys:[.fileSizeKey]).fileSize) ?? 0,b=(try? err.resourceValues(forKeys:[.fileSizeKey]).fileSize) ?? 0
+            if a>4*1024*1024 || b>1024*1024{break}
+            Thread.sleep(forTimeInterval:0.025)
+        }
+        if task.isRunning{stop()}else{task.waitUntilExit()}
+        try stdout.synchronize();try stderr.synchronize()
+        guard task.terminationReason == .exit,task.terminationStatus==0,Date()<deadline,(try out.resourceValues(forKeys:[.fileSizeKey]).fileSize ?? 0)<=4*1024*1024,(try err.resourceValues(forKeys:[.fileSizeKey]).fileSize ?? 0)<=1024*1024 else{throw VideoError.unavailable("原生只读探针的退出状态、时限或输出边界未通过")}
+        return try Data(contentsOf:out)+(includeStderr ? Data(contentsOf:err):Data())
+    }
+}
+
+/// Observe the real signed service before issuing or installing declarations.
+/// Only three no-input RPCs are sent, never a customer frame or an entitlement.
+public enum PluginPackageReadOnlyProbe {
+    public static func verify(root:URL,manifest:PluginPackageManifest,scratchRoot:URL)throws {
+        let expected=try PluginExecutionDescriptor(pluginID:manifest.module.id,architecture:manifest.execution.architecture)
+        guard manifest.execution==expected else{throw VideoError.permission("插件只读探针拒绝非固定入口或服务描述")}
+        try PluginPackageRules.verifyFiles(manifest,root:root)
+        try PluginNativeCode.verify(root:root,execution:expected)
+        let requests=try PluginPackageProbeRules.requests(),wire=try PluginPackageProbeRules.input(requests)
+        let result=try NativeProcessProbe.run(root.appendingPathComponent(expected.entrypoint),[],root:scratchRoot,timeout:25,inputData:wire)
+        try PluginPackageProbeRules.validate(result,requests:requests,manifest:manifest)
+        // Code/resources cannot silently change during the real handshake.
+        try PluginPackageRules.verifyFiles(manifest,root:root)
+        try PluginNativeCode.verify(root:root,execution:expected)
+    }
+}
+
 public enum PluginBridgeWire {
     public static let metadata="__video_transport"
     public static func response(_ data:Data,pid:pid_t)throws->Data {

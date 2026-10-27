@@ -41,29 +41,7 @@ private enum CandidateSelfTest {
     /// Execute only fixed native commands after all signed file bytes were verified. Capture
     /// bounded output in protected temporary files; never inherit provider/authentication env.
     static func run(_ executable:URL,_ arguments:[String],root:URL,timeout:TimeInterval=20,includeStderr:Bool=false,inputData:Data?=nil)throws->Data {
-        let fm=FileManager.default,cache=root.appendingPathComponent(".installer-probe-"+Codec.id())
-        try fm.createDirectory(at:cache,withIntermediateDirectories:false,attributes:[.posixPermissions:0o700]);defer{try? fm.removeItem(at:cache)}
-        let out=cache.appendingPathComponent("stdout"),err=cache.appendingPathComponent("stderr")
-        guard fm.createFile(atPath:out.path,contents:nil,attributes:[.posixPermissions:0o600]),fm.createFile(atPath:err.path,contents:nil,attributes:[.posixPermissions:0o600]) else{throw VideoError.unavailable("无法建立受保护的候选自检输出")}
-        let stdout=try FileHandle(forWritingTo:out),stderr=try FileHandle(forWritingTo:err)
-        defer{try? stdout.close();try? stderr.close()}
-        let task=Process();task.executableURL=executable;task.arguments=arguments;task.currentDirectoryURL=root
-        task.environment=["PATH":"/usr/bin:/bin:/usr/sbin:/sbin","LANG":"en_US.UTF-8","LC_ALL":"en_US.UTF-8","TMPDIR":cache.path]
-        let stdin=inputData==nil ? nil:Pipe()
-        if let stdin{task.standardInput=stdin}else{task.standardInput=FileHandle.nullDevice};task.standardOutput=stdout;task.standardError=stderr
-        try task.run()
-        if let inputData,let stdin{try stdin.fileHandleForWriting.write(contentsOf:inputData);try stdin.fileHandleForWriting.close()}
-        let deadline=Date().addingTimeInterval(timeout)
-        while task.isRunning && Date()<deadline {
-            let a=(try? out.resourceValues(forKeys:[.fileSizeKey]).fileSize) ?? 0,b=(try? err.resourceValues(forKeys:[.fileSizeKey]).fileSize) ?? 0
-            if a>4*1024*1024 || b>1024*1024{task.terminate();break}
-            Thread.sleep(forTimeInterval:0.025)
-        }
-        if task.isRunning{task.terminate();let stop=Date().addingTimeInterval(1);while task.isRunning && Date()<stop{Thread.sleep(forTimeInterval:0.025)};if task.isRunning{kill(task.processIdentifier,SIGKILL)}}
-        task.waitUntilExit();try stdout.synchronize();try stderr.synchronize()
-        guard task.terminationReason == .exit,task.terminationStatus==0,Date()<deadline,(try out.resourceValues(forKeys:[.fileSizeKey]).fileSize ?? 0)<=4*1024*1024,(try err.resourceValues(forKeys:[.fileSizeKey]).fileSize ?? 0)<=1024*1024 else{throw VideoError.unavailable("候选程序签名、系统信任或有限自检未通过；原安装和数据保留")}
-        // codesign writes its identity to stderr. This data is inspected in memory only.
-        return try Data(contentsOf:out)+(includeStderr ? Data(contentsOf:err):Data())
+        try NativeProcessProbe.run(executable,arguments,root:root,timeout:timeout,includeStderr:includeStderr,inputData:inputData)
     }
     static func envelope(_ data:Data,command:String,requireIndependentRevocationABI:Bool=false)throws {
         guard let object=try JSONSerialization.jsonObject(with:data) as? [String:Any],object["ok"] as? Bool==true,object["state"] as? String=="succeeded",object["schema_version"] as? String==AgentContract.version,object["error"] is NSNull || object["error"]==nil,let result=object["result"] as? [String:Any],!result.isEmpty else{throw VideoError.unavailable("候选"+command+"未返回当前ABI的成功封套")}
@@ -103,10 +81,7 @@ private enum CandidateSelfTest {
                 let package=try PluginPackageRules.verify(root:root,publicKey:InstallerTrust.publicKey,architecture:manifest.architecture,osMajor:ProcessInfo.processInfo.operatingSystemVersion.majorVersion,minimumPolicyVersion:history.versions[id] ?? 1,implementationDigest:{url in try MachOCodeIdentity.digest(PluginPackageRules.read(url,limit:512*1024*1024),cpuType:type)},validateCode:PluginNativeCode.verify)
                 guard package.module.id==id else{throw VideoError.permission("独立插件位置和身份不符")}
                 _=try history.observing([package.policy])
-                let requests=try PluginPackageProbeRules.requests(),wire=try PluginPackageProbeRules.input(requests)
-                let result=try run(root.appendingPathComponent(package.execution.entrypoint),[],root:data,timeout:25,inputData:wire)
-                try PluginPackageProbeRules.validate(result,requests:requests,manifest:package.manifest)
-                try PluginPackageRules.verifyFiles(package.manifest,root:root)
+                try PluginPackageReadOnlyProbe.verify(root:root,manifest:package.manifest,scratchRoot:data)
             }
         }
         let candidate=program.appendingPathComponent(manifest.product.entrypoint)

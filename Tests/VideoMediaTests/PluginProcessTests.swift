@@ -71,4 +71,40 @@ final class PluginProcessTests:XCTestCase {
         let framed=try PluginBridgeWire.response(response,pid:123);let(event,pid)=try PluginBridgeWire.parse(framed);XCTAssertEqual(event,"response");XCTAssertEqual(pid,123)
         for raw in ["{\"__video_transport\":{\"event\":\"interrupted\",\"peer_pid\":123}}","{\"__video_transport\":{\"event\":\"peer_exited\",\"peer_pid\":0}}","{\"__video_transport\":{\"event\":\"peer_exited\",\"peer_pid\":123},\"ok\":true}"]{XCTAssertThrowsError(try PluginBridgeWire.parse(Data(raw.utf8)))}
     }
+    private func probeDirectory()throws->URL {
+        let root=FileManager.default.temporaryDirectory.resolvingSymlinksInPath().appendingPathComponent("native-readonly-rule-"+Codec.id())
+        try FileManager.default.createDirectory(at:root,withIntermediateDirectories:false)
+        addTeardownBlock{try? FileManager.default.removeItem(at:root)}
+        return root
+    }
+    func test_native_probe_delivers_finite_stdin_eof_and_removes_capture()throws {
+        let root=try probeDirectory(),requests=try PluginPackageProbeRules.requests(),input=try PluginPackageProbeRules.input(requests)
+        XCTAssertLessThanOrEqual(input.count,4096)
+        let result=try NativeProcessProbe.run(URL(fileURLWithPath:"/bin/cat"),[],root:root,inputData:input)
+        XCTAssertEqual(result,input)
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath:root.path),[])
+    }
+    func test_native_probe_does_not_inherit_the_parent_environment()throws {
+        let root=try probeDirectory(),result=try NativeProcessProbe.run(URL(fileURLWithPath:"/usr/bin/env"),[],root:root)
+        let lines=String(decoding:result,as:UTF8.self).split(separator:"\n")
+        XCTAssertEqual(Set(lines.compactMap{$0.split(separator:"=",maxSplits:1).first.map(String.init)}),["PATH","LANG","LC_ALL","TMPDIR"])
+        XCTAssertTrue(lines.contains("PATH=/usr/bin:/bin:/usr/sbin:/sbin"));XCTAssertTrue(lines.contains("LANG=en_US.UTF-8"));XCTAssertTrue(lines.contains("LC_ALL=en_US.UTF-8"))
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath:root.path),[])
+    }
+    func test_native_probe_rejects_unsuccessful_exit_and_bounded_timeout()throws {
+        let root=try probeDirectory()
+        XCTAssertThrowsError(try NativeProcessProbe.run(URL(fileURLWithPath:"/usr/bin/false"),[],root:root))
+        let started=Date()
+        XCTAssertThrowsError(try NativeProcessProbe.run(URL(fileURLWithPath:"/bin/sleep"),["2"],root:root,timeout:0.05))
+        XCTAssertLessThan(Date().timeIntervalSince(started),3)
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath:root.path),[])
+    }
+    func test_native_probe_rejects_nonfinite_limits_and_oversize_input_before_start()throws {
+        let root=try probeDirectory(),program=URL(fileURLWithPath:"/usr/bin/true")
+        for timeout in [TimeInterval.nan,.infinity,0,-1,31] {
+            XCTAssertThrowsError(try NativeProcessProbe.run(program,[],root:root,timeout:timeout))
+        }
+        XCTAssertThrowsError(try NativeProcessProbe.run(program,[],root:root,inputData:Data(repeating:0,count:4097)))
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath:root.path),[])
+    }
 }
