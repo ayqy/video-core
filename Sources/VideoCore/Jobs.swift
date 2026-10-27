@@ -65,7 +65,12 @@ public enum JobRules {
         guard p + quote.upper.amount <= budget.project.amount, m + quote.upper.amount <= budget.month.amount else { throw VideoError.budget("项目或月现金上界已超限；取消不抹掉已发生费用") }
         return Job(workspaceID: workspaceID, projectID: project.id, revisionID: project.current.id, digest: digest, requestKey: requestKey, quote: quote)
     }
-    public static func cancel(_ job: Job) -> Job { var j = job; j.updatedAt = Date(); if j.videoGeneration != nil { j.message = "百度合同无取消接口，尚未发送远端取消；原任务继续查询，预算和实耗待核对"; return j }; if j.remoteID != nil || j.state == .unknownRemote || (j.quote.provider != "native" && (j.attempt>0 || j.providerAttempts?.isEmpty==false)) { j.state = .cancelRequested; j.message = "须由已核实的取消接口确认远端结果；已花费和未知占用不自动归零" } else { j.state = .cancelled; if j.quote.provider == "native" { j.actual = Money(0, j.quote.upper.currency); j.billingUnknown = false } }; return j }
+    public static func cancel(_ job: Job) -> Job {
+        // Completion and confirmed cancellation are durable facts. A delayed UI
+        // action or repeated command must retain the entire original job.
+        if [.needsReview, .succeeded, .cancelled].contains(job.state) { return job }
+        var j = job; j.updatedAt = Date(); if j.videoGeneration != nil { j.message = "百度合同无取消接口，尚未发送远端取消；原任务继续查询，预算和实耗待核对"; return j }; if j.remoteID != nil || j.state == .unknownRemote || (j.quote.provider != "native" && (j.attempt>0 || j.providerAttempts?.isEmpty==false)) { j.state = .cancelRequested; j.message = "须由已核实的取消接口确认远端结果；已花费和未知占用不自动归零" } else { j.state = .cancelled; if j.quote.provider == "native" { j.actual = Money(0, j.quote.upper.currency); j.billingUnknown = false } }; return j
+    }
     public static func recover(_ job: Job) throws -> Job { var j = job; guard [.interrupted, .failed, .unknownRemote].contains(j.state) else { throw VideoError.invalid("此作业无需恢复") }; if j.quote.provider != "native" { j.state = .unknownRemote; j.message = "先查询原remote_task_id，禁止重新付费提交" } else { j.state = .queued; j.message = "沿用原任务ID恢复" }; j.lease=nil; j.updatedAt = Date(); return j }
 }
 public struct ProviderProfile: Codable, Identifiable, Sendable {

@@ -27,13 +27,78 @@ public struct ClassicAudioCue: Codable, Equatable, Identifiable, Sendable {
         self.assetID=assetID;self.startFrame=startFrame;self.durationFrames=durationFrames;self.gain=gain;self.use=use;self.listened=listened
     }
 }
+/// Purely visual identity for one existing knowledge participant. Pose keys use
+/// CartoonPose's established contract plus the actual alternate walk frame.
+/// No rule, strategy, source permission, sound or review belongs to this value.
+public struct KnowledgeParticipantAppearance: Codable, Equatable, Sendable {
+    public var participantID: String
+    public var poseRoles: [String: String]
+    public init(participantID: String, poseRoles: [String: String]) {
+        self.participantID=participantID;self.poseRoles=poseRoles
+    }
+}
+public enum KnowledgeParticipantAppearanceRules {
+    public static let poseKeys = Set(CartoonPose.allCases.map(\.rawValue)+["walkAlternate"])
+    private static let legacyPoseKeys = [
+        "hero_idle":"listen", "hero_contribute":"speak", "hero_walk":"walk",
+        "hero_walk_alt":"walkAlternate", "hero_blocked":"object", "hero_success":"celebrate"
+    ]
+    /// Missing mappings preserve the prior atlas contract. A present mapping
+    /// must cover exactly the real participants; it never infers a character
+    /// from a label, sorted position, strategy or a prior simulation result.
+    public static func validate(artwork: ClassicArtwork, knowledge: KnowledgeSimulation?,
+                                imageHashes: [String: String] = [:]) throws {
+        guard let appearances=artwork.knowledgeParticipants else { return }
+        guard let knowledge else { throw VideoError.invalid("参与者姿态映射只能绑定实际知识模型，不能用于普通游戏或卡通镜头") }
+        try knowledge.validate()
+        let ids=Set(knowledge.participants.map(\.id))
+        guard appearances.count==ids.count, (2...8).contains(appearances.count),
+              Set(appearances.map(\.participantID))==ids,
+              Set(appearances.map(\.participantID)).count==appearances.count,
+              !artwork.sprites.isEmpty,artwork.sprites.count<=32,
+              Set(artwork.sprites.map(\.role)).count==artwork.sprites.count else {
+            throw VideoError.invalid("参与者姿态须逐项覆盖当前知识实体，拒绝缺项、未知或重复标识及超量图块")
+        }
+        for appearance in appearances {
+            guard Set(appearance.poseRoles.keys)==poseKeys,
+                  appearance.poseRoles.values.allSatisfy({
+                      !$0.isEmpty && $0==$0.trimmingCharacters(in:.whitespacesAndNewlines) &&
+                      $0.utf8.count<=128 && !$0.unicodeScalars.contains(where:CharacterSet.controlCharacters.contains)
+                  }),
+                  appearance.poseRoles.values.allSatisfy({role in artwork.sprites.contains{$0.role==role}}),
+                  let walk=artwork.sprites.first(where:{$0.role==appearance.poseRoles["walk"]}),
+                  let alternate=artwork.sprites.first(where:{$0.role==appearance.poseRoles["walkAlternate"]}) else {
+                throw VideoError.invalid("每个知识参与者须明确绑定倾听、示意、两幅步态、受阻和庆祝的实际图块")
+            }
+            let sameImage:Bool
+            if let a=imageHashes[walk.assetID],let b=imageHashes[alternate.assetID] { sameImage=a==b }
+            else { sameImage=walk.assetID==alternate.assetID }
+            guard !sameImage || walk.x != alternate.x || walk.y != alternate.y ||
+                  walk.width != alternate.width || walk.height != alternate.height else {
+                throw VideoError.invalid("知识参与者的两个步态指向同一原图区域，请绑定实际不同的步态")
+            }
+        }
+    }
+    /// Call after the complete mapping preflight. Only an actual phase/state
+    /// pose is translated; participant identity never changes its causal pose.
+    public static func spriteRole(participantID: String, legacyRole: String, artwork: ClassicArtwork) throws -> String {
+        guard let appearances=artwork.knowledgeParticipants else { return legacyRole }
+        guard let key=legacyPoseKeys[legacyRole],
+              let appearance=appearances.first(where:{$0.participantID==participantID}),
+              let role=appearance.poseRoles[key],artwork.sprites.contains(where:{$0.role==role}) else {
+            throw VideoError.invalid("当前知识实体或实际动作缺少已核姿态映射，未退回其他角色")
+        }
+        return role
+    }
+}
 public struct ClassicArtwork: Codable, Equatable, Sendable {
     public enum Derivation: String, Codable, CaseIterable, Sendable { case original = "下载原件", qStyle = "已生成Q版派生" }
     public var gameplay: ClassicGameplay; public var sprites: [ClassicSprite]; public var sources: [ClassicSource]
     public var derivation: Derivation; public var transformation: String; public var originalAssetIDs: [String]
     public var audioCues: [ClassicAudioCue]
-    public init(gameplay:ClassicGameplay,sprites:[ClassicSprite],sources:[ClassicSource],derivation:Derivation = .original,transformation:String="",originalAssetIDs:[String]=[],audioCues:[ClassicAudioCue]=[]) {
-        self.gameplay=gameplay;self.sprites=sprites;self.sources=sources;self.derivation=derivation;self.transformation=transformation;self.originalAssetIDs=originalAssetIDs;self.audioCues=audioCues
+    public var knowledgeParticipants: [KnowledgeParticipantAppearance]?
+    public init(gameplay:ClassicGameplay,sprites:[ClassicSprite],sources:[ClassicSource],derivation:Derivation = .original,transformation:String="",originalAssetIDs:[String]=[],audioCues:[ClassicAudioCue]=[],knowledgeParticipants:[KnowledgeParticipantAppearance]?=nil) {
+        self.gameplay=gameplay;self.sprites=sprites;self.sources=sources;self.derivation=derivation;self.transformation=transformation;self.originalAssetIDs=originalAssetIDs;self.audioCues=audioCues;self.knowledgeParticipants=knowledgeParticipants
     }
     public var assetIDs: Set<String> { Set(sprites.map(\.assetID)+sources.map(\.assetID)+originalAssetIDs+audioCues.map(\.assetID)) }
     public var evidenceIDs: Set<String> { Set(sources.map(\.evidenceID)) }
@@ -51,6 +116,8 @@ public enum ClassicArtworkRules {
     public static func validate(scene:Scene,assets:[Asset]) throws {
         guard let artwork=scene.classicArtwork else { return }
         guard (1...54000).contains(scene.durationFrames),[.simulation,.cartoon].contains(scene.kind),!artwork.sprites.isEmpty,artwork.sprites.count<=32,artwork.sources.count<=64,Set(artwork.sprites.map(\.role)).count==artwork.sprites.count else { throw VideoError.invalid("经典素材场景类型、图块数或角色标识无效") }
+        try KnowledgeParticipantAppearanceRules.validate(artwork:artwork,knowledge:scene.kind == .simulation ? scene.simulation.knowledge:nil,
+            imageHashes:Dictionary(assets.map{($0.id,$0.hash)},uniquingKeysWith:{first,_ in first}))
         let required = requiredRoles(knowledge: scene.kind == .simulation && scene.simulation.knowledge != nil, cartoon: scene.kind == .cartoon)
         guard required.isSubset(of:Set(artwork.sprites.map(\.role))) else { throw VideoError.invalid("外部图集须提供角色、地面以及游戏所需箱子和墙体") }
         guard Set(artwork.sources.map(\.assetID)).count==artwork.sources.count else { throw VideoError.invalid("同一素材不能填写互相冲突的来源记录") }
@@ -67,6 +134,9 @@ public enum ClassicArtworkRules {
             let originalHashes=Set(assets.filter{artwork.originalAssetIDs.contains($0.id)}.map(\.hash))
             var primaryRoles:Set<String> = scene.kind == .simulation && scene.simulation.knowledge == nil ? ["hero","crate"]:["hero"]
             if scene.kind == .simulation, let knowledge=scene.simulation.knowledge {
+                if let appearances=artwork.knowledgeParticipants {
+                    primaryRoles.formUnion(appearances.flatMap{Array($0.poseRoles.values)})
+                }
                 // Knowledge renderers draw scenery and actual action/state
                 // sprites, not just the legacy hero. A derived hero must not
                 // hide originals in the scene or its performed poses.

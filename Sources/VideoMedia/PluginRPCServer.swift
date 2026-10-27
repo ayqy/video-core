@@ -86,7 +86,7 @@ public final class PluginRPCServer:@unchecked Sendable {
     }
     private func input(_ request:PluginRPCRequest)throws->PluginFrameInput {
         guard let value=request.input else{throw VideoError.invalid("插件操作缺少实际帧输入")}
-        _=try scope(request);try PluginInputCompatibility.requireKnowledgeSupport(value.props.simulation,pluginID:descriptor.pluginID,inputSchema:descriptor.inputSchemaVersion);try PluginInputCompatibility.requireCartoonSupport(value.props.cartoonPerformance,pluginID:descriptor.pluginID,inputSchema:descriptor.inputSchemaVersion);try PluginProtocolRules.validate(value,capabilityID:descriptor.capabilityID)
+        _=try scope(request);try PluginInputCompatibility.requireKnowledgeSupport(value.props.simulation,pluginID:descriptor.pluginID,inputSchema:descriptor.inputSchemaVersion,appearances:value.props.artwork?.knowledgeParticipants);try PluginInputCompatibility.requireCartoonSupport(value.props.cartoonPerformance,pluginID:descriptor.pluginID,inputSchema:descriptor.inputSchemaVersion);try PluginProtocolRules.validate(value,capabilityID:descriptor.capabilityID)
         return value
     }
     private func handle(_ request:PluginRPCRequest)throws->PluginRPCResponse {

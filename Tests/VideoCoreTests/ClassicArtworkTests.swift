@@ -177,3 +177,162 @@ final class ClassicArtworkTests:XCTestCase {
         XCTAssertNil(historic.classicArtworkRequired)
     }
 }
+
+/// Isolated rule fixtures, not game artwork, paid access or human approval.
+final class KnowledgeParticipantAppearanceTests: XCTestCase {
+    private let keys=["listen","speak","walk","walkAlternate","object","celebrate"]
+    private let legacy=["hero_idle","hero_contribute","hero_walk","hero_walk_alt","hero_blocked","hero_success"]
+    private func model(_ version:Int=1)->KnowledgeSimulation {
+        var model=KnowledgeSimulation(knowledgeLabel:"参与者选择",participants:[
+            .init(id:"a",name:"甲",strategy:.contribute,initialResources:10),
+            .init(id:"b",name:"乙",strategy:.freeRide,initialResources:10)
+        ],rounds:1)
+        if version==2 {
+            model.version=2;model.payoffMatrix = .prisonersDilemma()
+            for i in model.participants.indices {model.participants[i].strategy = .contribute;model.participants[i].matrixStrategy = .alwaysFirst}
+        } else if version==3 {
+            for i in model.participants.indices {model.participants[i].strategy = .contribute}
+            model.version=3
+            model.ruleTable=KnowledgeRuleTable(actions:[.init(id:"wait",label:"等待",pose:.idle)],states:[.init(id:"open",label:"待处理")],
+                plans:[.init(actorID:"a",initialStateID:"open",defaultActionID:"wait"),.init(actorID:"b",initialStateID:"open",defaultActionID:"wait")],
+                rules:[.init(id:"remain",label:"保持",conditions:[.init(kind:.round,minimum:1,maximum:1)],effects:[.setState(actorID:"a",stateID:"open")])])
+        }
+        return model
+    }
+    private func fixture(_ version:Int=1)throws->(Scene,[Asset],[Evidence]) {
+        let proof=Evidence(workspaceID:"w",title:"隔离规则纹理",source:"isolated-appearance",claim:"只验证视觉身份与来源规则",owner:"rules",commercialAllowed:false,verified:true)
+        var original=Asset(workspaceID:"w",name:"original.png",hash:String(repeating:"a",count:64),ext:"png",bytes:4,mediaType:"image")
+        original.evidenceID=proof.id
+        var derived=original;derived.id=Codec.id();derived.name="derived.png";derived.hash=String(repeating:"b",count:64)
+        let sources=[original,derived].map{ClassicSource(assetID:$0.id,hash:$0.hash,source:proof.source,owner:proof.owner,license:"isolated",evidenceID:proof.id)}
+        let required=ClassicArtworkRules.requiredRoles(knowledge:true,cartoon:false).union(["hero_walk_alt"])
+        var sprites=required.sorted().map{ClassicSprite(role:$0,assetID:derived.id)}
+        for id in ["a","b"] {
+            sprites += keys.enumerated().map{ClassicSprite(role:id+"_"+$0.element,assetID:derived.id,x:Double($0.offset%3)/3,y:Double($0.offset/3)/2,width:1.0/3,height:0.5)}
+        }
+        let appearances=["b","a"].map{id in KnowledgeParticipantAppearance(participantID:id,poseRoles:Dictionary(uniqueKeysWithValues:keys.map{($0,id+"_"+$0)}))}
+        var scene=Scene(kind:.simulation,title:"同一知识的不同角色",body:"规则结果不因视觉身份绑定而改变。",durationFrames:180)
+        scene.simulation.knowledge=model(version)
+        scene.classicArtwork=ClassicArtwork(gameplay:.sokoban,sprites:sprites,sources:sources,derivation:.qStyle,transformation:"隔离实际不同字节测试",originalAssetIDs:[original.id],knowledgeParticipants:appearances)
+        return(scene,[original,derived],[proof])
+    }
+    func testOldArtworkJSONWithoutMappingRetainsExactEncodedBytes()throws {
+        var(scene,_,_)=try fixture();scene.classicArtwork?.knowledgeParticipants=nil
+        let artwork=try XCTUnwrap(scene.classicArtwork),bytes=try Codec.data(artwork)
+        XCTAssertFalse(String(decoding:bytes,as:UTF8.self).contains("knowledgeParticipants"))
+        let decoded=try Codec.decoder().decode(ClassicArtwork.self,from:bytes)
+        XCTAssertNil(decoded.knowledgeParticipants);XCTAssertEqual(try Codec.data(decoded),bytes)
+        XCTAssertEqual(try KnowledgeParticipantAppearanceRules.spriteRole(participantID:"old-any-id",legacyRole:"hero_walk",artwork:decoded),"hero_walk")
+    }
+    func testNormalBindingAllMechanismsUsesExactParticipantIDsWithoutChangingCausalInputs()throws {
+        for version in [1,2,3] {
+            let(scene,assets,evidence)=try fixture(version),oldSimulation=try Codec.data(scene.simulation)
+            let oldTrace=try SimulationReplay.record(scene:scene)
+            let bound=try ClassicSceneEditing.binding(XCTUnwrap(scene.classicArtwork),character:"甲与乙",to:scene,assets:assets,evidence:evidence,workspaceID:"w",requireQStyle:true)
+            try ClassicArtworkRules.validateRights(scene:bound,workspaceID:"w",assets:assets,evidence:evidence,commercial:false)
+            XCTAssertEqual(try Codec.data(bound.simulation),oldSimulation)
+            XCTAssertEqual(try SimulationReplay.record(scene:bound),oldTrace)
+            var reordered=bound;reordered.simulation.knowledge?.participants.reverse()
+            for id in ["a","b"] {for (i,role) in legacy.enumerated() {
+                XCTAssertEqual(try KnowledgeParticipantAppearanceRules.spriteRole(participantID:id,legacyRole:role,artwork:XCTUnwrap(reordered.classicArtwork)),id+"_"+keys[i])
+            }}
+            XCTAssertThrowsError(try ClassicArtworkRules.validateRights(scene:bound,workspaceID:"w",assets:assets,evidence:evidence,commercial:true))
+        }
+    }
+    func testPresentMappingRejectsUnknownDuplicateMissingAndNonKnowledgeParticipants()throws {
+        let(scene,assets,_)=try fixture()
+        for mutation in 0..<6 {
+            var changed=scene
+            switch mutation {
+            case 0:changed.classicArtwork?.knowledgeParticipants=[]
+            case 1:changed.classicArtwork?.knowledgeParticipants?.removeLast()
+            case 2:changed.classicArtwork?.knowledgeParticipants?[0].participantID="unknown"
+            case 3:
+                let duplicate=changed.classicArtwork!.knowledgeParticipants![1]
+                changed.classicArtwork?.knowledgeParticipants?[0]=duplicate
+            case 4:changed.simulation.knowledge=nil
+            default:changed.kind = .cartoon
+            }
+            XCTAssertThrowsError(try ClassicArtworkRules.validate(scene:changed,assets:assets),"mutation "+String(mutation))
+        }
+    }
+    func testBoundPosesRequireAllSixActualRolesAndDistinctWalkRegions()throws {
+        let(scene,assets,_)=try fixture()
+        for mutation in 0..<6 {
+            var changed=scene
+            switch mutation {
+            case 0:changed.classicArtwork?.knowledgeParticipants?[0].poseRoles.removeValue(forKey:"object")
+            case 1:changed.classicArtwork?.knowledgeParticipants?[0].poseRoles["extra"]="a_listen"
+            case 2:changed.classicArtwork?.knowledgeParticipants?[0].poseRoles["walk"]="missing"
+            case 3:changed.classicArtwork?.knowledgeParticipants?[0].poseRoles["listen"]=" a_listen"
+            case 4:changed.classicArtwork?.knowledgeParticipants?[0].poseRoles["walkAlternate"]="b_walk"
+            default:
+                let index=try XCTUnwrap(changed.classicArtwork?.sprites.firstIndex{$0.role=="b_walkAlternate"})
+                let other=try XCTUnwrap(changed.classicArtwork?.sprites.first{$0.role=="b_walk"})
+                changed.classicArtwork?.sprites[index]=ClassicSprite(role:"b_walkAlternate",assetID:other.assetID,x:other.x,y:other.y,width:other.width,height:other.height)
+            }
+            XCTAssertThrowsError(try ClassicArtworkRules.validate(scene:changed,assets:assets),"mutation "+String(mutation))
+        }
+    }
+    func testEveryBoundPoseMustBeDerivedEvenWhenDefaultHeroIsValid()throws {
+        let(scene,assets,_)=try fixture()
+        for id in ["a","b"] {for key in keys {
+            var changed=scene
+            let index=try XCTUnwrap(changed.classicArtwork?.sprites.firstIndex{$0.role==id+"_"+key})
+            changed.classicArtwork?.sprites[index].assetID=assets[0].id
+            XCTAssertThrowsError(try ClassicArtworkRules.validate(scene:changed,assets:assets),id+"_"+key)
+        }}
+        var changed=scene,aliased=assets[0];aliased.id=Codec.id()
+        let original=try XCTUnwrap(changed.classicArtwork?.sources.first{$0.assetID==assets[0].id})
+        changed.classicArtwork?.sources.append(ClassicSource(assetID:aliased.id,hash:aliased.hash,source:original.source,owner:original.owner,license:original.license,evidenceID:original.evidenceID))
+        let index=try XCTUnwrap(changed.classicArtwork?.sprites.firstIndex{$0.role=="b_speak"})
+        changed.classicArtwork?.sprites[index].assetID=aliased.id
+        XCTAssertThrowsError(try ClassicArtworkRules.validate(scene:changed,assets:assets+[aliased]))
+    }
+    func testSameDerivedImageAliasCannotPretendToBeAnotherWalkFrameAndSpriteLimitRemains()throws {
+        let(scene,assets,_)=try fixture()
+        var alias=assets[1];alias.id=Codec.id()
+        var changed=scene
+        let source=try XCTUnwrap(changed.classicArtwork?.sources.first{$0.assetID==assets[1].id})
+        changed.classicArtwork?.sources.append(ClassicSource(assetID:alias.id,hash:alias.hash,source:source.source,owner:source.owner,license:source.license,evidenceID:source.evidenceID))
+        let walk=try XCTUnwrap(changed.classicArtwork?.sprites.first{$0.role=="b_walk"})
+        let index=try XCTUnwrap(changed.classicArtwork?.sprites.firstIndex{$0.role=="b_walkAlternate"})
+        changed.classicArtwork?.sprites[index]=ClassicSprite(role:"b_walkAlternate",assetID:alias.id,x:walk.x,y:walk.y,width:walk.width,height:walk.height)
+        XCTAssertThrowsError(try ClassicArtworkRules.validate(scene:changed,assets:assets+[alias]))
+        changed=scene
+        while changed.classicArtwork!.sprites.count<33 {
+            let count=changed.classicArtwork!.sprites.count
+            changed.classicArtwork?.sprites.append(ClassicSprite(role:"unused_"+String(count),assetID:assets[1].id))
+        }
+        XCTAssertThrowsError(try ClassicArtworkRules.validate(scene:changed,assets:assets))
+    }
+    func testCounterfactualKeepsVisualIdentityButChangesActualRecordedConsequence()throws {
+        let(scene,assets,_)=try fixture()
+        var changed=scene;changed.simulation.knowledge?.threshold=2
+        changed.simulation.knowledge?.participants[1].strategy = .contribute
+        try ClassicArtworkRules.validate(scene:changed,assets:assets)
+        XCTAssertEqual(changed.classicArtwork?.knowledgeParticipants,scene.classicArtwork?.knowledgeParticipants)
+        XCTAssertNotEqual(try SimulationReplay.record(scene:changed),try SimulationReplay.record(scene:scene))
+    }
+    func testVisualWireRetainsMappingsWithoutSourcesNarrationOrApprovalAndNewSchemaIsExplicit()throws {
+        let(scene,_,_)=try fixture()
+        let props=PluginVisualProps(scene:scene),data=try Codec.data(props)
+        let decoded=try Codec.decoder().decode(PluginVisualProps.self,from:data)
+        XCTAssertEqual(decoded.artwork?.knowledgeParticipants,scene.classicArtwork?.knowledgeParticipants)
+        XCTAssertEqual(decoded.drawingScene().classicArtwork?.knowledgeParticipants,scene.classicArtwork?.knowledgeParticipants)
+        XCTAssertTrue(decoded.drawingScene().classicArtwork!.sources.isEmpty)
+        XCTAssertNil(decoded.drawingScene().voice)
+        for schema in [1,2,3,5] {
+            XCTAssertThrowsError(try PluginInputCompatibility.requireKnowledgeSupport(scene.simulation,pluginID:"video.game",inputSchema:schema,appearances:scene.classicArtwork?.knowledgeParticipants))
+        }
+        XCTAssertNoThrow(try PluginInputCompatibility.requireKnowledgeSupport(scene.simulation,pluginID:"video.game",inputSchema:6,appearances:scene.classicArtwork?.knowledgeParticipants))
+        XCTAssertEqual(try PluginInputCompatibility.publicationSchema(pluginID:"video.game"),2)
+        XCTAssertEqual(try PluginInputCompatibility.publicationSchema(pluginID:"video.game",requested:"6"),6)
+        XCTAssertThrowsError(try PluginInputCompatibility.publicationSchema(pluginID:"video.cartoon",requested:"6"))
+        for old in [1,2,3,4,5] {XCTAssertNil(PluginRPCSchemas.definitions(inputSchemaVersion:old)["PluginArtworkProps"]?.object?["properties"]?.object?["knowledgeParticipants"])}
+        let definitions=PluginRPCSchemas.definitions(inputSchemaVersion:6)
+        XCTAssertNotNil(definitions["KnowledgeParticipantAppearance"])
+        XCTAssertNotNil(definitions["PluginArtworkProps"]?.object?["properties"]?.object?["knowledgeParticipants"])
+        XCTAssertNotNil(AgentSchemas.definitions()["ClassicArtwork"]?.object?["properties"]?.object?["knowledgeParticipants"])
+    }
+}

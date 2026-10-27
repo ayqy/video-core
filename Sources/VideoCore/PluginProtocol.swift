@@ -2,7 +2,7 @@ import Foundation
 
 public enum PluginInputCompatibility {
     public static func supports(pluginID: String, version: Int) -> Bool {
-        version == 1 || (pluginID == "video.game" && [2,3,5].contains(version)) || (pluginID == "video.cartoon" && version == 4)
+        version == 1 || (pluginID == "video.game" && [2,3,5,6].contains(version)) || (pluginID == "video.cartoon" && version == 4)
     }
     /// Publisher defaults stay compatible with prior manifests. New endpoints must
     /// be selected explicitly, before any signing identity or output transaction.
@@ -17,13 +17,16 @@ public enum PluginInputCompatibility {
         }
         return version
     }
-    public static func requireKnowledgeSupport(_ simulation: Simulation, pluginID: String, inputSchema: Int) throws {
+    public static func requireKnowledgeSupport(_ simulation: Simulation, pluginID: String, inputSchema: Int, appearances: [KnowledgeParticipantAppearance]? = nil) throws {
         guard supports(pluginID: pluginID, version: inputSchema) else {
             throw VideoError.unavailable("此已安装模块的输入版本不受支持")
         }
-        guard let knowledge = simulation.knowledge else { return }
+        guard let knowledge = simulation.knowledge else {
+            guard appearances == nil else { throw VideoError.invalid("参与者姿态映射缺少实际知识模型") }
+            return
+        }
         try knowledge.validate()
-        let minimumSchema = knowledge.version == 3 ? 5 : knowledge.version == 2 ? 3 : 2
+        let minimumSchema = appearances != nil ? 6 : knowledge.version == 3 ? 5 : knowledge.version == 2 ? 3 : 2
         guard pluginID == "video.game", inputSchema >= minimumSchema else {
             throw VideoError.unavailable("此已安装模块不支持当前知识模型输入；请安装相容且受信的高级模块，未退回旧计数器画面")
         }
@@ -56,7 +59,8 @@ public struct PluginCharacterProps:Codable,Equatable,Sendable {
 }
 public struct PluginArtworkProps:Codable,Equatable,Sendable {
     public var gameplay:ClassicGameplay;public var sprites:[ClassicSprite];public var derivation:ClassicArtwork.Derivation
-    public init(gameplay:ClassicGameplay,sprites:[ClassicSprite],derivation:ClassicArtwork.Derivation){self.gameplay=gameplay;self.sprites=sprites;self.derivation=derivation}
+    public var knowledgeParticipants:[KnowledgeParticipantAppearance]?
+    public init(gameplay:ClassicGameplay,sprites:[ClassicSprite],derivation:ClassicArtwork.Derivation,knowledgeParticipants:[KnowledgeParticipantAppearance]?=nil){self.gameplay=gameplay;self.sprites=sprites;self.derivation=derivation;self.knowledgeParticipants=knowledgeParticipants}
 }
 /// Deliberately not Scene: narration text, titles, source documents, voices and review cannot cross.
 public struct PluginVisualProps:Codable,Equatable,Sendable {
@@ -69,7 +73,7 @@ public struct PluginVisualProps:Codable,Equatable,Sendable {
         character=scene.character;emotion=scene.emotion;color=scene.color;fontName=scene.fontName ?? "PingFangSC-Medium";narrationPresent = !scene.narration.isEmpty
         characterProfile=scene.characterProfile.map{PluginCharacterProps(silhouette:$0.silhouette,color:$0.color,actions:$0.actions)}
         cartoonPerformance=scene.cartoonPerformance
-        artwork=scene.classicArtwork.map{PluginArtworkProps(gameplay:$0.gameplay,sprites:$0.sprites,derivation:$0.derivation)};artworkRequired=true
+        artwork=scene.classicArtwork.map{PluginArtworkProps(gameplay:$0.gameplay,sprites:$0.sprites,derivation:$0.derivation,knowledgeParticipants:$0.knowledgeParticipants)};artworkRequired=true
     }
     /// Reconstruct only parameters used by the existing actual drawing implementations.
     /// This is not an authorized/reviewed Scene and must never be saved into a customer project.
@@ -78,7 +82,7 @@ public struct PluginVisualProps:Codable,Equatable,Sendable {
         result.id=sceneID;result.simulation=simulation;result.character=character;result.emotion=emotion;result.color=color;result.fontName=fontName;result.classicArtworkRequired=artworkRequired
         result.cartoonPerformance=cartoonPerformance
         result.characterProfile=characterProfile.map{CharacterProfile(name:character,silhouette:$0.silhouette,color:$0.color,expressions:[],actions:$0.actions,evidenceIDs:[],voiceAssetID:nil,original:false)}
-        result.classicArtwork=artwork.map{ClassicArtwork(gameplay:$0.gameplay,sprites:$0.sprites,sources:[],derivation:$0.derivation)}
+        result.classicArtwork=artwork.map{ClassicArtwork(gameplay:$0.gameplay,sprites:$0.sprites,sources:[],derivation:$0.derivation,knowledgeParticipants:$0.knowledgeParticipants)}
         return result
     }
 }
@@ -162,6 +166,9 @@ public enum PluginProtocolRules {
             let roles=Set(artwork.sprites.map(\.role)),required = ClassicArtworkRules.requiredRoles(knowledge: p.kind == .simulation && p.simulation.knowledge != nil, cartoon: p.kind == .cartoon)
             guard !artwork.sprites.isEmpty,artwork.sprites.count<=32,roles.count==artwork.sprites.count,required.isSubset(of:roles),Set(artwork.sprites.map(\.assetID))==Set(input.assets.map(\.assetID)) else{throw VideoError.invalid("插件图块与实际图片集合不符")}
             for s in artwork.sprites {guard text(s.role,maximum:512),[s.x,s.y,s.width,s.height].allSatisfy(\.isFinite),s.x>=0,s.y>=0,s.width>0,s.height>0,s.x+s.width<=1.000001,s.y+s.height<=1.000001 else{throw VideoError.invalid("插件图块坐标无效")}}
+            let visual=ClassicArtwork(gameplay:artwork.gameplay,sprites:artwork.sprites,sources:[],derivation:artwork.derivation,knowledgeParticipants:artwork.knowledgeParticipants)
+            try KnowledgeParticipantAppearanceRules.validate(artwork:visual,knowledge:p.kind == .simulation ? p.simulation.knowledge:nil,
+                imageHashes:Dictionary(uniqueKeysWithValues:input.assets.map{($0.assetID,$0.sha256)}))
         }
     }
     public static func validate(_ frame:PluginPNGFrame,input:PluginFrameInput)throws {
@@ -189,7 +196,7 @@ public enum PluginRPCSchemas {
             "PluginFrameInput":"invocation:PluginInvocation props:PluginVisualProps sourceFrame:i fps:i canvasWidth:i canvasHeight:i rect:PluginRect assets:[PluginRasterAsset]",
             "PluginVisualProps":"sceneID:s kind:SceneKind durationFrames:i simulation:Simulation character:s emotion:s color:s fontName:s narrationPresent:b characterProfile?:PluginCharacterProps artwork?:PluginArtworkProps artworkRequired:b" + (inputSchemaVersion >= 4 ? " cartoonPerformance?:CartoonPerformance" : ""),
             "PluginCharacterProps":"silhouette:CharacterSilhouette color:s actions:[s]",
-            "PluginArtworkProps":"gameplay:ClassicGameplay sprites:[ClassicSprite] derivation:Derivation",
+            "PluginArtworkProps":"gameplay:ClassicGameplay sprites:[ClassicSprite] derivation:Derivation" + (inputSchemaVersion >= 6 ? " knowledgeParticipants?:[KnowledgeParticipantAppearance]" : ""),
             "ClassicSprite":"role:s assetID:s x:n y:n width:n height:n",
             "Simulation":"seed:n initial:i capacity:i unit:s events:[RuleEvent]" + (inputSchemaVersion >= 2 ? " knowledge?:KnowledgeSimulation" : ""),
             "RuleEvent":"id:s tick:i delta:i label:s",
@@ -202,6 +209,9 @@ public enum PluginRPCSchemas {
             "PluginDescription":"pluginID:s capabilityID:s version:s methods:[PluginMethod] inputSchemaVersion:i outputSchemaVersion:i inputContract:s outputContract:s inputSchema:Schema outputSchema:Schema filesystemAccess:b networkAccess:b"
         ]
         var result=declarations.mapValues(record)
+        if inputSchemaVersion >= 6 {
+            result["KnowledgeParticipantAppearance"]=record("participantID:s poseRoles:{s}")
+        }
         if inputSchemaVersion >= 4 {
             for (key,declaration) in CartoonPerformanceSchema.records { result[key]=record(declaration) }
             for (key,values) in CartoonPerformanceSchema.enums { result[key] = .object(["type":.string("string"),"enum":.array(values.map(AgentValue.string))]) }
