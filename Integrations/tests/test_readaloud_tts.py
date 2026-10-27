@@ -14,6 +14,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+from types import ModuleType
 import unittest
 from unittest.mock import patch
 
@@ -32,6 +33,26 @@ INSPECTION = dict(samples=24000, sample_rate=24000, channels=1, bitrate=48000,
 
 
 class RequestRules(unittest.TestCase):
+    def test_native_rate_is_a_bounded_canonical_integer_percentage(self):
+        for rate in ("-50%", "-1%", "+0%", "+6%", "+100%"):
+            with self.subTest(rate=rate):
+                self.assertEqual(tts.validate_rate(rate), rate)
+        for rate in (None, 6, True, "6%", "0%", "-0%", "+06%", "+6.0%", "+6.5%", "+ 6%",
+                     " +6%", "+6% ", "+6%\n", "６%", "+101%", "-51%", "+1000%", "fast", "default"):
+            with self.subTest(rate=repr(rate)), self.assertRaises(tts.ReadAloudError):
+                tts.validate_rate(rate)
+
+    def test_native_rate_is_per_request_and_part_of_the_cache_identity(self):
+        baseline = copy.deepcopy(tts.CONFIG)
+        normal, normal_key = tts.request_identity(IDENTITY, TEXT, VOICES[0])
+        faster, faster_key = tts.request_identity(IDENTITY, TEXT, VOICES[0], rate="+6%")
+        self.assertEqual((normal["configuration"]["rate"], faster["configuration"]["rate"]), ("+0%", "+6%"))
+        self.assertNotEqual(normal_key, faster_key)
+        self.assertEqual(tts.CONFIG, baseline)
+        faster["configuration"]["pitch"] = "untrusted mutation"
+        self.assertEqual(normal["configuration"]["pitch"], "+0Hz")
+        self.assertEqual(tts.CONFIG, baseline)
+
     def test_only_two_exact_taiwanese_female_ids(self):
         for voice in VOICES:
             tts.validate_request(TEXT, voice)
@@ -109,9 +130,9 @@ class BatchRules(unittest.TestCase):
         return tts.generate_batch(self.runtime, self.cache, TEXT, jobs or self.jobs(),
                                   self.ffmpeg, self.ffprobe, **kwargs)
 
-    def produce(self, runtime, text, voice, output, deadline, log):
+    def produce(self, runtime, text, voice, output, deadline, log, *, rate="+0%"):
         self.assertEqual(text, TEXT)
-        output.write_bytes(("original:" + voice).encode())
+        output.write_bytes(("original:" + voice + ":" + rate).encode())
         log.write_text("generated; no URL or credentials\n")
 
     def test_missing_network_consent_never_submits_or_promotes(self):
@@ -178,6 +199,34 @@ class BatchRules(unittest.TestCase):
         for old, new in zip(first, second):
             self.assertEqual(Path(old["receipt"]).read_bytes(), Path(new["receipt"]).read_bytes())
 
+    def test_faster_request_cannot_reuse_original_speed_cache_or_bypass_consent(self):
+        with patch.object(tts, "run_worker", side_effect=self.produce):
+            normal = self.generate(allow_network=True)
+        with patch.object(tts, "run_worker") as transport, self.assertRaises(tts.ReadAloudError):
+            self.generate(self.jobs("faster-without-consent"), rate="+6%")
+        transport.assert_not_called()
+        with patch.object(tts, "run_worker", side_effect=self.produce) as transport:
+            faster = self.generate(self.jobs("faster"), allow_network=True, rate="+6%")
+        self.assertEqual([call.kwargs["rate"] for call in transport.call_args_list], ["+6%", "+6%"])
+        self.assertNotEqual([r["key"] for r in normal], [r["key"] for r in faster])
+        self.assertNotEqual([r["sha256"] for r in normal], [r["sha256"] for r in faster])
+        for row in faster:
+            self.assertIn("|request.configuration.rate|+6%|", Path(row["receipt"]).read_text())
+        with patch.object(tts, "run_worker") as transport:
+            retrieved = self.generate(self.jobs("faster-cache-hit"), rate="+6%")
+        transport.assert_not_called()
+        self.assertTrue(all(r["reused"] for r in retrieved))
+        for old, new in zip(faster, retrieved):
+            self.assertEqual(old["sha256"], new["sha256"])
+            self.assertEqual(Path(old["receipt"]).read_bytes(), Path(new["receipt"]).read_bytes())
+
+    def test_invalid_rate_rejects_before_identity_cache_or_network(self):
+        with patch.object(tts, "run_worker") as transport, self.assertRaises(tts.ReadAloudError):
+            self.generate(allow_network=True, rate="+6.5%")
+        self.identity.assert_not_called()
+        transport.assert_not_called()
+        self.assertFalse(self.cache.exists())
+
     def test_corrupt_cache_original_is_not_silently_regenerated(self):
         with patch.object(tts, "run_worker", side_effect=self.produce):
             first = self.generate(allow_network=True)
@@ -188,8 +237,8 @@ class BatchRules(unittest.TestCase):
 
     def test_second_failure_preserves_first_and_partial_original_without_success(self):
         calls = []
-        def failed(*args):
-            self.produce(*args)
+        def failed(*args, **kwargs):
+            self.produce(*args, **kwargs)
             calls.append(args[2])
             if len(calls) == 2:
                 raise tts.ReadAloudError("finite fixture transport failure")
@@ -221,6 +270,49 @@ class BatchRules(unittest.TestCase):
 
 
 class FileAndProcessRules(unittest.TestCase):
+    def test_parent_process_passes_native_rate_to_worker_cli(self):
+        from unittest.mock import Mock
+        child = Mock(pid=123456)
+        child.wait.return_value = 0
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for index, rate in enumerate(("+6%", "-50%")):
+                with patch.object(tts.subprocess, "Popen", return_value=child) as popen:
+                    tts.run_worker(root, TEXT, VOICES[0], root / "original.mp3", 10,
+                                   root / f"process-{index}.log", rate=rate)
+                command = popen.call_args.args[0]
+                self.assertEqual([arg for arg in command if arg.startswith("--rate=")], ["--rate=" + rate])
+                self.assertEqual(command[command.index("--text") + 1], TEXT)
+                self.assertEqual(command[command.index("--voice") + 1], VOICES[0])
+
+    def test_worker_cli_accepts_negative_rate_as_one_canonical_argument(self):
+        with tempfile.TemporaryDirectory() as directory:
+            args = ["readaloud_tts.py", "--worker", "--allow-network", "--runtime", directory,
+                    "--text", TEXT, "--voice", VOICES[0], "--output", directory + "/original.mp3",
+                    "--rate=-50%"]
+            with patch.object(sys, "argv", args), patch.object(tts, "worker") as worker:
+                self.assertEqual(tts.main(), 0)
+            self.assertEqual(worker.call_args.kwargs["rate"], "-50%")
+
+    def test_worker_passes_native_rate_unmodified_to_normal_sdk(self):
+        recorded = []
+        module = ModuleType("edge_tts")
+        class Communicate:
+            def __init__(self, **kwargs):
+                recorded.append(kwargs)
+            async def save(self, output):
+                Path(output).write_bytes(b"finite transport fixture, not candidate audio")
+        module.Communicate = Communicate
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "original.mp3"
+            with patch.dict(sys.modules, {"edge_tts": module}), \
+                    patch("importlib.metadata.version", return_value=tts.CLIENT_VERSION):
+                tts.worker(TEXT, VOICES[0], output, 10, rate="+6%")
+            self.assertTrue(output.is_file())
+        self.assertEqual(len(recorded), 1)
+        self.assertEqual(recorded[0], dict(text=TEXT, voice=VOICES[0], rate="+6%", volume="+0%",
+                                          pitch="+0Hz", connect_timeout=10, receive_timeout=8))
+
     def test_atomic_publication_never_overwrites_concurrent_file(self):
         with tempfile.TemporaryDirectory() as directory:
             source, output = Path(directory) / "source", Path(directory) / "output"

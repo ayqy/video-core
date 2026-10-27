@@ -43,6 +43,16 @@ class ReadAloudError(ValueError):
     """A bounded diagnostic code; never contains a URL, token or response body."""
 
 
+def validate_rate(rate: str) -> str:
+    """Accept canonical native speech-rate percentages, not audio processing."""
+    if type(rate) is not str or not re.fullmatch(r"[+-](?:0|[1-9][0-9]{0,2})%", rate):
+        raise ReadAloudError("语速须为带符号的规范整数百分比，范围-50%至+100%，默认+0%")
+    value = int(rate[:-1])
+    if not -50 <= value <= 100 or f"{value:+d}%" != rate:
+        raise ReadAloudError("语速须为带符号的规范整数百分比，范围-50%至+100%，默认+0%")
+    return rate
+
+
 def digest(path: Path) -> str:
     h = hashlib.sha256()
     with path.open("rb") as f:
@@ -154,11 +164,13 @@ print(json.dumps({'site':str(site),'python':sys.version.replace('\n',' '),'machi
                 **actual, ffmpeg=tool_identity(ffmpeg), ffprobe=tool_identity(ffprobe))
 
 
-def request_identity(identity: dict, text: str, voice: str) -> tuple[dict, str]:
+def request_identity(identity: dict, text: str, voice: str, *, rate: str = "+0%") -> tuple[dict, str]:
     validate_request(text, voice)
+    rate = validate_rate(rate)
     if identity.get("client_version") != CLIENT_VERSION or identity.get("wheel_sha256") != WHEEL_SHA256:
         raise ReadAloudError("请求客户端身份不符合固定原件")
-    request = dict(schema=1, engine=ENGINE, text=text, voice=voice, configuration=CONFIG,
+    configuration = dict(CONFIG, rate=rate)
+    request = dict(schema=1, engine=ENGINE, text=text, voice=voice, configuration=configuration,
                    runtime=identity)
     key = hashlib.sha256(json.dumps(request, sort_keys=True, ensure_ascii=False,
                                    separators=(",", ":")).encode()).hexdigest()
@@ -224,7 +236,8 @@ def receipt(request: dict, key: str, audio: Path, inspection: dict, generated_at
     rows = ["# 台湾女声朗读试听原件", "", "技术检查通过；完整听审、文字核对、音色选择均待确认。",
             "第三方edge-tts调用Microsoft Edge消费者ReadAloud；不是Azure Speech正式API。",
             "仅供本地非商教学与管理员试听；服务可调用与客户端LGPLv3均不授予音频商用或平台发布权。",
-            "未改默认；无名人模仿、克隆、变调、调速、拼句或转码。", "",
+            "未改默认；无名人模仿、克隆、后期变调、后期调速、拼句或转码。",
+            "语速由服务按本次request.configuration.rate原生合成；原MP3保持服务返回字节。", "",
             "生成时间（北京时间）：" + instant.astimezone(ZoneInfo("Asia/Shanghai")).isoformat(timespec="seconds"),
             "生成时间（UTC）：" + generated_at, "", "|字段|值|", "|---|---|"]
     fields = dict(request=request, cache_key=key, audio_sha256=digest(audio), inspection=inspection,
@@ -264,10 +277,12 @@ def stop_process(process: subprocess.Popen) -> None:
         process.wait(timeout=3)
 
 
-def run_worker(runtime: Path, text: str, voice: str, output: Path, deadline: int, log: Path) -> None:
+def run_worker(runtime: Path, text: str, voice: str, output: Path, deadline: int, log: Path,
+               *, rate: str = "+0%") -> None:
+    rate = validate_rate(rate)
     command = [str(runtime / "venv/bin/python"), "-I", "-B", str(Path(__file__).resolve()),
                "--worker", "--allow-network", "--runtime", str(runtime), "--text", text,
-               "--voice", voice, "--output", str(output), "--deadline", str(deadline)]
+               "--voice", voice, "--output", str(output), "--deadline", str(deadline), "--rate=" + rate]
     with log.open("xb") as f:
         process = subprocess.Popen(command, env=environment(True), stdout=f, stderr=f, start_new_session=True)
         try:
@@ -282,7 +297,9 @@ def run_worker(runtime: Path, text: str, voice: str, output: Path, deadline: int
 
 
 def generate_batch(runtime: Path, cache: Path, text: str, jobs: list[dict], ffmpeg: Path,
-                   ffprobe: Path, *, allow_network: bool = False, deadline: int = 120) -> list[dict]:
+                   ffprobe: Path, *, allow_network: bool = False, deadline: int = 120,
+                   rate: str = "+0%") -> list[dict]:
+    rate = validate_rate(rate)
     if not 1 <= len(jobs) <= 2 or type(deadline) is not int or not 10 <= deadline <= 300:
         raise ReadAloudError("每批1–2个不同女声，每声网络期限须为10–300秒")
     outputs, voices = set(), set()
@@ -306,7 +323,7 @@ def generate_batch(runtime: Path, cache: Path, text: str, jobs: list[dict], ffmp
         staging = Path(stack.enter_context(tempfile.TemporaryDirectory(prefix="readaloud-", dir=cache)))
         states = []
         for index, job in enumerate(jobs):
-            request, key = request_identity(identity, text, job["voice"])
+            request, key = request_identity(identity, text, job["voice"], rate=rate)
             lock = cache / (key + ".lock")
             try:
                 lock.mkdir()
@@ -347,7 +364,7 @@ def generate_batch(runtime: Path, cache: Path, text: str, jobs: list[dict], ffmp
                         continue
                     stamp = datetime.now(timezone.utc).isoformat()
                     run_worker(runtime, text, state["job"]["voice"], state["audio"], deadline,
-                               logs / ("readaloud-" + str(time.time_ns()) + ".log"))
+                               logs / ("readaloud-" + str(time.time_ns()) + ".log"), rate=rate)
                     inspection = inspect_mp3(state["audio"], ffmpeg, ffprobe)
                     state["source"].write_text(receipt(state["request"], state["key"], state["audio"], inspection, stamp))
                 if runtime_identity(runtime, ffmpeg, ffprobe) != identity:
@@ -368,15 +385,16 @@ def generate_batch(runtime: Path, cache: Path, text: str, jobs: list[dict], ffmp
             output = Path(state["job"]["output"])
             atomic_copy(state["audio"], output)
             atomic_copy(state["source"], output.with_suffix(".source.md"))
-            results.append(dict(voice=state["job"]["voice"], reused=state["reused"], key=state["key"],
+            results.append(dict(voice=state["job"]["voice"], rate=rate, reused=state["reused"], key=state["key"],
                                 sha256=digest(output), bytes=output.stat().st_size,
                                 receipt=str(output.with_suffix(".source.md")), listening_confirmed=False,
                                 commercial_allowed=False, upload_consent=False))
         return results
 
 
-def worker(text: str, voice: str, output: Path, deadline: int) -> None:
+def worker(text: str, voice: str, output: Path, deadline: int, *, rate: str = "+0%") -> None:
     validate_request(text, voice)
+    rate = validate_rate(rate)
     if output.exists() or output.is_symlink():
         raise ReadAloudError("worker原音输出已存在")
     import asyncio
@@ -385,7 +403,7 @@ def worker(text: str, voice: str, output: Path, deadline: int) -> None:
     if importlib.metadata.version("edge-tts") != CLIENT_VERSION:
         raise ReadAloudError("worker客户端版本不符")
     async def synthesize():
-        client = edge_tts.Communicate(text=text, voice=voice, rate=CONFIG["rate"],
+        client = edge_tts.Communicate(text=text, voice=voice, rate=rate,
                                      volume=CONFIG["volume"], pitch=CONFIG["pitch"],
                                      connect_timeout=10, receive_timeout=min(60, deadline - 2))
         await asyncio.wait_for(client.save(str(output)), timeout=deadline - 1)
@@ -403,6 +421,8 @@ def main() -> int:
     parser.add_argument("--ffprobe", type=Path, default=shutil.which("ffprobe"))
     parser.add_argument("--allow-network", action="store_true", help="允许把本次完整正文传给在线消费者朗读服务")
     parser.add_argument("--deadline", type=int, default=120)
+    parser.add_argument("--rate", default="+0%",
+                        help="服务原生语速，规范整数百分比-50%%至+100%%，默认+0%%；不是后期变速")
     parser.add_argument("--worker", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
     try:
@@ -411,16 +431,16 @@ def main() -> int:
         if args.worker:
             if not args.allow_network or len(args.voice) != 1 or not 10 <= args.deadline <= 300:
                 raise ReadAloudError("worker须是明确授权的单声有界网络调用")
-            worker(args.text, args.voice[0], args.output[0], args.deadline)
+            worker(args.text, args.voice[0], args.output[0], args.deadline, rate=args.rate)
         else:
             if not args.cache or not args.ffmpeg or not args.ffprobe:
                 raise ReadAloudError("须指定缓存与可用ffmpeg/ffprobe检查工具")
             results = generate_batch(args.runtime, args.cache, args.text,
                                      [dict(voice=v, output=o) for v, o in zip(args.voice, args.output)],
                                      Path(args.ffmpeg).resolve(), Path(args.ffprobe).resolve(),
-                                     allow_network=args.allow_network, deadline=args.deadline)
+                                     allow_network=args.allow_network, deadline=args.deadline, rate=args.rate)
             for result in results:
-                print(result["voice"], "reused" if result["reused"] else "generated",
+                print(result["voice"], "rate=" + result["rate"], "reused" if result["reused"] else "generated",
                       result["bytes"], result["sha256"], "listening=pending commercial=false upload=false")
         return 0
     except ReadAloudError as error:

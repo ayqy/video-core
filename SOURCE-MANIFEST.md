@@ -2,10 +2,10 @@
 
 VideoFree source export · package_free.py · version 1
 
-生成时间：2026-10-27 14:07:47 北京时间
+生成时间：2026-10-27 14:55:03 北京时间
 
-- 源码与必要元数据：237个文件；3541115字节（不含本清单）。
-- 整体内容指纹：`50f4be29d75418856ac543c46bde2566b4d4b6f0c951a489a28a4cabd79b2c9f`。
+- 源码与必要元数据：237个文件；3548787字节（不含本清单）。
+- 整体内容指纹：`aa682a6b75095e5a87b2e4f3153dd643b62ef7b10e7646b97779ed466a1a9c4a`。
 - 来源：受控原始工程中的逐文件白名单；Package.swift与唯一免费制作workflow来自Distribution/Free精确模板，README由发行脚本生成。
 - 本包不含.git，不可作为新业务checkout；本清单生成过程不执行构建、设备验收、签名安装或公共上传，各阶段以独立证据为准。
 - 排除：App、VideoGame、VideoCartoon、Premium、高级实现运行时测试、私有仓库地址、凭据、客户数据、缓存、日志及媒体过程产物。
@@ -37,8 +37,8 @@ VideoFree source export · package_free.py · version 1
 | e52450d73342e5a84f4a3c51051886c69df0ebb9dce685cc31e26791353c9211 | 19716 | Integrations/production_motion.py |
 | ebd4a31e6f3c7a6c73bb384798969e652e376bcd80d1d172e6c38ec697177cdd | 31843 | Integrations/qwen_stream.py |
 | 5153da60f78fe869c5b02cafe9b7474f191d7c064efadd2c33425955d94fd489 | 64507 | Integrations/readaloud-cpu-lock.txt |
-| 1b1fff9bb49ba91273a4cdeb76fc92bebacd7a9820a86d2b6a316fb042df5ab9 | 5917 | Integrations/readaloud_tts.md |
-| 680efa30ff3c14508abd2aef5641a5e4bbd9e42294f155c930ed395ec10fa08d | 23637 | Integrations/readaloud_tts.py |
+| 931be5656b1264c76ccc365278c26617d1ccd8145c65be8692570d39fcddeb57 | 6752 | Integrations/readaloud_tts.md |
+| d6f9b4341bec1814e4dc31f8e92b8093a27f3fb6002533210e912c714b81f5ff | 24858 | Integrations/readaloud_tts.py |
 | 3a68886794331a87603a955eeb41b48754c01d65051bea7ff03b3b4d717bc6c1 | 2828 | Integrations/skill_contract.py |
 | cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30 | 11358 | Integrations/skills/video/LICENSE |
 | 1dbab07b005a071618dc75a2e3cd3b68fccfba4c235d4818238a18cdbfcdb052 | 358 | Integrations/skills/video/NOTICE |
@@ -56,7 +56,7 @@ VideoFree source export · package_free.py · version 1
 | 5e371767fdd7f3828665ceec23bd573c81e885fa565e8e77d25e1acfa02d5910 | 10373 | Integrations/test_production_motion.py |
 | f82ae813561cfb2e11d718349d474eae4fb21ddd0da5b8056c0b11be3f372f18 | 53105 | Integrations/test_qwen_stream.py |
 | eaa46095a00b9e4fd00c12defe2e076d84c6c58ee6eebffac3e0c34a4e9f0859 | 29882 | Integrations/tests/test_expressive_tts.py |
-| 85dbb2e5551f3c9a73dbec97b22ef5ccbe839ea1fd090d7ad4025d7b615584cc | 14467 | Integrations/tests/test_readaloud_tts.py |
+| 240452d9ae189b53150fbcac5b005dd37d0bd5c19658c04e17ceb8db7b890de0 | 20083 | Integrations/tests/test_readaloud_tts.py |
 | c4e77cf154c0e3ac3b65be37d0f47eae2d4eb6df82b0476d0554034c4268488c | 19789 | Integrations/tests/test_voice_design_tts.py |
 | a0ef0caeb1990166cfd90ddde6ae17bd32a7fa36e5a2eac50c4865b6d4b584b2 | 2110 | Integrations/voice-design-source.txt |
 | fcd771a85150295b26129db92aecb16e27dc34decb94ad9c67b152856f12031b | 6773 | Integrations/voice_design_tts.md |
