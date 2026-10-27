@@ -2,10 +2,10 @@
 
 VideoFree source export · package_free.py · version 1
 
-生成时间：2026-10-27 16:34:53 北京时间
+生成时间：2026-10-27 18:35:22 北京时间
 
-- 源码与必要元数据：238个文件；3566494字节（不含本清单）。
-- 整体内容指纹：`f28a65b68740a3876657a394795f0304f47246405f32ae6432b99202cebdaea9`。
+- 源码与必要元数据：238个文件；3567190字节（不含本清单）。
+- 整体内容指纹：`dac767a77bb429ee44d655fed326bc9fe6cced1028549fbcfade2a2f55e42d87`。
 - 来源：受控原始工程中的逐文件白名单；Package.swift与唯一免费制作workflow来自Distribution/Free精确模板，README由发行脚本生成。
 - 本包不含.git，不可作为新业务checkout；本清单生成过程不执行构建、设备验收、签名安装或公共上传，各阶段以独立证据为准。
 - 排除：App、VideoGame、VideoCartoon、Premium、高级实现运行时测试、私有仓库地址、凭据、客户数据、缓存、日志及媒体过程产物。
@@ -37,7 +37,7 @@ VideoFree source export · package_free.py · version 1
 | e52450d73342e5a84f4a3c51051886c69df0ebb9dce685cc31e26791353c9211 | 19716 | Integrations/production_motion.py |
 | ebd4a31e6f3c7a6c73bb384798969e652e376bcd80d1d172e6c38ec697177cdd | 31843 | Integrations/qwen_stream.py |
 | 5153da60f78fe869c5b02cafe9b7474f191d7c064efadd2c33425955d94fd489 | 64507 | Integrations/readaloud-cpu-lock.txt |
-| 931be5656b1264c76ccc365278c26617d1ccd8145c65be8692570d39fcddeb57 | 6752 | Integrations/readaloud_tts.md |
+| 2e6c9b4c118715c444a79791e0af16e50b9264f510243b2f68e0f27c1aca89d2 | 7448 | Integrations/readaloud_tts.md |
 | d6f9b4341bec1814e4dc31f8e92b8093a27f3fb6002533210e912c714b81f5ff | 24858 | Integrations/readaloud_tts.py |
 | 3a68886794331a87603a955eeb41b48754c01d65051bea7ff03b3b4d717bc6c1 | 2828 | Integrations/skill_contract.py |
 | cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30 | 11358 | Integrations/skills/video/LICENSE |
