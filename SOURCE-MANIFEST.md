@@ -2,10 +2,10 @@
 
 VideoFree source export · package_free.py · version 1
 
-生成时间：2026-10-27 13:57:58 北京时间
+生成时间：2026-10-27 14:07:47 北京时间
 
 - 源码与必要元数据：237个文件；3541115字节（不含本清单）。
-- 整体内容指纹：`b96d661de0a9b7b0bfa7b2c8df64872e27ad1ea08cfb7c01899a50a1276aad57`。
+- 整体内容指纹：`50f4be29d75418856ac543c46bde2566b4d4b6f0c951a489a28a4cabd79b2c9f`。
 - 来源：受控原始工程中的逐文件白名单；Package.swift与唯一免费制作workflow来自Distribution/Free精确模板，README由发行脚本生成。
 - 本包不含.git，不可作为新业务checkout；本清单生成过程不执行构建、设备验收、签名安装或公共上传，各阶段以独立证据为准。
 - 排除：App、VideoGame、VideoCartoon、Premium、高级实现运行时测试、私有仓库地址、凭据、客户数据、缓存、日志及媒体过程产物。
@@ -14,7 +14,7 @@ VideoFree source export · package_free.py · version 1
 
 | SHA-256 | 字节数 | 包内路径 / 原工程来源 |
 |---|---:|---|
-| 1b04f2d681702295907039c791d8c997312131466b8186082ce5bbbc26b7c753 | 20472 | .github/workflows/free-production.yml |
+| 24f3050f3bcd889891628ddfee56e9067cfa72df2e03cacaf4f06595ec7543a3 | 20472 | .github/workflows/free-production.yml |
 | 501a1f91f71d14da620c0986b94594b9f5af66a9465ad2c1f4cc228025f88471 | 33497 | Integrations/README.md |
 | 2ff174ec064ca614f24e8ba67ae5c7042a2caa883af162bafd27a8a4520d5ed7 | 26522 | Integrations/asset_reuse.py |
 | 91f902f9ceedb5b26bfae07ecd097aa47fb9e69b807eae6ff289153770655142 | 25400 | Integrations/check_install.py |
