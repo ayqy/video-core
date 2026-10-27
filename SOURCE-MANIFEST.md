@@ -2,10 +2,10 @@
 
 VideoFree source export · package_free.py · version 1
 
-生成时间：2026-10-27 11:59:56 北京时间
+生成时间：2026-10-27 13:57:58 北京时间
 
-- 源码与必要元数据：233个文件；3430807字节（不含本清单）。
-- 整体内容指纹：`e5cfd3774285ad73bf72f149577df81786a01a9071cca2d7a7c91659c57d6f8b`。
+- 源码与必要元数据：237个文件；3541115字节（不含本清单）。
+- 整体内容指纹：`b96d661de0a9b7b0bfa7b2c8df64872e27ad1ea08cfb7c01899a50a1276aad57`。
 - 来源：受控原始工程中的逐文件白名单；Package.swift与唯一免费制作workflow来自Distribution/Free精确模板，README由发行脚本生成。
 - 本包不含.git，不可作为新业务checkout；本清单生成过程不执行构建、设备验收、签名安装或公共上传，各阶段以独立证据为准。
 - 排除：App、VideoGame、VideoCartoon、Premium、高级实现运行时测试、私有仓库地址、凭据、客户数据、缓存、日志及媒体过程产物。
@@ -14,8 +14,8 @@ VideoFree source export · package_free.py · version 1
 
 | SHA-256 | 字节数 | 包内路径 / 原工程来源 |
 |---|---:|---|
-| 8c8238b1d3b8b40c8c7744990b3734aa9c6855d698c6ddee70d83757bfc00ba5 | 19082 | .github/workflows/free-production.yml |
-| ca931d3a85b4ac4b4047ff1165605b9b5595a26e3f783ef058f63a2b212a434c | 33107 | Integrations/README.md |
+| 1b04f2d681702295907039c791d8c997312131466b8186082ce5bbbc26b7c753 | 20472 | .github/workflows/free-production.yml |
+| 501a1f91f71d14da620c0986b94594b9f5af66a9465ad2c1f4cc228025f88471 | 33497 | Integrations/README.md |
 | 2ff174ec064ca614f24e8ba67ae5c7042a2caa883af162bafd27a8a4520d5ed7 | 26522 | Integrations/asset_reuse.py |
 | 91f902f9ceedb5b26bfae07ecd097aa47fb9e69b807eae6ff289153770655142 | 25400 | Integrations/check_install.py |
 | 8cae02411044ade544a6877a000d5790ff7b17d6ab781294a8aa737ea6ef8fe0 | 6866 | Integrations/check_package.py |
@@ -36,6 +36,9 @@ VideoFree source export · package_free.py · version 1
 | 480c2ac1a04ca2c8ae97e976ac9af1db2d2cb950ac96dbacde28cf5d05689558 | 9603 | Integrations/prepare_cosyvoice.py |
 | e52450d73342e5a84f4a3c51051886c69df0ebb9dce685cc31e26791353c9211 | 19716 | Integrations/production_motion.py |
 | ebd4a31e6f3c7a6c73bb384798969e652e376bcd80d1d172e6c38ec697177cdd | 31843 | Integrations/qwen_stream.py |
+| 5153da60f78fe869c5b02cafe9b7474f191d7c064efadd2c33425955d94fd489 | 64507 | Integrations/readaloud-cpu-lock.txt |
+| 1b1fff9bb49ba91273a4cdeb76fc92bebacd7a9820a86d2b6a316fb042df5ab9 | 5917 | Integrations/readaloud_tts.md |
+| 680efa30ff3c14508abd2aef5641a5e4bbd9e42294f155c930ed395ec10fa08d | 23637 | Integrations/readaloud_tts.py |
 | 3a68886794331a87603a955eeb41b48754c01d65051bea7ff03b3b4d717bc6c1 | 2828 | Integrations/skill_contract.py |
 | cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30 | 11358 | Integrations/skills/video/LICENSE |
 | 1dbab07b005a071618dc75a2e3cd3b68fccfba4c235d4818238a18cdbfcdb052 | 358 | Integrations/skills/video/NOTICE |
@@ -53,6 +56,7 @@ VideoFree source export · package_free.py · version 1
 | 5e371767fdd7f3828665ceec23bd573c81e885fa565e8e77d25e1acfa02d5910 | 10373 | Integrations/test_production_motion.py |
 | f82ae813561cfb2e11d718349d474eae4fb21ddd0da5b8056c0b11be3f372f18 | 53105 | Integrations/test_qwen_stream.py |
 | eaa46095a00b9e4fd00c12defe2e076d84c6c58ee6eebffac3e0c34a4e9f0859 | 29882 | Integrations/tests/test_expressive_tts.py |
+| 85dbb2e5551f3c9a73dbec97b22ef5ccbe839ea1fd090d7ad4025d7b615584cc | 14467 | Integrations/tests/test_readaloud_tts.py |
 | c4e77cf154c0e3ac3b65be37d0f47eae2d4eb6df82b0476d0554034c4268488c | 19789 | Integrations/tests/test_voice_design_tts.py |
 | a0ef0caeb1990166cfd90ddde6ae17bd32a7fa36e5a2eac50c4865b6d4b584b2 | 2110 | Integrations/voice-design-source.txt |
 | fcd771a85150295b26129db92aecb16e27dc34decb94ad9c67b152856f12031b | 6773 | Integrations/voice_design_tts.md |

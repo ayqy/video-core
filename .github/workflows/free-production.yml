@@ -113,6 +113,32 @@ jobs:
           PY
           python3 -B Integrations/voice_design_tts.py --help
 
+      - name: Check optional Taiwan narration adapter rules without network
+        shell: bash
+        run: |
+          python3 -B - <<'PYRULES'
+          import socket, unittest
+          def deny_network(*args, **kwargs):
+              raise AssertionError('The optional narration CI rules must not connect to a real service')
+          socket.socket.connect = deny_network
+          socket.socket.connect_ex = deny_network
+          socket.create_connection = deny_network
+          suite = unittest.defaultTestLoader.discover('Integrations/tests', pattern='test_readaloud_tts.py')
+          def identities(node):
+              for item in node:
+                  if isinstance(item, unittest.TestSuite):
+                      yield from identities(item)
+                  else:
+                      yield item.id()
+          expected = list(identities(suite))
+          assert expected and len(expected) == len(set(expected)) == suite.countTestCases()
+          result = unittest.TextTestRunner(verbosity=1).run(suite)
+          assert result.wasSuccessful() and result.testsRun == len(expected) and not result.skipped
+          print('readaloud_complete_rules=' + str(len(expected)))
+          print('service_request=not_run; voice_generation=not_run; voice_quality=needs_review; default_voice=unchanged')
+          PYRULES
+          python3 -B Integrations/readaloud_tts.py --help
+
       - name: Check complete shared Skill and host permission rules
         shell: bash
         run: |
