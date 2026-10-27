@@ -240,6 +240,7 @@ jobs:
               ('VideoCoreTests', 'JobOperationTests'): (22, None),
               ('VideoCoreTests', 'JobCancellationTests'): (7, None),
               ('VideoCoreTests', 'KnowledgeParticipantAppearanceTests'): (8, None),
+              ('VideoCoreTests', 'KnowledgeParticipantCharacterBindingTests'): (6, None),
               ('VideoCoreTests', 'AgentWorkerTests'): (6, None),
               ('VideoCoreTests', 'AgentContractTests'): (11, None),
               ('VideoCoreTests', 'AgentPreviewTests'): (11, None),
@@ -257,9 +258,10 @@ jobs:
           for (target, suite), (source_count, selection) in suites.items():
               source_name = ('ContentProjectTests.swift' if suite in {'ContentProjectTests', 'ProductFactsTests'}
                              else 'ClassicArtworkTests.swift' if suite == 'KnowledgeParticipantAppearanceTests'
+                             else 'ClassicSceneEditingTests.swift' if suite == 'KnowledgeParticipantCharacterBindingTests'
                              else suite + '.swift')
               source = (root / 'Tests' / target / source_name).read_text()
-              if suite in {'ContentProjectTests', 'ProductFactsTests', 'DomainTests', 'KnowledgeParticipantAppearanceTests'}:
+              if suite in {'ContentProjectTests', 'ProductFactsTests', 'DomainTests', 'KnowledgeParticipantAppearanceTests', 'KnowledgeParticipantCharacterBindingTests'}:
                   declaration = re.search(r'(?m)^final class ' + re.escape(suite) + r'\s*:\s*XCTestCase\s*\{', source)
                   assert declaration, suite + ' declaration missing'
                   source = source[declaration.end():]
@@ -275,7 +277,7 @@ jobs:
               filters.append('^' + re.escape(target) + r'\.' + re.escape(suite) +
                              '/(?:' + '|'.join(re.escape(method) for method in selected) + ')$')
           expected = len(expected_methods)
-          assert expected == sum(method_counts.values()) == 415
+          assert expected == sum(method_counts.values()) == 421
           print('affected_suite_methods=' + str(method_counts))
           print('system_tts_methods=not_selected; import_only_methods=2')
           try:

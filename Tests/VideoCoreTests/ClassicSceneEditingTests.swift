@@ -1,6 +1,129 @@
 import XCTest
 @testable import VideoCore
 
+/// Isolated visual-binding rules; no media, entitlement or human approval is created.
+final class KnowledgeParticipantCharacterBindingTests:XCTestCase {
+    private let poseKeys=["listen","speak","walk","walkAlternate","object","celebrate"]
+    private func fixture()->(Scene,ClassicArtwork,[CartoonActor],[Asset],[Evidence]) {
+        let proof=Evidence(workspaceID:"w",title:"隔离角色来源",source:"isolated-character-library",claim:"只核显式角色绑定",owner:"rules",commercialAllowed:false,verified:false)
+        var original=Asset(workspaceID:"w",name:"original.png",hash:String(repeating:"a",count:64),ext:"png",bytes:8,mediaType:"image")
+        original.evidenceID=proof.id
+        var derived=original;derived.id=Codec.id();derived.name="derived.png";derived.hash=String(repeating:"b",count:64)
+        let sources=[original,derived].map{ClassicSource(assetID:$0.id,hash:$0.hash,source:proof.source,owner:proof.owner,license:"isolated",evidenceID:proof.id)}
+        var sprites=ClassicArtworkRules.requiredRoles(knowledge:true,cartoon:false).union(["hero_walk_alt"]).sorted().map{ClassicSprite(role:$0,assetID:derived.id)}
+        let actors=["blue","red"].map{id in CartoonActor(id:id,name:id=="blue" ? "蓝角色":"红角色",poseRoles:Dictionary(uniqueKeysWithValues:poseKeys.map{($0,id+"_"+$0)}))}
+        for actor in actors {sprites += poseKeys.enumerated().map{ClassicSprite(role:actor.poseRoles[$0.element]!,assetID:derived.id,x:Double($0.offset%3)/3,y:Double($0.offset/3)/2,width:1.0/3,height:0.5)}}
+        let artwork=ClassicArtwork(gameplay:.sokoban,sprites:sprites,sources:sources,derivation:.qStyle,transformation:"隔离不同原件字节",originalAssetIDs:[original.id])
+        var scene=Scene(kind:.simulation,title:"同名参与者",body:"明确角色与真实选择分别保存。",durationFrames:180)
+        scene.simulation.knowledge=KnowledgeSimulation(knowledgeLabel:"公共品",participants:[
+            .init(id:"p-z",name:"同名参与者",strategy:.contribute,initialResources:10),
+            .init(id:"p-a",name:"同名参与者",strategy:.freeRide,initialResources:10)],rounds:1)
+        return(scene,artwork,actors,[original,derived],[proof])
+    }
+    private func bind(_ selections:[String:String],_ scene:Scene,_ artwork:ClassicArtwork,_ actors:[CartoonActor],_ assets:[Asset],_ evidence:[Evidence])throws->Scene {
+        try ClassicSceneEditing.bindingKnowledgeCharacters(selections,actors:actors,artwork:artwork,to:scene,assets:assets,evidence:evidence,workspaceID:"w")
+    }
+    func testExplicitIDsWinOverParticipantOrderAndDisplayNames()throws {
+        let(scene,artwork,actors,assets,evidence)=fixture(),choices=["p-z":"red","p-a":"blue"]
+        let first=try bind(choices,scene,artwork,actors,assets,evidence)
+        var reordered=scene;reordered.simulation.knowledge?.participants.reverse()
+        let second=try bind(choices,reordered,artwork,Array(actors.reversed()),assets,evidence)
+        for value in [first,second] {
+            XCTAssertEqual(ClassicSceneEditing.knowledgeCharacterSelections(in:value,actors:actors),choices)
+            XCTAssertEqual(value.classicArtwork?.knowledgeParticipants?.first{$0.participantID=="p-z"}?.poseRoles,actors[1].poseRoles)
+            XCTAssertEqual(value.classicArtwork?.knowledgeParticipants?.first{$0.participantID=="p-a"}?.poseRoles,actors[0].poseRoles)
+        }
+        XCTAssertEqual(try Codec.data(first.simulation),try Codec.data(scene.simulation))
+        XCTAssertNil(scene.classicArtwork)
+        XCTAssertFalse(evidence[0].verified);XCTAssertFalse(evidence[0].commercialAllowed)
+    }
+    func testMissingUnknownDuplicateAndNonKnowledgeInputsDoNotChangeLegacyDraft()throws {
+        var(scene,artwork,actors,assets,evidence)=fixture();scene.classicArtwork=artwork
+        let before=try Codec.data(scene)
+        for choices in [[String:String](),["p-z":"red"],["p-z":"red","p-a":"missing"],["p-z":"red","p-a":"blue","stale":"blue"]] {
+            XCTAssertThrowsError(try bind(choices,scene,artwork,actors,assets,evidence))
+        }
+        let complete=["p-z":"red","p-a":"blue"]
+        XCTAssertThrowsError(try bind(complete,scene,artwork,[actors[0],actors[0]],assets,evidence))
+        var changed=scene;changed.simulation.knowledge=nil
+        XCTAssertThrowsError(try bind(complete,changed,artwork,actors,assets,evidence))
+        changed=scene;changed.kind = .cartoon
+        XCTAssertThrowsError(try bind(complete,changed,artwork,actors,assets,evidence))
+        changed=scene;changed.locked=true
+        XCTAssertThrowsError(try bind(complete,changed,artwork,actors,assets,evidence))
+        XCTAssertEqual(try Codec.data(scene),before)
+        XCTAssertNil(scene.classicArtwork?.knowledgeParticipants)
+        XCTAssertTrue(ClassicSceneEditing.knowledgeCharacterSelections(in:scene,actors:actors).isEmpty)
+    }
+    func testOnlyExactUnambiguousStoredMappingsAreRestored()throws {
+        let(scene,artwork,actors,assets,evidence)=fixture(),choices=["p-z":"red","p-a":"blue"]
+        let bound=try bind(choices,scene,artwork,actors,assets,evidence),before=try Codec.data(bound)
+        XCTAssertEqual(ClassicSceneEditing.knowledgeCharacterSelections(in:bound,actors:Array(actors.reversed())),choices)
+        var alias=actors[0];alias.id="blue-alias"
+        let recovered=ClassicSceneEditing.knowledgeCharacterSelections(in:bound,actors:actors+[alias])
+        XCTAssertNil(recovered["p-a"]);XCTAssertEqual(recovered["p-z"],"red")
+        var renamed=bound;renamed.simulation.knowledge?.participants[0].id="new-participant"
+        XCTAssertTrue(ClassicSceneEditing.knowledgeCharacterSelections(in:renamed,actors:actors).isEmpty)
+        XCTAssertEqual(try Codec.data(bound),before)
+    }
+    func testQStyleWorkspaceAndEveryPoseSourceStillApply()throws {
+        let(scene,artwork,actors,assets,evidence)=fixture(),choices=["p-z":"red","p-a":"blue"]
+        var originalArtwork=artwork;originalArtwork.derivation = .original
+        XCTAssertThrowsError(try bind(choices,scene,originalArtwork,actors,assets,evidence))
+        for key in poseKeys {
+            var changed=artwork
+            let index=try XCTUnwrap(changed.sprites.firstIndex{$0.role==actors[0].poseRoles[key]})
+            changed.sprites[index].assetID=assets[0].id
+            XCTAssertThrowsError(try bind(choices,scene,changed,actors,assets,evidence))
+        }
+        var incomplete=actors;incomplete[0].poseRoles.removeValue(forKey:"object")
+        XCTAssertThrowsError(try bind(choices,scene,artwork,incomplete,assets,evidence))
+        var foreignAssets=assets;foreignAssets[1].workspaceID="other"
+        XCTAssertThrowsError(try bind(choices,scene,artwork,actors,foreignAssets,evidence))
+        var foreignEvidence=evidence;foreignEvidence[0].workspaceID="other"
+        XCTAssertThrowsError(try bind(choices,scene,artwork,actors,assets,foreignEvidence))
+    }
+    func testVisualRebindPreservesRecordingAndOldRevision()throws {
+        let(source,artwork,actors,assets,evidence)=fixture()
+        var original=try bind(["p-z":"blue","p-a":"red"],source,artwork,actors,assets,evidence)
+        original.simulationRecording=try SimulationReplay.record(scene:original)
+        original.simulationRecordingConfirmed=false
+        let revision=Revision(contentContext:ContentContext(workspaceID:"w",name:"显式角色对应"),aspect:.landscape,scenes:[original])
+        let project=Project(workspaceID:"w",name:"保留历史",revision:revision),before=try Codec.data(project)
+        let rebound=try bind(["p-z":"red","p-a":"red"],original,artwork,actors,assets,evidence)
+        let saved=try Editor.apply([.replaceScene(original.id,rebound)],to:project,baseRevision:revision.id,assets:assets,message:"明确改变一个参与者外观")
+        XCTAssertEqual(try Codec.data(project),before);XCTAssertEqual(try Codec.data(saved.revisions[0]),try Codec.data(revision))
+        let current=saved.current.scenes[0]
+        XCTAssertEqual(try Codec.data(current.simulation),try Codec.data(original.simulation))
+        XCTAssertEqual(current.simulationRecording,original.simulationRecording)
+        XCTAssertFalse(current.simulationRecordingConfirmed ?? true)
+        XCTAssertEqual(try SimulationReplay.record(scene:current),try SimulationReplay.record(scene:original))
+        XCTAssertEqual(current.classicArtwork?.knowledgeParticipants?.first{$0.participantID=="p-a"},original.classicArtwork?.knowledgeParticipants?.first{$0.participantID=="p-a"})
+        XCTAssertTrue([saved.current.review.text,saved.current.review.rights,saved.current.review.fullPreview,saved.current.review.sound,saved.current.review.captions].allSatisfy{!$0})
+    }
+    func testExplicitSharedCharacterPreservesOriginalAudioAndVoice()throws {
+        var(scene,artwork,actors,assets,evidence)=fixture()
+        let proof=Evidence(workspaceID:"w",title:"隔离完整原音",source:"isolated-sound",claim:"原声音字段保持",owner:"rules",commercialAllowed:false,verified:false)
+        var audio=Asset(workspaceID:"w",name:"original.wav",hash:String(repeating:"c",count:64),ext:"wav",bytes:8,mediaType:"audio",durationFrames:30)
+        audio.evidenceID=proof.id;assets.append(audio);evidence.append(proof)
+        var previous=artwork
+        previous.sources.append(try ClassicSceneEditing.source(assetID:audio.id,assets:assets,evidence:evidence,workspaceID:"w"))
+        previous.audioCues=[ClassicAudioCue(assetID:audio.id,startFrame:45,durationFrames:30,gain:0.3,use:.effect,listened:false)]
+        scene.classicArtwork=previous
+        scene.characterProfile=CharacterProfile(name:"原角色",evidenceIDs:[proof.id],voiceAssetID:audio.id,original:false)
+        let choices=["p-z":"blue","p-a":"blue"],before=try Codec.data(scene)
+        let bound=try bind(choices,scene,artwork,actors,assets,evidence)
+        XCTAssertEqual(ClassicSceneEditing.knowledgeCharacterSelections(in:bound,actors:actors),choices)
+        XCTAssertEqual(bound.classicArtwork?.audioCues,previous.audioCues)
+        XCTAssertEqual(bound.classicArtwork?.sources.first{$0.assetID==audio.id},previous.sources.first{$0.assetID==audio.id})
+        XCTAssertEqual(bound.characterProfile?.voiceAssetID,audio.id)
+        XCTAssertTrue(bound.characterProfile?.evidenceIDs.contains(proof.id) ?? false)
+        XCTAssertEqual(bound.voice,scene.voice);XCTAssertEqual(bound.captions,scene.captions)
+        XCTAssertEqual(try Codec.data(scene),before)
+        XCTAssertFalse(evidence.contains{$0.verified || $0.commercialAllowed})
+    }
+}
+
 final class ClassicSceneEditingTests:XCTestCase {
     private func fixture()->([Asset],[Evidence]) {
         var images:[Asset]=[];var evidence:[Evidence]=[]

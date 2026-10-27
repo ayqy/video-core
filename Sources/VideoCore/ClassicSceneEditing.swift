@@ -57,6 +57,55 @@ public enum ClassicSceneEditing {
         try ClassicArtworkRules.validateRights(scene:scene,workspaceID:access.workspaceID,assets:database.assets,evidence:database.evidence,commercial:commercial,now:now)
         return scene
     }
+    /// Recover only an existing exact visual assignment. Ambiguous or missing
+    /// library matches stay unselected; labels and array positions never infer identity.
+    public static func knowledgeCharacterSelections(in scene:Scene,actors:[CartoonActor])->[String:String] {
+        guard scene.kind == .simulation,let knowledge=scene.simulation.knowledge,let artwork=scene.classicArtwork,(1...32).contains(actors.count),
+              artwork.knowledgeParticipants != nil,Set(actors.map(\.id)).count==actors.count,
+              (try? KnowledgeParticipantAppearanceRules.validate(artwork:artwork,knowledge:knowledge)) != nil else{return [:]}
+        var result:[String:String]=[:]
+        for appearance in artwork.knowledgeParticipants ?? [] {
+            let matches=actors.filter{$0.poseRoles==appearance.poseRoles}
+            if matches.count==1 {result[appearance.participantID]=matches[0].id}
+        }
+        return result
+    }
+    /// Apply a complete explicit participant-ID -> existing-character-ID choice.
+    /// This is a visual edit; original sound, causal inputs and recording stay intact.
+    public static func bindingKnowledgeCharacters(_ selections:[String:String],actors:[CartoonActor],artwork:ClassicArtwork,
+                                                   to original:Scene,assets:[Asset],evidence:[Evidence],workspaceID:String)throws->Scene {
+        guard original.kind == .simulation,let knowledge=original.simulation.knowledge else{throw VideoError.invalid("请先建立实际知识模型，再为每个参与者选择角色")}
+        try knowledge.validate()
+        guard Set(selections.keys)==Set(knowledge.participants.map(\.id)),(1...32).contains(actors.count),
+              Set(actors.map(\.id)).count==actors.count,
+              actors.allSatisfy({$0.id.range(of:"^[A-Za-z0-9_-]{1,40}$",options:.regularExpression) != nil &&
+                  !$0.name.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty && $0.name.utf8.count<=120 &&
+                  !$0.name.unicodeScalars.contains(where:CharacterSet.controlCharacters.contains)}) else {
+            throw VideoError.invalid("请逐项选择当前模型的全部参与者；角色库标识须明确且不能重复")
+        }
+        let library=Dictionary(uniqueKeysWithValues:actors.map{($0.id,$0)})
+        var mapped=artwork,names:[String]=[],appearances:[KnowledgeParticipantAppearance]=[]
+        for participant in knowledge.participants {
+            guard let id=selections[participant.id],let actor=library[id] else{throw VideoError.invalid("所选角色不在当前已导入角色库中，请明确选择后再应用")}
+            names.append(actor.name)
+            appearances.append(KnowledgeParticipantAppearance(participantID:participant.id,poseRoles:actor.poseRoles))
+        }
+        mapped.knowledgeParticipants=appearances
+        mapped.audioCues=original.classicArtwork?.audioCues ?? []
+        for cue in mapped.audioCues {
+            guard let record=original.classicArtwork?.sources.first(where:{$0.assetID==cue.assetID}) else{throw VideoError.permission("原镜头声音的具体来源缺失，未替换角色")}
+            if let existing=mapped.sources.first(where:{$0.assetID==record.assetID}) {
+                guard existing==record else{throw VideoError.conflict("角色库与原镜头声音的来源记录冲突，未替换角色")}
+            } else{mapped.sources.append(record)}
+        }
+        var scene=try binding(mapped,character:names.joined(separator:"、"),to:original,assets:assets,evidence:evidence,workspaceID:workspaceID,requireQStyle:true)
+        if var profile=scene.characterProfile {
+            profile.voiceAssetID=original.characterProfile?.voiceAssetID
+            profile.evidenceIDs=Array(Set(profile.evidenceIDs+(original.characterProfile?.evidenceIDs ?? []))).sorted()
+            scene.characterProfile=profile
+        }
+        return scene
+    }
     public static func binding(_ artwork:ClassicArtwork,character:String,to original:Scene,assets:[Asset],evidence:[Evidence],workspaceID:String,requireQStyle:Bool=false)throws->Scene {
         guard !original.locked,[SceneKind.simulation,.cartoon].contains(original.kind),!character.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty else{throw VideoError.permission("请先解锁实际规则/角色镜头并选择已知角色")}
         guard !requireQStyle || artwork.derivation == .qStyle else{throw VideoError.review("下载原件尚未完成实际Q版派生，不能用于新高级成片；请保留原件并绑定真实处理产物")}

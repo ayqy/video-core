@@ -2,10 +2,10 @@
 
 VideoFree source export · package_free.py · version 1
 
-生成时间：2026-10-28 01:09:22 北京时间
+生成时间：2026-10-28 02:46:43 北京时间
 
-- 源码与必要元数据：239个文件；3594227字节（不含本清单）。
-- 整体内容指纹：`8acf5e6c606acb8d9823fbc4e681f165bce2d5fba0ac83e0937baf223fc93802`。
+- 源码与必要元数据：239个文件；3608915字节（不含本清单）。
+- 整体内容指纹：`d30ce433cdd4bb76564befa4ce1119dc61954c8b05b5f7e10c9d58c2aa10786e`。
 - 来源：受控原始工程中的逐文件白名单；Package.swift与唯一免费制作workflow来自Distribution/Free精确模板，README由发行脚本生成。
 - 本包不含.git，不可作为新业务checkout；本清单生成过程不执行构建、设备验收、签名安装或公共上传，各阶段以独立证据为准。
 - 排除：App、VideoGame、VideoCartoon、Premium、高级实现运行时测试、私有仓库地址、凭据、客户数据、缓存、日志及媒体过程产物。
@@ -14,7 +14,7 @@ VideoFree source export · package_free.py · version 1
 
 | SHA-256 | 字节数 | 包内路径 / 原工程来源 |
 |---|---:|---|
-| a61b33254b07bef0bf32e344f847d2f82e2e25f4b32f950ed0b1dc5c9d347e1c | 20807 | .github/workflows/free-production.yml |
+| e9c00af5c9ec48b49c26a350221791c16b3f6a5776ac1302fefd9b93688c923b | 21065 | .github/workflows/free-production.yml |
 | 501a1f91f71d14da620c0986b94594b9f5af66a9465ad2c1f4cc228025f88471 | 33497 | Integrations/README.md |
 | 2ff174ec064ca614f24e8ba67ae5c7042a2caa883af162bafd27a8a4520d5ed7 | 26522 | Integrations/asset_reuse.py |
 | 91f902f9ceedb5b26bfae07ecd097aa47fb9e69b807eae6ff289153770655142 | 25400 | Integrations/check_install.py |
@@ -83,7 +83,7 @@ VideoFree source export · package_free.py · version 1
 | 189ad6135ff5becbe08363ac71b03ed91e90ca27a03f07d0ec2fe3de97f3470f | 12961 | Sources/VideoCore/BatchRules.swift |
 | 77c10a02e09545b5087bd78330852f78f80fe9a4e472e65a33507135b21a232d | 14040 | Sources/VideoCore/CartoonActing.swift |
 | e10257d333ec199778893356f6393c3597655a5f3331f90b9661cf058f772455 | 16698 | Sources/VideoCore/ClassicArtwork.swift |
-| 6f76ab2ddab5ce59e4f56dde09159de0e8ca91de542384a322f8d8b399f2233c | 22473 | Sources/VideoCore/ClassicSceneEditing.swift |
+| 8d57f3cc6a3afb2458ce8c164499ed128e40ee2a55311da6b86ec695e1f8236d | 26392 | Sources/VideoCore/ClassicSceneEditing.swift |
 | b2cdd155b2ff7507f9ea0ca1b1c85ae41059c903c829d1aecb14f704a34badf0 | 17671 | Sources/VideoCore/CohortFinance.swift |
 | 3e3b6eb76ea2295ebb9f4a8619f128247fb2b04566953229fa51725944e9a087 | 12447 | Sources/VideoCore/Commercial.swift |
 | e9b64ac1623ddede8f3e28ec11cf5a7a70ac64358d5592e43fb52a6131fb03ca | 32976 | Sources/VideoCore/CommercialReports.swift |
@@ -189,7 +189,7 @@ VideoFree source export · package_free.py · version 1
 | 84bf0bbbf07c6dfb4a679f9754c238253b53237018d8519be541453f48c70e40 | 11156 | Tests/VideoCoreTests/BrandDeliveryTests.swift |
 | 8adf01feaf26bb66604d75da5b5ab4fd22a0b806f7e9ec1e524528412365bbfd | 10270 | Tests/VideoCoreTests/CartoonPerformanceTests.swift |
 | 1b5855f57e8350e7b9e7648a3f251f8c511e9835901837d2c96e468e707fe0ff | 27303 | Tests/VideoCoreTests/ClassicArtworkTests.swift |
-| 4b0167c86313089d6b5cde2f150169bedae59572014e985223f6631c6251d9f3 | 59086 | Tests/VideoCoreTests/ClassicSceneEditingTests.swift |
+| ffa03454de16bc20cab26d79491e2d5e81504fce571769d9c546b125bbab3c5a | 69597 | Tests/VideoCoreTests/ClassicSceneEditingTests.swift |
 | f18fda57b514d19653ff1ac7ce621f4022be6868fb8b385b2cb5884e698c447a | 17786 | Tests/VideoCoreTests/CohortFinanceTests.swift |
 | d6f32510e1092e64a73bf2fba1b1c8d1e1c1d6271bfed3dcbf12eb11665bc347 | 10029 | Tests/VideoCoreTests/CommercialTests.swift |
 | 9c0903ed3be70c01bd7acf8b013ff917d84654560fad6aa2cbd46a6ade137967 | 51790 | Tests/VideoCoreTests/ContentProjectTests.swift |
