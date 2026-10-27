@@ -92,6 +92,27 @@ jobs:
           python3 -B Integrations/expressive_tts.py --help
           python3 -B Integrations/prepare_cosyvoice.py --help
 
+      - name: Check independent adult voice design rules
+        shell: bash
+        run: |
+          python3 -B - <<'PY'
+          import unittest
+          suite = unittest.defaultTestLoader.discover('Integrations/tests', pattern='test_voice_design_tts.py')
+          def identities(node):
+              for item in node:
+                  if isinstance(item, unittest.TestSuite):
+                      yield from identities(item)
+                  else:
+                      yield item.id()
+          expected = list(identities(suite))
+          assert len(expected) == len(set(expected)) == 17
+          result = unittest.TextTestRunner(verbosity=1).run(suite)
+          assert result.wasSuccessful() and result.testsRun == len(expected) and not result.skipped
+          print('voice_design_complete_rules=' + str(len(expected)))
+          print('model_download=not_run; inference=not_run; voice_quality=needs_review; default_voice=unchanged')
+          PY
+          python3 -B Integrations/voice_design_tts.py --help
+
       - name: Check complete shared Skill and host permission rules
         shell: bash
         run: |
