@@ -60,7 +60,7 @@ public enum AgentMutationExecutor {
         case "projects create":
             let aspect=values["aspect"]?.string.flatMap(Aspect.init(rawValue:)) ?? .landscape
             let scenes=try values["scenes"].map{try Codec.decoder().decode([Scene].self,from:Codec.data($0))} ?? []
-            var revision=try Planner.create(workspaceID:workspaceID,name:text("name"),aspect:aspect,scenes:scenes)
+            var revision=try Planner.create(workspaceID:workspaceID,name:text("name"),aspect:aspect,scenes:scenes,assets:database.assets.filter{$0.workspaceID==workspaceID})
             revision.dependencies=try DependencyRules.freeze(revision:revision,assets:database.assets,evidence:database.evidence)
             let project=Project(workspaceID:workspaceID,name:text("name"),revision:revision)
             database.projects.append(project);projectID=project.id;revisionID=revision.id;state="needs_review";result = .object(["review_required":.boolean(true)])

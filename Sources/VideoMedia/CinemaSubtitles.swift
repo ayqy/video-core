@@ -22,8 +22,8 @@ enum CinemaSubtitles {
     /// may be a full-frame background, so its content is left to authored layout
     /// and the normal final review rather than guessed from its outer rectangle.
     static func validateClearance(scene: Scene, sourceFrame: Int, aspect: Aspect, rect: CGRect) throws {
+        let frame = LayerRules.renderSourceFrame(scene: scene, sourceFrame: sourceFrame)
         for layer in scene.layers ?? [] where layer.kind == .text || layer.kind == .chart || layer.kind == .code {
-            let frame = (layer.kind == .chart || layer.kind == .code || layer.entrance != nil) ? min(sourceFrame, max(0, scene.durationFrames - 1)) : sourceFrame
             guard layer.startFrame <= frame, layer.endFrame > frame else { continue }
             let progress = try layer.entrance?.progress(at: frame) ?? 1
             // Match LayerPainter's actual visibility. An element whose entrance

@@ -150,10 +150,6 @@ public enum PluginProtocolRules {
         guard [p.character,p.emotion,p.fontName].allSatisfy({text($0,maximum:512)}),p.color.range(of:"^[a-fA-F0-9]{6}$",options:.regularExpression) != nil,p.simulation.events.count<=4096,p.simulation.unit.utf8.count<=512,p.simulation.events.allSatisfy({text($0.label,maximum:512)}) else{throw VideoError.invalid("插件视觉参数或事件数量超界")}
         if let profile=p.characterProfile {guard profile.actions.count<=64,profile.actions.allSatisfy({text($0,maximum:512)}),profile.color.range(of:"^[a-fA-F0-9]{6}$",options:.regularExpression) != nil else{throw VideoError.invalid("插件角色动作或颜色无效")}}
         _ = try SimulationReplay.frameState(simulation:p.simulation,frame:input.sourceFrame,fps:input.fps)
-        if let performance=p.cartoonPerformance {
-            guard p.kind == .cartoon, let artwork=p.artwork else { throw VideoError.invalid("多角色表演仅用于实际图集的卡通输入") }
-            try performance.validate(durationFrames:p.durationFrames,sprites:artwork.sprites)
-        }
         guard input.assets.count<=32,Set(input.assets.map(\.assetID)).count==input.assets.count else{throw VideoError.invalid("插件图片数量或标识重复")}
         var bytes=0,pixels=0
         for asset in input.assets {
@@ -166,6 +162,11 @@ public enum PluginProtocolRules {
             let roles=Set(artwork.sprites.map(\.role)),required = ClassicArtworkRules.requiredRoles(knowledge: p.kind == .simulation && p.simulation.knowledge != nil, cartoon: p.kind == .cartoon)
             guard !artwork.sprites.isEmpty,artwork.sprites.count<=32,roles.count==artwork.sprites.count,required.isSubset(of:roles),Set(artwork.sprites.map(\.assetID))==Set(input.assets.map(\.assetID)) else{throw VideoError.invalid("插件图块与实际图片集合不符")}
             for s in artwork.sprites {guard text(s.role,maximum:512),[s.x,s.y,s.width,s.height].allSatisfy(\.isFinite),s.x>=0,s.y>=0,s.width>0,s.height>0,s.x+s.width<=1.000001,s.y+s.height<=1.000001 else{throw VideoError.invalid("插件图块坐标无效")}}
+            if let performance=p.cartoonPerformance {
+                guard p.kind == .cartoon else { throw VideoError.invalid("多角色表演仅用于实际图集的卡通输入") }
+                try performance.validate(durationFrames:p.durationFrames,sprites:artwork.sprites,
+                    imageHashes:Dictionary(uniqueKeysWithValues:input.assets.map{($0.assetID,$0.sha256)}))
+            }
             let visual=ClassicArtwork(gameplay:artwork.gameplay,sprites:artwork.sprites,sources:[],derivation:artwork.derivation,knowledgeParticipants:artwork.knowledgeParticipants)
             try KnowledgeParticipantAppearanceRules.validate(artwork:visual,knowledge:p.kind == .simulation ? p.simulation.knowledge:nil,
                 imageHashes:Dictionary(uniqueKeysWithValues:input.assets.map{($0.assetID,$0.sha256)}))

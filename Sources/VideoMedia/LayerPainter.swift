@@ -6,8 +6,8 @@ import Foundation
 
 enum LayerPainter {
     static func draw(scene:Scene,sourceFrame:Int,aspect:Aspect,images:[String:CGImage],context c:CGContext,fontName:String="PingFangSC-Medium") throws {
+        let frame=LayerRules.renderSourceFrame(scene:scene,sourceFrame:sourceFrame)
         for layer in scene.layers ?? [] {
-            let frame=(layer.kind == .chart || layer.kind == .code || layer.entrance != nil) ? min(sourceFrame,max(0,scene.durationFrames-1)) : sourceFrame
             guard layer.startFrame<=frame,layer.endFrame>frame else{continue}
             let layout=layer.layout(at:frame);let w=Double(aspect.width),h=Double(aspect.height)
             let rect=CGRect(x:(layout.x-layer.width*layout.scale/2)*w,y:(1-layout.y-layer.height*layout.scale/2)*h,width:layer.width*layout.scale*w,height:layer.height*layout.scale*h)

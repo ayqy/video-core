@@ -118,6 +118,42 @@ final class PaperPresentationMediaTests:XCTestCase {
         try save(ScenePainter.image(revision:fast,frame:59),name:"05-paper-pause-complete.png")
     }
 
+    func testPlainImagesTextAndShapesHoldTheSameLastPixelsAsAnimatedLayers()throws {
+        let picture=try source()
+        for aspect in Aspect.allCases {for paper in [false,true] {
+            for variant in 0..<4 {
+                var value=scene()
+                if !paper {value.paperPresentation=nil}
+                var layer=SceneLayer(kind:variant == 0 ? .image:(variant == 1 ? .text:.rectangle),text:variant == 1 ? "路修好了":"",assetID:variant == 0 ? "drawing":nil,endFrame:90)
+                layer.width=0.4;layer.height=0.15;layer.color="C22135"
+                if variant == 3 {layer.entrance=LayerEntrance(kind:.revealLeft,startFrame:0,endFrame:60)}
+                layer.keyframes=[Keyframe(frame:0,x:0.4,y:0.5,scale:1),Keyframe(frame:89,x:0.6,y:0.5,scale:1)]
+                value.layers=[layer]
+                let last=try ScenePainter.image(revision:revision(value,aspect:aspect),frame:89,layerImages:["drawing":picture])
+                value.speed=2;value.pauseFrames=15
+                let held=try ScenePainter.image(revision:revision(value,aspect:aspect),frame:59,layerImages:["drawing":picture])
+                // Exclude the ordinary painter's live time/index footer; compare
+                // the actual drawing area, including its final keyframe position.
+                let drawing=CGRect(x:0,y:CGFloat(aspect.height)*0.3,width:CGFloat(aspect.width),height:CGFloat(aspect.height)*0.4)
+                XCTAssertEqual(try region(held,drawing),try region(last,drawing),"普通元素与入场元素都应保留作者末态，variant=\(variant)")
+                var empty=value;empty.layers=[]
+                XCTAssertNotEqual(try region(held,drawing),try region(ScenePainter.image(revision:revision(empty,aspect:aspect),frame:59),drawing),"留白期间不能把知识主体删掉")
+            }
+        }}
+    }
+
+    func testTrailingHoldDoesNotRestoreLayersWhoseAuthoredWindowEndedEarlier()throws {
+        for kind in [SceneLayer.Kind.text,.image,.rectangle] {
+            var value=scene();value.speed=2;value.pauseFrames=15
+            var early=SceneLayer(kind:kind,text:kind == .text ? "先前提示":"",assetID:kind == .image ? "drawing":nil,endFrame:60)
+            early.width=0.4;early.height=0.15
+            value.layers=[early]
+            var empty=value;empty.layers=[]
+            let actual=try ScenePainter.image(revision:revision(value),frame:59,layerImages:["drawing":try source()])
+            XCTAssertEqual(try hash(actual),try hash(ScenePainter.image(revision:revision(empty),frame:59)))
+        }
+    }
+
     func testOverflowMissingFontAndUnsupportedSceneKindAreRejected()throws {
         var value=scene();value.title=String(repeating:"超长标题",count:40)
         XCTAssertThrowsError(try ScenePainter.image(revision:revision(value),frame:0))

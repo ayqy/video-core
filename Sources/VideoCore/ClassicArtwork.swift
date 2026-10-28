@@ -160,8 +160,26 @@ public enum ClassicArtworkRules {
                   cue.startFrame>=0,cue.durationFrames>0,cue.durationFrames<=duration,cue.durationFrames<=scene.durationFrames,cue.startFrame<=scene.durationFrames-cue.durationFrames,cue.gain.isFinite,(0...1).contains(cue.gain) else { throw VideoError.invalid("游戏音效实长、位置或音量无效；不得自动截断提示语") }
         }
     }
+    /// New bindings/revisions and current production require real registered
+    /// source identity. Historical metadata stays decodable and repairable even
+    /// if an earlier release allowed separate imports of the same walking cell.
+    public static func validateWalkingSources(scene:Scene,assets:[Asset]) throws {
+        guard let performance=scene.cartoonPerformance,let artwork=scene.classicArtwork else{return}
+        try performance.validate(durationFrames:scene.durationFrames,sprites:artwork.sprites)
+        let imageHashes=Dictionary(assets.filter{$0.mediaType.hasPrefix("image")}.map{($0.id,$0.hash)},uniquingKeysWith:{first,_ in first})
+        for actor in performance.actors where performance.beats.contains(where:{$0.cues.contains(where:{$0.actorID==actor.id && $0.pose == .walk})}) {
+            for key in ["walk","walkAlternate"] {
+                guard let role=actor.poseRoles[key],let sprite=artwork.sprites.first(where:{$0.role==role}),imageHashes[sprite.assetID] != nil else {
+                    throw VideoError.invalid("新角色步态须绑定当前工作区已登记的实际图片来源")
+                }
+            }
+        }
+        try performance.validate(durationFrames:scene.durationFrames,sprites:artwork.sprites,imageHashes:imageHashes)
+    }
     public static func validateRights(scene:Scene,workspaceID:String,assets:[Asset],evidence:[Evidence],commercial:Bool,requireListening:Bool=false,now:Date=Date()) throws {
-        try validate(scene:scene,assets:assets.filter{$0.workspaceID==workspaceID})
+        let scoped=assets.filter{$0.workspaceID==workspaceID}
+        try validate(scene:scene,assets:scoped)
+        try validateWalkingSources(scene:scene,assets:scoped)
         guard let artwork=scene.classicArtwork else { return }
         for source in artwork.sources {
             guard let proof=evidence.first(where:{$0.id==source.evidenceID && $0.workspaceID==workspaceID}),proof.usable(commercial:commercial,now:now),proof.owner==source.owner,proof.source==source.source else { throw VideoError.permission("外部游戏图像/录音的具体授权尚未核实、已过期或来源不一致") }

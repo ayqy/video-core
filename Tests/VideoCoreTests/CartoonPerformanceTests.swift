@@ -74,6 +74,84 @@ final class CartoonPerformanceTests: XCTestCase {
         var missing=p;missing.actors[0].poseRoles["walkAlternate"]=nil
         XCTAssertThrowsError(try missing.validate(durationFrames:90))
     }
+    func testNormalEditorRejectsTwoImportsOfOneWalkingRegionWithoutBanningAtlasReuse() throws {
+        let (original,assets,project)=try fixture(),before=try Codec.data(project)
+        var duplicate=assets[1];duplicate.id=Codec.id();duplicate.name="same-poses-imported-again.png"
+        let completeAssets=assets+[duplicate]
+        var changed=original,artwork=try XCTUnwrap(changed.classicArtwork)
+        let walk=try XCTUnwrap(artwork.sprites.first{$0.role=="hero_walk"})
+        let alternate=try XCTUnwrap(artwork.sprites.firstIndex{$0.role=="hero_walk_alt"})
+        let actualAlternate=artwork.sprites[alternate]
+        artwork.sources.append(ClassicSource(assetID:duplicate.id,hash:duplicate.hash,source:"isolated://second-import",owner:"隔离图块规则",license:"隔离开发规则，不是传播授权",evidenceID:try XCTUnwrap(duplicate.evidenceID)))
+        artwork.sprites[alternate]=ClassicSprite(role:"hero_walk_alt",assetID:duplicate.id,x:walk.x,y:walk.y,width:walk.width,height:walk.height)
+        changed.classicArtwork=artwork
+        // Historical metadata remains readable. Only new work/production adds
+        // the source-byte identity check, so an old project can be repaired.
+        XCTAssertNoThrow(try changed.validate(assets:completeAssets))
+        XCTAssertThrowsError(try Planner.create(workspaceID:"w",name:"新表演",scenes:[changed],assets:completeAssets))
+        XCTAssertThrowsError(try ClassicArtworkRules.validateRights(scene:changed,workspaceID:"w",assets:completeAssets,evidence:[],commercial:false)) {error in
+            XCTAssertEqual((error as? VideoError)?.code,"invalid_input")
+        }
+        XCTAssertThrowsError(try Editor.apply([.replaceScene(original.id,changed)],to:project,baseRevision:project.current.id,assets:completeAssets,message:"重复导入不能充当第二步态"))
+        XCTAssertEqual(try Codec.data(project),before)
+        let historicalAlias=changed
+        // A second imported identity remains usable for a genuinely different
+        // region of the same atlas, and ordinary revision/history rules apply.
+        var differentRegion=actualAlternate;differentRegion.assetID=duplicate.id
+        artwork.sprites[alternate]=differentRegion;changed.classicArtwork=artwork
+        let edited=try Editor.apply([.replaceScene(original.id,changed)],to:project,baseRevision:project.current.id,assets:completeAssets,message:"保留同图集的不同真实步态区域")
+        XCTAssertEqual(try Codec.data(edited.revisions[0]),try Codec.data(project.current))
+        XCTAssertEqual(edited.current.scenes[0].classicArtwork?.sprites[alternate],differentRegion)
+        XCTAssertEqual(edited.current.scenes[0].cartoonPerformance,original.cartoonPerformance)
+        XCTAssertFalse(edited.current.review.complete)
+        XCTAssertNoThrow(try Planner.create(workspaceID:"w",name:"新表演",scenes:[changed],assets:completeAssets))
+
+        // Persist an isolated pre-fix snapshot with actual CAS bytes. It is
+        // historical test data, not an acceptance hook or a product migration.
+        let root=FileManager.default.temporaryDirectory.appendingPathComponent("cartoon-history-"+UUID().uuidString,isDirectory:true)
+        defer{try? FileManager.default.removeItem(at:root)}
+        let repository=try Repository(root:root.appendingPathComponent("source"))
+        var storedAssets:[Asset]=[]
+        for asset in completeAssets {
+            var stored=try repository.ingest(Data(("isolated-core-image-"+asset.hash).utf8),name:asset.name,workspaceID:"w",mediaType:"image")
+            stored.id=asset.id;stored.evidenceID=asset.evidenceID;storedAssets.append(stored)
+        }
+        var legacyScene=historicalAlias
+        let legacySources=try XCTUnwrap(legacyScene.classicArtwork).sources.map{source in
+            var value=source;value.hash=storedAssets.first{$0.id==source.assetID}!.hash;return value
+        }
+        legacyScene.classicArtwork?.sources=legacySources
+        let legacyRevision=Revision(contentContext:ContentContext(workspaceID:"w",name:"旧角色工程"),aspect:.landscape,scenes:[legacyScene])
+        let legacyProject=Project(workspaceID:"w",name:"旧角色工程",revision:legacyRevision)
+        var workspace=Workspace(name:"隔离历史",owner:"owner");workspace.id="w"
+        try repository.transaction{state in state.workspaces=[workspace];state.assets=storedAssets;state.projects=[legacyProject]}
+        try repository.read().validate()
+        let opened=try Repository(root:repository.root,readOnly:true)
+        XCTAssertEqual(try Codec.data(opened.read().projects[0]),try Codec.data(legacyProject))
+        let oldBackup=try repository.backup()
+        let restored=try Repository.restore(oldBackup,to:root.appendingPathComponent("restored"))
+        XCTAssertEqual(try Codec.data(restored.read().projects[0]),try Codec.data(legacyProject))
+        XCTAssertThrowsError(try Editor.apply([.cta("新修订不能带入旧步态别名")],to:legacyProject,baseRevision:legacyRevision.id,assets:storedAssets,message:"检查整版结果"))
+        let issues=try Quality.inspect(legacyRevision,database:restored.read(),requireReview:false)
+        XCTAssertTrue(issues.contains{$0.message.contains("行走的两个动作名称")},"实际制作预检必须拒绝旧别名，而非靠源文件不可读拒绝")
+        var repaired=legacyScene
+        repaired.classicArtwork?.sprites[alternate].x=actualAlternate.x
+        repaired.classicArtwork?.sprites[alternate].y=actualAlternate.y
+        repaired.classicArtwork?.sprites[alternate].width=actualAlternate.width
+        repaired.classicArtwork?.sprites[alternate].height=actualAlternate.height
+        let fixed=try Editor.apply([.replaceScene(legacyScene.id,repaired)],to:legacyProject,baseRevision:legacyRevision.id,assets:storedAssets,message:"明确修复第二步态区域")
+        XCTAssertEqual(try Codec.data(fixed.revisions[0]),try Codec.data(legacyRevision))
+        try restored.transaction{$0.projects=[fixed]}
+        try restored.read().validate()
+        let repairedBackup=try restored.backup()
+        let repairedRestore=try Repository.restore(repairedBackup,to:root.appendingPathComponent("repaired-restored"))
+        XCTAssertEqual(try Codec.data(repairedRestore.read().projects[0]),try Codec.data(fixed))
+        XCTAssertThrowsError(try Editor.apply([.restore(legacyRevision.id)],to:fixed,baseRevision:fixed.current.id,assets:storedAssets,message:"恢复历史也须生成有效新结果"))
+        let legacyAndRepair=try Editor.apply([.restore(legacyRevision.id),.replaceScene(legacyScene.id,repaired)],to:fixed,baseRevision:fixed.current.id,assets:storedAssets,message:"同批恢复并明确修复")
+        XCTAssertEqual(try Codec.data(legacyAndRepair.revisions[0]),try Codec.data(legacyRevision))
+        XCTAssertEqual(try Codec.data(legacyAndRepair.revisions[1]),try Codec.data(fixed.current))
+        XCTAssertNoThrow(try ClassicArtworkRules.validateWalkingSources(scene:legacyAndRepair.current.scenes[0],assets:storedAssets))
+    }
     func testOldSceneNilOmissionAndNewPerformanceRoundTripBindDigest() throws {
         var (scene,_,_)=try fixture();scene.cartoonPerformance=nil
         let old=try Codec.data(scene)

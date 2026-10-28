@@ -115,11 +115,15 @@ public struct CartoonPerformance: Codable, Equatable, Sendable {
         }
         return CartoonFrameState(beatID:beat.id,beatIndex:index,camera:beat.camera,speakerID:beat.speakerID,localAnimationFrame:animation,actors:states)
     }
-    public func validate(durationFrames: Int, sprites: [ClassicSprite]) throws {
+    public func validate(durationFrames: Int, sprites: [ClassicSprite], imageHashes: [String:String] = [:]) throws {
         try validate(durationFrames:durationFrames,availableRoles:Set(sprites.map(\.role)))
         for actor in actors where beats.contains(where:{$0.cues.contains(where:{$0.actorID==actor.id && $0.pose == .walk})}) {
             let a=sprites.first(where:{$0.role==actor.poseRoles["walk"]})!,b=sprites.first(where:{$0.role==actor.poseRoles["walkAlternate"]})!
-            guard a.assetID != b.assetID || a.x != b.x || a.y != b.y || a.width != b.width || a.height != b.height else {throw VideoError.invalid("行走的两个动作名称指向同一图块，请绑定真实不同的步态区域")}
+            // Separate imports retain separate identities even when their bytes
+            // are equal. A second identity cannot turn the same image region
+            // into another walking pose; other regions remain reusable.
+            let sameImage=a.assetID==b.assetID || (imageHashes[a.assetID].map{hash in imageHashes[b.assetID]==hash} ?? false)
+            guard !sameImage || a.x != b.x || a.y != b.y || a.width != b.width || a.height != b.height else {throw VideoError.invalid("行走的两个动作名称指向同一图块，请绑定真实不同的步态区域")}
         }
     }
     /// Split and trim preserve the original source-frame positions and walk phase.

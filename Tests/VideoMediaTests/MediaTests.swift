@@ -4,6 +4,7 @@ import VideoCore
 import AVFoundation
 import CoreMedia
 import CoreGraphics
+import CoreText
 
 final class MediaTests:XCTestCase {
     func testWrappedChineseTitleSurvivesPortraitConversionWithOverflowStillRejected() throws {
@@ -157,6 +158,40 @@ final class MediaTests:XCTestCase {
             try changesKey{$0.frameworks[0].buildVersion="different-test-build"}
             try changesKey{$0.frameworks[1].buildVersion="different-test-build"}
         }
+    }
+
+    func testOnlyNewlyHeldPlainLayerPixelsChangeThePreviousCacheIdentity() throws {
+        let encoding=try VisualClipCache.EncodingConfiguration.capture(aspect:.landscape,fps:30)
+        func previousKey(_ revision:Revision)throws->String {
+            var scene=revision.scenes[0]
+            scene.voice=nil;scene.speechPlan=nil;scene.voiceGain=1;scene.sourceGain=0;scene.musicGain=0;scene.muted=false
+            scene.evidenceIDs=[];scene.courseMappingIDs=nil;scene.narrativeSources=nil;scene.locked=false
+            scene.narration=scene.narration.isEmpty ? "":"speech"
+            let font=CTFontCreateWithName("PingFangSC-Medium" as CFString,32,nil)
+            let table=CTFontCopyTable(font,0x68656164,[]) as Data? ?? Data()
+            let paperData=scene.paperPresentation != nil && scene.layers?.contains(where:{$0.kind == .chart || $0.kind == .code}) == true
+            return try Codec.digest(VisualClipCache.Key(version:VisualClipCache.version+(paperData ? "-paper-data-1":"")+revision.toolchain,cinemaSubtitleStyle:CinemaSubtitles.styleVersion,os:ProcessInfo.processInfo.operatingSystemVersionString,font:(CTFontCopyPostScriptName(font) as String)+Codec.hash(table),scene:scene,encoding:encoding,purpose:revision.purpose,aspect:revision.aspect,fps:revision.fps,index:0,sceneCount:1,startFrame:0,price:nil,cta:revision.cta,sourceHash:nil,layerHashes:[:],moduleIdentity:nil,artworkIdentity:nil))
+        }
+        for paper in [false,true] {for kind in [SceneLayer.Kind.text,.image,.rectangle,.chart,.code] {
+            var scene=Scene(title:"停顿缓存",body:"源图与字幕保持独立",durationFrames:90)
+            scene.speed=2
+            if paper {scene.paperPresentation=PaperPresentation()}
+            var layer=SceneLayer(kind:kind,text:kind == .text ? "结果":"",assetID:kind == .image ? "drawing":nil,endFrame:90)
+            if kind == .chart {layer.dataPresentation=DataPresentation(chart:DataChart(title:"代币",axisLabel:"枚",minimum:0,maximum:4,series:[DataSeries(id:"a",label:"甲",color:"38BDF8",keyframes:[.init(frame:0,value:3)])]))}
+            if kind == .code {layer.dataPresentation=DataPresentation(code:CodePresentation(title:"规则",lines:["built = total >= 3"],highlights:[.init(startFrame:0,endFrame:90,line:0)]))}
+            for pause in [0,15] {for end in [60,90] {for entrance in [false,true] {
+                scene.pauseFrames=pause;layer.endFrame=end
+                layer.entrance=entrance ? LayerEntrance(kind:.fade,startFrame:0,endFrame:30):nil
+                if kind == .code {layer.dataPresentation=DataPresentation(code:CodePresentation(title:"规则",lines:["built = total >= 3"],highlights:[.init(startFrame:0,endFrame:end,line:0)]))}
+                scene.layers=[layer]
+                let revision=Revision(contentContext:ContentContext(workspaceID:"w",name:"旧缓存隔离"),aspect:.landscape,scenes:[scene],cta:"")
+                let prior=try previousKey(revision)
+                let current=try VisualClipCache.fingerprint(revision:revision,index:0,database:Database(),modules:nil,encoding:encoding)
+                if pause>0 && end==90 && !entrance && kind != .chart && kind != .code {
+                    XCTAssertNotEqual(current,prior,"旧缓存的主体消失片段不能冒充已修复持画")
+                } else {XCTAssertEqual(current,prior,"未改变像素语义的片段继续使用原缓存身份")}
+            }}}
+        }}
     }
 
     func testMissingFrameworkIdentityRendersWithoutPersistentCacheReuse() async throws {

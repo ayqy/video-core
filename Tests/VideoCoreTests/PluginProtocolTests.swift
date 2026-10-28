@@ -41,6 +41,31 @@ final class PluginProtocolTests:XCTestCase {
         let original=fixture()
         for mutation in 0..<10 {var input=original;switch mutation{case 0:input.assets[0].data.append(4);case 1:input.assets.append(input.assets[0]);case 2:input.assets[0].width=8193;case 3:input.props.artwork?.sprites[0].x = .nan;case 4:input.props.artwork?.sprites[0].width=2;case 5:input.canvasWidth=Int.max;case 6:input.sourceFrame = -1;case 7:input.rect.height = .infinity;case 8:input.props.artwork?.sprites.removeLast();default:input.assets[0].assetID="unreferenced"};XCTAssertThrowsError(try PluginProtocolRules.validate(input,capabilityID:"game.simulate"))}
     }
+    func testCartoonWalkingUsesVerifiedImageBytesAcrossSeparateAssetIDs() throws {
+        var input=fixture(),scene=Scene(kind:.cartoon,title:"源身份不是步态",body:"只核真实图块",durationFrames:90)
+        let roles=Array(Set(CartoonActor.dinoRoles.values)).sorted()+["hero","floor"]
+        let first=input.assets[0].assetID,second="second-atlas-identity"
+        var bankCopy=input.assets[0];bankCopy.assetID=second;input.assets.append(bankCopy)
+        var sprites=roles.enumerated().map{ClassicSprite(role:$0.element,assetID:first,x:Double($0.offset%3)/3,y:Double($0.offset/3)/3,width:0.25,height:0.25)}
+        let walk=try XCTUnwrap(sprites.first{$0.role=="hero_walk"}),alternate=try XCTUnwrap(sprites.firstIndex{$0.role=="hero_walk_alt"})
+        let actualAlternate=sprites[alternate]
+        sprites[alternate]=ClassicSprite(role:"hero_walk_alt",assetID:second,x:walk.x,y:walk.y,width:walk.width,height:walk.height)
+        scene.classicArtwork=ClassicArtwork(gameplay:.platformer,sprites:sprites,sources:[],derivation:.qStyle)
+        scene.cartoonPerformance=try .conversation(durationFrames:90)
+        input.props=PluginVisualProps(scene:scene)
+        XCTAssertThrowsError(try PluginProtocolRules.validate(input,capabilityID:"cartoon.animate"))
+        // Different regions of these equal image bytes are still valid.
+        var differentRegion=actualAlternate;differentRegion.assetID=second
+        input.props.artwork?.sprites[alternate]=differentRegion
+        XCTAssertNoThrow(try PluginProtocolRules.validate(input,capabilityID:"cartoon.animate"))
+        // Separate actual image bytes may use the same normalized region.
+        input.props.artwork?.sprites[alternate]=ClassicSprite(role:"hero_walk_alt",assetID:second,x:walk.x,y:walk.y,width:walk.width,height:walk.height)
+        input.assets[1].data.append(4);input.assets[1].sha256=Codec.hash(input.assets[1].data)
+        XCTAssertNoThrow(try PluginProtocolRules.validate(input,capabilityID:"cartoon.animate"))
+        // The claimed hash alone cannot make unequal transmitted bytes valid.
+        input.assets[1].sha256=input.assets[0].sha256
+        XCTAssertThrowsError(try PluginProtocolRules.validate(input,capabilityID:"cartoon.animate"))
+    }
     func testOutputIsBoundToActualInputFrameAndDependencyBytes()throws {
         let input=fixture(),digest=try input.contentDigest()
         let frame=PluginPNGFrame(data:Data([9,8,7]),width:600,height:480,sourceFrame:0,inputDigest:digest,dependencyFingerprints:["atlas":input.assets[0].sha256])

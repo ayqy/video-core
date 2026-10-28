@@ -14,6 +14,12 @@ public struct SceneLayer: Codable, Equatable, Identifiable, Sendable {
     public func layout(at frame:Int)->(x:Double,y:Double,scale:Double) { var s=Scene(title:"layer",body:"");s.x=x;s.y=y;s.keyframes=keyframes;return s.layout(at:frame) }
 }
 public enum LayerRules {
+    /// Layer visuals hold the final authored source frame during a trailing pause.
+    /// Callers pass Scene.renderSourceFrame's result; captions and audio retain
+    /// that original mapping. A layer that ended earlier remains absent.
+    public static func renderSourceFrame(scene: Scene, sourceFrame: Int) -> Int {
+        min(max(0, sourceFrame), max(0, scene.durationFrames - 1))
+    }
     public static func validate(scene:Scene,assets:[Asset]) throws {
         let layers=scene.layers ?? []
         guard layers.count<=32,Set(layers.map(\.id)).count==layers.count else { throw VideoError.invalid("单镜头最多32个元素，元素ID不能重复") }

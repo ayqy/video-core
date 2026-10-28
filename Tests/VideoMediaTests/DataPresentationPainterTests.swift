@@ -113,6 +113,26 @@ final class DataPresentationPainterTests: XCTestCase {
         assertPixel(try pixel(code,x:82,y:296),equals:try referencePixel("111C31"))
         assertPixel(try pixel(code,x:1188,y:500),equals:try referencePixel("244A61"))
     }
+    func testDataAndCodeRetainTheirLastValuesThroughSpeedPauseAndSourceSplit() throws {
+        for code in [false,true] {for paper in [false,true] {
+            var original=paper ? paperRevision(code:code):revision(code:code)
+            original.scenes[0].speed=2;original.scenes[0].pauseFrames=9
+            let scene=original.scenes[0]
+            let project=Project(workspaceID:"w",name:"数据留白",revision:original)
+            let split=try Editor.apply([.splitScene(scene.id,60)],to:project,baseRevision:original.id,assets:[],message:"保留原值和最后停顿")
+            XCTAssertEqual(split.current.scenes.map(\.pauseFrames),[0,9])
+            let last=try ScenePainter.image(revision:original,frame:original.frames-1)
+            let divided=try ScenePainter.image(revision:split.current,frame:split.current.frames-1)
+            // Ordinary metadata/footer changes after a split; the authored data
+            // area must still show exactly the same final values and highlights.
+            let rect=paper ? CGRect(x:80,y:172,width:1120,height:342):CGRect(x:80,y:294,width:1120,height:316)
+            let pixelRect=CGRect(x:rect.minX,y:CGFloat(last.height)-rect.maxY,width:rect.width,height:rect.height)
+            XCTAssertEqual(try ScenePainter.png(XCTUnwrap(last.cropping(to:pixelRect))),try ScenePainter.png(XCTUnwrap(divided.cropping(to:pixelRect))))
+            var source=original;source.scenes[0].speed=1;source.scenes[0].pauseFrames=0
+            let finalSource=try ScenePainter.image(revision:source,frame:180)
+            XCTAssertEqual(try ScenePainter.png(XCTUnwrap(last.cropping(to:pixelRect))),try ScenePainter.png(XCTUnwrap(finalSource.cropping(to:pixelRect))))
+        }}
+    }
     func testPaperDataSuffixSeparatesDrawingSemanticsUnderCurrentEncoding() throws {
         // Reconstruct the base drawing key under the current encoding identity.
         // This isolates the paper-data suffix; old encoding cache migration is

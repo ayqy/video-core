@@ -197,7 +197,11 @@ public enum Editor {
             case .restore(let id): guard let r = p.revisions.first(where: { $0.id == id }) else { throw VideoError.notFound("历史版本不存在") }; revision.schemaVersion=r.schemaVersion; revision.scenes = r.scenes; revision.product = r.product; revision.contentContext=r.contentContext; revision.cta = r.cta; revision.aspect = r.aspect; revision.musicAssetID = r.musicAssetID; revision.dependencies=r.dependencies;revision.audioQuality=r.audioQuality;revision.productionBrief=r.productionBrief;revision.purpose=r.purpose
             }
         }
-        for s in revision.scenes { try s.validate(assets: assets) }; p.revisions.append(revision); return p
+        for s in revision.scenes {
+            try s.validate(assets: assets)
+            try ClassicArtworkRules.validateWalkingSources(scene:s,assets:assets.filter{$0.workspaceID==project.workspaceID})
+        }
+        p.revisions.append(revision); return p
     }
     public static func updateFacts(_ product: Product, project: Project) -> Project {
         guard project.current.product?.id==product.id,project.workspaceID==product.workspaceID else{return project}
@@ -335,9 +339,10 @@ public enum Quality {
 }
 public enum Planner {
     /// Creates an ordinary editing draft from actual workspace/content, without commerce prerequisites.
-    public static func create(workspaceID:String,name:String,aspect:Aspect = .landscape,scenes:[Scene] = [])throws->Revision {
+    public static func create(workspaceID:String,name:String,aspect:Aspect = .landscape,scenes:[Scene] = [],assets:[Asset] = [])throws->Revision {
         let context=ContentContext(workspaceID:workspaceID,name:name)
         try context.validate()
+        for scene in scenes {try ClassicArtworkRules.validateWalkingSources(scene:scene,assets:assets.filter{$0.workspaceID==workspaceID})}
         return Revision(contentContext:context,aspect:aspect,scenes:scenes)
     }
     /// Plans a teaching video from user-supplied content without inventing a product or sales action.

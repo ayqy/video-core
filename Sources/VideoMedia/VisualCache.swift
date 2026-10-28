@@ -101,7 +101,16 @@ enum VisualClipCache {
         // Only paper data/code changed its visual semantics. Keep the cache
         // identity of ordinary panels and authored drawing-only paper scenes.
         let paperData=scene.paperPresentation != nil && scene.layers?.contains(where:{$0.kind == .chart || $0.kind == .code}) == true
-        let rendererVersion=version+(paperData ? "-paper-data-1":"")
+        // Earlier versions held data/entrance layers only. Separate the exact
+        // scenes whose ordinary layer now remains visible beyond the source end;
+        // unchanged clips keep their existing cache identity.
+        let lastSourceFrame=scene.renderSourceFrame(atTimelineFrame:scene.timelineFrames-1)
+        let heldFrame=LayerRules.renderSourceFrame(scene:scene,sourceFrame:lastSourceFrame)
+        let layerHold=lastSourceFrame != heldFrame && scene.layers?.contains(where:{
+            $0.kind != .chart && $0.kind != .code && $0.entrance == nil &&
+            $0.startFrame<=heldFrame && $0.endFrame>heldFrame
+        }) == true
+        let rendererVersion=version+(paperData ? "-paper-data-1":"")+(layerHold ? "-layer-tail-hold-1":"")
         return try Codec.digest(Key(version:rendererVersion+revision.toolchain,cinemaSubtitleStyle:CinemaSubtitles.styleVersion,os:ProcessInfo.processInfo.operatingSystemVersionString,font:fontID,scene:scene,encoding:encoding,purpose:revision.purpose,aspect:revision.aspect,fps:revision.fps,index:index,sceneCount:revision.scenes.count,startFrame:revision.scenes.prefix(index).reduce(0){$0+$1.timelineFrames},price:scene.showPrice ? try revision.product?.price(at:revision.createdAt):nil,cta:index==revision.scenes.count-1 ? revision.cta:nil,sourceHash:database.assets.first{$0.id==scene.assetID}?.hash,layerHashes:Dictionary(uniqueKeysWithValues:database.assets.filter { a in scene.layers?.contains(where:{$0.assetID==a.id})==true }.map{($0.id,$0.hash)}),moduleIdentity:moduleIdentity,artworkIdentity:try ClassicArtworkMedia.fingerprint(scene:scene,database:database)))
     }
     static func compose(revision r: Revision, repository: Repository, database db: Database, output: URL,modules:RenderModuleRegistry?, invocation:RenderInvocation?=nil, encoding:EncodingConfiguration?=nil, videoEncoder:NativeEncoderSelection = .automatic, progress: @escaping @Sendable (Double) throws -> Void) async throws -> Int {

@@ -287,4 +287,29 @@ final class CinemaSubtitleTests: XCTestCase {
             XCTAssertNoThrow(try CinemaSubtitles.validateClearance(scene: scene, sourceFrame: 15, aspect: aspect, rect: band))
         }
     }
+
+    func testHeldPlainTextUsesTheSameClearanceFrameWhileCaptionsEndNaturally() throws {
+        for aspect in Aspect.allCases {
+            let band=PaperPresentationPainter.Layout(aspect:aspect,mode:.explanation,showPrice:false,showAction:false).caption
+            var label=SceneLayer(kind:.text,text:"结果",endFrame:90)
+            label.x=Double(band.midX)/Double(aspect.width);label.y=1-Double(band.midY)/Double(aspect.height)
+            label.width=0.2;label.height=0.08
+            var scene=Scene(title:"保留最后画面",body:"等观众看清结果",durationFrames:90)
+            scene.speed=2;scene.pauseFrames=15;scene.layers=[label]
+            XCTAssertThrowsError(try CinemaSubtitles.validateClearance(scene:scene,sourceFrame:118,aspect:aspect,rect:band),"净空检查必须看见实际持画的普通文字")
+            scene.layers?[0].endFrame=60
+            XCTAssertNoThrow(try CinemaSubtitles.validateClearance(scene:scene,sourceFrame:118,aspect:aspect,rect:band),"提前结束的提示不复活")
+            scene.layers?[0].endFrame=90;scene.layers?[0].y=0.5
+            scene.captions=[Caption(text:"路修好了。",startFrame:0,endFrame:90)]
+            for paper in [false,true] {
+                scene.paperPresentation=paper ? PaperPresentation():nil
+                let r=revision(scene,aspect:aspect)
+                var without=r;without.scenes[0].captions=[]
+                let captionBand=paper ? band:ScenePainter.OverlayLayout(width:CGFloat(aspect.width),height:CGFloat(aspect.height),showPrice:false,separateBody:false).captionText
+                XCTAssertEqual(try region(ScenePainter.image(revision:r,frame:59),captionBand),try region(ScenePainter.image(revision:without,frame:59),captionBand),"画面持留不能把电影字幕延长")
+                XCTAssertEqual(try srtCues(MediaRenderer.subtitles(r)).last?.end,1500)
+                try assertSRTMatchesPainterFramePTS(r)
+            }
+        }
+    }
 }
