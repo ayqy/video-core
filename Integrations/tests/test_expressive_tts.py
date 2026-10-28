@@ -9,6 +9,7 @@ import concurrent.futures
 import hashlib
 import importlib.util
 import json
+import os
 from pathlib import Path
 import random
 import signal
@@ -17,7 +18,9 @@ import struct
 import subprocess
 import sys
 import tempfile
+import textwrap
 import threading
+import time
 from types import ModuleType, SimpleNamespace
 import unittest
 from unittest import mock
@@ -427,21 +430,70 @@ class GenerationBoundaryTests(unittest.TestCase):
             return process
 
         second_output = self.root / "concurrent.wav"
+
+        def competing_request():
+            try:
+                self.assertTrue(entered.wait(5), "original worker did not start")
+                with self.assertRaisesRegex(ValueError, "正在生成"):
+                    self.generate(output=second_output)
+                self.assertFalse(second_output.exists())
+            finally:
+                release.set()
+
         with mock.patch.object(tts.subprocess, "Popen", side_effect=spawn) as worker:
             with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-                original = pool.submit(self.generate)
-                try:
-                    self.assertTrue(entered.wait(5), "original worker did not start")
-                    with self.assertRaisesRegex(ValueError, "正在生成"):
-                        self.generate(output=second_output)
-                    self.assertFalse(second_output.exists())
-                    self.assertEqual(worker.call_count, 1)
-                finally:
-                    release.set()
-                result = original.result(timeout=5)
+                competing = pool.submit(competing_request)
+                result = self.generate()
+                competing.result(timeout=5)
+            self.assertEqual(worker.call_count, 1)
         self.assertFalse(result["reused"])
         self.assertTrue(self.output.is_file())
         self.assertFalse(list(self.cache.glob("*.lock")))
+
+    def test_sigterm_during_worker_creation_defers_until_handle_is_owned_and_restores_handler(self):
+        previous = signal.getsignal(signal.SIGTERM)
+        process = SimpleNamespace(pid=991238, wait=mock.Mock(return_value=0))
+
+        def spawn(args, **kwargs):
+            write_test_pcm(Path(args[args.index("--output") + 1]))
+            signal.getsignal(signal.SIGTERM)(signal.SIGTERM, None)
+            return process
+
+        with mock.patch.object(tts.subprocess, "Popen", side_effect=spawn), \
+                mock.patch.object(tts.os, "killpg") as kill:
+            with self.assertRaisesRegex(tts.WorkerCancelled, "取消"):
+                self.generate()
+        kill.assert_called_once_with(process.pid, signal.SIGTERM)
+        process.wait.assert_called_once_with(timeout=5)
+        self.assertIs(signal.getsignal(signal.SIGTERM), previous)
+        self.assert_no_delivery_cache_or_lock()
+
+    def test_nonmain_cache_miss_never_creates_a_worker_or_changes_signal_handler(self):
+        previous = signal.getsignal(signal.SIGTERM)
+        with mock.patch.object(tts.subprocess, "Popen", side_effect=AssertionError("nonmain worker spawned")) as spawn:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                result = pool.submit(self.generate)
+                with self.assertRaisesRegex(ValueError, "主线程"):
+                    result.result(timeout=5)
+        spawn.assert_not_called()
+        self.assertIs(signal.getsignal(signal.SIGTERM), previous)
+        self.assert_no_delivery_cache_or_lock()
+
+    def test_keyboard_interrupt_reaps_owned_group_even_when_term_repeats_during_cleanup(self):
+        previous = signal.getsignal(signal.SIGTERM)
+        process = SimpleNamespace(pid=991239, wait=mock.Mock(side_effect=[KeyboardInterrupt(), 0]))
+
+        def repeated_term(pid, number):
+            signal.getsignal(signal.SIGTERM)(signal.SIGTERM, None)
+
+        with mock.patch.object(tts.subprocess, "Popen", return_value=process), \
+                mock.patch.object(tts.os, "killpg", side_effect=repeated_term) as kill:
+            with self.assertRaises(KeyboardInterrupt):
+                self.generate()
+        kill.assert_called_once_with(process.pid, signal.SIGTERM)
+        self.assertEqual(process.wait.call_args_list, [mock.call(timeout=600), mock.call(timeout=5)])
+        self.assertIs(signal.getsignal(signal.SIGTERM), previous)
+        self.assert_no_delivery_cache_or_lock()
 
     def test_timeout_cleans_partial_pcm_staging_and_lock_and_terminates_process_group(self):
         for escalate in (False, True):
@@ -554,6 +606,132 @@ class GenerationBoundaryTests(unittest.TestCase):
                     with self.assertRaises((ValueError, OSError, wave.Error, EOFError)):
                         self.generate()
                 self.assert_no_delivery_cache_or_lock()
+
+
+class OwnedWorkerSignalTests(unittest.TestCase):
+    def test_parent_sigterm_reaps_real_worker_and_leaves_bystander_alive(self):
+        self.check_real_cancellation(during_creation=False)
+
+    def test_sigterm_before_popen_returns_reaps_real_worker_and_leaves_bystander_alive(self):
+        self.check_real_cancellation(during_creation=True)
+
+    def check_real_cancellation(self, *, during_creation):
+        # Real finite processes exercise ownership, reaping and cache cleanup.
+        # They never import a speech model, read credentials or create audio.
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            runtime = root / "runtime"
+            binary = runtime / "venv/bin/python"
+            binary.parent.mkdir(parents=True)
+            binary.symlink_to(Path(sys.executable).resolve())
+            worker = runtime / "worker-fixture.py"
+            worker.write_text(textwrap.dedent("""
+                import os,signal,sys,time
+                from pathlib import Path
+                root=Path(sys.argv[sys.argv.index('--runtime')+1])
+                def term(signum,frame):
+                    (root/'term-seen').write_text('TERM observed by finite worker')
+                signal.signal(signal.SIGTERM,term)
+                marker=root/'worker-ready.part'
+                marker.write_text(str(os.getpid())+'\\n'+str(os.getpgrp()))
+                marker.rename(root/'worker-ready')
+                end=time.monotonic()+20
+                while time.monotonic()<end: time.sleep(0.02)
+                """), encoding="utf-8")
+            parent_script = root / "parent-fixture.py"
+            parent_script.write_text(textwrap.dedent("""
+                import importlib.util,os,signal,sys,time
+                from pathlib import Path
+                source=Path(sys.argv[1]);root=Path(sys.argv[2]);creation=sys.argv[3]=='creation'
+                spec=importlib.util.spec_from_file_location('finite_adapter',source)
+                tts=importlib.util.module_from_spec(spec);spec.loader.exec_module(tts)
+                tts.__file__=str(root/'worker-fixture.py')
+                tts.identity=lambda runtime: dict(engine=tts.ENGINE,model=tts.MODEL_REVISION,
+                    source=tts.SOURCE_REVISION,runtime_sha256='finite-fixture',adapter_sha256='finite-fixture')
+                def previous(signum,frame): pass
+                signal.signal(signal.SIGTERM,previous)
+                original=tts.subprocess.Popen;children=[]
+                def tracked(*args,**options):
+                    child=original(*args,**options);children.append(child)
+                    if creation:
+                        end=time.monotonic()+5
+                        while not (root/'worker-ready').is_file():
+                            if time.monotonic()>=end or child.poll() is not None:
+                                raise AssertionError('finite worker never became ready')
+                            time.sleep(0.02)
+                        os.kill(os.getpid(),signal.SIGTERM)
+                    return child
+                tts.subprocess.Popen=tracked
+                cache=root/'cache';delivery=root/'delivery.wav'
+                try:
+                    tts.generate(root,cache,'finite process fixture','中文女','',1986,delivery,10)
+                except tts.WorkerCancelled:
+                    child=children[0];reaped=False
+                    try: os.waitpid(child.pid,os.WNOHANG)
+                    except ChildProcessError: reaped=True
+                    values=dict(cancelled=1,reaped=int(reaped),
+                        handler_restored=int(signal.getsignal(signal.SIGTERM) is previous),
+                        returncode=child.returncode,no_delivery=int(not delivery.exists()),
+                        no_cache_or_lock=int(not list(cache.iterdir())))
+                    (root/'result.txt').write_text('\\n'.join(str(k)+'='+str(v) for k,v in values.items()))
+                    raise SystemExit(2)
+                raise SystemExit(3)
+                """), encoding="utf-8")
+            side = subprocess.Popen([sys.executable, "-I", "-B", "-c", "import time;time.sleep(20)"],
+                                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+            parent = None
+            reaped = False
+            worker_id = None
+            with (root / "parent.log").open("xb") as parent_log:
+                try:
+                    parent = subprocess.Popen([sys.executable, "-I", "-B", str(parent_script),
+                                               str(ADAPTER_PATH), str(runtime),
+                                               "creation" if during_creation else "waiting"],
+                                              stdout=parent_log, stderr=parent_log, start_new_session=True)
+
+                    def ready(path, seconds):
+                        end = time.monotonic() + seconds
+                        while time.monotonic() < end:
+                            if path.is_file():
+                                return
+                            if parent.poll() is not None:
+                                self.fail("finite parent exited before its process checkpoint")
+                            time.sleep(0.02)
+                        self.fail("finite process checkpoint timed out")
+
+                    ready(runtime / "worker-ready", 5)
+                    worker_id, group = map(int, (runtime / "worker-ready").read_text().splitlines())
+                    self.assertEqual(worker_id, group)
+                    self.assertNotIn(group, (os.getpgrp(), parent.pid, side.pid))
+                    if not during_creation:
+                        parent.send_signal(signal.SIGTERM)
+                    ready(runtime / "term-seen", 2)
+                    # A repeated parent TERM must not interrupt the bounded
+                    # cleanup of a worker deliberately ignoring its first TERM.
+                    parent.send_signal(signal.SIGTERM)
+                    self.assertEqual(parent.wait(timeout=12), 2)
+                    result = dict(row.split("=", 1) for row in (runtime / "result.txt").read_text().splitlines())
+                    reaped = result.get("reaped") == "1"
+                    self.assertEqual(result, dict(cancelled="1", reaped="1", handler_restored="1",
+                        returncode=str(-signal.SIGKILL), no_delivery="1", no_cache_or_lock="1"))
+                    self.assertIsNone(side.poll(), "the unrelated finite bystander was terminated")
+                    with self.assertRaises(ProcessLookupError):
+                        os.killpg(group, 0)
+                    self.assertFalse(list(runtime.rglob("*.wav")))
+                finally:
+                    if worker_id is not None and not reaped:
+                        try:
+                            os.killpg(worker_id, signal.SIGKILL)
+                        except ProcessLookupError:
+                            pass
+                    for owned in (parent, side):
+                        if owned is not None:
+                            if owned.poll() is None:
+                                try:
+                                    os.killpg(owned.pid, signal.SIGKILL)
+                                except ProcessLookupError:
+                                    pass
+                            owned.wait(timeout=5)
 
 
 if __name__ == "__main__":

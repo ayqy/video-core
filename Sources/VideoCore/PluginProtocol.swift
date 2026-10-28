@@ -4,13 +4,13 @@ public enum PluginInputCompatibility {
     public static func supports(pluginID: String, version: Int) -> Bool {
         version == 1 || (pluginID == "video.game" && [2,3,5,6].contains(version)) || (pluginID == "video.cartoon" && version == 4)
     }
-    /// Publisher defaults stay compatible with prior manifests. New endpoints must
-    /// be selected explicitly, before any signing identity or output transaction.
+    /// Publisher defaults match the current endpoints. Prior schemas remain
+    /// explicitly selectable, before any signing identity or output transaction.
     public static func publicationSchema(pluginID: String, requested: String? = nil) throws -> Int {
         guard ["video.game", "video.cartoon"].contains(pluginID) else {
             throw VideoError.invalid("发行协议选择需要明确的游戏或卡通模块；未访问发行身份")
         }
-        guard let requested else { return pluginID == "video.game" ? 2 : 1 }
+        guard let requested else { return pluginID == "video.game" ? 6 : 4 }
         guard requested.range(of: "^[1-9][0-9]{0,2}$", options: .regularExpression) != nil,
               let version = Int(requested), supports(pluginID: pluginID, version: version) else {
             throw VideoError.invalid("发行输入协议版本不受此模块支持；未访问发行身份")

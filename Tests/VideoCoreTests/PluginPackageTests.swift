@@ -137,14 +137,18 @@ final class PluginPackageTests:XCTestCase {
         }
         data.append(Data("{\"__video_transport\":{\"event\":\"peer_exited\",\"peer_pid\":12345}}\n".utf8));return data
     }
-    func testCurrentServiceSchemasRequireExplicitPublicationSelectionAndKeepOldDefaults()throws {
+    func testCurrentServiceSchemasUseMatchingPublicationDefaultsAndKeepExplicitLegacySelection()throws {
         for (id,schema,legacy) in [("video.game",6,2),("video.cartoon",4,1)] {
             let (manifest,requests,description)=try currentProbe(id,schema)
             let transcript=try probeTranscript(requests,description)
-            XCTAssertEqual(try PluginInputCompatibility.publicationSchema(pluginID:id),legacy)
+            var defaultManifest=manifest
+            defaultManifest.module.inputSchema=try PluginInputCompatibility.publicationSchema(pluginID:id)
+            XCTAssertEqual(defaultManifest.module.inputSchema,schema)
             XCTAssertEqual(try PluginInputCompatibility.publicationSchema(pluginID:id,requested:String(schema)),schema)
-            XCTAssertNoThrow(try PluginPackageProbeRules.validate(transcript,requests:requests,manifest:manifest))
-            var old=manifest;old.module.inputSchema=legacy
+            XCTAssertNoThrow(try PluginPackageProbeRules.validate(transcript,requests:requests,manifest:defaultManifest))
+            var old=manifest
+            old.module.inputSchema=try PluginInputCompatibility.publicationSchema(pluginID:id,requested:String(legacy))
+            XCTAssertEqual(old.module.inputSchema,legacy)
             XCTAssertThrowsError(try PluginPackageProbeRules.validate(transcript,requests:requests,manifest:old),"Legacy declarations must not silently describe a current service")
         }
     }

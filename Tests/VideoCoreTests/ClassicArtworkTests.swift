@@ -314,7 +314,7 @@ final class KnowledgeParticipantAppearanceTests: XCTestCase {
         XCTAssertEqual(changed.classicArtwork?.knowledgeParticipants,scene.classicArtwork?.knowledgeParticipants)
         XCTAssertNotEqual(try SimulationReplay.record(scene:changed),try SimulationReplay.record(scene:scene))
     }
-    func testVisualWireRetainsMappingsWithoutSourcesNarrationOrApprovalAndNewSchemaIsExplicit()throws {
+    func testVisualWireRetainsMappingsWithoutSourcesNarrationOrApprovalAndRequiresSchemaSix()throws {
         let(scene,_,_)=try fixture()
         let props=PluginVisualProps(scene:scene),data=try Codec.data(props)
         let decoded=try Codec.decoder().decode(PluginVisualProps.self,from:data)
@@ -326,7 +326,7 @@ final class KnowledgeParticipantAppearanceTests: XCTestCase {
             XCTAssertThrowsError(try PluginInputCompatibility.requireKnowledgeSupport(scene.simulation,pluginID:"video.game",inputSchema:schema,appearances:scene.classicArtwork?.knowledgeParticipants))
         }
         XCTAssertNoThrow(try PluginInputCompatibility.requireKnowledgeSupport(scene.simulation,pluginID:"video.game",inputSchema:6,appearances:scene.classicArtwork?.knowledgeParticipants))
-        XCTAssertEqual(try PluginInputCompatibility.publicationSchema(pluginID:"video.game"),2)
+        XCTAssertEqual(try PluginInputCompatibility.publicationSchema(pluginID:"video.game"),6)
         XCTAssertEqual(try PluginInputCompatibility.publicationSchema(pluginID:"video.game",requested:"6"),6)
         XCTAssertThrowsError(try PluginInputCompatibility.publicationSchema(pluginID:"video.cartoon",requested:"6"))
         for old in [1,2,3,4,5] {XCTAssertNil(PluginRPCSchemas.definitions(inputSchemaVersion:old)["PluginArtworkProps"]?.object?["properties"]?.object?["knowledgeParticipants"])}

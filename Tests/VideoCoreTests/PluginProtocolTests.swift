@@ -136,10 +136,10 @@ final class PluginProtocolTests:XCTestCase {
         XCTAssertEqual(descriptor.inputSchemaVersion, 3)
         XCTAssertEqual(descriptor.inputSchema.object?["$defs"]?.object?["KnowledgePayoffMatrix"], current["KnowledgePayoffMatrix"])
     }
-    func testPublicationSchemaSelectionRetainsLegacyDefaultsAndRejectsCrossModuleOrNoncanonicalRequests() throws {
-        XCTAssertEqual(try PluginInputCompatibility.publicationSchema(pluginID: "video.game"), 2)
-        XCTAssertEqual(try PluginInputCompatibility.publicationSchema(pluginID: "video.cartoon"), 1)
-        for version in [1, 2, 3, 5] {
+    func testPublicationSchemaSelectionUsesCurrentDefaultsAndRetainsExplicitLegacyRequests() throws {
+        XCTAssertEqual(try PluginInputCompatibility.publicationSchema(pluginID: "video.game"), 6)
+        XCTAssertEqual(try PluginInputCompatibility.publicationSchema(pluginID: "video.cartoon"), 4)
+        for version in [1, 2, 3, 5, 6] {
             XCTAssertEqual(try PluginInputCompatibility.publicationSchema(pluginID: "video.game", requested: String(version)), version)
         }
         for version in [1, 4] {

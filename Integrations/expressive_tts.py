@@ -17,6 +17,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import threading
 import wave
 
 ENGINE = "FunAudioLLM/CosyVoice-300M-SFT"
@@ -118,6 +119,61 @@ def receipt(request: dict, key: str, wav: Path, samples: int) -> str:
     return "\n".join(rows)
 
 
+class WorkerCancelled(ValueError):
+    pass
+
+
+def run_worker(args: list[str], env: dict[str, str], log, deadline: int) -> int:
+    """Own one isolated worker until it exits, including parent cancellation."""
+    if threading.current_thread() is not threading.main_thread():
+        raise ValueError("本地配音worker须由主线程管理信号，不在后台线程创建进程")
+    process = None
+    cancelled = False
+    cleaning = False
+    previous = signal.getsignal(signal.SIGTERM)
+
+    def cancel(signum, frame):
+        nonlocal cancelled
+        cancelled = True
+        # Popen may have created its child before returning the owned handle.
+        # Defer interruption through that assignment window and through reaping.
+        if process is not None and not cleaning:
+            raise WorkerCancelled("本地配音已取消；无交付、未回退旧声音")
+
+    signal.signal(signal.SIGTERM, cancel)
+    try:
+        try:
+            if cancelled:
+                raise WorkerCancelled("本地配音已取消，未启动配音worker")
+            process = subprocess.Popen(args, env=env, stdout=log, stderr=log, start_new_session=True)
+            if cancelled:
+                raise WorkerCancelled("本地配音已取消；无交付、未回退旧声音")
+            code = process.wait(timeout=deadline)
+            if cancelled:
+                raise WorkerCancelled("本地配音已取消；无交付、未回退旧声音")
+        except BaseException as error:
+            cleaning = True
+            if process is not None:
+                try:
+                    os.killpg(process.pid, signal.SIGTERM)
+                except ProcessLookupError:
+                    pass
+                try:
+                    process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    try:
+                        os.killpg(process.pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+                    process.wait(timeout=5)
+            if isinstance(error, subprocess.TimeoutExpired):
+                raise ValueError("本地配音超时；无交付、未回退旧声音") from None
+            raise
+        return code
+    finally:
+        signal.signal(signal.SIGTERM, previous)
+
+
 def generate(runtime: Path, cache: Path, text: str, voice: str, instruction: str,
              seed: int, output: Path, deadline: int = 600) -> dict:
     validate_request(text, voice, instruction, seed)
@@ -159,17 +215,7 @@ def generate(runtime: Path, cache: Path, text: str, voice: str, instruction: str
                        "PYTHONDONTWRITEBYTECODE": "1", "TOKENIZERS_PARALLELISM": "false",
                        "OMP_NUM_THREADS": "2", "MKL_NUM_THREADS": "2"}
                 with (staging / "worker-output.txt").open("wb") as log:
-                    process = subprocess.Popen(args, env=env, stdout=log, stderr=log, start_new_session=True)
-                    try:
-                        code = process.wait(timeout=deadline)
-                    except subprocess.TimeoutExpired:
-                        os.killpg(process.pid, signal.SIGTERM)
-                        try:
-                            process.wait(timeout=5)
-                        except subprocess.TimeoutExpired:
-                            os.killpg(process.pid, signal.SIGKILL)
-                            process.wait(timeout=5)
-                        raise ValueError("本地配音超时；无交付、未回退旧声音") from None
+                    code = run_worker(args, env, log, deadline)
                 if code:
                     detail = (staging / "worker-output.txt").read_text(errors="replace")[-1800:]
                     raise ValueError("本地配音未成功：" + detail)

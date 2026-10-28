@@ -95,6 +95,23 @@ final class ModuleCatalogPublicationTests: XCTestCase {
             XCTAssertEqual(try Codec.data(result[index].policy), try Codec.data(original[index].policy))
         }
     }
+    func testCurrentPublicationDefaultsStillRequireModuleUpgradeAndRetainPolicy() throws {
+        let original = entries()
+        var upgraded = original
+        for index in upgraded.indices {
+            upgraded[index].manifest.inputSchema = try PluginInputCompatibility.publicationSchema(pluginID: upgraded[index].manifest.id)
+        }
+        XCTAssertThrowsError(try plan(upgraded, previous: original), "默认新协议不能覆盖原模块版本")
+        for index in upgraded.indices { upgraded[index].manifest.version = "1.3.0" }
+        let result = try plan(upgraded, previous: original)
+        XCTAssertEqual(result.map { $0.manifest.inputSchema }, [6, 4])
+        for index in result.indices {
+            XCTAssertEqual(try Codec.data(result[index].policy), try Codec.data(original[index].policy))
+            XCTAssertEqual(result[index].manifest.id, original[index].manifest.id)
+            XCTAssertEqual(result[index].manifest.abi, original[index].manifest.abi)
+            XCTAssertEqual(result[index].manifest.implementationDigest, original[index].manifest.implementationDigest)
+        }
+    }
     private func sourceReview() throws -> (SourcePublicationReview,[SourcePublicationFile]) {
         func file(_ path:String,_ content:String)->SourcePublicationFile {
             let data=Data(content.utf8);return SourcePublicationFile(path:path,bytes:data.count,sha256:Codec.hash(data))
