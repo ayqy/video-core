@@ -200,6 +200,7 @@ public enum Editor {
         for s in revision.scenes {
             try s.validate(assets: assets)
             try ClassicArtworkRules.validateWalkingSources(scene:s,assets:assets.filter{$0.workspaceID==project.workspaceID})
+            try ClassicArtworkRules.validateGateSources(scene:s,assets:assets.filter{$0.workspaceID==project.workspaceID})
         }
         p.revisions.append(revision); return p
     }
@@ -342,7 +343,11 @@ public enum Planner {
     public static func create(workspaceID:String,name:String,aspect:Aspect = .landscape,scenes:[Scene] = [],assets:[Asset] = [])throws->Revision {
         let context=ContentContext(workspaceID:workspaceID,name:name)
         try context.validate()
-        for scene in scenes {try ClassicArtworkRules.validateWalkingSources(scene:scene,assets:assets.filter{$0.workspaceID==workspaceID})}
+        for scene in scenes {
+            let scoped = assets.filter { $0.workspaceID == workspaceID }
+            try ClassicArtworkRules.validateWalkingSources(scene:scene,assets:scoped)
+            try ClassicArtworkRules.validateGateSources(scene:scene,assets:scoped)
+        }
         return Revision(contentContext:context,aspect:aspect,scenes:scenes)
     }
     /// Plans a teaching video from user-supplied content without inventing a product or sales action.

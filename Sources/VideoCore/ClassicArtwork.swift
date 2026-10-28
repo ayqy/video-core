@@ -176,10 +176,46 @@ public enum ClassicArtworkRules {
         }
         try performance.validate(durationFrames:scene.durationFrames,sprites:artwork.sprites,imageHashes:imageHashes)
     }
+    /// Current authoring and Host production validation for the optional
+    /// public-good door family. Historical metadata remains readable through
+    /// validate(scene:assets:); only actual consumption requires the full set.
+    /// Image decoding and identical-pixel aliases are additionally checked by
+    /// the closed renderer, after this Host checks original source identity.
+    public static func validateGateSources(scene: Scene, assets: [Asset]) throws {
+        guard scene.kind == .simulation, scene.simulation.knowledge?.version == 1,
+              let artwork = scene.classicArtwork else { return }
+        let roles = ["obstacle", "door_narrow", "door_opening", "door_open"]
+        let declared = Set(artwork.sprites.map(\.role))
+        guard roles.dropFirst().contains(where: declared.contains) else { return }
+        guard Set(roles).isSubset(of: declared) else {
+            throw VideoError.review("门状态图块不完整；当前编辑和制作须绑定关闭、窄缝、开启和全开四幅实际图块")
+        }
+        struct SourceRegion: Hashable {
+            let hash: String
+            let x: Double, y: Double, width: Double, height: Double
+        }
+        var regions = Set<SourceRegion>()
+        let originals = Set(assets.filter { artwork.originalAssetIDs.contains($0.id) }.map(\.hash))
+        for role in roles {
+            guard let sprite = artwork.sprites.first(where: { $0.role == role }),
+                  let asset = assets.first(where: { $0.id == sprite.assetID && $0.mediaType.hasPrefix("image") }) else {
+                throw VideoError.invalid("当前门状态缺少已登记的实际图片来源")
+            }
+            guard regions.insert(SourceRegion(hash: asset.hash, x: sprite.x, y: sprite.y,
+                width: sprite.width, height: sprite.height)).inserted else {
+                throw VideoError.invalid("门状态不能通过不同素材标识重复使用同一原图区域")
+            }
+            if artwork.derivation == .qStyle, originals.contains(asset.hash) {
+                throw VideoError.review("Q版门的四个实际状态都须绑定派生图块，不能以原件更名代替")
+            }
+        }
+    }
+
     public static func validateRights(scene:Scene,workspaceID:String,assets:[Asset],evidence:[Evidence],commercial:Bool,requireListening:Bool=false,now:Date=Date()) throws {
         let scoped=assets.filter{$0.workspaceID==workspaceID}
         try validate(scene:scene,assets:scoped)
         try validateWalkingSources(scene:scene,assets:scoped)
+        try validateGateSources(scene:scene,assets:scoped)
         guard let artwork=scene.classicArtwork else { return }
         for source in artwork.sources {
             guard let proof=evidence.first(where:{$0.id==source.evidenceID && $0.workspaceID==workspaceID}),proof.usable(commercial:commercial,now:now),proof.owner==source.owner,proof.source==source.source else { throw VideoError.permission("外部游戏图像/录音的具体授权尚未核实、已过期或来源不一致") }

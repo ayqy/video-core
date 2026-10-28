@@ -336,3 +336,97 @@ final class KnowledgeParticipantAppearanceTests: XCTestCase {
         XCTAssertNotNil(AgentSchemas.definitions()["ClassicArtwork"]?.object?["properties"]?.object?["knowledgeParticipants"])
     }
 }
+
+/// Host-only source checks for optional real gate imagery. These do not decode
+/// pixels or replace the closed renderer's actual-crop checks.
+final class KnowledgeDoorSourceTests: XCTestCase {
+    private let doors = ["obstacle", "door_narrow", "door_opening", "door_open"]
+    private func fixture() -> (Scene, [Asset], [Evidence]) {
+        let proof = Evidence(workspaceID: "door-w", title: "隔离门素材规则", source: "isolated-door-source",
+            claim: "仅验证来源与历史兼容", owner: "test", commercialAllowed: true, verified: true)
+        var original = Asset(workspaceID: "door-w", name: "original.png", hash: String(repeating: "a", count: 64), ext: "png", bytes: 4, mediaType: "image")
+        original.evidenceID = proof.id
+        var derived = original; derived.id = Codec.id(); derived.name = "derived.png"; derived.hash = String(repeating: "b", count: 64)
+        let sources = [original, derived].map { ClassicSource(assetID: $0.id, hash: $0.hash, source: proof.source, owner: proof.owner, license: "isolated", evidenceID: proof.id) }
+        var sprites = ClassicArtworkRules.requiredRoles(knowledge: true, cartoon: false).sorted().map { ClassicSprite(role: $0, assetID: derived.id) }
+        sprites.removeAll { $0.role == "obstacle" }
+        sprites += doors.enumerated().map { ClassicSprite(role: $0.element, assetID: derived.id, x: Double($0.offset) / 4, width: 0.25) }
+        var scene = Scene(kind: .simulation, title: "共享门与个人出力", body: "判定通过才开门", durationFrames: 180)
+        scene.simulation.knowledge = KnowledgeSimulation(knowledgeLabel: "共享门", participants: [
+            .init(id: "a", name: "甲", strategy: .contribute), .init(id: "b", name: "乙", strategy: .freeRide)], rounds: 1)
+        scene.classicArtwork = ClassicArtwork(gameplay: .sokoban, sprites: sprites, sources: sources,
+            derivation: .qStyle, transformation: "隔离规则实际派生绑定", originalAssetIDs: [original.id])
+        return (scene, [original, derived], [proof])
+    }
+    func testCompleteGateSourceCheckPreservesExactSceneAndSimulationRecord() throws {
+        let (scene, assets, evidence) = fixture()
+        let bytes = try Codec.data(scene), trace = try SimulationReplay.record(scene: scene)
+        try ClassicArtworkRules.validateRights(scene: scene, workspaceID: "door-w", assets: assets, evidence: evidence, commercial: true)
+        XCTAssertEqual(try Codec.data(scene), bytes)
+        XCTAssertEqual(try SimulationReplay.record(scene: scene), trace)
+        XCTAssertNoThrow(try Planner.create(workspaceID: "door-w", name: "完整门草稿", scenes: [scene], assets: assets))
+    }
+    func testPartialGateRemainsHistoricallyReadableButCurrentAuthoringAndProductionRejectIt() throws {
+        let (scene, assets, evidence) = fixture()
+        for missing in doors.dropFirst() {
+            var partial = scene; partial.classicArtwork?.sprites.removeAll { $0.role == missing }
+            XCTAssertNoThrow(try partial.validate(assets: assets), "旧工程基础读取不能被新门规则卡住")
+            let bytes = try Codec.data(partial), decoded = try Codec.decoder().decode(Scene.self, from: bytes)
+            XCTAssertEqual(try Codec.data(decoded), bytes)
+            XCTAssertThrowsError(try ClassicArtworkRules.validateRights(scene: decoded, workspaceID: "door-w", assets: assets, evidence: evidence, commercial: false))
+            XCTAssertThrowsError(try Planner.create(workspaceID: "door-w", name: "半组不可新建", scenes: [decoded], assets: assets))
+        }
+    }
+    func testCurrentEditRejectsPartialGateAndCanRepairHistoricalSceneInOneRevision() throws {
+        let (scene, assets, _) = fixture()
+        var partial = scene; partial.classicArtwork?.sprites.removeAll { $0.role == "door_open" }
+        let revision = Revision(contentContext: ContentContext(workspaceID: "door-w", name: "旧门草稿"), aspect: .landscape, scenes: [partial])
+        let project = Project(workspaceID: "door-w", name: "旧门草稿", revision: revision)
+        XCTAssertThrowsError(try Editor.apply([.cta("仍是半组")], to: project, baseRevision: revision.id, assets: assets, message: "不完整状态不可继续生产"))
+        let repaired = try Editor.apply([.replaceScene(partial.id, scene)], to: project, baseRevision: revision.id, assets: assets, message: "绑定完整门态")
+        XCTAssertEqual(repaired.revisions.count, 2)
+        XCTAssertNoThrow(try ClassicArtworkRules.validateGateSources(scene: XCTUnwrap(repaired.current.scenes.first), assets: assets))
+        XCTAssertEqual(project.revisions.count, 1, "失败编辑不修改原工程")
+    }
+    func testDifferentAssetIDsWithSameSourceAndRegionCannotPretendToBeFourGateFrames() throws {
+        let (scene, assets, evidence) = fixture()
+        var alias = assets[1]; alias.id = Codec.id()
+        var changed = scene
+        let base = try XCTUnwrap(scene.classicArtwork?.sprites.first { $0.role == "obstacle" })
+        let index = try XCTUnwrap(changed.classicArtwork?.sprites.firstIndex { $0.role == "door_open" })
+        changed.classicArtwork?.sprites[index] = ClassicSprite(role: "door_open", assetID: alias.id, x: base.x, y: base.y, width: base.width, height: base.height)
+        let proof = evidence[0]
+        changed.classicArtwork?.sources.append(.init(assetID: alias.id, hash: alias.hash, source: proof.source, owner: proof.owner, license: "isolated", evidenceID: proof.id))
+        XCTAssertNoThrow(try changed.validate(assets: assets + [alias]), "历史基础元数据仍可读")
+        XCTAssertThrowsError(try ClassicArtworkRules.validateGateSources(scene: changed, assets: assets + [alias]))
+        changed.classicArtwork?.sprites[index].x = 0.75
+        XCTAssertNoThrow(try ClassicArtworkRules.validateGateSources(scene: changed, assets: assets + [alias]), "同一实际图集不同区域是合法帧")
+    }
+    func testEachQDoorStateRejectsOriginalBytesIncludingAliasedOriginalAsset() throws {
+        let (scene, assets, evidence) = fixture()
+        for role in doors {
+            var changed = scene
+            let index = try XCTUnwrap(changed.classicArtwork?.sprites.firstIndex { $0.role == role })
+            changed.classicArtwork?.sprites[index].assetID = assets[0].id
+            XCTAssertThrowsError(try ClassicArtworkRules.validateGateSources(scene: changed, assets: assets), role)
+        }
+        var alias = assets[0]; alias.id = Codec.id()
+        var changed = scene
+        let index = try XCTUnwrap(changed.classicArtwork?.sprites.firstIndex { $0.role == "door_open" })
+        changed.classicArtwork?.sprites[index].assetID = alias.id
+        let proof = evidence[0]
+        changed.classicArtwork?.sources.append(.init(assetID: alias.id, hash: alias.hash, source: proof.source, owner: proof.owner, license: "isolated", evidenceID: proof.id))
+        XCTAssertThrowsError(try ClassicArtworkRules.validateGateSources(scene: changed, assets: assets + [alias]))
+    }
+    func testLegacyObstacleAndOtherMechanismsKeepTheirExistingRoleMeaning() throws {
+        let (scene, assets, evidence) = fixture()
+        var legacy = scene; legacy.classicArtwork?.sprites.removeAll { doors.dropFirst().contains($0.role) }
+        XCTAssertNoThrow(try ClassicArtworkRules.validateRights(scene: legacy, workspaceID: "door-w", assets: assets, evidence: evidence, commercial: false))
+        var matrix = scene
+        matrix.simulation.knowledge = KnowledgeSimulation(knowledgeLabel: "双方选择", participants: [
+            .init(id: "a", name: "甲", strategy: .contribute), .init(id: "b", name: "乙", strategy: .contribute)], rounds: 1, payoffMatrix: .prisonersDilemma())
+        matrix.classicArtwork?.sprites.removeAll { $0.role == "door_open" }
+        XCTAssertNoThrow(try ClassicArtworkRules.validateGateSources(scene: matrix, assets: assets), "矩阵不消费公共品门态，不臆造建筑行为")
+        XCTAssertNoThrow(try ClassicArtworkRules.validateGateSources(scene: legacy, assets: []), "无新门组不扩张旧场景的消费契约")
+    }
+}
