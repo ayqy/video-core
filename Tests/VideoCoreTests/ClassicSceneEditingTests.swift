@@ -760,4 +760,95 @@ final class KnowledgeSoundTests:XCTestCase {
         var locked=s;locked.locked=true
         XCTAssertThrowsError(try ClassicSceneEditing.addingKnowledgeCue(try XCTUnwrap(ClassicSceneEditing.knowledgeSoundMoments(scene:s).first),assetID:assets[1].id,gain:0.3,to:locked,assets:assets,evidence:evidence,workspaceID:"w"))
     }
+    private func gateFixture()throws->(Scene,[Asset],[Evidence]) {
+        var(s,assets,evidence)=try audioFixture(scene(),frames:20)
+        let roles=["obstacle","door_narrow","door_opening","door_open"]
+        s.classicArtwork?.sprites.removeAll{roles.contains($0.role)}
+        s.classicArtwork?.sprites += roles.enumerated().map{index,role in
+            ClassicSprite(role:role,assetID:assets[0].id,x:Double(index)/4,width:0.25)
+        }
+        return(s,assets,evidence)
+    }
+    func testFourCellGateSoundTargetsActualVisibleOpeningAndLeavesRecordingUntouched()throws {
+        let(s,_,_)=try gateFixture(),before=try Codec.data(s)
+        let moments=try ClassicSceneEditing.knowledgeSoundMoments(scene:s)
+        XCTAssertEqual(moments.map(\.kind),[.action,.gateOpening,.outcome])
+        XCTAssertEqual(moments.map(\.sourceFrame),[60,98,150])
+        let gate=try XCTUnwrap(moments.first{$0.kind == .gateOpening})
+        XCTAssertEqual(gate.sourceTick,3);XCTAssertEqual(gate.sceneFrame,98)
+        XCTAssertTrue(gate.summary.contains("尚未通行或结算收益"))
+        XCTAssertEqual(try Codec.data(s),before)
+        var lowRate=s;lowRate.durationFrames=6
+        lowRate.simulationRecording=try SimulationReplay.record(scene:lowRate,fps:1)
+        XCTAssertEqual(try ClassicSceneEditing.knowledgeSoundMoments(scene:lowRate,fps:1).map(\.kind),[.action,.outcome],
+            "仅有关闭帧的resolution不生成提前音效，也不拒绝其它正常候选")
+    }
+    func testGateSoundRequiresTheCompleteDoorFamilyAndActualPublicGoodSuccess()throws {
+        let(s,_,_)=try gateFixture()
+        var failed=s;failed.simulation.knowledge?.threshold=2
+        failed.simulationRecording=try SimulationReplay.record(scene:failed)
+        XCTAssertFalse(try ClassicSceneEditing.knowledgeSoundMoments(scene:failed).contains{$0.kind == .gateOpening})
+        var incomplete=s;incomplete.classicArtwork?.sprites.removeAll{$0.role=="door_opening"}
+        XCTAssertFalse(try ClassicSceneEditing.knowledgeSoundMoments(scene:incomplete).contains{$0.kind == .gateOpening})
+        XCTAssertFalse(try ClassicSceneEditing.knowledgeSoundMoments(scene:scene()).contains{$0.kind == .gateOpening})
+        var table=try tableScene();table.classicArtwork=s.classicArtwork
+        XCTAssertFalse(try ClassicSceneEditing.knowledgeSoundMoments(scene:table).contains{$0.kind == .gateOpening})
+        var matrix=s
+        matrix.simulation.knowledge=KnowledgeSimulation(knowledgeLabel:"收益格",participants:[
+            .init(id:"a",name:"甲",strategy:.contribute,initialResources:20,matrixStrategy:.alwaysFirst),
+            .init(id:"b",name:"乙",strategy:.contribute,initialResources:20,matrixStrategy:.alwaysFirst)
+        ],rounds:1,payoffMatrix:.prisonersDilemma())
+        matrix.simulationRecording=try SimulationReplay.record(scene:matrix)
+        XCTAssertFalse(try ClassicSceneEditing.knowledgeSoundMoments(scene:matrix).contains{$0.kind == .gateOpening})
+    }
+    func testGateOpeningWindowsAndSplitRetimingRetainOnlyTheFirstVisibleOwner()throws {
+        let(original,assets,_)=try gateFixture()
+        for (start,end,expected) in [(90,98,0),(98,120,1),(99,120,0)] {
+            var shot=original;shot.durationFrames=60
+            shot.simulationPresentation=SimulationPresentation(sourceStartFrame:start,sourceEndFrame:end,presentationFrames:60)
+            shot.simulationRecording=try SimulationReplay.record(scene:shot)
+            let gates=try ClassicSceneEditing.knowledgeSoundMoments(scene:shot).filter{$0.kind == .gateOpening}
+            XCTAssertEqual(gates.count,expected)
+            if expected==1 {XCTAssertEqual(gates[0].sceneFrame,0);XCTAssertEqual(gates[0].sourceFrame,98)}
+        }
+        var retimed=original;retimed.durationFrames=360
+        retimed.simulationPresentation=SimulationPresentation(sourceStartFrame:0,sourceEndFrame:180,presentationFrames:360)
+        retimed.simulationRecording=try SimulationReplay.record(scene:retimed)
+        let gate=try XCTUnwrap(ClassicSceneEditing.knowledgeSoundMoments(scene:retimed).first{$0.kind == .gateOpening})
+        XCTAssertEqual(gate.sceneFrame,197);XCTAssertEqual(gate.sourceFrame,98)
+        for boundary in [197,198,199] {
+            let project=Project(workspaceID:"w",name:"开门声音",revision:Revision(contentContext:ContentContext(workspaceID:"w",name:"同一实际门"),aspect:.landscape,scenes:[retimed]))
+            let split=try Editor.apply([.splitScene(retimed.id,boundary)],to:project,baseRevision:project.current.id,assets:assets,message:"保首次可见开门归属")
+            var gates:[KnowledgeSoundMoment]=[],positions:[Int]=[]
+            for var shot in split.current.scenes {
+                shot.simulationRecording=try SimulationReplay.record(scene:shot)
+                let selected=try ClassicSceneEditing.knowledgeSoundMoments(scene:shot).filter{$0.kind == .gateOpening}
+                gates += selected;positions += selected.map{$0.sceneFrame+(shot.simulationPresentation?.presentationOffsetFrames ?? 0)}
+            }
+            XCTAssertEqual(gates.map(\.id),[gate.id]);XCTAssertEqual(gates.map(\.sourceFrame),[98]);XCTAssertEqual(positions,[197])
+        }
+        var compressed=original;compressed.durationFrames=4
+        compressed.simulationPresentation=SimulationPresentation(sourceStartFrame:90,sourceEndFrame:120,presentationFrames:4)
+        compressed.simulationRecording=try SimulationReplay.record(scene:compressed)
+        let sampled=try XCTUnwrap(ClassicSceneEditing.knowledgeSoundMoments(scene:compressed).first{$0.kind == .gateOpening})
+        XCTAssertEqual(sampled.sceneFrame,1);XCTAssertEqual(sampled.sourceFrame,99)
+        compressed.durationFrames=2
+        compressed.simulationPresentation=SimulationPresentation(sourceStartFrame:90,sourceEndFrame:151,presentationFrames:2)
+        compressed.simulationRecording=try SimulationReplay.record(scene:compressed)
+        XCTAssertThrowsError(try ClassicSceneEditing.knowledgeSoundMoments(scene:compressed),"不能把跳过的开门声移到结算帧")
+    }
+    func testGateSoundBindsTheWholeSourceWithoutGrantingListeningOrReusingStaleSelection()throws {
+        let(s,assets,evidence)=try gateFixture()
+        let gate=try XCTUnwrap(ClassicSceneEditing.knowledgeSoundMoments(scene:s).first{$0.kind == .gateOpening})
+        let bound=try ClassicSceneEditing.addingKnowledgeCue(gate,assetID:assets[1].id,gain:0.25,to:s,assets:assets,evidence:evidence,workspaceID:"w")
+        let cue=try XCTUnwrap(bound.classicArtwork?.audioCues.first)
+        XCTAssertEqual(cue.startFrame,98);XCTAssertEqual(cue.durationFrames,20);XCTAssertFalse(cue.listened)
+        XCTAssertEqual(bound.simulationRecording,s.simulationRecording);XCTAssertEqual(bound.durationFrames,180)
+        var changed=s;changed.simulation.knowledge?.threshold=2
+        changed.simulationRecording=try SimulationReplay.record(scene:changed)
+        XCTAssertThrowsError(try ClassicSceneEditing.addingKnowledgeCue(gate,assetID:assets[1].id,gain:0.25,to:changed,assets:assets,evidence:evidence,workspaceID:"w"))
+        var longAssets=assets;longAssets[1].durationFrames=83
+        XCTAssertThrowsError(try ClassicSceneEditing.addingKnowledgeCue(gate,assetID:assets[1].id,gain:0.25,to:s,assets:longAssets,evidence:evidence,workspaceID:"w"))
+        XCTAssertThrowsError(try ClassicSceneEditing.addingKnowledgeCue(gate,assetID:assets[1].id,gain:0.25,to:s,assets:assets,evidence:[],workspaceID:"w"))
+    }
 }

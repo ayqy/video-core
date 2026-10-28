@@ -3,6 +3,57 @@ import Foundation
 /// A view of already applied engine results. This schedule never settles rules,
 /// changes balances, or adds fields to a recorded trace or module input.
 public enum KnowledgePresentationSchedule {
+    public struct GateOpeningMoment: Equatable, Sendable {
+        public let phaseStartFrame: Int
+        public let sourceFrame: Int
+
+        /// Opening must still be visible in the same actual resolution. A
+        /// compressed presentation cannot move its sound into passage or a
+        /// later round, nor replay it when a slice starts after this onset.
+        public func isVisible(atSourceFrame frame: Int, fps: Int) -> Bool {
+            guard (1...120).contains(fps), frame >= sourceFrame,
+                  frame >= phaseStartFrame, frame - phaseStartFrame < fps else { return false }
+            return true
+        }
+    }
+
+    /// The optional four-cell shared gate and its sound use this same visual
+    /// schedule. Applied clearing is observed, never inferred from deposits.
+    public static func publicGoodGateStep(state: KnowledgeFrameState) throws -> Int {
+        guard state.phaseProgress.isFinite, (0...1).contains(state.phaseProgress) else {
+            throw VideoError.invalid("实际开门进度无效")
+        }
+        guard state.obstacleCleared else { return 0 }
+        switch state.phase {
+        case .resolution: return min(3, Int((state.phaseProgress * 4).rounded(.down)))
+        case .passage, .settlement: return 3
+        default: return 0
+        }
+    }
+
+    public static func publicGoodGateOpening(event: KnowledgeEvent, fps: Int = 30) throws -> GateOpeningMoment? {
+        guard (1...120).contains(fps), (0...1800).contains(event.tick) else {
+            throw VideoError.invalid("实际开门声音的刻度或帧率无效")
+        }
+        guard event.phase == .resolution, event.obstacleCleared,
+              event.matrixPool == nil, event.ruleExecution == nil else { return nil }
+        // frameState divides integer elapsed frames by fps. At low or odd
+        // rates, select the first representable non-closed cell, not a rounded
+        // midpoint or the resolution's still-closed first frame.
+        for offset in 0..<fps {
+            let state = KnowledgeFrameState(tick: event.tick, round: event.round, phase: event.phase,
+                phaseProgress: Double(offset) / Double(fps), actors: event.actors,
+                totalContribution: event.totalContribution, threshold: event.threshold,
+                obstacleCleared: event.obstacleCleared)
+            if try publicGoodGateStep(state: state) > 0 {
+                return GateOpeningMoment(phaseStartFrame: event.tick * fps, sourceFrame: event.tick * fps + offset)
+            }
+        }
+        // At fps 1, resolution has only its still-closed frame. Leave manual
+        // audio available rather than invent a resolution onset in passage.
+        return nil
+    }
+
     public struct Flow: Equatable, Sendable {
         public enum Kind: String, Sendable { case deposit, transfer }
         public let kind: Kind

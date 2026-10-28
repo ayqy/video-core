@@ -154,7 +154,7 @@ public enum ClassicSceneEditing {
 /// A transient observation of the current recording, never an approval or an
 /// instruction to synthesize a sound. Existing source/listening checks still apply.
 public struct KnowledgeSoundMoment: Equatable, Identifiable, Sendable {
-    public enum Kind: String, Sendable { case constrained = "行动受限", action = "实际行动", outcome = "实际后果" }
+    public enum Kind: String, Sendable { case constrained = "行动受限", action = "实际行动", gateOpening = "通路打开", outcome = "实际后果" }
     public let id: String
     public let kind: Kind
     public let round: Int
@@ -167,7 +167,7 @@ public struct KnowledgeSoundMoment: Equatable, Identifiable, Sendable {
 }
 
 public extension ClassicSceneEditing {
-    /// Observe actual decisions, debits and settled effects; do not predict from
+    /// Observe actual decisions, debits, gate opening and settled effects; do not predict from
     /// rule declarations, balance sign, sprite pose or the knowledge's name.
     static func knowledgeSoundMoments(scene: Scene, fps: Int = 30) throws -> [KnowledgeSoundMoment] {
         guard scene.kind == .simulation, let model=scene.simulation.knowledge, scene.speed == 1 else {
@@ -200,6 +200,7 @@ public extension ClassicSceneEditing {
             let target:Int
             let suffix:String
             let flow:KnowledgePresentationSchedule.FlowMoment?
+            var gate:KnowledgePresentationSchedule.GateOpeningMoment? = nil
         }
         func name(_ id:String?)->String { id.flatMap{names[$0]} ?? "公共池" }
         func firstOwnedFrame(for target:Int)throws->Int? {
@@ -255,6 +256,18 @@ public extension ClassicSceneEditing {
                     let summary=name(flow.flow.sourceActorID)+"：实际扣费\(flow.flow.amount)\(model.resourceLabel)，交入公共池"
                     candidates.append(Candidate(kind:.action,summary:summary,target:flow.sourceFrame,suffix:":flow:"+flow.flow.id,flow:flow))
                 }
+            case .resolution:
+                // An optional complete gate family has a visible opening beat.
+                // Legacy disappearing obstacles retain their existing sound
+                // candidates; labels and unused door roles cannot create one.
+                let doorRoles=Set(["obstacle","door_narrow","door_opening","door_open"])
+                guard model.version==1,model.payoffMatrix==nil,model.ruleTable==nil,
+                      let artwork=scene.classicArtwork,
+                      doorRoles.isSubset(of:Set(artwork.sprites.map(\.role))),
+                      let gate=try KnowledgePresentationSchedule.publicGoodGateOpening(event:event,fps:fps) else { continue }
+                candidates.append(Candidate(kind:.gateOpening,
+                    summary:"实际投入\(event.totalContribution)达到共享门槛\(event.threshold)，通路开始打开；尚未通行或结算收益",
+                    target:gate.sourceFrame,suffix:"",flow:nil,gate:gate))
             case .settlement:
                 for flow in flows {
                     let summary:String
@@ -291,7 +304,8 @@ public extension ClassicSceneEditing {
                 guard let lower=try firstOwnedFrame(for:candidate.target) else {continue}
                 let source=try scene.renderSimulationSourceFrame(atTimelineFrame:lower)
                 guard source/fps == event.tick,
-                      candidate.flow.map({$0.isVisible(atSourceFrame:source,fps:fps)}) ?? true else {
+                      candidate.flow.map({$0.isVisible(atSourceFrame:source,fps:fps)}) ?? true,
+                      candidate.gate.map({$0.isVisible(atSourceFrame:source,fps:fps)}) ?? true else {
                     throw VideoError.review("展示窗口跳过了真实声音事件或当前交接，请延长展示并重新录制，不会把声音移到另一个阶段或交接")
                 }
                 moments.append(KnowledgeSoundMoment(id:"\(event.round):\(event.tick):\(candidate.kind.rawValue)"+candidate.suffix,kind:candidate.kind,round:event.round,sourceTick:event.tick,sourceFrame:source,sceneFrame:lower,summary:candidate.summary,recordingDigest:digest))

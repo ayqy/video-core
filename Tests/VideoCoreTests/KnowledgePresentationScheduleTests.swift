@@ -84,4 +84,49 @@ final class KnowledgePresentationScheduleTests:XCTestCase {
         XCTAssertEqual(try Codec.data(trace),bytes)
         try KnowledgeSimulationEngine.verify(trace,model:model(),seed:7)
     }
+    private func gateModel()->KnowledgeSimulation {
+        KnowledgeSimulation(knowledgeLabel:"共享通路",participants:[
+            .init(id:"a",name:"甲",strategy:.contribute),.init(id:"b",name:"乙",strategy:.freeRide)
+        ],rounds:2,threshold:1)
+    }
+    func testGateOpeningUsesTheFirstRepresentableActualCellAcrossFrameRates()throws {
+        let input=gateModel(),trace=try KnowledgeSimulationEngine.record(model:input,seed:24,throughTick:11)
+        let bytes=try Codec.data(trace)
+        for fps in 1...120 {
+            for actual in trace.events where actual.phase == .resolution {
+                let moment=try KnowledgePresentationSchedule.publicGoodGateOpening(event:actual,fps:fps)
+                if fps==1 {XCTAssertNil(moment);continue}
+                let opening=try XCTUnwrap(moment)
+                XCTAssertEqual(opening.sourceFrame,actual.tick*fps+(fps+3)/4)
+                let before=try KnowledgeSimulationEngine.frameState(model:input,seed:24,frame:opening.sourceFrame-1,fps:fps)
+                let shown=try KnowledgeSimulationEngine.frameState(model:input,seed:24,frame:opening.sourceFrame,fps:fps)
+                XCTAssertEqual(try KnowledgePresentationSchedule.publicGoodGateStep(state:before),0)
+                XCTAssertGreaterThan(try KnowledgePresentationSchedule.publicGoodGateStep(state:shown),0)
+                XCTAssertTrue(opening.isVisible(atSourceFrame:opening.sourceFrame,fps:fps))
+                XCTAssertFalse(opening.isVisible(atSourceFrame:opening.sourceFrame-1,fps:fps))
+                XCTAssertFalse(opening.isVisible(atSourceFrame:(actual.tick+1)*fps,fps:fps))
+            }
+        }
+        XCTAssertEqual(try Codec.data(trace),bytes)
+        try KnowledgeSimulationEngine.verify(trace,model:input,seed:24)
+    }
+    func testGateScheduleRequiresActualClearingAndResetsBeforeEachRound()throws {
+        let input=gateModel(),resolution=try event(.resolution,model:input)
+        var failed=input;failed.threshold=2
+        XCTAssertNil(try KnowledgePresentationSchedule.publicGoodGateOpening(event:event(.resolution,model:failed)))
+        XCTAssertNil(try KnowledgePresentationSchedule.publicGoodGateOpening(event:event(.contribution,model:input)))
+        XCTAssertNil(try KnowledgePresentationSchedule.publicGoodGateOpening(event:event(.resolution)))
+        var nonPublic=resolution;nonPublic.ruleExecution=try event(.resolution).ruleExecution
+        XCTAssertNil(try KnowledgePresentationSchedule.publicGoodGateOpening(event:nonPublic))
+        for (frame,expected) in [(89,0),(90,0),(97,0),(98,1),(105,2),(113,3),(120,3),(179,3),(180,0),(269,0),(278,1)] {
+            let state=try KnowledgeSimulationEngine.frameState(model:input,seed:24,frame:frame)
+            XCTAssertEqual(try KnowledgePresentationSchedule.publicGoodGateStep(state:state),expected)
+        }
+        var invalid=resolution;invalid.tick=Int.max
+        XCTAssertThrowsError(try KnowledgePresentationSchedule.publicGoodGateOpening(event:invalid))
+        XCTAssertThrowsError(try KnowledgePresentationSchedule.publicGoodGateOpening(event:resolution,fps:0))
+        var state=try KnowledgeSimulationEngine.frameState(model:input,seed:24,frame:98)
+        state.phaseProgress = .nan
+        XCTAssertThrowsError(try KnowledgePresentationSchedule.publicGoodGateStep(state:state))
+    }
 }

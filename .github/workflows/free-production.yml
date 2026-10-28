@@ -239,8 +239,11 @@ jobs:
               ('VideoCoreTests', 'CartoonPerformanceTests'): (10, None),
               ('VideoCoreTests', 'PluginProtocolTests'): (14, None),
               ('VideoCoreTests', 'ClassicArtworkTests'): (12, None),
+              ('VideoCoreTests', 'KnowledgeDoorSourceTests'): (6, None),
+              ('VideoCoreTests', 'ClassicGateEditingTests'): (7, None),
               ('VideoCoreTests', 'ClassicSceneEditingTests'): (22, None),
-              ('VideoCoreTests', 'KnowledgeSoundTests'): (20, None),
+              ('VideoCoreTests', 'KnowledgeSoundTests'): (24, None),
+              ('VideoCoreTests', 'KnowledgePresentationScheduleTests'): (9, None),
               ('VideoCoreTests', 'KnowledgeStoryboardTests'): (22, None),
               ('VideoMediaTests', 'PaperPresentationMediaTests'): (11, None),
               ('VideoMediaTests', 'CinemaSubtitleTests'): (13, None),
@@ -270,11 +273,11 @@ jobs:
           filters = []
           for (target, suite), (source_count, selection) in suites.items():
               source_name = ('ContentProjectTests.swift' if suite in {'ContentProjectTests', 'ProductFactsTests'}
-                             else 'ClassicArtworkTests.swift' if suite == 'KnowledgeParticipantAppearanceTests'
+                             else 'ClassicArtworkTests.swift' if suite in {'KnowledgeParticipantAppearanceTests', 'KnowledgeDoorSourceTests'}
                              else 'ClassicSceneEditingTests.swift' if suite in {'KnowledgeParticipantCharacterBindingTests', 'KnowledgeSoundTests'}
                              else suite + '.swift')
               source = (root / 'Tests' / target / source_name).read_text()
-              if suite in {'ContentProjectTests', 'ProductFactsTests', 'DomainTests', 'ClassicArtworkTests', 'KnowledgeParticipantAppearanceTests', 'KnowledgeParticipantCharacterBindingTests', 'ClassicSceneEditingTests', 'KnowledgeSoundTests'}:
+              if suite in {'ContentProjectTests', 'ProductFactsTests', 'DomainTests', 'ClassicArtworkTests', 'KnowledgeParticipantAppearanceTests', 'KnowledgeDoorSourceTests', 'KnowledgeParticipantCharacterBindingTests', 'ClassicSceneEditingTests', 'KnowledgeSoundTests'}:
                   declaration = re.search(r'(?m)^final class ' + re.escape(suite) + r'\s*:\s*XCTestCase\s*\{', source)
                   assert declaration, suite + ' declaration missing'
                   source = source[declaration.end():]
@@ -290,7 +293,7 @@ jobs:
               filters.append('^' + re.escape(target) + r'\.' + re.escape(suite) +
                              '/(?:' + '|'.join(re.escape(method) for method in selected) + ')$')
           expected = len(expected_methods)
-          assert expected == sum(method_counts.values()) == 588
+          assert expected == sum(method_counts.values()) == 614
           print('affected_suite_methods=' + str(method_counts))
           print('system_tts_methods=not_selected; import_only_methods=2')
           try:

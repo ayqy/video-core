@@ -2,10 +2,10 @@
 
 VideoFree source export · package_free.py · version 1
 
-生成时间：2026-10-28 15:08:11 北京时间
+生成时间：2026-10-28 16:55:51 北京时间
 
-- 源码与必要元数据：243个文件；3686525字节（不含本清单）。
-- 整体内容指纹：`f92568201ae4156f79b7ed8a1ba85c73689e60458461bca20c3317d7a3668d15`。
+- 源码与必要元数据：245个文件；3714689字节（不含本清单）。
+- 整体内容指纹：`f7bc6599a984871321e0c154b3c8acfd71b49eecfe2acaa742cc3d99dc92ca4a`。
 - 来源：受控原始工程中的逐文件白名单；Package.swift与唯一免费制作workflow来自Distribution/Free精确模板，README由发行脚本生成。
 - 本包不含.git，不可作为新业务checkout；本清单生成过程不执行构建、设备验收、签名安装或公共上传，各阶段以独立证据为准。
 - 排除：App、VideoGame、VideoCartoon、Premium、高级实现运行时测试、私有仓库地址、凭据、客户数据、缓存、日志及媒体过程产物。
@@ -14,7 +14,7 @@ VideoFree source export · package_free.py · version 1
 
 | SHA-256 | 字节数 | 包内路径 / 原工程来源 |
 |---|---:|---|
-| a57cfdb273006ccd3d008eee04d18bf64ab12bcea2d5dc866d40d032e6b025aa | 22083 | .github/workflows/free-production.yml |
+| 724139d1bfe061d4d478ffb50de3034d3edd956b57ff5e102e6299ec4860e57d | 22369 | .github/workflows/free-production.yml |
 | 501a1f91f71d14da620c0986b94594b9f5af66a9465ad2c1f4cc228025f88471 | 33497 | Integrations/README.md |
 | 2ff174ec064ca614f24e8ba67ae5c7042a2caa883af162bafd27a8a4520d5ed7 | 26522 | Integrations/asset_reuse.py |
 | 91f902f9ceedb5b26bfae07ecd097aa47fb9e69b807eae6ff289153770655142 | 25400 | Integrations/check_install.py |
@@ -83,7 +83,8 @@ VideoFree source export · package_free.py · version 1
 | 189ad6135ff5becbe08363ac71b03ed91e90ca27a03f07d0ec2fe3de97f3470f | 12961 | Sources/VideoCore/BatchRules.swift |
 | fe9608d07c8af6c9c5792525ea3927ae6e7ff776bbcfb7c4c1e279f510cd176a | 14422 | Sources/VideoCore/CartoonActing.swift |
 | 883447aa1e2d607f4b5d5801f3124e0484c091aa25ce37478df317156a982367 | 20348 | Sources/VideoCore/ClassicArtwork.swift |
-| 8d57f3cc6a3afb2458ce8c164499ed128e40ee2a55311da6b86ec695e1f8236d | 26392 | Sources/VideoCore/ClassicSceneEditing.swift |
+| 9884c605cfe5afab146f8e499d75bce10c210a21ab3b345accbd4eb764ab1927 | 3053 | Sources/VideoCore/ClassicGateEditing.swift |
+| 0dde2db997554100ac439bca81772e88c37e26303337461e7cd63670bcb8fa61 | 27604 | Sources/VideoCore/ClassicSceneEditing.swift |
 | b2cdd155b2ff7507f9ea0ca1b1c85ae41059c903c829d1aecb14f704a34badf0 | 17671 | Sources/VideoCore/CohortFinance.swift |
 | 3e3b6eb76ea2295ebb9f4a8619f128247fb2b04566953229fa51725944e9a087 | 12447 | Sources/VideoCore/Commercial.swift |
 | e9b64ac1623ddede8f3e28ec11cf5a7a70ac64358d5592e43fb52a6131fb03ca | 32976 | Sources/VideoCore/CommercialReports.swift |
@@ -98,7 +99,7 @@ VideoFree source export · package_free.py · version 1
 | 311c51c82cd0ef3c4b64b3c52d20f9a91bedaa8c6c71629688ce6d9d0bfc3288 | 16500 | Sources/VideoCore/JobOperations.swift |
 | 0ee730aaa2160251a2c51dd081d9d50d9a9a3aa6c669d2f68a02b33024b84088 | 10836 | Sources/VideoCore/Jobs.swift |
 | c30e6243bddf528a998c37db59531a0956a60a140794ebc1f6b7039d794c3e6d | 8728 | Sources/VideoCore/KnowledgeCounterfactualExplanation.swift |
-| 377d98556ada3ef0458d8383c4958eaa5ede2661eb869c699e46b84d54d97fc5 | 6232 | Sources/VideoCore/KnowledgePresentationSchedule.swift |
+| 938c9770ffc9a5c0b8e9275610dd0610546ae60e15fe9714e63dea14483d7d82 | 8935 | Sources/VideoCore/KnowledgePresentationSchedule.swift |
 | 89bdf13864d580d29ba3fbf7c0ee665e73e807f5428a8fb81611eb5c22b78dda | 32809 | Sources/VideoCore/KnowledgeRuleTable.swift |
 | 69145ad27bdcfbf17a6d995cb50bc20d0683125f68a6be70a2f46e6f102c5c15 | 38900 | Sources/VideoCore/KnowledgeSimulation.swift |
 | 8537dc2a1acdfa4eb976897c14c43e8a58b07f246e38b33ee97d8d42b53e3297 | 12974 | Sources/VideoCore/KnowledgeStoryboard.swift |
@@ -189,7 +190,8 @@ VideoFree source export · package_free.py · version 1
 | 84bf0bbbf07c6dfb4a679f9754c238253b53237018d8519be541453f48c70e40 | 11156 | Tests/VideoCoreTests/BrandDeliveryTests.swift |
 | c20addd4c9dd0847b4325143d3f09c5998b2e2b715fedf10d6b2153d7e94bb2d | 17315 | Tests/VideoCoreTests/CartoonPerformanceTests.swift |
 | e86fcb08526af25e8f49c186a78578dc491b4a93cb7dd9e78e14a278823dfad3 | 35389 | Tests/VideoCoreTests/ClassicArtworkTests.swift |
-| ffa03454de16bc20cab26d79491e2d5e81504fce571769d9c546b125bbab3c5a | 69597 | Tests/VideoCoreTests/ClassicSceneEditingTests.swift |
+| 6b846c9679458a60b746ab0ffa9b0527e970c9caef667539f339492c9482074e | 10099 | Tests/VideoCoreTests/ClassicGateEditingTests.swift |
+| 99b27c5e8ab0dd47b09bf48c4d455c9da9064080e99abf96a0e2c943ef8011d5 | 77077 | Tests/VideoCoreTests/ClassicSceneEditingTests.swift |
 | f18fda57b514d19653ff1ac7ce621f4022be6868fb8b385b2cb5884e698c447a | 17786 | Tests/VideoCoreTests/CohortFinanceTests.swift |
 | d6f32510e1092e64a73bf2fba1b1c8d1e1c1d6271bfed3dcbf12eb11665bc347 | 10029 | Tests/VideoCoreTests/CommercialTests.swift |
 | 9c0903ed3be70c01bd7acf8b013ff917d84654560fad6aa2cbd46a6ade137967 | 51790 | Tests/VideoCoreTests/ContentProjectTests.swift |
@@ -203,7 +205,7 @@ VideoFree source export · package_free.py · version 1
 | 2f8925fb3afd19d00eaebf71c2e2682e5429de0e9076e025791e8907078e8344 | 7634 | Tests/VideoCoreTests/JobCancellationTests.swift |
 | a491fb1b3faad4bcc9a630bcd28c6282da87cf9d6dcd66612f11a16a563e6e51 | 30049 | Tests/VideoCoreTests/JobOperationTests.swift |
 | dab75185d3165e033e822c7ea0d3da944c81b2184295c61cf459f767113f8b7e | 24451 | Tests/VideoCoreTests/KnowledgeCounterfactualExplanationTests.swift |
-| 492e75b4ec94606a7286a259af806d0f3660c79c1b192fd3fde0c94278d218a2 | 6270 | Tests/VideoCoreTests/KnowledgePresentationScheduleTests.swift |
+| 9329c4860896a1a301c52916805c64d6ad35c1623f00a763c4adc7f1c85e491f | 9601 | Tests/VideoCoreTests/KnowledgePresentationScheduleTests.swift |
 | 78f362bac4e58371ad8c2481af3d3a519a8ff4c76778ca0ac1c97e3bbf808feb | 24476 | Tests/VideoCoreTests/KnowledgeRuleTableTests.swift |
 | d313eee0d4c1eefcdcca602fce5c17004f01f9067fbea1630a54efdf51960083 | 30593 | Tests/VideoCoreTests/KnowledgeSimulationTests.swift |
 | e61ec42dac719883b0fe90e6909e30e6dcaa159d6a53db8e749c0766eeb21e90 | 33279 | Tests/VideoCoreTests/KnowledgeStoryboardTests.swift |
