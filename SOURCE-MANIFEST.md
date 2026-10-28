@@ -2,14 +2,14 @@
 
 VideoFree source export · package_free.py · version 1
 
-生成时间：2026-10-28 11:20:58 北京时间
+生成时间：2026-10-28 12:22:43 北京时间
 
-- 源码与必要元数据：239个文件；3643674字节（不含本清单）。
-- 整体内容指纹：`cc20d19b2a904fe24f1e23b95010c8e460c2557d09fbde147aa07f5b61285e77`。
+- 源码与必要元数据：243个文件；3675905字节（不含本清单）。
+- 整体内容指纹：`bf0c656f6c0c5fd0afade980c9497501dcb65edad771093fefd40a153ce717eb`。
 - 来源：受控原始工程中的逐文件白名单；Package.swift与唯一免费制作workflow来自Distribution/Free精确模板，README由发行脚本生成。
 - 本包不含.git，不可作为新业务checkout；本清单生成过程不执行构建、设备验收、签名安装或公共上传，各阶段以独立证据为准。
 - 排除：App、VideoGame、VideoCartoon、Premium、高级实现运行时测试、私有仓库地址、凭据、客户数据、缓存、日志及媒体过程产物。
-- 已检查：路径与普通文本文件类型、符号/硬链接拒绝、免费源码闭源import、已知凭据形态和仓库URL。模式检查不能证明任意自由文本绝无敏感信息，仍需发行审查。
+- 已检查：路径与普通文本文件类型、符号/硬链接拒绝、免费源码闭源import、已知凭据形态和仓库URL。仅四件显式CC0原件按固定大小/SHA核对，其中三件原Ogg允许二进制；其它文件仍须通过原文本门。模式检查不能证明任意自由文本绝无敏感信息，仍需发行审查。
 - 固定测试例外：PublicationTests的凭据拒绝测试包含一条已按SHA-256精确审核的合成字符串；仅该匹配允许，其余测试与生产源码适用同一检查。
 
 | SHA-256 | 字节数 | 包内路径 / 原工程来源 |
@@ -25,8 +25,8 @@ VideoFree source export · package_free.py · version 1
 | 331a2efd301fd9cf623d76e9e47bf85f3fa43fb8d1b6b3281831e418013075f0 | 41267 | Integrations/codex_production.py |
 | a7c3eef63ba036caa939577e231d5b78eab80ca8e0e9f2eeb47286ab453bc011 | 1771 | Integrations/cosyvoice-cpu-lock.txt |
 | 36bdcf361abca71ae28992a3d5fd2f1c658738f9ba954a21ddb41fc7516b7ceb | 6332 | Integrations/discover.py |
-| 71f141fb97afad654073147b6d7c9cccd12428be4e8ada6274946f0e30df14de | 3258 | Integrations/examples/README.md |
-| 5c647aa4023be1aff66c0fcf4166fe41bf9e8d54039f800b46d80ec8f43d86e7 | 30722 | Integrations/examples/free_production.py |
+| a65d1e59858bf1047e6f73d64f6c904b19c3f9016569e95ab7c235e9a899c5cc | 4641 | Integrations/examples/README.md |
+| af03ab8a8b4fdbd68030d7fca1a906912c494ee99c619916c99f98edbe0e080a | 34345 | Integrations/examples/free_production.py |
 | 8ef21896ef8881ba4a74edc20745dd12278681a1945b450662ab19f6f61bbe10 | 5387 | Integrations/expressive_tts.md |
 | 7b02e8b4e3bd5abf2f91640c9c853f45d3131b504e8d421604c93f3dd00c3267 | 14197 | Integrations/expressive_tts.py |
 | f3cda5bceed4b2f2cd8832e427fdf6b83e9ecbaa4ff1fc7beaf3805bfb4573f7 | 16732 | Integrations/install.py |
@@ -64,7 +64,7 @@ VideoFree source export · package_free.py · version 1
 | cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30 | 11358 | LICENSE |
 | c369f09e50d62d1a1c8eff1500888667ff7a192d0fdc7b32d39c800dfa1e9721 | 1597 | NOTICE |
 | e3dae895ffcaa4ce4470f1dc9d63eee5071f829d63cfe227360c3dabfbdd0d91 | 1213 | Package.swift |
-| 2e9515e7aa7bfb530fc40215ae9e9b1b279fc81f9102be365b5d7007a9e84bc3 | 4162 | README.md |
+| 652e85266cc8ed7d957cdb4edb729ebb166f01f8906d7f164884fef434d0da14 | 4569 | README.md |
 | bbfe59a972a3e8e09e347c04bc22c0eacd2544881af8a4b6068bfc30b38466e8 | 80 | Sources/CSQLite/module.modulemap |
 | b052d8e561e942f97b503033ecd2eaa2b35213bdbf374983efe9e68eabdfc024 | 21 | Sources/CSQLite/shim.h |
 | 347257a3cd5bcb0e501506a29ab4dc2892a46d2560a111a8d779b124e594ebb9 | 60 | Sources/CZlib/module.modulemap |
@@ -253,3 +253,7 @@ VideoFree source export · package_free.py · version 1
 | 7c6eb66b6fe49e9ce838c0b5503a5f3c7a459acb62350b45df577b57a246de93 | 38779 | Tests/VideoMediaTests/ScriptJobsTests.swift |
 | 03edcaf754546e54eee0172e844fd13115c80b1829c720f8c6db3af3ba53282d | 7087 | Tests/VideoMediaTests/SpeechMediaTests.swift |
 | fd14ec3e583f47b0a3bbdfd711bb86a0b08f47b379e1d9f053d9e5e978af19b7 | 9786 | Tests/VideoMediaTests/SpeechProjectProductionTests.swift |
+| 57d021b53ab176ba287ee0e32abe3a31df86a2449715bf437789cf9779cc1d4e | 486 | ThirdParty/GameAssets/voiceover/AUTHOR-LICENSE.txt |
+| 1ba6aa2cb3710fd7c6e021622b4ef0428a0107c8f2db2e0dda8de8bcbdb56fd3 | 8283 | ThirdParty/GameAssets/voiceover/go.ogg |
+| 4a49258fab1f84b00d0060e1535218b22a3b4bba61ef4d989b82e4cab15d69b3 | 7313 | ThirdParty/GameAssets/voiceover/ready.ogg |
+| 18907e24f8cbd0751831eed8d2dd1c2501ed587da6a7451404edf0876aa56150 | 10736 | ThirdParty/GameAssets/voiceover/you_win.ogg |

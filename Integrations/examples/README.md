@@ -16,6 +16,17 @@ python3 Integrations/examples/free_production.py \
 
 产物在选定output中，summary.md给出真实作业、版本、媒体参数、原件来源、四件摘要与含源备份。--binary-sha256可省略，此时固定并报告本次实际二进制摘要；--cache可省略，此时在输出同级建立带目标摘要的专属缓存。下载、完整原录音、格式转换及配方自身的recipe-progress.sqlite在专属cache中；它与产品workspace.sqlite完全分开，不直接修改产品快照。原作者声音发布包只在内存校验，保留精确原Ogg及许可，不生成或交付ZIP。
 
+配方附带`ThirdParty/GameAssets/voiceover/`中的三件固定原Ogg及原作者许可，均已与[Kenney原作者包](https://kenney.nl/media/pages/assets/voiceover-pack/3f7f168698-1677589897/kenney_voiceover-pack.zip)逐件核同。三件录音的固定[公开镜像来源](https://github.com/Mcamento8/open-game-sfx-index/tree/34bbe8b525b5ceff3804915ea745532af11f6055/audio/voiceover-pack/Female)只用于说明原件来历；配方不执行镜像代码、不接受用户替换URL，也不更换声音。许可原文以`AUTHOR-LICENSE.txt`保留，四件原件适用CC0。
+
+|原件|字节数|SHA-256|
+|---|---:|---|
+|ready.ogg|7313|4a49258fab1f84b00d0060e1535218b22a3b4bba61ef4d989b82e4cab15d69b3|
+|go.ogg|8283|1ba6aa2cb3710fd7c6e021622b4ef0428a0107c8f2db2e0dda8de8bcbdb56fd3|
+|you_win.ogg|10736|18907e24f8cbd0751831eed8d2dd1c2501ed587da6a7451404edf0876aa56150|
+|AUTHOR-LICENSE.txt|486|57d021b53ab176ba287ee0e32abe3a31df86a2449715bf437789cf9779cc1d4e|
+
+已有缓存原件先逐件核对，摘要、大小或普通文件边界不符就保留并拒绝覆盖；缓存缺件时从完整本地固定原件组补齐。若本地整组原件均不存在，才使用既有固定原作者包并核其整体及成员摘要。本地组缺件或损坏时明确失败，不用其它声音替代。原Ogg仍按原方式完整解码为PCM，源身份、时长、字幕及待审状态不变。
+
 若依赖缺失、公开原件改变或正常CLI拒绝，配方明确失败并保留现场。安装缺失依赖或排除故障后，用同一二进制及完全相同output/cache参数重跑：已完成步骤读取原回执；先只读核原提交键，有原job就查询真实原ID，不再报价或提交。中断/失败或运行中任务只通过一个最多300秒、仅原ID的正常有限worker续接，租约仍有效时由产品守卫处理；取消和外部状态不自动恢复。不要删缓存或换output重交。若此前报价已过期且原键确未产生作业，只刷新未使用的本地零元报价，仍绑定同一提交键；不对已接单作业重复提交。
 
 本例所有声音试听、字幕和五项Review确认保持false，输出是needs_review待审稿。完整看听、声音和具体用途审核须由实际使用者完成，来源CC0核对不代替这些确认。配方不授商业或上传许可、不调用App或打开窗口，也不凭本机运行推断机器从未安装App；若用于验证干净环境，调用者应另保留真实环境与安装清单。

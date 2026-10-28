@@ -15,13 +15,16 @@ import hashlib
 import io
 import json
 import math
+import os
 from pathlib import Path
 import plistlib
 import shutil
 import sqlite3
+import stat
 import subprocess
 import sys
 import time
+import urllib.error
 import urllib.request
 import uuid
 import wave
@@ -56,6 +59,12 @@ VOICES = (
     ("You win", "you_win.ogg", "18907e24f8cbd0751831eed8d2dd1c2501ed587da6a7451404edf0876aa56150"),
 )
 RECIPE_VERSION = "free-production-2"
+# Only this exact predecessor may reuse its existing business receipts. The
+# resolver change does not alter the authored shots, audio originals or UUIDs.
+SOURCE_REUSE_PREVIOUS_RECIPE_SHA = "5c647aa4023be1aff66c0fcf4166fe41bf9e8d54039f800b46d80ec8f43d86e7"
+VOICE_ORIGINALS = tuple((name, pin, size) for (_, name, pin), size in zip(VOICES, (7313, 8283, 10736))) + (
+    ("AUTHOR-LICENSE.txt", VOICE_LICENSE_SHA, 486),
+)
 
 
 def require(condition, message):
@@ -92,22 +101,104 @@ def command(argv, **options):
 
 def fetch(url, expected, maximum):
     # There is no user URL, auth header, credential, redirect destination or retry loop.
-    with urllib.request.urlopen(url, timeout=40) as response:
-        require(response.geturl().startswith("https://"), "来源必须保持HTTPS")
-        data = response.read(maximum + 1)
+    try:
+        with urllib.request.urlopen(url, timeout=40) as response:
+            require(response.geturl().startswith("https://"), "来源必须保持HTTPS")
+            data = response.read(maximum + 1)
+    except urllib.error.HTTPError as error:
+        raise RuntimeError("固定公开原件下载失败：HTTP " + str(error.code) + "；" + url) from None
     require(len(data) <= maximum and sha(data) == expected,
             "公开原件摘要变化或超限，拒绝采用：" + url)
     return data
 
 
+def checked_original(path, expected, maximum):
+    require(not any(item.is_symlink() for item in (path, *path.parents)),
+            "原件路径不能包含符号链接：" + str(path))
+    descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    try:
+        before = os.fstat(descriptor)
+        require(stat.S_ISREG(before.st_mode) and before.st_nlink == 1 and 0 < before.st_size <= maximum,
+                "原件必须是有界普通文件：" + str(path))
+        with os.fdopen(descriptor, "rb", closefd=False) as stream:
+            data = stream.read(maximum + 1)
+        after = os.fstat(descriptor)
+        require((before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns) ==
+                (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns) and
+                len(data) == before.st_size and sha(data) == expected,
+                "原件摘要或读取期间状态变化，保留现场：" + str(path))
+        return data
+    finally:
+        os.close(descriptor)
+
+
+def cache_original(path, data, expected, maximum):
+    require(0 < len(data) <= maximum and sha(data) == expected, "待缓存原件身份不符")
+    if path.exists() or path.is_symlink():
+        checked_original(path, expected, maximum)
+        return path
+    require(not any(item.is_symlink() for item in path.parents), "缓存父目录不能包含符号链接")
+    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
+    with os.fdopen(descriptor, "wb") as stream:
+        stream.write(data)
+    checked_original(path, expected, maximum)
+    return path
+
+
 def source_file(path, url, expected, maximum):
-    if path.exists():
-        require(path.is_file() and not path.is_symlink() and sha(path.read_bytes()) == expected,
-                "缓存原件已变化，不自动覆盖：" + str(path))
+    if path.exists() or path.is_symlink():
+        checked_original(path, expected, maximum)
         return path
     data = fetch(url, expected, maximum)
-    path.write_bytes(data)
-    return path
+    return cache_original(path, data, expected, maximum)
+
+
+def resolve_voice_sources(repo, source):
+    """Resolve only the four fixed originals, without changing existing cache bytes."""
+    require(not any(item.is_symlink() for item in (source, *source.parents)),
+            "固定录音缓存路径不能包含符号链接")
+    def target(name):
+        return source / ("voice-author-license.txt" if name == "AUTHOR-LICENSE.txt" else name)
+
+    present = []
+    for name, pin, size in VOICE_ORIGINALS:
+        path = target(name)
+        exists = path.exists() or path.is_symlink()
+        if exists:
+            checked_original(path, pin, size)
+        present.append(exists)
+    if all(present):
+        return target("AUTHOR-LICENSE.txt")
+
+    local = repo / "ThirdParty/GameAssets/voiceover"
+    require(not any(item.is_symlink() for item in (local, *local.parents)),
+            "固定本地录音目录不能包含符号链接")
+    local_present = [(local / name).exists() or (local / name).is_symlink()
+                     for name, _, _ in VOICE_ORIGINALS]
+    if any(local_present):
+        require(all(local_present), "固定本地录音原件组不完整；保留现场，不改用其它声音")
+        originals = {name: checked_original(local / name, pin, size)
+                     for name, pin, size in VOICE_ORIGINALS}
+    else:
+        package = fetch(VOICE_URL, VOICE_PACKAGE_SHA, 3_000_000)
+        with zipfile.ZipFile(io.BytesIO(package)) as published:
+            originals = {}
+            for _, filename, pin in VOICES:
+                matches = [name for name in published.namelist() if name.endswith("Female/" + filename)]
+                require(len(matches) == 1, "作者原录音成员不唯一")
+                originals[filename] = published.read(matches[0])
+            licenses = [published.read(name) for name in published.namelist()
+                        if name.lower().endswith("license.txt") and published.getinfo(name).file_size < 100_000]
+            matches = [data for data in licenses if sha(data) == VOICE_LICENSE_SHA]
+            require(len(matches) == 1, "原作者CC0许可原件不符")
+            originals["AUTHOR-LICENSE.txt"] = matches[0]
+        del package  # No ZIP is written to cache or delivered.
+    # Check the complete group before adding any missing member to the cache.
+    for name, pin, size in VOICE_ORIGINALS:
+        require(len(originals[name]) == size and sha(originals[name]) == pin, "固定录音或许可原件不符：" + name)
+    for name, pin, size in VOICE_ORIGINALS:
+        cache_original(target(name), originals[name], pin, size)
+    return target("AUTHOR-LICENSE.txt")
 
 
 class Recipe:
@@ -133,7 +224,10 @@ class Recipe:
         identity = canonical(dict(version=RECIPE_VERSION, recipe_source_sha256=self.source_sha,
                                   binary=expected, out=str(out), shots=SHOTS))
         row = self.store.execute("SELECT value FROM identity WHERE name='recipe'").fetchone()
-        require(row is None or row[0] == identity, "配方输入、CLI或目标变化；不改已有制作现场")
+        previous_identity = canonical(dict(version=RECIPE_VERSION,
+            recipe_source_sha256=SOURCE_REUSE_PREVIOUS_RECIPE_SHA, binary=expected, out=str(out), shots=SHOTS))
+        require(row is None or row[0] in (identity, previous_identity),
+                "配方输入、CLI或目标变化；不改已有制作现场")
         self.store.execute("INSERT OR IGNORE INTO identity VALUES ('recipe',?)", (identity,))
         self.store.execute("INSERT OR IGNORE INTO identity VALUES ('source_checked_at',?)",
                            (datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),))
@@ -349,27 +443,7 @@ def main():
     image = source_file(source / "tile-gem.png", IMAGE_URL, IMAGE_SHA, 100_000)
     image_rights = source_file(source / "image-author-readme.md", IMAGE_RIGHTS_URL, IMAGE_RIGHTS_SHA, 100_000)
     require("CC0 licensed" in image_rights.read_text(), "图像原作者CC0声明不可取")
-    licensed = source / "voice-author-license.txt"
-    complete = licensed.is_file() and sha(licensed.read_bytes()) == VOICE_LICENSE_SHA
-    complete = complete and all((source / filename).is_file() and sha((source / filename).read_bytes()) == pin
-                                for _, filename, pin in VOICES)
-    if not complete:
-        package = fetch(VOICE_URL, VOICE_PACKAGE_SHA, 3_000_000)
-        with zipfile.ZipFile(io.BytesIO(package)) as published:
-            # Identify exact original members by both suffix and independently
-            # recorded hash. Never extract a path supplied by an archive.
-            for _, filename, pin in VOICES:
-                matches = [n for n in published.namelist() if n.endswith("Female/" + filename)]
-                require(len(matches) == 1, "作者原录音成员不唯一")
-                data = published.read(matches[0])
-                require(sha(data) == pin, "作者原录音摘要不符")
-                (source / filename).write_bytes(data)
-            licenses = [published.read(n) for n in published.namelist()
-                        if n.lower().endswith("license.txt") and published.getinfo(n).file_size < 100_000]
-            matches = [b for b in licenses if sha(b) == VOICE_LICENSE_SHA]
-            require(len(matches) == 1, "原作者CC0许可原件不符")
-            licensed.write_bytes(matches[0])
-        del package  # No ZIP is written to cache or delivered.
+    licensed = resolve_voice_sources(repo, source)
     require(b"CC0" in licensed.read_bytes(), "真实录音许可不可取")
     audio = []
     for words, filename, pin in VOICES:

@@ -15,12 +15,14 @@ MacApp、旧 App、VideoGame、VideoCartoon、Premium、高级实现运行时测
 - 更新器：`video-install --help`说明固定发行者签名目录包和程序/数据成对回滚；不提供私钥、许可证或未签名安装开关。
 - Skill：参阅 `Integrations/README.md`；安装器只向用户选择的项目目录安装，不更改模型账户或读取密钥。
 - 免费包不含高级模块，模拟或卡通高级绘制请求会明确报告缺少能力；已有工程、素材和历史导出仍可读取。
-- DinoBuiltinAssets与VoicePromptBuiltinAssets仅是固定被动素材包的导入器文本；Mac内置图片、原音和依赖这些资源的集成测试不在此文本分包。普通文件导入与免费制作不依赖这些素材包。
+- DinoBuiltinAssets与VoicePromptBuiltinAssets仅是固定被动素材包的导入器文本；完整Mac内置图片、原音包和依赖这些资源的集成测试不在本包。普通入门配方仅另附三件固定CC0原Ogg及原作者许可，不要求安装Mac素材包。
 - 规则测试与源文件摘要见 `SOURCE-MANIFEST.md`。此分包检查不等于编译、设备验收或公开发行已经通过。
 
 ## 独立制作入门
 
 `Integrations/examples/README.md`提供可直接运行的普通免费制作配方：固定公开原件与许可、脚本和剪辑、真实英文提示录音、成片四件、质量交接及含源恢复。提示录音不冒中文知识旁白，人工声音/字幕/整片审核保持待审。
+
+`ThirdParty/GameAssets/voiceover/`仅包含该配方已核的Ready、Go、You win三件英文原Ogg及原作者CC0许可。配方先核本地原件或既有缓存的精确SHA，再补缺；坏缓存保留并拒绝覆盖，缺少整组本地原件时才走既有固定原作者包。原件不适用本项目源码的Apache许可，具体来源与SHA见配方说明。
 
 中文讲解配音见 `Integrations/expressive_tts.md`：用户自行准备固定的本地CosyVoice-300M-SFT模型和独立环境，再用预设音色离线生成完整语句，默认中文男；缓存按实际模型、引擎、环境、音色、原文和种子身份复用。兼容文件名不表示已提供情绪控制，非空`instruction`会明确拒绝；声音效果与整片审核仍须完整试听。本包只分发工具、规则测试、指南和环境锁，不附带模型权重、第三方运行时或生成音频。
 
