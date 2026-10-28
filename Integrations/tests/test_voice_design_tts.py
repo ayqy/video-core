@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from contextlib import ExitStack
 import importlib.util
+import hashlib
 import json
 from pathlib import Path
 import signal
@@ -24,6 +25,11 @@ SPEC = importlib.util.spec_from_file_location("voice_design_tts_under_test", Pat
 tts = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(tts)
 TEXT = "四个邻居想修路。凑够三枚硬币，就能开工。"
+ORIGINAL_DESIGNS = ("adult-warm-low", "adult-bright-confident", "adult-soft-playful")
+TAIWAN_DESIGN = "adult-taiwan-warm-narrative-v1"
+FULL_TEXT = ("四个邻居想修路。凑够三枚硬币，就能开工。别人已经出了三枚，小陈把自己那枚收了回去。"
+             "路修好了，他照样走，钱也省下了。把时间倒回去。小周也收回硬币，只剩两枚，路修不成。"
+             "这时，小陈补上一枚，路就能修好。路修好了，没出钱的人也能走。有人就想等别人掏钱，这就是搭便车。")
 ENGINE_ID = dict(engine=tts.ENGINE, model=tts.MODEL_REVISION,
                  source_wheel=tts.SOURCE_WHEEL_SHA256, runtime_sha256="runtime",
                  adapter_sha256="adapter", source_list_sha256="source-list")
@@ -53,7 +59,32 @@ class RequestTests(unittest.TestCase):
             self.assertEqual((request["device"], request["dtype"], request["attention"], request["threads"]), ("cpu", "float32", "eager", 4))
             self.assertEqual(request["speed"], 1.0)
             keys.add(key)
-        self.assertEqual(len(keys), 3)
+        self.assertEqual(len(keys), 4)
+
+    def test_taiwan_candidate_is_independent_and_preserves_the_three_original_directions(self):
+        original_hashes = {
+            "adult-warm-low": "9a775d28b8b9be0967542dab4c19a758f9610f5cf50d0a834b1d0d4ee915cb8b",
+            "adult-bright-confident": "8a7ac3699e05b48a0fb589665ee3d74247d36662a825a50a21c320fcd8d05e40",
+            "adult-soft-playful": "164b69fe9ea0ffd017c5f6129b3cee1a1161bd286bb1c31765e01b35151bf12a",
+        }
+        self.assertEqual(tuple(tts.DESIGNS), (*ORIGINAL_DESIGNS, TAIWAN_DESIGN))
+        for voice, expected in original_hashes.items():
+            self.assertEqual(hashlib.sha256(tts.DESIGNS[voice]["instruction"].encode()).hexdigest(), expected)
+        direction = tts.DESIGNS[TAIWAN_DESIGN]["instruction"]
+        request, key = tts.request_identity(ENGINE_ID, FULL_TEXT, TAIWAN_DESIGN, direction, 1986)
+        self.assertEqual(request["voice"], TAIWAN_DESIGN)
+        self.assertEqual(request["instruction"], direction)
+        self.assertEqual(request["text"], FULL_TEXT)
+        self.assertEqual(len(FULL_TEXT), 129)
+        self.assertEqual(hashlib.sha256(FULL_TEXT.encode()).hexdigest(), "738a979bcc7f8e1d6630dec646d5b1f2187e59961e6f77af01041a6d52ccc494")
+        for voice in ORIGINAL_DESIGNS:
+            _, old_key = tts.request_identity(ENGINE_ID, FULL_TEXT, voice, tts.DESIGNS[voice]["instruction"], 1986)
+            self.assertNotEqual(key, old_key)
+            with self.assertRaises(ValueError):
+                tts.validate_request(FULL_TEXT, TAIWAN_DESIGN, tts.DESIGNS[voice]["instruction"], 1986)
+        for alias in ("d", "D", "zh-TW-HsiaoChenNeural"):
+            with self.assertRaises(ValueError):
+                tts.validate_request(FULL_TEXT, alias, direction, 1986)
 
     def test_unknown_blank_or_mismatched_directions_are_not_ignored(self):
         voice = next(iter(tts.DESIGNS))
@@ -178,7 +209,7 @@ class GenerationRulesTests(unittest.TestCase):
         self.runtime = self.root / "runtime"
         self.runtime.mkdir()
         self.cache = self.root / "cache"
-        self.jobs = [job(self.root / "delivery", voice) for voice in tts.DESIGNS]
+        self.jobs = [job(self.root / "delivery", voice) for voice in ORIGINAL_DESIGNS]
         patch = mock.patch.object(tts, "identity", return_value=ENGINE_ID)
         patch.start()
         self.addCleanup(patch.stop)
@@ -206,6 +237,29 @@ class GenerationRulesTests(unittest.TestCase):
         self.assertEqual([x["sha256"] for x in first], [x["sha256"] for x in second])
         self.assertFalse((self.runtime / "inference.lock").exists())
         self.assertFalse(list(self.cache.glob("*.lock")))
+
+    def test_taiwan_full_utterance_uses_one_worker_and_reuses_only_its_exact_pending_audio(self):
+        selected = [job(self.root / "taiwan", TAIWAN_DESIGN)]
+        with mock.patch.object(tts, "run_worker", side_effect=self.fake_runner) as runner:
+            first = tts.generate_batch(self.runtime, self.cache, FULL_TEXT, selected, deadline=750)
+        runner.assert_called_once()
+        self.assertEqual(runner.call_args.args[1], FULL_TEXT)
+        self.assertEqual(runner.call_args.args[3], 750)
+        submitted = runner.call_args.args[2]
+        self.assertEqual(len(submitted), 1)
+        self.assertEqual(submitted[0]["voice"], TAIWAN_DESIGN)
+        self.assertEqual(submitted[0]["instruction"], tts.DESIGNS[TAIWAN_DESIGN]["instruction"])
+        self.assertFalse(first[0]["reused"] or first[0]["listening_confirmed"])
+        source = (self.cache / first[0]["key"] / "source.md").read_text()
+        self.assertIn("|text|" + FULL_TEXT + "|", source)
+        self.assertIn("|voice|" + TAIWAN_DESIGN + "|", source)
+        repeated = [{**selected[0], "output": self.root / "again/taiwan.wav"}]
+        with mock.patch.object(tts, "run_worker", side_effect=AssertionError("cache hit started a model")):
+            second = tts.generate_batch(self.runtime, self.cache, FULL_TEXT, repeated, deadline=750)
+        self.assertEqual(first[0]["key"], second[0]["key"])
+        self.assertEqual(first[0]["sha256"], second[0]["sha256"])
+        self.assertTrue(second[0]["reused"])
+        self.assertFalse(second[0]["listening_confirmed"])
 
     def test_cache_tampering_is_rejected_without_new_generation_or_overwriting(self):
         with mock.patch.object(tts, "run_worker", side_effect=self.fake_runner):
@@ -303,10 +357,16 @@ class GenerationRulesTests(unittest.TestCase):
 
 class WorkerCallContractTests(unittest.TestCase):
     def test_one_model_load_then_whole_original_text_per_design_with_distinct_instructions(self):
+        self.check_worker_contract(ORIGINAL_DESIGNS, TEXT)
+
+    def test_taiwan_candidate_sends_one_complete_original_and_native_design_instruction(self):
+        self.check_worker_contract((TAIWAN_DESIGN,), FULL_TEXT)
+
+    def check_worker_contract(self, voices, text):
         # Finite API fixture only; asserts calls, not genuine voice or quality.
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            jobs = [job(root, voice) for voice in tts.DESIGNS]
+            jobs = [job(root, voice) for voice in voices]
             audio = type("SyntheticAudio", (), {"ndim": 1, "__len__": lambda self: 7200})()
             engine = SimpleNamespace(model=SimpleNamespace(tts_model_type="voice_design"),
                                      get_supported_languages=mock.Mock(return_value=["chinese"]),
@@ -322,14 +382,14 @@ class WorkerCallContractTests(unittest.TestCase):
                     mock.patch.dict(sys.modules, {"numpy": numpy, "torch": torch, "soundfile": soundfile,
                                                "qwen_tts": SimpleNamespace(Qwen3TTSModel=SimpleNamespace(from_pretrained=factory))}), \
                     mock.patch("socket.create_connection"), mock.patch("socket.socket.connect"), mock.patch("socket.socket.connect_ex"):
-                tts.worker(root, TEXT, jobs)
+                tts.worker(root, text, jobs)
             factory.assert_called_once_with(str(root / "model"), device_map="cpu", dtype="float32", attn_implementation="eager", local_files_only=True)
-            self.assertEqual(engine.generate_voice_design.call_count, 3)
+            self.assertEqual(engine.generate_voice_design.call_count, len(jobs))
             for call, item in zip(engine.generate_voice_design.call_args_list, jobs):
-                self.assertEqual(call.kwargs, dict(text=TEXT, language="Chinese", instruct=item["instruction"], **tts.GENERATION))
+                self.assertEqual(call.kwargs, dict(text=text, language="Chinese", instruct=item["instruction"], **tts.GENERATION))
             torch.set_num_threads.assert_called_once_with(4)
-            self.assertEqual(torch.manual_seed.call_args_list, [mock.call(1986)] * 3)
-            self.assertEqual(soundfile.write.call_count, 3)
+            self.assertEqual(torch.manual_seed.call_args_list, [mock.call(1986)] * len(jobs))
+            self.assertEqual(soundfile.write.call_count, len(jobs))
 
     def test_pcm_validation_rejects_truncation_wrong_rate_duration_silence_and_clipping(self):
         with tempfile.TemporaryDirectory() as directory:

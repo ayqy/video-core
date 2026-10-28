@@ -2,10 +2,10 @@
 
 VideoFree source export · package_free.py · version 1
 
-生成时间：2026-10-28 21:49:14 北京时间
+生成时间：2026-10-29 01:36:11 北京时间
 
-- 源码与必要元数据：247个文件；3761854字节（不含本清单）。
-- 整体内容指纹：`b1e79c75e89f44a4329a69acc1b50677c4a08ba2777d50d58926019193ec498c`。
+- 源码与必要元数据：250个文件；3823459字节（不含本清单）。
+- 整体内容指纹：`d79f9243f4151a18b6995ddfad32ecdc92032cbd1b843c5e9093b8fd646098bf`。
 - 来源：受控原始工程中的逐文件白名单；Package.swift与唯一免费制作workflow来自Distribution/Free精确模板，README由发行脚本生成。
 - 本包不含.git，不可作为新业务checkout；本清单生成过程不执行构建、设备验收、签名安装或公共上传，各阶段以独立证据为准。
 - 排除：App、VideoGame、VideoCartoon、Premium、高级实现运行时测试、私有仓库地址、凭据、客户数据、缓存、日志及媒体过程产物。
@@ -14,8 +14,8 @@ VideoFree source export · package_free.py · version 1
 
 | SHA-256 | 字节数 | 包内路径 / 原工程来源 |
 |---|---:|---|
-| 81834d97558cdef1e99bb50870e14b14069d66bcbc5d2df1bb3fab1eef267b83 | 22370 | .github/workflows/free-production.yml |
-| 501a1f91f71d14da620c0986b94594b9f5af66a9465ad2c1f4cc228025f88471 | 33497 | Integrations/README.md |
+| f7c54318be547c3e359afe381412da415d91fb27826e6e716fd02d403954e061 | 23418 | .github/workflows/free-production.yml |
+| 248bde3e471dd8cb7f588e56031cace869331737a21ab0ad3e4a1824d1d5213a | 34061 | Integrations/README.md |
 | 2ff174ec064ca614f24e8ba67ae5c7042a2caa883af162bafd27a8a4520d5ed7 | 26522 | Integrations/asset_reuse.py |
 | 91f902f9ceedb5b26bfae07ecd097aa47fb9e69b807eae6ff289153770655142 | 25400 | Integrations/check_install.py |
 | 8cae02411044ade544a6877a000d5790ff7b17d6ab781294a8aa737ea6ef8fe0 | 6866 | Integrations/check_package.py |
@@ -34,6 +34,7 @@ VideoFree source export · package_free.py · version 1
 | 6c9e7b8a1b3a447b36d1356701559016a2ad5990499ce6c404af7314d420e5d8 | 3636 | Integrations/package.py |
 | dc9835697ac4f3491c29cecd309bd4430b29196137c96b032f4fa310dad0b6c8 | 11371 | Integrations/pencil_production.py |
 | 480c2ac1a04ca2c8ae97e976ac9af1db2d2cb950ac96dbacde28cf5d05689558 | 9603 | Integrations/prepare_cosyvoice.py |
+| 5641d897f4c8c2b55414491bbd67e8b23655ca779c5d2d4ab96a477e45783b0a | 23518 | Integrations/prepare_voice_design.py |
 | e52450d73342e5a84f4a3c51051886c69df0ebb9dce685cc31e26791353c9211 | 19716 | Integrations/production_motion.py |
 | ebd4a31e6f3c7a6c73bb384798969e652e376bcd80d1d172e6c38ec697177cdd | 31843 | Integrations/qwen_stream.py |
 | 5153da60f78fe869c5b02cafe9b7474f191d7c064efadd2c33425955d94fd489 | 64507 | Integrations/readaloud-cpu-lock.txt |
@@ -56,11 +57,13 @@ VideoFree source export · package_free.py · version 1
 | 5e371767fdd7f3828665ceec23bd573c81e885fa565e8e77d25e1acfa02d5910 | 10373 | Integrations/test_production_motion.py |
 | f82ae813561cfb2e11d718349d474eae4fb21ddd0da5b8056c0b11be3f372f18 | 53105 | Integrations/test_qwen_stream.py |
 | eaa46095a00b9e4fd00c12defe2e076d84c6c58ee6eebffac3e0c34a4e9f0859 | 29882 | Integrations/tests/test_expressive_tts.py |
+| 833cf7e875a9115cecdbd200e9be4a8931b9efdf4a0f91d332bd673a243be5ea | 24863 | Integrations/tests/test_prepare_voice_design.py |
 | 240452d9ae189b53150fbcac5b005dd37d0bd5c19658c04e17ceb8db7b890de0 | 20083 | Integrations/tests/test_readaloud_tts.py |
-| c4e77cf154c0e3ac3b65be37d0f47eae2d4eb6df82b0476d0554034c4268488c | 19789 | Integrations/tests/test_voice_design_tts.py |
+| fdd66e5b8357daa13cfafb3fb34b078f562b3fc6147b2fbddf781dab7b7748ef | 23956 | Integrations/tests/test_voice_design_tts.py |
+| 3d0f9e64ed711773f2c29562ae3fb64f4e9dabf52b5aaf4801b22a543cb04894 | 1550 | Integrations/voice-design-cpu-lock.txt |
 | a0ef0caeb1990166cfd90ddde6ae17bd32a7fa36e5a2eac50c4865b6d4b584b2 | 2110 | Integrations/voice-design-source.txt |
-| fcd771a85150295b26129db92aecb16e27dc34decb94ad9c67b152856f12031b | 6773 | Integrations/voice_design_tts.md |
-| ef03a26ea227e71853df7dfe4eb8adc4dee546f9bf34d27860d5025ad9c7f1b0 | 25751 | Integrations/voice_design_tts.py |
+| a27b491c090d3033035e017aa8a10c2285b26854d90adc7423b3514c4653103f | 11636 | Integrations/voice_design_tts.md |
+| cd1640099d2b5ab576fa03f26c3027c43709e86aa9506b1890c78f118e4fcbf7 | 26783 | Integrations/voice_design_tts.py |
 | cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30 | 11358 | LICENSE |
 | c369f09e50d62d1a1c8eff1500888667ff7a192d0fdc7b32d39c800dfa1e9721 | 1597 | NOTICE |
 | e3dae895ffcaa4ce4470f1dc9d63eee5071f829d63cfe227360c3dabfbdd0d91 | 1213 | Package.swift |
