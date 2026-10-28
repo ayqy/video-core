@@ -19,6 +19,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import wave
 
@@ -256,35 +257,66 @@ def atomic_copy_text(text: str, output: Path) -> None:
         atomic_copy(source, output)
 
 
+class WorkerCancelled(ValueError):
+    pass
+
+
 def run_worker(runtime: Path, text: str, jobs: list[dict], deadline: int, log: Path) -> None:
+    if threading.current_thread() is not threading.main_thread():
+        raise ValueError("本地音色worker须由主线程管理信号，不在后台线程创建进程")
     args = [str(runtime / "venv/bin/python"), "-I", "-B", str(Path(__file__).resolve()),
             "--worker", "--runtime", str(runtime), "--text", text]
     for job in jobs:
         args += ["--voice", job["voice"], "--instruction", job["instruction"],
                  "--seed", str(job["seed"]), "--output", str(job["output"])]
-    with log.open("xb") as output:
-        process = subprocess.Popen(args, env=offline_environment(runtime), stdout=output,
-                                   stderr=output, start_new_session=True)
-        try:
-            code = process.wait(timeout=deadline)
-        except BaseException as error:
+    process = None
+    cancelled = False
+    cleaning = False
+    previous = signal.getsignal(signal.SIGTERM)
+
+    def cancel(signum, frame):
+        nonlocal cancelled
+        cancelled = True
+        # Popen can receive a signal after creating the child but before its
+        # return value is assigned. Defer raising until that child is owned.
+        if process is not None and not cleaning:
+            raise WorkerCancelled("本地音色设计已取消，原日志保留；未交付或更换声音")
+
+    signal.signal(signal.SIGTERM, cancel)
+    try:
+        with log.open("xb") as output:
             try:
-                os.killpg(process.pid, signal.SIGTERM)
-            except ProcessLookupError:
-                pass
-            try:
-                process.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                try:
-                    os.killpg(process.pid, signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
-                process.wait(timeout=5)
-            if isinstance(error, subprocess.TimeoutExpired):
-                raise ValueError("本地音色设计超时，原日志保留；无成功交付、未回退声音") from None
-            raise
-    if code:
-        raise ValueError("本地音色设计失败，原日志保留：" + str(log))
+                if cancelled:
+                    raise WorkerCancelled("本地音色设计已取消，未启动声音worker")
+                process = subprocess.Popen(args, env=offline_environment(runtime), stdout=output,
+                                           stderr=output, start_new_session=True)
+                if cancelled:
+                    raise WorkerCancelled("本地音色设计已取消，原日志保留；未交付或更换声音")
+                code = process.wait(timeout=deadline)
+                if cancelled:
+                    raise WorkerCancelled("本地音色设计已取消，原日志保留；未交付或更换声音")
+            except BaseException as error:
+                cleaning = True  # Further TERM signals cannot interrupt reaping.
+                if process is not None:
+                    try:
+                        os.killpg(process.pid, signal.SIGTERM)
+                    except ProcessLookupError:
+                        pass
+                    try:
+                        process.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        try:
+                            os.killpg(process.pid, signal.SIGKILL)
+                        except ProcessLookupError:
+                            pass
+                        process.wait(timeout=5)
+                if isinstance(error, subprocess.TimeoutExpired):
+                    raise ValueError("本地音色设计超时，原日志保留；无成功交付、未回退声音") from None
+                raise
+        if code:
+            raise ValueError("本地音色设计失败，原日志保留：" + str(log))
+    finally:
+        signal.signal(signal.SIGTERM, previous)
 
 
 def generate_batch(runtime: Path, cache: Path, text: str, jobs: list[dict], deadline: int = 10800) -> list[dict]:

@@ -2,10 +2,10 @@
 
 VideoFree source export · package_free.py · version 1
 
-生成时间：2026-10-29 01:57:35 北京时间
+生成时间：2026-10-29 02:55:15 北京时间
 
-- 源码与必要元数据：250个文件；3832567字节（不含本清单）。
-- 整体内容指纹：`ab3b181d937dc1dc88999f15ecdb4cc786072c0ea1bb2992525b733a07dfc75f`。
+- 源码与必要元数据：250个文件；3842404字节（不含本清单）。
+- 整体内容指纹：`3365d561e6b0962b2a776808e392b3a5d81ad5c850866c9fe21d42ac00881121`。
 - 来源：受控原始工程中的逐文件白名单；Package.swift与唯一免费制作workflow来自Distribution/Free精确模板，README由发行脚本生成。
 - 本包不含.git，不可作为新业务checkout；本清单生成过程不执行构建、设备验收、签名安装或公共上传，各阶段以独立证据为准。
 - 排除：App、VideoGame、VideoCartoon、Premium、高级实现运行时测试、私有仓库地址、凭据、客户数据、缓存、日志及媒体过程产物。
@@ -14,7 +14,7 @@ VideoFree source export · package_free.py · version 1
 
 | SHA-256 | 字节数 | 包内路径 / 原工程来源 |
 |---|---:|---|
-| 8c91e2a84f45bc236e35ac43dcb58d96fed113e4e16c55cdb4c3c8bd2901276c | 23418 | .github/workflows/free-production.yml |
+| b113c54e2b860fc48aa80e897480756cd7f7704f5db3e70438a212c0c8905089 | 23418 | .github/workflows/free-production.yml |
 | 248bde3e471dd8cb7f588e56031cace869331737a21ab0ad3e4a1824d1d5213a | 34061 | Integrations/README.md |
 | 2ff174ec064ca614f24e8ba67ae5c7042a2caa883af162bafd27a8a4520d5ed7 | 26522 | Integrations/asset_reuse.py |
 | 91f902f9ceedb5b26bfae07ecd097aa47fb9e69b807eae6ff289153770655142 | 25400 | Integrations/check_install.py |
@@ -59,11 +59,11 @@ VideoFree source export · package_free.py · version 1
 | eaa46095a00b9e4fd00c12defe2e076d84c6c58ee6eebffac3e0c34a4e9f0859 | 29882 | Integrations/tests/test_expressive_tts.py |
 | 0ba4172bde961e0fe11a7847eb44f146e59a5e5a7f52a7d19777ad0b2c30c355 | 30183 | Integrations/tests/test_prepare_voice_design.py |
 | 240452d9ae189b53150fbcac5b005dd37d0bd5c19658c04e17ceb8db7b890de0 | 20083 | Integrations/tests/test_readaloud_tts.py |
-| fdd66e5b8357daa13cfafb3fb34b078f562b3fc6147b2fbddf781dab7b7748ef | 23956 | Integrations/tests/test_voice_design_tts.py |
+| a3bf81646dd7fa5ad793c053155620a31169c57af70e1e4b95bea39acd0f3390 | 31601 | Integrations/tests/test_voice_design_tts.py |
 | 3d0f9e64ed711773f2c29562ae3fb64f4e9dabf52b5aaf4801b22a543cb04894 | 1550 | Integrations/voice-design-cpu-lock.txt |
 | a0ef0caeb1990166cfd90ddde6ae17bd32a7fa36e5a2eac50c4865b6d4b584b2 | 2110 | Integrations/voice-design-source.txt |
-| 6df7f87fd7d8c0003c4b908845afc39dc4881c844a1d0578d659799f0313f098 | 12750 | Integrations/voice_design_tts.md |
-| cd1640099d2b5ab576fa03f26c3027c43709e86aa9506b1890c78f118e4fcbf7 | 26783 | Integrations/voice_design_tts.py |
+| f7efbc951908e8a50820c005fa9c079aec5b14a0786fd0dce7cf3a1508afb795 | 13393 | Integrations/voice_design_tts.md |
+| 17ad61c7529ed2ca6c97eabaf334a5ea4e8d4ece9b9e8f9d97ef1eb4080878d7 | 28332 | Integrations/voice_design_tts.py |
 | cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30 | 11358 | LICENSE |
 | c369f09e50d62d1a1c8eff1500888667ff7a192d0fdc7b32d39c800dfa1e9721 | 1597 | NOTICE |
 | e3dae895ffcaa4ce4470f1dc9d63eee5071f829d63cfe227360c3dabfbdd0d91 | 1213 | Package.swift |

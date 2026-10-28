@@ -9,12 +9,15 @@ from contextlib import ExitStack
 import importlib.util
 import hashlib
 import json
+import os
 from pathlib import Path
 import signal
 import struct
 import subprocess
 import sys
 import tempfile
+import textwrap
+import time
 from types import SimpleNamespace
 import unittest
 from unittest import mock
@@ -337,6 +340,29 @@ class GenerationRulesTests(unittest.TestCase):
         kill.assert_called_once_with(991001, signal.SIGTERM)
         self.assertTrue(log.is_file())
 
+    def test_sigterm_during_worker_creation_is_deferred_and_nonmain_calls_never_spawn(self):
+        selected = [self.jobs[0]]
+        previous = signal.getsignal(signal.SIGTERM)
+        process = SimpleNamespace(pid=991075, wait=mock.Mock(return_value=0))
+
+        def create(*args, **options):
+            # Simulate TERM after a child exists but before Popen returns it.
+            signal.getsignal(signal.SIGTERM)(signal.SIGTERM, None)
+            return process
+
+        with mock.patch.object(tts.subprocess, "Popen", side_effect=create), mock.patch.object(tts.os, "killpg") as kill:
+            with self.assertRaises(tts.WorkerCancelled):
+                tts.run_worker(self.runtime, TEXT, selected, 5, self.root / "creation-cancel.log")
+        kill.assert_called_once_with(991075, signal.SIGTERM)
+        process.wait.assert_called_once_with(timeout=5)
+        self.assertIs(signal.getsignal(signal.SIGTERM), previous)
+        with mock.patch.object(tts.threading, "current_thread", return_value=object()), \
+                mock.patch.object(tts.subprocess, "Popen", side_effect=AssertionError("nonmain call spawned a worker")) as spawning:
+            with self.assertRaisesRegex(ValueError, "主线程"):
+                tts.run_worker(self.runtime, TEXT, selected, 5, self.root / "thread.log")
+        spawning.assert_not_called()
+        self.assertFalse((self.root / "thread.log").exists())
+
     def test_atomic_copy_failure_and_concurrent_destination_do_not_destroy_other_audio(self):
         source = self.root / "source.wav"
         pcm(source)
@@ -402,6 +428,112 @@ class WorkerCallContractTests(unittest.TestCase):
             target.write_bytes(target.read_bytes()[:-2])
             with self.assertRaisesRegex(ValueError, "不完整"):
                 tts.inspect_wave(target)
+
+
+class OwnedWorkerSignalTests(unittest.TestCase):
+    def test_parent_sigterm_reaps_real_owned_worker_while_bystander_survives(self):
+        # Finite process integration only. The fake worker never imports a model,
+        # reads credentials, contacts a network or writes a speech waveform.
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            runtime = root / "runtime"
+            binary = runtime / "venv/bin/python"
+            binary.parent.mkdir(parents=True)
+            binary.symlink_to(Path(sys.executable).resolve())
+            worker = runtime / "worker-fixture.py"
+            worker.write_text(textwrap.dedent("""
+                import os,signal,sys,time
+                from pathlib import Path
+                root=Path(sys.argv[sys.argv.index('--runtime')+1])
+                def term(signum,frame):
+                    (root/'term-seen').write_text('TERM observed by finite worker')
+                signal.signal(signal.SIGTERM,term)
+                marker=root/'worker-ready.part'
+                marker.write_text(str(os.getpid())+'\\n'+str(os.getpgrp()))
+                marker.rename(root/'worker-ready')
+                print('finite owned-worker fixture; no speech',flush=True)
+                end=time.monotonic()+20
+                while time.monotonic()<end: time.sleep(0.02)
+                """), encoding="utf-8")
+            parent_script = root / "parent-fixture.py"
+            parent_script.write_text(textwrap.dedent("""
+                import importlib.util,os,signal,sys
+                from pathlib import Path
+                source=Path(sys.argv[1]);root=Path(sys.argv[2])
+                spec=importlib.util.spec_from_file_location('finite_adapter',source)
+                tts=importlib.util.module_from_spec(spec);spec.loader.exec_module(tts)
+                tts.__file__=str(root/'worker-fixture.py')
+                def previous(signum,frame): pass
+                signal.signal(signal.SIGTERM,previous)
+                original=tts.subprocess.Popen;children=[]
+                def tracked(*args,**options):
+                    child=original(*args,**options);children.append(child);return child
+                tts.subprocess.Popen=tracked
+                try:
+                    tts.run_worker(root,'finite process fixture',[],10,root/'worker.log')
+                except tts.WorkerCancelled:
+                    child=children[0];reaped=False
+                    try: os.waitpid(child.pid,os.WNOHANG)
+                    except ChildProcessError: reaped=True
+                    (root/'result.txt').write_text('cancelled=1\\nreaped='+str(int(reaped))+
+                        '\\nhandler_restored='+str(int(signal.getsignal(signal.SIGTERM) is previous))+
+                        '\\nreturncode='+str(child.returncode)+'\\n')
+                    raise SystemExit(2)
+                raise SystemExit(3)
+                """), encoding="utf-8")
+            adapter = Path(tts.__file__).resolve()
+            side = subprocess.Popen([sys.executable, "-I", "-B", "-c", "import time;time.sleep(20)"],
+                                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+            parent = None
+            reaped = False
+            worker_id = None
+            with (root / "parent.log").open("xb") as parent_log:
+                try:
+                    parent = subprocess.Popen([sys.executable, "-I", "-B", str(parent_script), str(adapter), str(runtime)],
+                                              stdout=parent_log, stderr=parent_log, start_new_session=True)
+
+                    def ready(path, seconds):
+                        end = time.monotonic() + seconds
+                        while time.monotonic() < end:
+                            if path.is_file():
+                                return
+                            if parent.poll() is not None:
+                                self.fail("finite parent exited before its expected process checkpoint")
+                            time.sleep(0.02)
+                        self.fail("finite process checkpoint timed out")
+
+                    ready(runtime / "worker-ready", 5)
+                    worker_id, group = map(int, (runtime / "worker-ready").read_text().splitlines())
+                    self.assertEqual(worker_id, group)
+                    self.assertNotIn(group, (os.getpgrp(), parent.pid, side.pid))
+                    parent.send_signal(signal.SIGTERM)
+                    ready(runtime / "term-seen", 2)
+                    # The worker deliberately ignores TERM, so this second parent
+                    # TERM arrives during the adapter's bounded reaping phase.
+                    parent.send_signal(signal.SIGTERM)
+                    self.assertEqual(parent.wait(timeout=12), 2)
+                    result = dict(row.split("=", 1) for row in (runtime / "result.txt").read_text().splitlines())
+                    reaped = result.get("reaped") == "1"
+                    self.assertEqual(result, {"cancelled": "1", "reaped": "1", "handler_restored": "1", "returncode": str(-signal.SIGKILL)})
+                    self.assertIsNone(side.poll(), "the unrelated owned fixture was terminated")
+                    with self.assertRaises(ProcessLookupError):
+                        os.killpg(group, 0)
+                    self.assertIn("finite owned-worker fixture; no speech", (runtime / "worker.log").read_text())
+                    self.assertFalse(list(runtime.rglob("*.wav")))
+                finally:
+                    if worker_id is not None and not reaped:
+                        try:
+                            os.killpg(worker_id, signal.SIGKILL)
+                        except ProcessLookupError:
+                            pass
+                    for owned in (parent, side):
+                        if owned is not None:
+                            if owned.poll() is None:
+                                try:
+                                    os.killpg(owned.pid, signal.SIGKILL)
+                                except ProcessLookupError:
+                                    pass
+                            owned.wait(timeout=5)
 
 
 if __name__ == "__main__":
