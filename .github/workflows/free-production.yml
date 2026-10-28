@@ -126,7 +126,7 @@ jobs:
                   else:
                       yield item.id()
           expected = list(identities(suite))
-          assert len(expected) == len(set(expected)) == 32
+          assert len(expected) == len(set(expected)) == 36
           result = unittest.TextTestRunner(verbosity=1).run(suite)
           assert result.wasSuccessful() and result.testsRun == len(expected) and not result.skipped
           print('voice_design_preparation_complete_rules=' + str(len(expected)))

@@ -21,6 +21,8 @@ import subprocess
 import sys
 import tempfile
 import time
+import unicodedata
+import urllib.parse
 import urllib.request
 
 import voice_design_tts as tts
@@ -269,9 +271,45 @@ class HTTPSRedirect(urllib.request.HTTPRedirectHandler):
         return super().redirect_request(request, fp, code, message, headers, url)
 
 
-def public_open(request: urllib.request.Request, timeout: float):
-    # No implicit netrc, service token or environment proxy credential is used.
-    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), HTTPSRedirect())
+def validate_public_route(value: str) -> str:
+    if (not isinstance(value, str) or not value or len(value.encode("utf-8")) > 2048
+            or any(character.isspace() or unicodedata.category(character).startswith("C") for character in value)):
+        raise ValueError("公共路由须为不含空白或控制字符的有界无账号URL")
+    try:
+        route = urllib.parse.urlsplit(value)
+        port = route.port
+        if (route.scheme not in ("http", "https") or not route.hostname or not route.netloc
+                or route.username is not None or route.password is not None
+                or route.path not in ("", "/") or route.query or route.fragment
+                or route.netloc.endswith(":") or "%" in route.netloc or (port is not None and not 1 <= port <= 65535)):
+            raise ValueError("公共路由URL不符合无账号HTTP(S)主机及端口格式")
+    except ValueError:
+        # Never echo a rejected value, even when it contains credentials.
+        raise ValueError("公共路由URL不符合无账号HTTP(S)主机及端口格式") from None
+    return value
+
+
+def read_public_route(path: Path) -> str:
+    selected = path.absolute()
+    ordinary_path(selected)
+    if not selected.is_file() or not 0 < selected.stat().st_size <= 2048:
+        raise ValueError("公共路由文件须为1–2048字节普通原件")
+    with selected.open("rb") as source:
+        data = source.read(2049)
+    if not 0 < len(data) <= 2048:
+        raise ValueError("公共路由文件大小变化或超限")
+    try:
+        value = data.decode("utf-8")
+    except UnicodeError:
+        raise ValueError("公共路由文件须为有效UTF-8") from None
+    return validate_public_route(value)
+
+
+def public_open(request: urllib.request.Request, timeout: float, *, public_route: str | None = None):
+    # Default is direct. A route is explicit, account-free and never obtained
+    # from proxy environment variables, netrc or a service credential.
+    proxies = {} if public_route is None else {"https": validate_public_route(public_route)}
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler(proxies), HTTPSRedirect())
     return opener.open(request, timeout=timeout)
 
 
@@ -300,16 +338,17 @@ def model_layout(root: Path, *, complete: bool = False) -> None:
         raise ValueError("固定12件模型原件不完整")
 
 
-def recover_file(root: Path, name: str, budget: Budget) -> None:
+def recover_file(root: Path, name: str, budget: Budget, *, public_route: str | None = None) -> None:
     if name not in tts.MODEL_FILES:
         raise ValueError("未知固定模型原件")
     size, expected = tts.MODEL_FILES[name]
     target = root / "model" / name
     url = f"https://huggingface.co/{tts.ENGINE}/resolve/{tts.MODEL_REVISION}/{name}"
-    recover_original(root, target, url, size, expected, budget)
+    recover_original(root, target, url, size, expected, budget, public_route=public_route)
 
 
-def recover_original(root: Path, target: Path, url: str, size: int, expected: str, budget: Budget) -> None:
+def recover_original(root: Path, target: Path, url: str, size: int, expected: str, budget: Budget,
+                     *, public_route: str | None = None) -> None:
     """Recover only an internally selected fixed model or reviewed sox original."""
     part = target.with_name(target.name + ".part")
     ordinary_path(target)
@@ -330,7 +369,7 @@ def recover_original(root: Path, target: Path, url: str, size: int, expected: st
         if offset:
             headers["Range"] = f"bytes={offset}-"
         request = urllib.request.Request(url, headers=headers)
-        with public_open(request, timeout=min(30, budget.remaining())) as response:
+        with public_open(request, timeout=min(30, budget.remaining()), public_route=public_route) as response:
             status = response.status
             expected_status = 206 if offset else 200
             content_range = response.headers.get("Content-Range")
@@ -402,11 +441,14 @@ def space_preflight(root: Path, stage: str, files: list[str] | None) -> None:
 
 
 def prepare(runtime: Path, stage: str, seconds: int = 840, *, python: Path | None = None,
-            uv: Path | None = None, files: list[str] | None = None) -> str:
+            uv: Path | None = None, files: list[str] | None = None,
+            public_route_file: Path | None = None) -> str:
     if stage not in STAGES or (stage != "environment" and (python is not None or uv is not None)):
         raise ValueError("准备工具参数与阶段不符")
     if stage == "environment" and (python is None or uv is None):
         raise ValueError("环境阶段须显式指定解释器和uv")
+    if public_route_file is not None and stage != "model":
+        raise ValueError("公共路由文件仅用于model阶段，不影响环境安装、封存或校验")
     if files is not None and (stage != "model" or not files or len(files) != len(set(files))
                               or any(name not in tts.MODEL_FILES for name in files)):
         raise ValueError("模型阶段仅接受不重复的固定原件名称")
@@ -423,6 +465,7 @@ def prepare(runtime: Path, stage: str, seconds: int = 840, *, python: Path | Non
     if (root / "inference.lock").exists() or (root / "inference.lock").is_symlink():
         raise ValueError("所选运行环境正在生成，等待原作业，不并发准备")
     with deadline(seconds) as budget:
+        public_route = read_public_route(public_route_file) if public_route_file is not None else None
         if stage == "verify":
             if (root / "preparation.lock").exists() or (root / "preparation.lock").is_symlink():
                 raise ValueError("所选运行环境正在准备，不并发校验")
@@ -446,7 +489,7 @@ def prepare(runtime: Path, stage: str, seconds: int = 840, *, python: Path | Non
                 model_layout(root)
                 selected = files if files is not None else list(tts.MODEL_FILES)
                 for name in selected:
-                    recover_file(root, name, budget)
+                    recover_file(root, name, budget, public_route=public_route)
                 model_layout(root)
                 return f"本阶段{len(selected)}件固定原件校验通过；须完整12件及环境通过后另行seal"
             verify_or_seal(root, budget, seal=True)
@@ -462,10 +505,12 @@ def main() -> int:
     parser.add_argument("--deadline", type=int, default=840)
     parser.add_argument("--python", type=Path)
     parser.add_argument("--uv", type=Path)
+    parser.add_argument("--public-route-file", type=Path, help="仅model可选的普通无账号路由文件；默认直连，不读取隐式环境代理")
     parser.add_argument("--file", action="append", choices=tuple(tts.MODEL_FILES), dest="files")
     args = parser.parse_args()
     try:
-        print(prepare(args.runtime, args.stage, args.deadline, python=args.python, uv=args.uv, files=args.files))
+        print(prepare(args.runtime, args.stage, args.deadline, python=args.python, uv=args.uv,
+                      files=args.files, public_route_file=args.public_route_file))
         return 0
     except (ValueError, OSError, subprocess.SubprocessError) as error:
         # No redirect URL, environment value or package-manager stream is echoed.

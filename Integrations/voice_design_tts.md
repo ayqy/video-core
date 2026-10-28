@@ -38,6 +38,14 @@ python3 -B Integrations/prepare_voice_design.py --runtime .cache/voice-design74 
 
 已有`identity.txt`后，环境、模型和seal阶段都拒绝写入；只允许verify按当前完整身份校验，或显式选择另一新缓存。准备锁与生成锁互斥；不删除活跃锁重开任务。模型取件只使用固定公开HTTPS地址，禁止降级重定向，不读取隐式服务Token、netrc或代理凭据。准备日志、依赖、模型和临时文件只留所选缓存，不进入发行包或管理员邮件。
 
+模型下载默认直连。若受管运行环境的实际连接诊断表明直连超时，而本机已有可用的无账号公共网络路由，可显式加`--public-route-file`选择其普通文件路径；工具不会自动读取环境代理。该文件最多2048字节，只放一个有效UTF-8的HTTP(S)路由URL，不含账号、密码、空白、控制字符或末尾换行；须有主机、合法可选端口，路径只能为空或`/`，不能带query或fragment。文件、父链和硬链接均核验，不回显内容。此参数仅适用于model，环境/SoX下载、seal和verify不接受它。
+
+```sh
+python3 -B Integrations/prepare_voice_design.py --runtime .cache/voice-design74 --stage model --file model.safetensors --public-route-file .cache/voice-design74/public-route.txt --deadline 840
+```
+
+显式路由只改变固定HTTPS请求的连接路径，不修改模型来源、TLS证书和主机名验证、HTTPS重定向限制或完整size/SHA/Range条件。路由文件留所选缓存，不入库、不打进发行包，也不寄管理员；错误只报告类别和规则，不输出URL内容。
+
 `model/`只放固定版本的十二个原件：根目录下的`model.safetensors`、`README.md`、`config.json`、`generation_config.json`、`merges.txt`、`preprocessor_config.json`、`tokenizer_config.json`、`vocab.json`，以及`speech_tokenizer/`中的`model.safetensors`、`config.json`、`configuration.json`、`preprocessor_config.json`。从上面固定版本的官方`resolve`地址取得，保留原字节。模型约4.52GB，FP32推理还需模型参数及工作内存；依赖和下载临时空间另计。所有大小与SHA256由适配器逐件核验，缺件、多件、链接、错版本都拒绝，不采用半下载文件。
 
 环境和原件准备完成后，显式封存一次：

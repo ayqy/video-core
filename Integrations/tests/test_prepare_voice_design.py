@@ -59,6 +59,45 @@ class TemporaryCase(unittest.TestCase):
 
 
 class RequestAndLockTests(TemporaryCase):
+    def test_public_route_file_rejects_credentials_links_oversize_and_invalid_url_structure(self):
+        path = self.root / "fixture-public-route.txt"
+        valid = "http://127.0.0.1:8080"
+        for value in (valid, "https://localhost:443/", "http://[::1]:8080"):
+            path.write_text(value, encoding="utf-8")
+            self.assertEqual(prep.read_public_route(path), value)
+        invalid = ("", "http://user:password@localhost:8080", "http://user@localhost", "http://@localhost",
+                   "socks5://localhost:1080", "http:///missing-host", "http://localhost:0", "http://localhost:65536",
+                   "http://localhost:bad", "http://localhost:", "http://localhost/path", "http://localhost?query=1",
+                   "http://localhost#fragment", "http://local host", valid + "\n", valid + "\x00", valid + "\x7f",
+                   "http://local\u200bhost", "http://host%40other", "x" * 2049)
+        for value in invalid:
+            path.write_text(value, encoding="utf-8")
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                prep.read_public_route(path)
+        path.write_text(valid, encoding="utf-8")
+        link = self.root / "route-link"
+        link.symlink_to(path)
+        with self.assertRaisesRegex(ValueError, "链接"):
+            prep.read_public_route(link)
+        directory_link = self.root / "parent-link"
+        directory_link.symlink_to(self.root, target_is_directory=True)
+        with self.assertRaisesRegex(ValueError, "链接"):
+            prep.read_public_route(directory_link / path.name)
+        hardlink = self.root / "route-hardlink"
+        prep.os.link(path, hardlink)
+        with self.assertRaisesRegex(ValueError, "硬链接"):
+            prep.read_public_route(hardlink)
+
+    def test_public_route_parameter_rejects_other_stages_before_reading_or_creating_files(self):
+        absent = self.root / "not-created"
+        route = self.root / "not-read.txt"
+        with mock.patch.object(prep, "read_public_route", side_effect=AssertionError("wrong stage read route")):
+            for stage in ("environment", "seal", "verify"):
+                options = dict(python=Path("/explicit/python"), uv=Path("/explicit/uv")) if stage == "environment" else {}
+                with self.subTest(stage=stage), self.assertRaisesRegex(ValueError, "仅用于model"):
+                    prep.prepare(absent, stage, 5, public_route_file=route, **options)
+        self.assertFalse(absent.exists())
+
     def test_published_lock_is_the_complete_original_91_dependency_record(self):
         self.assertEqual(prep.LOCK.stat().st_size, 1550)
         self.assertEqual(prep.tts.digest(prep.LOCK), prep.LOCK_SHA256)
@@ -169,6 +208,22 @@ class ModelRecoveryTests(TemporaryCase):
         self.assertEqual(request.full_url, f"https://huggingface.co/{prep.tts.ENGINE}/resolve/{prep.tts.MODEL_REVISION}/{self.name}")
         self.assertIsNone(request.get_header("Authorization"))
         self.assertIsNone(request.get_header("Range"))
+        self.assertEqual(self.target.read_bytes(), self.payload)
+        self.assertFalse(self.part.exists())
+
+    def test_model_route_file_is_selected_once_and_reaches_the_original_download_chain(self):
+        route_file = self.root / "fixture-route.txt"
+        route = "http://127.0.0.1:8080"
+        route_file.write_text(route, encoding="utf-8")
+        with mock.patch.object(prep, "read_public_route", wraps=prep.read_public_route) as reading, \
+                mock.patch.object(prep, "recover_original", wraps=prep.recover_original) as recovery, \
+                mock.patch.object(prep, "public_open", return_value=Response(self.payload)) as opening:
+            result = prep.prepare(self.root, "model", 5, files=[self.name], public_route_file=route_file)
+        reading.assert_called_once_with(route_file)
+        self.assertEqual(recovery.call_args.kwargs["public_route"], route)
+        self.assertEqual(opening.call_args.kwargs["public_route"], route)
+        self.assertTrue(opening.call_args.args[0].full_url.startswith("https://huggingface.co/"))
+        self.assertNotIn(route, result)
         self.assertEqual(self.target.read_bytes(), self.payload)
         self.assertFalse(self.part.exists())
 
@@ -373,6 +428,32 @@ class EnvironmentTests(TemporaryCase):
 
 
 class ProcessAndDeadlineTests(TemporaryCase):
+    def test_public_opener_uses_only_selected_account_free_route_and_https_redirect_validation(self):
+        request = prep.urllib.request.Request("https://huggingface.co/fixed-public-fixture")
+        route = "http://127.0.0.1:8080"
+        opener = mock.Mock()
+        with mock.patch.dict(prep.os.environ, {"HTTPS_PROXY": "synthetic-env-route-not-used"}), \
+                mock.patch.object(prep.urllib.request, "ProxyHandler") as handler, \
+                mock.patch.object(prep.urllib.request, "build_opener", return_value=opener) as building:
+            prep.public_open(request, 7)
+            handler.assert_called_once_with({})
+            self.assertIsInstance(building.call_args.args[1], prep.HTTPSRedirect)
+            opener.open.assert_called_once_with(request, timeout=7)
+            handler.reset_mock()
+            opener.reset_mock()
+            prep.public_open(request, 9, public_route=route)
+            handler.assert_called_once_with({"https": route})
+            self.assertIsInstance(building.call_args.args[1], prep.HTTPSRedirect)
+            opener.open.assert_called_once_with(request, timeout=9)
+            handler.reset_mock()
+            with self.assertRaisesRegex(ValueError, "无账号") as rejected:
+                prep.public_open(request, 5, public_route="http://fixture-user:fixture-password@localhost")
+            self.assertNotIn("fixture-user", str(rejected.exception))
+            self.assertNotIn("fixture-password", str(rejected.exception))
+            handler.assert_not_called()
+        with self.assertRaisesRegex(ValueError, "HTTPS"):
+            prep.HTTPSRedirect().redirect_request(request, None, 302, "fixture", {}, "http://invalid-downgrade")
+
     def test_readonly_bad_temp_path_is_rejected_before_creating_any_temporary_file(self):
         outside = self.root.parent / "outside"
         outside.mkdir()
@@ -410,7 +491,7 @@ class ProcessAndDeadlineTests(TemporaryCase):
     def test_expired_model_stage_preserves_partial_and_releases_only_its_own_lock(self):
         self.model()
 
-        def interrupted(root, name, budget):
+        def interrupted(root, name, budget, **options):
             self.part.write_bytes(b"returned prefix")
             raise prep.PreparationTimeout("synthetic finite expiry")
 
