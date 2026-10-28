@@ -179,6 +179,29 @@ public enum JobOperations {
         }else if !(j.billing ?? []).isEmpty,!j.billingUnknown,snapshot.actual != nil {
             j.message="原任务终态报费与已核净实际额一致；实际及待退款按凭据保留，产物仍须审核"
         }
+        if job.state == .needsReview || job.state == .succeeded {
+            // Both SDK overloads retain the local output/review fact while
+            // accepting new supplier observations and independent accounting.
+            // Repeated remote success must not move it to billing_pending.
+            j.state=job.state;j.progress=job.progress
+            if [.queued,.running,.unknown].contains(snapshot.state),(job.billing ?? []).isEmpty,let reported=snapshot.actual {
+                let known=max(job.actual?.amount ?? 0,job.remoteReportedActual?.amount ?? 0)
+                if reported.amount<known {
+                    j.actual=job.actual;j.remoteReportedActual=Money(known,job.quote.upper.currency);j.billingUnknown=true
+                }
+            }
+            let observed:String
+            switch snapshot.state {
+            case .queued:observed="排队中"
+            case .running:observed="制作中"
+            case .succeeded:observed="制作完成"
+            case .failed:observed="失败"
+            case .cancelled:observed="已取消"
+            case .unknown:observed="未知"
+            }
+            j.message = "原产物及审核状态保持；本次原ID远端观察为" + observed + "；" +
+                (j.billingUnknown ? "最终费用仍待核对，预算占用保留；实际和待退款按凭据保留":"实际费用与退款按原ID及账单独立核对")
+        }
         return j
     }
 }

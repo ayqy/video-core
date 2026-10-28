@@ -21,6 +21,108 @@ final class JobCancellationTests: XCTestCase {
         }
     }
 
+    private func completedRemote(state:JobState)throws->Job {
+        var completed=try job(provider:"remote")
+        completed.state=state;completed.progress=1;completed.remoteID="original-service-id"
+        completed.remoteCheckedAt=now;completed.remoteObservationSequence=3
+        completed.artifacts=artifacts(for:completed);completed.outputAssetIDs=["original-output"]
+        for record in [
+            BillingRecord(id:"charge",kind:.charge,money:Money(12),source:"隔离规则消耗凭据",at:now),
+            BillingRecord(id:"refund-request",kind:.refundRequested,money:Money(5),source:"隔离规则申请凭据",at:now),
+            BillingRecord(id:"refund-received",kind:.refundReceived,money:Money(3),source:"隔离规则到账凭据",at:now)
+        ] {completed=try JobOperations.reconcile(completed,record:record)}
+        completed.remoteReportedActual=Money(12);completed.billingUnknown=true
+        return completed
+    }
+
+    func testCancellationFinalStateUsesTheExistingCompletedAndCancelledBoundary() {
+        for state in [JobState.queued,.running,.needsReview,.succeeded,.failed,.interrupted,.cancelRequested,.cancelled,.unknownRemote,.billingPending] {
+            XCTAssertEqual(state.isCancellationFinal,[JobState.needsReview,.succeeded,.cancelled].contains(state),state.rawValue)
+        }
+    }
+
+    func testNewRemoteObservationsKeepCompletedOutputFactsAndPartialRefundLedger()throws {
+        for state in [JobState.needsReview,.succeeded] {
+            let original=try completedRemote(state:state)
+            for observed in [RemoteSnapshot.State.queued,.running,.unknown,.succeeded,.failed,.cancelled] {
+                let checked=now.addingTimeInterval(2)
+                let snapshot=RemoteSnapshot(remoteID:original.remoteID!,requestKey:original.requestKey,state:observed,progress:0.2,actual:Money(7),checkedAt:checked)
+                let serial=try JobOperations.applyRemote(snapshot,to:original,now:checked)
+                let updated=try JobOperations.applyRemote(snapshot,to:original,observing:original,now:checked)
+                XCTAssertEqual(serial.state,state);XCTAssertEqual(serial.progress,1)
+                XCTAssertEqual(try Codec.data(serial.artifacts),try Codec.data(original.artifacts))
+                XCTAssertEqual(try Codec.data(serial.billing),try Codec.data(original.billing))
+                XCTAssertEqual(serial.actual,Money(9));XCTAssertEqual(serial.refundPending,Money(2))
+                XCTAssertEqual(serial.remoteReportedActual,Money(12));XCTAssertTrue(serial.billingUnknown)
+                XCTAssertEqual(serial.remoteCheckedAt,checked)
+                XCTAssertEqual(serial.remoteObservationSequence,original.remoteObservationSequence)
+                XCTAssertEqual(updated.state,state);XCTAssertEqual(updated.progress,1)
+                XCTAssertEqual(updated.remoteID,original.remoteID);XCTAssertEqual(updated.requestKey,original.requestKey)
+                XCTAssertEqual(updated.revisionID,original.revisionID);XCTAssertEqual(updated.digest,original.digest)
+                XCTAssertEqual(updated.remoteCheckedAt,checked);XCTAssertEqual(updated.remoteObservationSequence,4)
+                XCTAssertEqual(try Codec.data(updated.artifacts),try Codec.data(original.artifacts))
+                XCTAssertEqual(updated.outputAssetIDs,original.outputAssetIDs)
+                XCTAssertEqual(try Codec.data(updated.quote),try Codec.data(original.quote))
+                XCTAssertEqual(try Codec.data(updated.billing),try Codec.data(original.billing))
+                XCTAssertEqual(updated.actual,Money(9));XCTAssertEqual(updated.refundPending,Money(2))
+                XCTAssertEqual(updated.remoteReportedActual,Money(12));XCTAssertTrue(updated.billingUnknown)
+                XCTAssertEqual(updated.exposure,original.exposure)
+                XCTAssertTrue(updated.message.contains("原产物及审核状态保持"))
+            }
+        }
+    }
+
+    func testCompletedRemoteTerminalNetConfirmationSettlesAccountingWithoutUndoingReview()throws {
+        let original=try completedRemote(state:.succeeded),checked=now.addingTimeInterval(2)
+        let snapshot=RemoteSnapshot(remoteID:original.remoteID!,requestKey:original.requestKey,state:.succeeded,progress:1,actual:Money(9),checkedAt:checked)
+        let serial=try JobOperations.applyRemote(snapshot,to:original,now:checked)
+        let updated=try JobOperations.applyRemote(snapshot,to:original,observing:original,now:checked)
+        XCTAssertEqual(serial.state,.succeeded);XCTAssertEqual(serial.progress,1)
+        XCTAssertFalse(serial.billingUnknown);XCTAssertEqual(serial.actual,Money(9));XCTAssertEqual(serial.refundPending,Money(2))
+        XCTAssertEqual(try Codec.data(serial.billing),try Codec.data(original.billing))
+        XCTAssertEqual(updated.state,.succeeded);XCTAssertEqual(updated.remoteReportedActual,Money(9))
+        XCTAssertFalse(updated.billingUnknown);XCTAssertEqual(updated.actual,Money(9));XCTAssertEqual(updated.refundPending,Money(2))
+        XCTAssertEqual(try Codec.data(updated.billing),try Codec.data(original.billing))
+        XCTAssertEqual(try Codec.data(updated.artifacts),try Codec.data(original.artifacts))
+        XCTAssertEqual(updated.remoteObservationSequence,4);XCTAssertEqual(updated.remoteCheckedAt,checked)
+    }
+
+    func testCompletedRemoteUnknownCostRemainsUnknownInsteadOfInventingZero()throws {
+        var original=try completedRemote(state:.needsReview)
+        original.billing=nil;original.actual=nil;original.refundPending=nil
+        let checked=now.addingTimeInterval(2)
+        let snapshot=RemoteSnapshot(remoteID:original.remoteID!,requestKey:original.requestKey,state:.unknown,progress:0,checkedAt:checked)
+        let serial=try JobOperations.applyRemote(snapshot,to:original,now:checked)
+        let updated=try JobOperations.applyRemote(snapshot,to:original,observing:original,now:checked)
+        XCTAssertEqual(serial.state,.needsReview);XCTAssertEqual(serial.progress,1)
+        XCTAssertNil(serial.actual);XCTAssertTrue(serial.billingUnknown);XCTAssertEqual(serial.remoteReportedActual,Money(12))
+        XCTAssertEqual(updated.state,.needsReview);XCTAssertEqual(updated.progress,1)
+        XCTAssertNil(updated.actual);XCTAssertNil(updated.refundPending);XCTAssertTrue(updated.billingUnknown)
+        XCTAssertEqual(updated.remoteReportedActual,Money(12));XCTAssertEqual(updated.exposure,original.exposure)
+        XCTAssertEqual(try Codec.data(updated.artifacts),try Codec.data(original.artifacts))
+    }
+
+    func testCompletedRemoteLowerNonterminalReportsCannotEraseSeenSpendWithoutARefundReceipt()throws {
+        for state in [JobState.needsReview,.succeeded] {
+            var original=try completedRemote(state:state)
+            original.billing=nil;original.actual=Money(20);original.remoteReportedActual=Money(20);original.refundPending=nil
+            for observed in [RemoteSnapshot.State.queued,.running,.unknown] {
+                let checked=now.addingTimeInterval(2)
+                let snapshot=RemoteSnapshot(remoteID:original.remoteID!,requestKey:original.requestKey,state:observed,progress:0,actual:Money(0),checkedAt:checked)
+                let serial=try JobOperations.applyRemote(snapshot,to:original,now:checked)
+                let asynchronous=try JobOperations.applyRemote(snapshot,to:original,observing:original,now:checked)
+                for updated in [serial,asynchronous] {
+                    XCTAssertEqual(updated.state,state);XCTAssertEqual(updated.progress,1)
+                    XCTAssertEqual(updated.actual,Money(20));XCTAssertEqual(updated.remoteReportedActual,Money(20))
+                    XCTAssertTrue(updated.billingUnknown);XCTAssertNil(updated.refundPending)
+                    XCTAssertTrue((updated.billing ?? []).isEmpty)
+                    XCTAssertEqual(updated.exposure,original.exposure)
+                    XCTAssertEqual(try Codec.data(updated.artifacts),try Codec.data(original.artifacts))
+                }
+            }
+        }
+    }
+
     func testCompletedNeedsReviewCancellationPreservesOriginalJobBytes() throws {
         let running = try JobOperations.claim(job(), owner: "normal-worker", now: now)
         let completed = try JobOperations.finish(running, token: XCTUnwrap(running.lease).token, artifacts: artifacts(for: running), now: now.addingTimeInterval(1))

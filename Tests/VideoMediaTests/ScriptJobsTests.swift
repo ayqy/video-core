@@ -30,6 +30,97 @@ final class ScriptJobsTests:XCTestCase {
         try repository.transaction{$0.workspaces=[workspace];$0.projects=[project];$0.providers=[profile];$0.jobs=[job]}
         return(repository,try repository.read().jobs[0],profile)
     }
+    private func completedRemoteFixture(state:JobState)throws->(Repository,Job,ProviderProfile) {
+        let(repository,_,_)=try remoteFixture()
+        try repository.transaction{db in
+            // An isolated, never-configured reference makes accidental entry
+            // into credential/transport handling fail; no secret is installed.
+            db.providers[0].keyReference="never-configured-cancel-"+Codec.id()
+            var job=db.jobs[0];job.state=state;job.progress=1
+            job.artifacts=[("video.mp4","video/mp4"),("cover.png","image/png"),("captions.srt","application/x-subrip"),("publication.txt","text/plain")].map {
+                Artifact(path:"/isolated-domain-output/"+$0.0,mime:$0.1,bytes:12,sha256:Codec.hash(Data($0.0.utf8)),revision:job.revisionID)
+            }
+            for record in [BillingRecord(id:"charge",kind:.charge,money:Money(12),source:"隔离规则消耗凭据"),
+                BillingRecord(id:"refund-request",kind:.refundRequested,money:Money(5),source:"隔离规则申请凭据"),
+                BillingRecord(id:"refund-received",kind:.refundReceived,money:Money(3),source:"隔离规则到账凭据")] {
+                job=try JobOperations.reconcile(job,record:record)
+            }
+            job.remoteReportedActual=Money(12);job.billingUnknown=true;db.jobs[0]=job
+        }
+        let current=try repository.read()
+        return(repository,current.jobs[0],current.providers[0])
+    }
+    func testCompletedRemoteCancellationReturnsBeforeCredentialsWithoutWritingAnyJobState()async throws {
+        for state in [JobState.needsReview,.succeeded,.cancelled] {
+            let(repository,original,_)=try completedRemoteFixture(state:state)
+            defer{try? FileManager.default.removeItem(at:repository.root)}
+            let before=try Codec.data(repository.read())
+            let first=try await RemoteJobs.cancel(repository:repository,workspaceID:original.workspaceID,jobID:original.id,principal:"owner",ownerOnly:true)
+            XCTAssertEqual(try Codec.data(first),try Codec.data(original),state.rawValue)
+            let repeated=try await RemoteJobs.cancel(repository:repository,workspaceID:original.workspaceID,jobID:original.id,principal:"owner")
+            XCTAssertEqual(try Codec.data(repeated),try Codec.data(original),state.rawValue)
+            XCTAssertEqual(try Codec.data(repository.read()),before,"no intent transaction or generation write is allowed")
+        }
+    }
+    func testCompletedRemoteCancellationStillChecksOwnerGrantAndOriginalRevisionBinding()async throws {
+        for condition in 0..<3 {
+            let(repository,original,_)=try completedRemoteFixture(state:.succeeded)
+            defer{try? FileManager.default.removeItem(at:repository.root)}
+            if condition==2 {try repository.transaction{$0.jobs[0].digest=String(repeating:"f",count:64)}}
+            let before=try Codec.data(repository.read())
+            do {
+                _ = try await RemoteJobs.cancel(repository:repository,workspaceID:original.workspaceID,jobID:original.id,
+                    principal:condition==0 ? "editor":condition==1 ? "outsider":"owner",ownerOnly:condition==0)
+                XCTFail("completed task bypassed current authority or frozen revision binding")
+            }catch let error as VideoError {
+                if condition==2 {guard case .conflict=error else{return XCTFail("invalid original revision was not rejected")}}
+                else {guard case .permission=error else{return XCTFail("completed task did not retain its permission boundary")}}
+            }
+            XCTAssertEqual(try Codec.data(repository.read()),before)
+        }
+    }
+    func testCompletedLowLevelCancellationRefusesWithoutInventingSupplierReceiptOrReadingCredentials()async throws {
+        for state in [JobState.needsReview,.succeeded,.cancelled] {
+            let(repository,original,profile)=try completedRemoteFixture(state:state)
+            defer{try? FileManager.default.removeItem(at:repository.root)}
+            let before=try Codec.data(repository.read())
+            do {
+                _ = try await RemoteJobs.cancel(profile:profile,job:original)
+                XCTFail("completed lower-level cancel fabricated a supplier receipt")
+            }catch let error as VideoError {
+                guard case .conflict=error else{return XCTFail("completed target entered credential or transport handling")}
+            }
+            XCTAssertEqual(try Codec.data(repository.read()),before)
+        }
+    }
+    func testFreshCompletedRemoteQueriesKeepFourOutputsWhileUpdatingObservedCostAndRefundStatus()throws {
+        for state in [JobState.needsReview,.succeeded] {
+            for command in ["jobs query","worker run"] {
+                let(repository,original,profile)=try completedRemoteFixture(state:state)
+                defer{try? FileManager.default.removeItem(at:repository.root)}
+                let originalArtifacts=try Codec.data(original.artifacts),originalBilling=try Codec.data(original.billing)
+                var current=original
+                for (index,pair) in [(RemoteSnapshot.State.running,Money(20)),(.unknown,Money(0)),(.succeeded,Money(9))].enumerated() {
+                    let snapshot=RemoteSnapshot(remoteID:original.remoteID!,requestKey:original.requestKey,state:pair.0,progress:0.2,
+                        actual:pair.1,checkedAt:Date().addingTimeInterval(Double(index)))
+                    let updated=try RemoteJobs.accept(snapshot,original:current,profile:profile,repository:repository,principal:"owner",command:command)
+                    XCTAssertEqual(updated.state,state);XCTAssertEqual(updated.progress,1)
+                    XCTAssertEqual(updated.remoteID,original.remoteID);XCTAssertEqual(updated.requestKey,original.requestKey)
+                    XCTAssertEqual(updated.revisionID,original.revisionID);XCTAssertEqual(updated.digest,original.digest)
+                    XCTAssertEqual(try Codec.data(updated.quote),try Codec.data(original.quote))
+                    XCTAssertEqual(try Codec.data(updated.artifacts),originalArtifacts);XCTAssertEqual(updated.artifacts.count,4)
+                    XCTAssertEqual(try Codec.data(updated.billing),originalBilling)
+                    XCTAssertEqual(updated.actual,Money(9));XCTAssertEqual(updated.refundPending,Money(2))
+                    XCTAssertEqual(updated.remoteReportedActual,Money(index==2 ? 9:20))
+                    XCTAssertEqual(updated.billingUnknown,index != 2)
+                    XCTAssertEqual(updated.remoteCheckedAt,snapshot.checkedAt)
+                    XCTAssertEqual(updated.remoteObservationSequence,index+1)
+                    current=try repository.read().jobs[0]
+                    XCTAssertEqual(try Codec.data(current),try Codec.data(updated))
+                }
+            }
+        }
+    }
     func testDelayedRemoteQueryCannotReplaceSameSecondCancellationAndSpend()throws {
         for command in ["jobs query","worker run"] {
             let(repository,_,profile)=try remoteFixture();defer{try? FileManager.default.removeItem(at:repository.root)}

@@ -7,6 +7,80 @@ final class JobOperationTests: XCTestCase {
         return Project(workspaceID:"w",name:"演示",revision:Revision(product:p,purpose:.course,aspect:.portrait,scenes:[Scene(title:"完整",body:"内容")],cta:"了解已有课程"))
     }
     func job(provider: String = "native") throws -> Job { let p=project(); return Job(workspaceID:"w",projectID:p.id,revisionID:p.current.id,digest:try p.current.contentDigest(),requestKey:"once",quote:Quote(projectID:p.id,revisionID:p.current.id,digest:try p.current.contentDigest(),upper:Money(90),unit:"CNY",provider:provider,expiresAt:Date().addingTimeInterval(1000),confirmed:true)) }
+    private func localResumeFixture() throws -> (Database, Project, Job) {
+        var database = Database(), workspace = Workspace(name: "本机", owner: "owner")
+        workspace.id = "w"
+        let project = project(), digest = try project.current.contentDigest()
+        let quote = Quote(projectID: project.id, revisionID: project.current.id, digest: digest,
+                          upper: Money(0), unit: "CNY", provider: "native",
+                          expiresAt: Date().addingTimeInterval(-100), confirmed: true)
+        let job = Job(workspaceID: "w", projectID: project.id, revisionID: project.current.id,
+                      digest: digest, requestKey: "original-local-key", quote: quote)
+        database.workspaces = [workspace]; database.projects = [project]; database.jobs = [job]
+        return (database, project, job)
+    }
+    func testLocalQueuedResumePreservesOriginalJobAndExpiredFrozenQuote() throws {
+        var (database, project, original) = try localResumeFixture()
+        let before = try Codec.data(database.jobs)
+        let resumed = try JobRules.resumeLocal(observing: original, in: &database, workspaceID: "w",
+                                              projectID: project.id, revisionID: project.current.id, principal: "owner")
+        XCTAssertEqual(try Codec.data(resumed), try Codec.data(original))
+        XCTAssertEqual(try Codec.data(database.jobs), before)
+        XCTAssertEqual(resumed.id, original.id); XCTAssertEqual(resumed.requestKey, original.requestKey)
+    }
+    func testLocalFailedAndInterruptedResumeUsesFreshOriginalWithoutNewSubmission() throws {
+        for state in [JobState.failed, .interrupted] {
+            var (database, project, original) = try localResumeFixture()
+            original.state = state; original.attempt = 2; original.progress = 0.4
+            database.jobs = [original]
+            let resumed = try JobRules.resumeLocal(observing: original, in: &database, workspaceID: "w",
+                                                  projectID: project.id, revisionID: project.current.id, principal: "owner")
+            XCTAssertEqual(resumed.state, .queued); XCTAssertNil(resumed.lease)
+            XCTAssertEqual(resumed.id, original.id); XCTAssertEqual(resumed.attempt, 2)
+            XCTAssertEqual(resumed.requestKey, original.requestKey)
+            XCTAssertEqual(try Codec.data(resumed.quote), try Codec.data(original.quote))
+            XCTAssertEqual(database.jobs.count, 1); XCTAssertEqual(database.projects[0].current.id, project.current.id)
+        }
+    }
+    func testLocalResumeRejectsLateLifecycleAndEveryFrozenQuoteChange() throws {
+        let (base, project, original) = try localResumeFixture()
+        let newLease = try observedLease(now: Date(), owner: "new-worker")
+        let mutations: [(inout Job) -> Void] = [
+            { $0.id = Codec.id() }, { $0.workspaceID = "other" }, { $0.projectID = "other" },
+            { $0.revisionID = "other" }, { $0.digest = "other" }, { $0.requestKey = "other" },
+            { $0.createdAt = $0.createdAt.addingTimeInterval(1) },
+            { $0.quote.id = Codec.id() }, { $0.quote.projectID = "other" }, { $0.quote.revisionID = "other" },
+            { $0.quote.digest = "other" }, { $0.quote.provider = "remote" }, { $0.quote.upper = Money(1) },
+            { $0.quote.unit = "USD" }, { $0.quote.expiresAt = $0.quote.expiresAt.addingTimeInterval(1) },
+            { $0.quote.attempts += 1 }, { $0.quote.confirmed = false },
+            { $0.quote.createdAt = $0.quote.createdAt.addingTimeInterval(1) },
+            { $0.quote.breakdown = EstimateBreakdown(version: "changed", specification: "changed", source: "原价表", validFrom: Date(), expiresAt: Date(), lines: [], excluded: []) },
+            { $0.state = .cancelled }, { $0.state = .needsReview }, { $0.state = .succeeded },
+            { $0.state = .running }, { $0.attempt += 1 }, { $0.progress = 0.5 },
+            { $0.updatedAt = $0.updatedAt.addingTimeInterval(1) },
+            { $0.lease = newLease },
+            { $0.outputAssetIDs = ["new-output"] }
+        ]
+        for (index, mutation) in mutations.enumerated() {
+            var database = base; mutation(&database.jobs[0])
+            let before = try Codec.data(database)
+            XCTAssertThrowsError(try JobRules.resumeLocal(observing: original, in: &database, workspaceID: "w",
+                projectID: project.id, revisionID: project.current.id, principal: "owner"), "mutation \(index)")
+            XCTAssertEqual(try Codec.data(database), before, "mutation \(index)")
+        }
+    }
+    func testLocalResumeRechecksCurrentOwnerAndCurrentProjectDigest() throws {
+        let (base, project, original) = try localResumeFixture()
+        var otherOwner = base; otherOwner.workspaces[0].owner = "new-owner"
+        XCTAssertThrowsError(try JobRules.resumeLocal(observing: original, in: &otherOwner, workspaceID: "w",
+            projectID: project.id, revisionID: project.current.id, principal: "owner"))
+        var edited = base; edited.projects[0].revisions[0].scenes[0].body = "已变化"
+        XCTAssertThrowsError(try JobRules.resumeLocal(observing: original, in: &edited, workspaceID: "w",
+            projectID: project.id, revisionID: project.current.id, principal: "owner"))
+        var missing = base; missing.projects = []
+        XCTAssertThrowsError(try JobRules.resumeLocal(observing: original, in: &missing, workspaceID: "w",
+            projectID: project.id, revisionID: project.current.id, principal: "owner"))
+    }
     private func partialRefundJob()throws->Job {
         var j=try job(provider:"remote");j.remoteID="original";j.state = .cancelled
         j.createdAt=Date(timeIntervalSince1970:1_700_000_000);j.updatedAt=j.createdAt

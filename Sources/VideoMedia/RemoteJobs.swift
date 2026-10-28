@@ -18,7 +18,11 @@ public enum RemoteJobs {
         let database=try repository.read()
         guard let original=database.jobs.first(where:{$0.id==jobID && $0.workspaceID==workspaceID}),
               let profile=database.providers.first(where:{$0.id==original.quote.provider}) else{throw VideoError.notFound("原任务或服务配置不可用")}
-        _ = try checkedTarget(original:original,profile:profile,database:database,principal:principal,command:command,ownerOnly:ownerOnly)
+        let validated=try checkedTarget(original:original,profile:profile,database:database,principal:principal,command:command,ownerOnly:ownerOnly)
+        // Repeat cancellation is a read of the existing result. Keep authority
+        // and immutable-binding checks, but do not create intent, read a secret
+        // or send a supplier request for an already final cancellation target.
+        if cancel,validated.state.isCancellationFinal {return validated}
         let prepared:Job
         if cancel {
             try requireCancellationSupport(profile:profile)
@@ -72,6 +76,10 @@ public enum RemoteJobs {
         return try await request(profile:profile,job:job,cancel:false)
     }
     public static func cancel(profile: ProviderProfile, job: Job) async throws -> RemoteSnapshot {
+        // The repository entry returns the original job idempotently. This
+        // lower-level transport API must not fabricate a supplier observation
+        // or send a cancellation for that already-final target.
+        guard !job.state.isCancellationFinal else{throw VideoError.conflict("原任务已完成、待看听或已确认取消；未发送远端取消，请读取原产物及独立费用记录")}
         try requireCancellationSupport(profile:profile)
         return try await request(profile:profile,job:job,cancel:true)
     }

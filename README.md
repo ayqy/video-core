@@ -15,7 +15,7 @@ MacApp、旧 App、VideoGame、VideoCartoon、Premium、高级实现运行时测
 - 更新器：`video-install --help`说明固定发行者签名目录包和程序/数据成对回滚；不提供私钥、许可证或未签名安装开关。
 - Skill：参阅 `Integrations/README.md`；安装器只向用户选择的项目目录安装，不更改模型账户或读取密钥。
 - 免费包不含高级模块，模拟或卡通高级绘制请求会明确报告缺少能力；已有工程、素材和历史导出仍可读取。
-- DinoBuiltinAssets与VoicePromptBuiltinAssets仅是固定被动素材包的导入器文本；完整Mac内置图片、原音包和依赖这些资源的集成测试不在本包。普通入门配方仅另附三件固定CC0原Ogg及原作者许可，不要求安装Mac素材包。
+- DinoBuiltinAssets、VoicePromptBuiltinAssets、BubbleKnowledgeBuiltinAssets与MotaBuiltinAssets是固定被动素材包的导入器源码；完整Mac内置图片、原音包和依赖这些资源的集成测试不在本包。导入器核对原字节及来源，不能把导入成功当用途授权或声音听审。普通入门配方仅另附三件固定CC0原Ogg及原作者许可，不要求安装Mac素材包。
 - 规则测试与源文件摘要见 `SOURCE-MANIFEST.md`。此分包检查不等于编译、设备验收或公开发行已经通过。
 
 ## 独立制作入门

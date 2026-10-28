@@ -3,6 +3,8 @@ import Foundation
 public enum JobState: String, Codable, Sendable {
     case queued, running, needsReview = "needs_review", succeeded, failed, interrupted, cancelRequested = "cancel_requested", cancelled, unknownRemote = "unknown_remote", billingPending = "billing_pending"
     public var label: String { switch self { case .queued: return "排队中"; case .running: return "制作中"; case .needsReview: return "待看听审核"; case .succeeded: return "已生成"; case .failed: return "失败"; case .interrupted: return "已中断，可恢复"; case .cancelRequested: return "取消请求中"; case .cancelled: return "已取消，费用独立核对"; case .unknownRemote: return "远端状态未知，先查询"; case .billingPending: return "费用待对账" } }
+    /// A repeated cancellation cannot undo an existing output or a confirmed cancellation.
+    public var isCancellationFinal: Bool { self == .needsReview || self == .succeeded || self == .cancelled }
 }
 public struct Quote: Codable, Identifiable, Sendable {
     public var id = Codec.id(); public var projectID: String; public var revisionID: String; public var digest: String; public var upper: Money; public var unit: String; public var provider: String; public var expiresAt: Date; public var attempts: Int; public var confirmed: Bool; public var createdAt = Date()
@@ -68,7 +70,7 @@ public enum JobRules {
     public static func cancel(_ job: Job) -> Job {
         // Completion and confirmed cancellation are durable facts. A delayed UI
         // action or repeated command must retain the entire original job.
-        if [.needsReview, .succeeded, .cancelled].contains(job.state) { return job }
+        if job.state.isCancellationFinal { return job }
         var j = job; j.updatedAt = Date(); if j.videoGeneration != nil { j.message = "百度合同无取消接口，尚未发送远端取消；原任务继续查询，预算和实耗待核对"; return j }; if j.remoteID != nil || j.state == .unknownRemote || (j.quote.provider != "native" && (j.attempt>0 || j.providerAttempts?.isEmpty==false)) { j.state = .cancelRequested; j.message = "须由已核实的取消接口确认远端结果；已花费和未知占用不自动归零" } else { j.state = .cancelled; if j.quote.provider == "native" { j.actual = Money(0, j.quote.upper.currency); j.billingUnknown = false } }; return j
     }
     public static func recover(_ job: Job) throws -> Job { var j = job; guard [.interrupted, .failed, .unknownRemote].contains(j.state) else { throw VideoError.invalid("此作业无需恢复") }; if j.quote.provider != "native" { j.state = .unknownRemote; j.message = "先查询原remote_task_id，禁止重新付费提交" } else { j.state = .queued; j.message = "沿用原任务ID恢复" }; j.lease=nil; j.updatedAt = Date(); return j }
