@@ -134,6 +134,70 @@ final class PluginProcessTests:XCTestCase {
         try pipe.fileHandleForWriting.close()
         XCTAssertNil(try PluginStdioInput.readChunk(pipe.fileHandleForReading.fileDescriptor))
     }
+    func test_jsonl_buffer_preserves_fragmented_multiline_and_nonzero_indices()throws {
+        let lines=[Data("one".utf8),Data(),Data("{\"value\":\"雪\\n\"}".utf8)]
+        let tail=Data("unfinished".utf8)
+        var wire=Data();for line in lines{wire.append(line);wire.append(10)};wire.append(tail)
+        for width in 1...wire.count {
+            var buffer=PluginJSONLBuffer(),actual=[Data](),offset=0
+            while offset<wire.count {
+                let end=min(wire.count,offset+width)
+                buffer.append(Data(wire[offset..<end]));offset=end
+                while let line=buffer.popLine(){actual.append(line)}
+            }
+            XCTAssertEqual(actual,lines,"chunk width \(width)")
+            XCTAssertEqual(buffer.searchedBytes,wire.count)
+            XCTAssertEqual(buffer.takeRemainder(),tail);XCTAssertTrue(buffer.isEmpty)
+            XCTAssertNil(buffer.takeRemainder())
+        }
+        let original=Data("prefix:first\npar".utf8),slice=original.dropFirst(7)
+        XCTAssertNotEqual(slice.startIndex,0,"fixture must retain nonzero Data indices")
+        var buffer=PluginJSONLBuffer(slice)
+        XCTAssertEqual(buffer.popLine(),Data("first".utf8));XCTAssertNil(buffer.popLine())
+        buffer.append(Data("tial\nlast\n".utf8))
+        XCTAssertEqual(buffer.popLine(),Data("partial".utf8));XCTAssertEqual(buffer.popLine(),Data("last".utf8))
+        XCTAssertNil(buffer.popLine());XCTAssertTrue(buffer.isEmpty);XCTAssertNil(buffer.takeRemainder())
+        XCTAssertEqual(buffer.searchedBytes,slice.count+Data("tial\nlast\n".utf8).count)
+    }
+    func test_jsonl_buffer_preserves_eof_tails_and_existing_transport_limits()throws {
+        var buffer=PluginJSONLBuffer();buffer.append(Data("complete\ntrailing".utf8))
+        XCTAssertEqual(buffer.popLine(),Data("complete".utf8));XCTAssertNil(buffer.popLine())
+        // A response reader cannot take a partial line; only bridge-input EOF takes this tail.
+        XCTAssertEqual(buffer.takeRemainder(),Data("trailing".utf8));XCTAssertNil(buffer.takeRemainder())
+        XCTAssertNil(buffer.popLine());XCTAssertEqual(buffer.count,0)
+        func json(_ count:Int,transport:Bool)->Data {
+            let prefix=Data((transport ? "{\"__video_transport\":{\"event\":\"response\",\"peer_pid\":123},\"padding\":\"":"{\"padding\":\"").utf8),suffix=Data("\"}".utf8)
+            return prefix+Data(repeating:120,count:count-prefix.count-suffix.count)+suffix
+        }
+        let limit=PluginProtocolRules.maximumResponseBytes,exact=json(limit,transport:false)
+        buffer.append(exact);XCTAssertNil(buffer.popLine());XCTAssertEqual(buffer.count,limit)
+        let atEOF=try XCTUnwrap(buffer.takeRemainder())
+        XCTAssertEqual(atEOF,exact);XCTAssertNoThrow(try PluginBridgeWire.response(atEOF,pid:123))
+        buffer.append(json(limit+1,transport:false));buffer.append(Data([10]))
+        let oversized=try XCTUnwrap(buffer.popLine())
+        XCTAssertEqual(oversized.count,limit+1)
+        XCTAssertThrowsError(try PluginBridgeWire.response(oversized,pid:123))
+        XCTAssertNoThrow(try PluginBridgeWire.parse(json(limit+1024,transport:true)))
+        XCTAssertThrowsError(try PluginBridgeWire.parse(json(limit+1025,transport:true)))
+        // Framing must not truncate a pending oversize tail and hide it from the caller's buffer guard.
+        buffer.append(Data(repeating:120,count:limit+2049));XCTAssertNil(buffer.popLine())
+        XCTAssertEqual(buffer.count,limit+2049)
+    }
+    func test_jsonl_buffer_searches_a_large_fragmented_line_only_once()throws {
+        let prefix=Data("{\"padding\":\"".utf8),suffix=Data("\"}".utf8),size=12*1024*1024+512*1024
+        let line=prefix+Data(repeating:120,count:size-prefix.count-suffix.count)+suffix
+        var buffer=PluginJSONLBuffer(),offset=0
+        while offset<line.count {
+            let end=min(line.count,offset+65536)
+            buffer.append(Data(line[offset..<end]));offset=end
+            XCTAssertNil(buffer.popLine());XCTAssertEqual(buffer.searchedBytes,offset)
+            XCTAssertNil(buffer.popLine());XCTAssertEqual(buffer.searchedBytes,offset,"no new bytes must mean no repeated search")
+        }
+        buffer.append(Data([10]));XCTAssertEqual(buffer.popLine(),line)
+        XCTAssertEqual(buffer.searchedBytes,line.count+1);XCTAssertTrue(buffer.isEmpty)
+        buffer.append(Data("next\n".utf8));XCTAssertEqual(buffer.popLine(),Data("next".utf8))
+        XCTAssertEqual(buffer.searchedBytes,line.count+1+5);XCTAssertNil(buffer.popLine())
+    }
     func test_plugin_atlas_keeps_the_hash_validated_original_png_bytes()throws {
         let root=FileManager.default.temporaryDirectory.appendingPathComponent("original-png-"+UUID().uuidString)
         defer{try? FileManager.default.removeItem(at:root)}

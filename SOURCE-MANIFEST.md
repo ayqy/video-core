@@ -2,10 +2,10 @@
 
 VideoFree source export · package_free.py · version 1
 
-生成时间：2026-10-29 10:41:50 北京时间
+生成时间：2026-10-29 11:49:58 北京时间
 
-- 源码与必要元数据：252个文件；3893781字节（不含本清单）。
-- 整体内容指纹：`4c577803dc765ba2c9175713902ec819a5ec8dbe1771bb3ce33b609039e5fdef`。
+- 源码与必要元数据：252个文件；3899548字节（不含本清单）。
+- 整体内容指纹：`e8b933c663a0193abab4a97342175830112a605403fcbd60d77abaac7fe7d959`。
 - 来源：受控原始工程中的逐文件白名单；Package.swift与唯一免费制作workflow来自Distribution/Free精确模板，README由发行脚本生成。
 - 本包不含.git，不可作为新业务checkout；本清单生成过程不执行构建、设备验收、签名安装或公共上传，各阶段以独立证据为准。
 - 排除：App、VideoGame、VideoCartoon、Premium、高级实现运行时测试、私有仓库地址、凭据、客户数据、缓存、日志及媒体过程产物。
@@ -14,7 +14,7 @@ VideoFree source export · package_free.py · version 1
 
 | SHA-256 | 字节数 | 包内路径 / 原工程来源 |
 |---|---:|---|
-| 427c3b8d3772039dd8adbe0cdeddc41918035d7b24af1c2126a2a50c4c453d08 | 24554 | .github/workflows/free-production.yml |
+| 234dc2cd62e947c652e68b79be8c7d826252706fcf694fc5afa4026a03d1dd86 | 24554 | .github/workflows/free-production.yml |
 | 248bde3e471dd8cb7f588e56031cace869331737a21ab0ad3e4a1824d1d5213a | 34061 | Integrations/README.md |
 | 2ff174ec064ca614f24e8ba67ae5c7042a2caa883af162bafd27a8a4520d5ed7 | 26522 | Integrations/asset_reuse.py |
 | 91f902f9ceedb5b26bfae07ecd097aa47fb9e69b807eae6ff289153770655142 | 25400 | Integrations/check_install.py |
@@ -163,7 +163,7 @@ VideoFree source export · package_free.py · version 1
 | 7d9c92154321451ef83c7412812e7aee06e7e0c926f12258a29cbe7c6d17f5da | 12599 | Sources/VideoMedia/Painter.swift |
 | 76a872883c6d2197b74295532b84f28adcaf884dce0cd04325e3e46815ee925c | 4199 | Sources/VideoMedia/PaperPresentationPainter.swift |
 | a10eed97164e8f7f6f897692b3eb88e410e27ec8b6aaba7a9ea6193832917618 | 12474 | Sources/VideoMedia/PencilBuiltinAssets.swift |
-| 854ebbc4bbbbbcf0395cde151bf13c2071ba2a899ab16c7a9102157555aacbb7 | 27507 | Sources/VideoMedia/PluginProcess.swift |
+| 1087a0b8cbb7665ad37dae32e4089e75ff1b0faed514505b1ce0a098ae94ab17 | 28752 | Sources/VideoMedia/PluginProcess.swift |
 | 71710c31b4d49d28bca2d8ca05f4fa845c8ab09bdf70e86aef5561d76128c4dd | 14184 | Sources/VideoMedia/PluginRPCServer.swift |
 | b6ecc97e5f3e179f6c4daf869b94f8e8310868d84336400e11e57f0e9dff44fd | 2742 | Sources/VideoMedia/PluginXPCServer.swift |
 | 9b5a83d4b5f2d3ee77ca26d518268e9bd25b01d767d43d558b30d32a1948814a | 2806 | Sources/VideoMedia/Preview.swift |
@@ -257,7 +257,7 @@ VideoFree source export · package_free.py · version 1
 | 4e735b7700b6c618f736fd983eeab28e1dbe93f7ffe82c3e564ab997036d5642 | 23423 | Tests/VideoMediaTests/MediaTests.swift |
 | 2f24b48426df45f31fd87fcb62e727426a451cb8cb9c2949e0fc8d4238744d18 | 7697 | Tests/VideoMediaTests/NativeEncoderTests.swift |
 | 4107b55c496e037cb26708cfcfc224301c35ac98dc06598130c0219ac351f934 | 15795 | Tests/VideoMediaTests/PaperPresentationMediaTests.swift |
-| d9ca9f5a29ab99be0659bf37dba3a031a77f120a71e144a5197144f481978473 | 13664 | Tests/VideoMediaTests/PluginProcessTests.swift |
+| 43a6d2a9f2a0f5bffed66b7ba299dfc207019d53daedf6c2a565bc3f2abfed0c | 18186 | Tests/VideoMediaTests/PluginProcessTests.swift |
 | a28dfd69ed134054eb432e761061f0db09e3bb14aded4e9ce0e796af1a8c1cbb | 3748 | Tests/VideoMediaTests/RenderInvocationTests.swift |
 | f1fa3952a70af45cf3adca99715c3bab89aee643deadcdc25f76e59575e9dcf2 | 45627 | Tests/VideoMediaTests/ScriptJobsTests.swift |
 | 03edcaf754546e54eee0172e844fd13115c80b1829c720f8c6db3af3ba53282d | 7087 | Tests/VideoMediaTests/SpeechMediaTests.swift |

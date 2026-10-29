@@ -235,6 +235,34 @@ enum PluginStdioInput {
     }
 }
 
+/// Byte framing only. Callers retain their own size, EOF and authorization rules.
+struct PluginJSONLBuffer {
+    private var storage:Data
+    private var searched=0
+    // Logical bytes covered by searches, not CPU comparisons or copying work.
+    private(set) var searchedBytes=0
+    init(_ initial:Data=Data()){storage=initial}
+    var count:Int{storage.count}
+    var isEmpty:Bool{storage.isEmpty}
+    mutating func append(_ data:Data){storage.append(data)}
+    mutating func append<S:Sequence>(contentsOf bytes:S) where S.Element==UInt8{storage.append(contentsOf:bytes)}
+    mutating func popLine()->Data? {
+        guard searched<storage.count else{return nil}
+        let lower=storage.index(storage.startIndex,offsetBy:searched)
+        guard let newline=storage[lower..<storage.endIndex].firstIndex(of:10) else {
+            searchedBytes+=storage.count-searched;searched=storage.count;return nil
+        }
+        searchedBytes+=storage.distance(from:lower,to:newline)+1
+        let line=Data(storage[..<newline])
+        storage.removeSubrange(storage.startIndex...newline);searched=0
+        return line
+    }
+    mutating func takeRemainder()->Data? {
+        guard !storage.isEmpty else{return nil}
+        let remainder=storage;storage=Data();searched=0;return remainder
+    }
+}
+
 /// Trusted headless bridge. It contains no premium renderer and emits no diagnostics or input text.
 public enum PluginStdioBridge {
     public static func run()->Never {
@@ -246,7 +274,7 @@ public enum PluginStdioBridge {
         let parentMonitor=DispatchSource.makeTimerSource(queue:.global(qos:.utility))
         parentMonitor.schedule(deadline:.now()+0.5,repeating:0.5)
         parentMonitor.setEventHandler{if (try? parent.verify(method:.handshake)) == nil{_exit(125)}};parentMonitor.resume()
-        let peer=PluginBridgePeer(service:name);var scope:PluginInvocation?,buffer=Data();var failed=false
+        let peer=PluginBridgePeer(service:name);var scope:PluginInvocation?,buffer=PluginJSONLBuffer();var failed=false
         do {
             func request(_ line:Data)throws {
                 guard !line.isEmpty,line.count<=PluginProtocolRules.maximumRequestBytes else{throw VideoError.invalid("桥消息超限")}
@@ -262,10 +290,10 @@ public enum PluginStdioBridge {
             }
             while let data=try PluginStdioInput.readChunk(STDIN_FILENO) {
                 buffer.append(data)
-                while let newline=buffer.firstIndex(of:10){let line=Data(buffer[..<newline]);buffer.removeSubrange(...newline);try request(line)}
+                while let line=buffer.popLine(){try request(line)}
                 guard buffer.count<=PluginProtocolRules.maximumRequestBytes else{throw VideoError.invalid("桥消息超限")}
             }
-            if !buffer.isEmpty{try request(buffer)}
+            if let remainder=buffer.takeRemainder(){try request(remainder)}
         }catch{failed=true}
         do {try peer.close(invocation:scope);FileHandle.standardOutput.write(PluginBridgeWire.event("peer_exited",pid:peer.pid));FileHandle.standardOutput.write(Data([10]))}
         catch{failed=true;if peer.pid>1{FileHandle.standardOutput.write(PluginBridgeWire.event("transport_failed",pid:peer.pid));FileHandle.standardOutput.write(Data([10]))}}
@@ -277,7 +305,7 @@ public enum PluginStdioBridge {
 final class PluginProcessClient {
     let process=Process(),input=Pipe(),output=Pipe(),errors=Pipe();let invocation:PluginInvocation
     private let closeLock=NSLock();private var closeRequested=false
-    var buffer=Data();var stderrBytes=0;var stderrOpen=true;var peer:pid_t?;var termination:Result<Void,VideoError>?
+    var buffer=PluginJSONLBuffer();var stderrBytes=0;var stderrOpen=true;var peer:pid_t?;var termination:Result<Void,VideoError>?
     init(package:VerifiedPluginPackage,scope:RenderInvocation)throws {
         try scope.check();try PluginPackageRules.verifyFiles(package.manifest,root:package.rootURL);try PluginNativeCode.verify(root:package.rootURL,execution:package.execution)
         invocation=PluginInvocation(workspaceID:scope.workspaceID,projectID:scope.projectID,revisionID:scope.revisionID,revisionDigest:scope.revisionDigest,jobID:scope.jobID,invocationID:scope.id,budgetReference:scope.budgetReference,currency:scope.currency,budgetLimit:scope.budgetLimit.amount,deadlineUnixTime:scope.deadline.timeIntervalSince1970)
@@ -293,14 +321,15 @@ final class PluginProcessClient {
     private func next(until:Date,check:()throws->Void={})throws->Data {
         while Date()<until {
             try check()
-            if let newline=buffer.firstIndex(of:10){let line=Data(buffer[..<newline]);buffer.removeSubrange(...newline);return line}
+            if let line=buffer.popLine(){return line}
             var descriptors=[pollfd(fd:output.fileHandleForReading.fileDescriptor,events:Int16(POLLIN|POLLHUP),revents:0),pollfd(fd:stderrOpen ? errors.fileHandleForReading.fileDescriptor:-1,events:Int16(POLLIN|POLLHUP),revents:0)]
             let status=poll(&descriptors,2,25);guard status>=0 || errno==EINTR else{throw VideoError.unavailable("插件管道未能继续读取")}
             for index in 0..<2 where descriptors[index].revents != 0 {
                 var bytes=[UInt8](repeating:0,count:65536);let count=read(descriptors[index].fd,&bytes,bytes.count)
                 if count>0 {if index==0{buffer.append(contentsOf:bytes.prefix(count))}else{stderrBytes+=count}}
                 if count==0,index==1{stderrOpen=false}
-                if count==0,index==0,buffer.firstIndex(of:10)==nil{throw VideoError.unavailable("插件桥提前关闭，缺少完整退出或响应回执")}
+                // popLine above found no complete line; an EOF read appended no bytes.
+                if count==0,index==0{throw VideoError.unavailable("插件桥提前关闭，缺少完整退出或响应回执")}
             }
             guard buffer.count<=PluginProtocolRules.maximumResponseBytes+2048,stderrBytes<=1024*1024 else{throw VideoError.unavailable("插件管道输出超出有界长度")}
         }
