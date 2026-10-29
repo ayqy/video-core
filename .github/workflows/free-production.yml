@@ -13,7 +13,7 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  host-causal-stage:
+  cartoon-rig-stage:
     if: github.repository == 'ayqy/video-core' && github.event.repository.private == false
     runs-on: macos-15-intel
     timeout-minutes: 40
@@ -57,18 +57,18 @@ jobs:
               'Sources/VideoGame', 'Sources/VideoCartoon', 'Sources/VideoAdvanced'])
           # Core encoding/validation changed: execute current CLI/Core below.
           # Fixed protected bytes reject any unplanned extra native or dependency edit.
-          BASE_PUBLIC_COMMIT = 'b8f86f0e9d98213d170148358800675cff7717e8'
-          BASE_INTEGRATION_RUN = '40930534088'
-          BASE_NATIVE_RUN = '40915484069'
-          ADDITIONS = {'Sources/VideoCore/StoryCausalSources.swift',
-              'Tests/VideoCoreTests/StoryCausalSourcesTests.swift',
-              'Integrations/causal_story.py', 'Integrations/test_causal_story.py'}
-          REVIEWED_CHANGED = ADDITIONS | {'Sources/VideoCore/Models.swift',
-              'Sources/VideoCore/Editing.swift', 'Sources/VideoCore/AgentSchemas.swift',
+          BASE_PUBLIC_COMMIT = 'db06ab606fbeab5ab1732290b3a9be5edb575779'
+          BASE_INTEGRATION_RUN = '40944433172'
+          BASE_NATIVE_RUN = '40944433172'
+          ADDITIONS = set()
+          REVIEWED_CHANGED = ADDITIONS | {'Sources/VideoCore/StoryActions.swift', 'Sources/VideoCore/PluginProtocol.swift',
+              'Sources/VideoCore/VendorFreeModuleTrust.swift', 'Tests/VideoCoreTests/StoryActionTests.swift',
+              'Tests/VideoCoreTests/PluginProtocolTests.swift', 'Tests/VideoCoreTests/VendorFreeModuleTrustTests.swift',
               'Integrations/story_action.py', 'Integrations/test_story_action.py',
+              'Integrations/causal_story.py', 'Integrations/test_causal_story.py',
               'Integrations/README.md', '.github/workflows/free-production.yml', 'README.md'}
-          PROTECTED_COUNT = 253
-          PROTECTED_SHA256 = 'ae4eff89485ffcda8fde3d1313943bf78f7216fd50837ebdcf6886b40ce2bcfc'
+          PROTECTED_COUNT = 252
+          PROTECTED_SHA256 = '9aee51a4c0dc2d272be5dd3f2d12857488242b53d1300460ad23b178ca024c65'
           assert ADDITIONS <= set(rows) and REVIEWED_CHANGED <= set(rows)
           protected = {name: value for name, value in rows.items() if name not in REVIEWED_CHANGED}
           digest_input = ''.join(f'{name}\0{protected[name][0]}\0{protected[name][1]}\n' for name in sorted(protected))
@@ -81,7 +81,7 @@ jobs:
                 + '; media_implementation_base_run=' + BASE_NATIVE_RUN + '; current_media_chain=not_run')
           PYCODE
 
-      - name: Validate complete causal author and story action Python rules
+      - name: Validate complete affected causal and story action Python rules
         shell: bash
         run: |
           python3 -B - <<'PYCODE'
@@ -117,7 +117,7 @@ jobs:
           print('affected_python_rules=passed; distinct_test_ids=' + str(len(expected)))
           print('affected_python_modules=' + json.dumps(dict(Counter(name.split('.')[0] for name in expected)), sort_keys=True))
           print('affected_python_test_ids_sha256=' + hashlib.sha256(inventory).hexdigest())
-          print('causal_author_rules_only=true; real_model_request=not_run; production_film=not_run')
+          print('rig_actor_rules_only=true; real_model_request=not_run; production_film=not_run')
           PYCODE
 
       - name: Build the latest standalone free CLI
@@ -164,14 +164,9 @@ jobs:
           log = Path(os.environ['RUNNER_TEMP']) / 'video-free-rules.log'
           # This selection and its actual-identity verifier match the managed local driver.
           SWIFT_SUITES = {
-              'StoryCausalSourcesTests': ('StoryCausalSourcesTests.swift', None),
               'StoryActionTests': ('StoryActionTests.swift', None),
-              'AgentSchemasTests': ('AgentSchemasTests.swift', None),
               'PluginProtocolTests': ('PluginProtocolTests.swift', None),
-              'DomainTests': ('DomainTests.swift', [
-                  'testImmutableRevisionConflictLockAndVoiceInvalidation',
-                  'testTrimSplitAndSpeedReflow',
-                  'testExtremePauseAndTrimReturnStructuredErrorsBeforeTimelineArithmetic']),
+              'VendorFreeModuleTrustTests': ('VendorFreeModuleTrustTests.swift', None),
           }
 
 
@@ -245,7 +240,7 @@ jobs:
           expected = affected_methods()
           counts = {suite: sum(item[1] == suite for item in expected) for suite in SWIFT_SUITES}
           print('affected_suite_methods=' + json.dumps(counts, sort_keys=True))
-          print('scope=new_host_causality_and_intersecting_complete_core_branches; current_media_chain=not_run')
+          print('scope=rig_v2_schema6_and_restricted_free_scope; current_media_chain=not_run')
           try:
               binary = Path(os.environ['VIDEO_FREE_BINARY']).resolve(strict=True)
               environment = dict(os.environ, VIDEO_TEST_CLI=str(binary))
@@ -277,16 +272,18 @@ jobs:
           python3 -B - <<'PYCODE'
           from pathlib import Path
           import os
-          text = ('The current public CLI build, affected Core contracts and complete causal/story Python rules passed.\n\n'
-                  'Core differs from the prior baseline, so no prior CLI build or blanket native rule result substitutes '
-                  'for these current executions. Protected payloads matched public b8f86f0e9d98213d170148358800675cff7717e8. '
-                  'Its successful run 40930534088 retains unchanged asset/provenance rule evidence; earlier run '
-                  '40915484069 retains evidence of unchanged media implementations. The old complete movie chain '
-                  'was not rerun for this commit.\n\n'
-                  'Host-only causality, old scenes without the optional field and plugin non-disclosure are covered by '
-                  'the affected Core tests. Actual trusted game/cartoon production and source recovery require their '
-                  'separate current receipts. No rights, paid entitlement, voice, caption or whole-film approval is '
-                  'inferred from source publication or rules.\n')
+          text = ('The current public CLI build, complete StoryAction/PluginProtocol/VendorFree classes '
+                  'and complete causal_story/story_action Python rules passed.\n\n'
+                  'Rig version 2 explicitly requires cartoon schema6 and allows at most eight actors. '
+                  'Legacy rig1/cartoon5 remain bounded and compatible; restricted issuer, permissions, '
+                  'free/closed scope and policy9 are unchanged. Protected payloads matched public '
+                  'db06ab606fbeab5ab1732290b3a9be5edb575779. Its actual successful Free production run '
+                  '40944433172 supplies unchanged causal-source, Domain and AgentSchemas branch evidence; '
+                  'their fixtures use the unchanged nil/rig1 invocation conditions. Those classes and the '
+                  'complete old media chain were not rerun for this commit.\n\n'
+                  'Closed cartoon painter/server rules, actual stable signing, three-method preflight/peer exit, '
+                  'issuance and current mixed game7/cartoon6 catalog recovery require separate native receipts. '
+                  'Source publication grants no rights, paid entitlement or voice/caption/whole-film approval.\n')
           with Path(os.environ['GITHUB_STEP_SUMMARY']).open('a') as stream:
               stream.write(text)
           print('current_native_build=passed; current_affected_swift_rules=passed; affected_python_rules=passed')

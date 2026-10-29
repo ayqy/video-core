@@ -38,7 +38,7 @@ final class VendorFreeModuleTrustTests: XCTestCase {
     }
     func testCompleteFreeClosedPairPassesForOnlyCurrentModuleSchemasAndBothArchitectures()throws {
         let key=Curve25519.Signing.PrivateKey()
-        for id in ["video.game","video.cartoon"] {for architecture in ["arm64","x86_64"] {for schema in (id == "video.game" ? [6,7]:[4,5]) {
+        for id in ["video.game","video.cartoon"] {for architecture in ["arm64","x86_64"] {for schema in (id == "video.game" ? [6,7]:[4,5,6]) {
             var (manifest,policy)=try values(id:id,architecture:architecture);manifest.module.inputSchema=schema
             let documents=try pair(manifest,policy,key:key)
             let verified=try verify(documents,key:key)
@@ -193,5 +193,25 @@ final class VendorFreeModuleTrustTests: XCTestCase {
         XCTAssertThrowsError(try ManagedPayloadRules.validate(original+[resource],product:.coreCLI))
         var malformed=resource;malformed.bytes=31
         XCTAssertThrowsError(try ManagedPayloadRules.validate(original+[malformed],product:.advancedCLI,format:2))
+    }
+    func testRestrictedCartoonSixAddsNoPaidOpenFutureOrPermissionAuthority()throws {
+        let key=Curve25519.Signing.PrivateKey()
+        for architecture in ["arm64","x86_64"] {
+            var (manifest,policy)=try values(id:"video.cartoon",architecture:architecture);manifest.module.inputSchema=6
+            let verified=try verify(pair(manifest,policy,key:key),key:key)
+            XCTAssertEqual(verified.0.module.inputSchema,6);XCTAssertEqual(verified.1.access,"free");XCTAssertEqual(verified.1.sourceVisibility,"closed")
+            for index in 0..<6 {
+                var changed=manifest,terms=policy
+                switch index {
+                case 0:changed.module.inputSchema=7
+                case 1:terms.access="paid"
+                case 2:terms.sourceVisibility="open";changed.module.sourceVisibility="open"
+                case 3:changed.module.permissions=["network"]
+                case 4:changed.module.outputSchema=2
+                default:changed.module.capabilities=["editor.export"]
+                }
+                XCTAssertThrowsError(try verify(pair(changed,terms,key:key),key:key),"cartoon6 scope \(architecture) \(index)")
+            }
+        }
     }
 }

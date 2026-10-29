@@ -65,6 +65,17 @@ class StoryActionTests(unittest.TestCase):
         value['scenes'][0]['causality']['untyped']=True
         with self.assertRaises(StoryError):compile_story(project(),value)
 
+    def test_explicit_rig_two_supports_eight_independent_actors_without_widening_rig_one(self):
+        value=plan();entry=value['scenes'][0];entry['mode']='cartoon'
+        entry['rig']=dict(version=2,actors=[dict(id='actor-'+str(i)) for i in range(8)],cues=[])
+        scene=compile_story(project(),value)['edits'][0]['replaceScene']['_1']
+        self.assertEqual(scene['cartoonRig']['version'],2);self.assertEqual(len(scene['cartoonRig']['actors']),8)
+        for version,count in ((1,5),(2,9),(3,1),(True,1)):
+            changed=copy.deepcopy(value);changed['scenes'][0]['rig'].update(version=version,actors=[dict(id='actor-'+str(i)) for i in range(count)])
+            with self.subTest(version=version,count=count),self.assertRaises(StoryError):compile_story(project(),changed)
+        value['scenes'][0]['rig'].update(version=1,actors=[dict(id='actor-'+str(i)) for i in range(4)])
+        self.assertEqual(len(compile_story(project(),value)['edits']),1)
+
     def test_dry_run_rejection_never_submits_edit(self):
         calls = []
         def invoke(command, body, dry):

@@ -161,10 +161,10 @@ public struct CartoonRigActorFrame:Equatable,Sendable {
 }
 public struct CartoonRig:Codable,Equatable,Sendable {
     public var version=1;public var actors:[CartoonRigActor];public var cues:[CartoonRigCue];public var speech:CartoonSpeechTrack?
-    public init(actors:[CartoonRigActor],cues:[CartoonRigCue]=[],speech:CartoonSpeechTrack?=nil) {self.actors=actors;self.cues=cues;self.speech=speech}
+    public init(version:Int=1,actors:[CartoonRigActor],cues:[CartoonRigCue]=[],speech:CartoonSpeechTrack?=nil) {self.version=version;self.actors=actors;self.cues=cues;self.speech=speech}
     public func validate(durationFrames:Int,voiceBinding:CartoonSpeechBinding?) throws {
         let ids=Set(actors.map(\.id))
-        guard version==1,(1...54000).contains(durationFrames),(1...4).contains(actors.count),ids.count==actors.count,cues.count<=256 else {throw VideoError.invalid("原生卡通rig版本、演员或动作数量无效")}
+        guard [1,2].contains(version),(1...54000).contains(durationFrames),(1...(version==1 ? 4:8)).contains(actors.count),ids.count==actors.count,cues.count<=256 else {throw VideoError.invalid("原生卡通rig版本、演员或动作数量无效；v1最多4人，显式v2最多8人")}
         for actor in actors {try StoryPoint(x:actor.x,y:actor.y).validate();guard StoryActionRules.identifier(actor.id),PluginProtocolRules.text(actor.name,maximum:192),actor.name.count<=48,actor.color.range(of:"^[a-fA-F0-9]{6}$",options:.regularExpression) != nil,actor.scale.isFinite,(0.25...2).contains(actor.scale) else {throw VideoError.invalid("原生卡通演员身份、颜色或尺度无效")}}
         for cue in cues {guard ids.contains(cue.actorID),cue.startFrame>=0,cue.endFrame>cue.startFrame,cue.endFrame<=durationFrames else {throw VideoError.invalid("卡通表情和肢体动作超出实际演员或源帧")}}
         for id in ids {let ordered=cues.filter{$0.actorID==id}.sorted{$0.startFrame<$1.startFrame};for i in ordered.indices.dropFirst() where ordered[i].startFrame<ordered[i-1].endFrame {throw VideoError.invalid("同一演员的rig动作不能重叠")}}

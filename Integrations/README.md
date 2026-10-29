@@ -116,7 +116,9 @@ Claude的3-turn/0.10美元上限会话与缩减后的1-turn/0.01美元上限探�
 
 旧工程没有该字段仍可读取。原始模型、完整轨迹及讲稿仅属于Host工程，不进入`PluginVisualProps`视觉白名单；正常编辑仍会使受影响确认失效。此阶段不生成角色图片、补写未运行的反事实结果、授予素材用途或自动确认声音、字幕和整片审核。
 
-运行规则：`python3 -B -m unittest discover -s Integrations -p test_causal_story.py`。正常编排依赖故事动作规则，公共CI会同时完整验证两个Python模块及实际受影响Core分支。
+运行规则：`python3 -B -m unittest discover -s Integrations -p test_causal_story.py`。共享因果作者依赖故事动作模块；按实际修改范围运行相交的完整规则。
+
+共享动作作者支持显式的`CartoonRig.version=2`，最多八个独立角色；旧`version=1`保持四人上限。rig2即使只有一名角色也需要受信cartoon schema6，不能回退给旧schema5服务。本次同时修正因果作者的条件数量预算，因此公共CI完整验证`test_causal_story.py`、`test_story_action.py`和相交Core三类。高级绘制和真实模块发行仍由各自受管阶段验证，不改变free/closed或素材用途。
 
 ### Codex受控动态工具
 

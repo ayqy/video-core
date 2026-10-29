@@ -2,7 +2,7 @@ import Foundation
 
 public enum PluginInputCompatibility {
     public static func supports(pluginID: String, version: Int) -> Bool {
-        version == 1 || (pluginID == "video.game" && [2,3,5,6,7].contains(version)) || (pluginID == "video.cartoon" && [4,5].contains(version))
+        version == 1 || (pluginID == "video.game" && [2,3,5,6,7].contains(version)) || (pluginID == "video.cartoon" && [4,5,6].contains(version))
     }
     /// Publisher defaults match the current endpoints. Prior schemas remain
     /// explicitly selectable, before any signing identity or output transaction.
@@ -10,7 +10,7 @@ public enum PluginInputCompatibility {
         guard ["video.game", "video.cartoon"].contains(pluginID) else {
             throw VideoError.invalid("发行协议选择需要明确的游戏或卡通模块；未访问发行身份")
         }
-        guard let requested else { return pluginID == "video.game" ? 7 : 5 }
+        guard let requested else { return pluginID == "video.game" ? 7 : 6 }
         guard requested.range(of: "^[1-9][0-9]{0,2}$", options: .regularExpression) != nil,
               let version = Int(requested), supports(pluginID: pluginID, version: version) else {
             throw VideoError.invalid("发行输入协议版本不受此模块支持；未访问发行身份")
@@ -32,15 +32,18 @@ public enum PluginInputCompatibility {
         }
     }
     public static func requireCartoonSupport(_ performance: CartoonPerformance?, pluginID: String, inputSchema: Int) throws {
-        guard performance == nil || (pluginID == "video.cartoon" && [4,5].contains(inputSchema)) else {
+        guard performance == nil || (pluginID == "video.cartoon" && [4,5,6].contains(inputSchema)) else {
             throw VideoError.unavailable("此模块不支持多角色表演输入；请安装相容且受信的卡通模块，未退回单角色摆动")
         }
     }
     public static func requireStorySupport(storyActions:[StoryAction]?,gameWorld:GameWorld?,cartoonRig:CartoonRig?,pluginID:String,inputSchema:Int) throws {
         guard storyActions != nil || gameWorld != nil || cartoonRig != nil else {return}
+        if let rig=cartoonRig {
+            guard [1,2].contains(rig.version),rig.version != 2 || (pluginID=="video.cartoon" && inputSchema==6) else {throw VideoError.unavailable("显式卡通rig v2须使用cartoon6；未知rig版本不回退旧画法")}
+        }
         guard supports(pluginID:pluginID,version:inputSchema),
               (pluginID == "video.game" && inputSchema>=7 && cartoonRig==nil) ||
-              (pluginID == "video.cartoon" && inputSchema>=5 && gameWorld==nil) else {throw VideoError.unavailable("动态游戏世界、故事动作或能量卡通rig需要game7/cartoon5相容受信模块；未退回旧画面")}
+              (pluginID == "video.cartoon" && inputSchema>=5 && gameWorld==nil) else {throw VideoError.unavailable("动态游戏世界、故事动作或能量卡通rig需要game7/cartoon5相容受信模块；显式rig v2需要cartoon6，未退回旧画面")}
     }
 }
 
@@ -252,6 +255,15 @@ public enum PluginRPCSchemas {
             // Full source-layer schemas are reused from the normal agent contract.
             let host=AgentSchemas.definitions()
             for name in ["SceneLayer","Keyframe","LayerKind","DataPresentation","DataChart","DataSeries","DataValueKeyframe","CodePresentation","CodeHighlight","LayerEntrance","LayerEntranceKind"] {if let value=host[name] {result[name]=value}}
+            if pluginID=="video.cartoon" && inputSchemaVersion==6 {
+                var rig=result["CartoonRig"]!.object!,properties=rig["properties"]!.object!
+                properties["version"] = .object(["type":.string("integer"),"enum":.array([.number(1),.number(2)])])
+                var actors=properties["actors"]!.object!;actors["minItems"] = .number(1);actors["maxItems"] = .number(8);properties["actors"] = .object(actors)
+                rig["properties"] = .object(properties)
+                rig["if"] = .object(["properties":.object(["version":.object(["const":.number(1)])])])
+                rig["then"] = .object(["properties":.object(["actors":.object(["maxItems":.number(4)])])])
+                result["CartoonRig"] = .object(rig)
+            }
         }
         if inputSchemaVersion >= 6 {
             result["KnowledgeParticipantAppearance"]=record("participantID:s poseRoles:{s}")

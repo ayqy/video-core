@@ -146,7 +146,8 @@ def compile_story(project: dict, spec: dict) -> dict:
                  'independent cartoon requires its own rig, never game art')
             rig = entry['rig']
             object_fields(rig, ('version', 'actors', 'cues'), ('speech',))
-            need(rig['version'] == 1 and isinstance(rig['actors'], list) and 1 <= len(rig['actors']) <= 4,
+            need(type(rig['version']) is int and rig['version'] in (1, 2) and isinstance(rig['actors'], list)
+                 and 1 <= len(rig['actors']) <= (4 if rig['version'] == 1 else 8),
                  'invalid independent cartoon cast')
             subjects.update(v['id'] for v in rig['actors'])
             if scene.get('voice'):

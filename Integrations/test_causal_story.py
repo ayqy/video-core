@@ -7,7 +7,7 @@ from copy import deepcopy
 import unittest
 
 from causal_story import (BRANCHES, CausalStoryError, SOURCE_WINDOWS, check_trace_shape,
-                         compile_causal_story, make_models, make_simulation, recording_edits)
+                         compile_causal_story, make_models, make_simulation, recording_edits, canonical)
 
 
 ACTORS=('a','b','c','d','buyer','builder','fund','road')
@@ -79,6 +79,30 @@ class CausalStoryTests(unittest.TestCase):
             self.assertEqual(len(model['participants']),8);self.assertEqual(len(model['ruleTable']['states']),8)
             self.assertTrue(all(a['cost']==0 for a in model['ruleTable']['actions']))
             self.assertEqual(model['ruleTable']['initialPool'],0);self.assertEqual(model['ruleTable']['externalBudgetPerRound'],0)
+
+    def test_total_native_table_budget_counts_rules_and_every_actor_decision(self):
+        for branch,model in make_models().items():
+            table=model['ruleTable'];decisions=[r for p in table['plans'] for r in p['decisions']]
+            conditions=sum(len(r['conditions']) for r in table['rules'])+sum(len(r['conditions']) for r in decisions)
+            effects=sum(len(r['effects']) for r in table['rules'])
+            self.assertEqual(conditions,121,branch);self.assertLessEqual(conditions,128)
+            self.assertEqual(len(decisions),21);self.assertLessEqual(len(decisions),64)
+            self.assertEqual(effects,26);self.assertLessEqual(effects,128)
+            self.assertLessEqual(len(canonical(table)),64*1024)
+            for actor in ('a','b','c','d'):
+                plan=next(p for p in table['plans'] if p['actorID']==actor)
+                self.assertTrue(all(len(r['conditions'])==1 for r in plan['decisions'] if r['actionID'] in ('load','deliver','sell')))
+                for prefix in ('load-','deliver-','sale-'):
+                    rule=next(r for r in table['rules'] if r['id']==prefix+actor)
+                    self.assertTrue(any(c['kind']=='state' and c.get('actorID')=='road' and c.get('stateID')=='open' for c in rule['conditions']))
+
+    def test_blocked_round_requests_do_not_grant_goods_or_money_without_applied_effects(self):
+        value=synthetic_sources()
+        for tick,key in ((38,'load'),(44,'deliver'),(50,'sell')):
+            for actor in value['refund']['trace']['events'][tick]['actors']:
+                if actor['id'] in ('a','b','c','d'):actor['executedActionID']=key
+        plan=compile_causal_story(value,anchors())
+        self.assertFalse(any(b['sourceID']=='refund' and b['kind'] in ('stateChange','delivery','payment') for b in plan['causality']['bindings']))
 
     def test_compile_consumes_facts_without_mutating_any_native_source(self):
         sources=synthetic_sources();before=deepcopy(sources);plan=compile_causal_story(sources,anchors())

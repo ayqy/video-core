@@ -181,4 +181,25 @@ final class StoryActionTests:XCTestCase {
         XCTAssertEqual(invalidated.current.scenes[0].simulationRecordingConfirmed,false)
         XCTAssertThrowsError(try SimulationReplay.verify(scene:invalidated.current.scenes[0]))
     }
+    func testRigVersionTwoExpandsOnlyExplicitActorLimitAndRejectsUnknownVersions()throws {
+        func actors(_ count:Int)->[CartoonRigActor] {(0..<count).map{.init(id:"actor-\($0)",name:"角色\($0)",x:0.5,y:0.5)}}
+        let legacy=CartoonRig(actors:actors(4));XCTAssertEqual(legacy.version,1);try legacy.validate(durationFrames:30,voiceBinding:nil)
+        XCTAssertThrowsError(try CartoonRig(actors:actors(5)).validate(durationFrames:30,voiceBinding:nil))
+        for count in [1,4,7,8] {try CartoonRig(version:2,actors:actors(count)).validate(durationFrames:30,voiceBinding:nil)}
+        for count in [0,9] {XCTAssertThrowsError(try CartoonRig(version:2,actors:actors(count)).validate(durationFrames:30,voiceBinding:nil))}
+        for version in [0,3,99] {XCTAssertThrowsError(try CartoonRig(version:version,actors:actors(1)).validate(durationFrames:30,voiceBinding:nil))}
+        var duplicate=CartoonRig(version:2,actors:actors(7));duplicate.actors[6].id=duplicate.actors[0].id
+        XCTAssertThrowsError(try duplicate.validate(durationFrames:30,voiceBinding:nil))
+    }
+    func testVersionOneRigWireAndOriginalRMSPresentationRemainUnchanged()throws {
+        let (scene,assets)=try fixture(),rig=try XCTUnwrap(scene.cartoonRig),data=try Codec.data(rig)
+        let object=try XCTUnwrap(JSONSerialization.jsonObject(with:data) as? [String:Any])
+        XCTAssertEqual(Set(object.keys),Set(["version","actors","cues","speech"]));XCTAssertEqual(object["version"] as? Int,1)
+        let decoded=try Codec.decoder().decode(CartoonRig.self,from:data)
+        XCTAssertEqual(try Codec.data(decoded),data);XCTAssertEqual(decoded,rig)
+        for frame in [0,3,15,27,29] {XCTAssertEqual(decoded.frameState(frame:frame,durationFrames:30),rig.frameState(frame:frame,durationFrames:30))}
+        try scene.validate(assets:assets)
+        let legacy=Scene(title:"旧无rig",body:"旧镜头")
+        XCTAssertFalse(String(decoding:try Codec.data(legacy),as:UTF8.self).contains("cartoonRig"))
+    }
 }

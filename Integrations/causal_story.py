@@ -71,9 +71,13 @@ def road_models():
         if actor == 'd':
             choose('d-round3-choice', [round_is(3), resources('d', 1)], 'wait')
         if actor in HOUSEHOLDS:
-            choose(actor+'-load', [round_is(7), state_is('road', 'open'), state_is(actor, 'stocked')], 'load')
-            choose(actor+'-deliver', [round_is(8), state_is('road', 'open'), state_is(actor, 'loaded')], 'deliver')
-            choose(actor+'-sell', [round_is(9), state_is('road', 'open'), state_is(actor, 'delivered')], 'sell')
+            # Requests are round-based; only the actual effects below determine
+            # loading/delivery/payment. A closed-road request grants no result.
+            # Keep road/state/resource guards once in authoritative rules, not
+            # duplicated across every actor decision (global 128-condition cap).
+            choose(actor+'-load', [round_is(7)], 'load')
+            choose(actor+'-deliver', [round_is(8)], 'deliver')
+            choose(actor+'-sell', [round_is(9)], 'sell')
         if actor == 'builder':
             for r, state, amount in ((4, 'closed', 3), (5, 'building', 2), (6, 'building', 1)):
                 choose('build-'+str(r), [round_is(r), state_is('road', state), resources('fund', amount)], 'build')

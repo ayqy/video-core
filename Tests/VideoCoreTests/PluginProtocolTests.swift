@@ -138,11 +138,11 @@ final class PluginProtocolTests:XCTestCase {
     }
     func testPublicationSchemaSelectionUsesCurrentDefaultsAndRetainsExplicitLegacyRequests() throws {
         XCTAssertEqual(try PluginInputCompatibility.publicationSchema(pluginID: "video.game"), 7)
-        XCTAssertEqual(try PluginInputCompatibility.publicationSchema(pluginID: "video.cartoon"), 5)
+        XCTAssertEqual(try PluginInputCompatibility.publicationSchema(pluginID: "video.cartoon"), 6)
         for version in [1, 2, 3, 5, 6, 7] {
             XCTAssertEqual(try PluginInputCompatibility.publicationSchema(pluginID: "video.game", requested: String(version)), version)
         }
-        for version in [1, 4, 5] {
+        for version in [1, 4, 5, 6] {
             XCTAssertEqual(try PluginInputCompatibility.publicationSchema(pluginID: "video.cartoon", requested: String(version)), version)
         }
         for value in ["", "0", "-1", "03", "+3", "3.0", " 3", "3 ", "1e0", "true", "999999999999999999999", "3\n"] {
@@ -152,7 +152,7 @@ final class PluginProtocolTests:XCTestCase {
         XCTAssertThrowsError(try PluginInputCompatibility.publicationSchema(pluginID: "video.game", requested: "4"))
         XCTAssertThrowsError(try PluginInputCompatibility.publicationSchema(pluginID: "video.cartoon", requested: "2"))
         XCTAssertThrowsError(try PluginInputCompatibility.publicationSchema(pluginID: "video.cartoon", requested: "3"))
-        XCTAssertThrowsError(try PluginInputCompatibility.publicationSchema(pluginID: "video.cartoon", requested: "6"))
+        XCTAssertThrowsError(try PluginInputCompatibility.publicationSchema(pluginID: "video.cartoon", requested: "7"))
     }
     func testRuleTableRequiresExplicitSchemaFiveWithoutChangingEarlierShapes() throws {
         var simulation=Simulation()
@@ -194,5 +194,31 @@ final class PluginProtocolTests:XCTestCase {
         let bytes=String(decoding:try Codec.data(visual),as:UTF8.self)
         XCTAssertFalse(bytes.contains("simulationPresentation"))
         XCTAssertNil(visual.drawingScene().simulationPresentation)
+    }
+    func testRigVersionTwoRequiresCartoonSixEvenForOneActorAndKeepsLegacyFive()throws {
+        for count in [1,7,8] {
+            let rig=CartoonRig(version:2,actors:(0..<count).map{.init(id:"actor-\($0)",name:"角色\($0)",x:0.5,y:0.5)})
+            for schema in [1,4,5] {XCTAssertThrowsError(try PluginInputCompatibility.requireStorySupport(storyActions:[],gameWorld:nil,cartoonRig:rig,pluginID:"video.cartoon",inputSchema:schema))}
+            XCTAssertNoThrow(try PluginInputCompatibility.requireStorySupport(storyActions:[],gameWorld:nil,cartoonRig:rig,pluginID:"video.cartoon",inputSchema:6))
+            XCTAssertThrowsError(try PluginInputCompatibility.requireStorySupport(storyActions:[],gameWorld:nil,cartoonRig:rig,pluginID:"video.game",inputSchema:7))
+            var input=fixture(),scene=Scene(kind:.cartoon,title:"",body:"",durationFrames:30);scene.cartoonRig=rig;scene.classicArtworkRequired=false
+            input.props=PluginVisualProps(scene:scene);input.assets=[]
+            XCTAssertNoThrow(try PluginProtocolRules.validate(input,capabilityID:"cartoon.animate"))
+        }
+        let legacy=CartoonRig(actors:[.init(id:"legacy",name:"旧演员",x:0.5,y:0.5)])
+        for schema in [5,6] {XCTAssertNoThrow(try PluginInputCompatibility.requireStorySupport(storyActions:[],gameWorld:nil,cartoonRig:legacy,pluginID:"video.cartoon",inputSchema:schema))}
+        var unknown=legacy;unknown.version=3
+        XCTAssertThrowsError(try PluginInputCompatibility.requireStorySupport(storyActions:[],gameWorld:nil,cartoonRig:unknown,pluginID:"video.cartoon",inputSchema:6))
+        XCTAssertTrue(PluginInputCompatibility.supports(pluginID:"video.cartoon",version:6));XCTAssertFalse(PluginInputCompatibility.supports(pluginID:"video.cartoon",version:7))
+    }
+    func testCartoonSixDiscoveryBoundsRigTwoWithoutChangingFiveOrExposingHostCausality()throws {
+        let old=PluginRPCSchemas.definitions(inputSchemaVersion:5,pluginID:"video.cartoon"),current=PluginRPCSchemas.definitions(inputSchemaVersion:6,pluginID:"video.cartoon")
+        let oldRig=try XCTUnwrap(old["CartoonRig"]?.object),rig=try XCTUnwrap(current["CartoonRig"]?.object)
+        XCTAssertNil(oldRig["if"]);XCTAssertNil(oldRig["properties"]?.object?["actors"]?.object?["maxItems"]);XCTAssertNil(oldRig["properties"]?.object?["version"]?.object?["enum"])
+        XCTAssertEqual(rig["properties"]?.object?["version"]?.object?["enum"],.array([.number(1),.number(2)]))
+        XCTAssertEqual(rig["properties"]?.object?["actors"]?.object?["minItems"],.number(1));XCTAssertEqual(rig["properties"]?.object?["actors"]?.object?["maxItems"],.number(8))
+        XCTAssertEqual(rig["then"]?.object?["properties"]?.object?["actors"]?.object?["maxItems"],.number(4))
+        for name in ["StoryAction","CartoonRigActor","CartoonRigCue","CartoonSpeechTrack","SpeechEnergyCue"] {XCTAssertEqual(old[name],current[name],name)}
+        for name in ["StoryCausality","StoryCausalSource","StoryCausalBinding"] {XCTAssertNil(current[name],name)}
     }
 }
