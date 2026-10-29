@@ -46,6 +46,57 @@ class AssetReuseTests(unittest.TestCase):
         return GeneratedAsset(path, hashlib.sha256(path.read_bytes()).hexdigest(), request.generation_prompt,
                               "真实测试原件来源\n完整回执应由生产调用方提供", rights or self.rights)
 
+    def test_current_provenance_retains_exact_source_metadata_without_registering(self):
+        generated = self.generated()
+        self.cache.register(self.request, generated)
+        before = self.cache.database.read_bytes()
+        record = self.cache.provenance(self.request, sha256=generated.sha256)
+        self.assertEqual(record.request_key, self.request.key)
+        self.assertEqual(record.sha256, generated.sha256)
+        self.assertEqual(record.prompt, generated.prompt)
+        self.assertEqual(record.provenance, generated.provenance)
+        self.assertEqual(record.rights, generated.rights)
+        self.assertEqual(before, self.cache.database.read_bytes())
+
+    def test_provenance_refuses_missing_mismatched_revoked_and_wrong_use(self):
+        generated = self.generated()
+        with self.assertRaises(AssetReuseError):
+            self.cache.provenance(self.request, sha256=generated.sha256)
+        self.cache.register(self.request, generated)
+        for digest, use in (("0" * 64, "local_draft"), (generated.sha256, "commercial"), (generated.sha256, "upload")):
+            with self.subTest(use=use), self.assertRaises(AssetReuseError):
+                self.cache.provenance(self.request, sha256=digest, use=use)
+        self.cache.revoke(self.request)
+        with self.assertRaises(AssetReuseError):
+            self.cache.provenance(self.request, sha256=generated.sha256)
+
+    def test_provenance_refuses_expired_corrupt_or_replaced_original(self):
+        generated = self.generated()
+        self.cache.register(self.request, generated)
+        record = self.cache.provenance(self.request, sha256=generated.sha256)
+        with patch("asset_reuse.time.time", return_value=5_000_000_000):
+            with self.cache._db() as connection:
+                rights = json.loads(connection.execute("SELECT rights FROM originals WHERE id=?", (record.original_id,)).fetchone()[0])
+                rights["expires_at"] = "2000-01-01T00:00:00+00:00"
+                connection.execute("UPDATE originals SET rights=? WHERE id=?", (json.dumps(rights), record.original_id))
+            with self.assertRaises(AssetReuseError):
+                self.cache.provenance(self.request, sha256=generated.sha256)
+        with self.cache._db() as connection:
+            rights["expires_at"] = None
+            connection.execute("UPDATE originals SET rights=? WHERE id=?", (json.dumps(rights), record.original_id))
+        # A corrupt source is not turned into a successful provenance report.
+        current = self.cache.directory / "objects" / (generated.sha256 + ".png")
+        current.write_bytes(b"corrupt")
+        with self.assertRaises(AssetReuseError):
+            self.cache.provenance(self.request, sha256=generated.sha256)
+        replacement_path = self.root / "replacement.png"
+        replacement_path.write_bytes(png(marker=99))
+        replacement = self.generated(path=replacement_path)
+        self.cache.register(self.request, replacement)
+        with self.assertRaises(AssetReuseError):
+            self.cache.provenance(self.request, sha256=generated.sha256)
+        self.assertEqual(self.cache.provenance(self.request, sha256=replacement.sha256).sha256, replacement.sha256)
+
     def test_missing_without_adapter_does_not_claim_generation(self):
         plan = resolve_sources(self.cache, [self.request])
         self.assertFalse(plan.ready)

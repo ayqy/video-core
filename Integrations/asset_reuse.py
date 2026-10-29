@@ -273,6 +273,17 @@ class AssetResolution:
     generated: bool = False
 
 
+@dataclass(frozen=True)
+class AssetProvenance:
+    """One current usable original, never a cache inventory or permission grant."""
+    original_id: str
+    request_key: str
+    sha256: str
+    prompt: str
+    provenance: str
+    rights: AssetRights
+
+
 class AssetCache:
     """Caller-selected local SQLite index and content-addressed original PNGs.
 
@@ -442,6 +453,27 @@ class AssetCache:
     def resolve(self, request: AssetRequest, *, use="local_draft"):
         with self._lock(request.key):
             return self._resolve(request, use)
+
+    def provenance(self, request: AssetRequest, *, sha256: str, use="local_draft"):
+        """Return exact registered metadata only for the still-current pinned original.
+
+        Source integrity, current selection, revocation, expiry and requested use
+        are checked under the same request lock. No original is registered and
+        no verification or review is inferred by reading this record.
+        """
+        if not isinstance(request, AssetRequest) or not isinstance(sha256, str) or not re.fullmatch(r"[a-f0-9]{64}", sha256):
+            raise AssetReuseError("typed requirement and pinned original SHA-256 required")
+        with self._lock(request.key):
+            selected = self._resolve(request, use)
+            if selected.state != "available" or selected.sha256 != sha256:
+                raise AssetReuseError("selected original is no longer current or usable; resolve again")
+            with self._db() as connection:
+                row = connection.execute("SELECT originals.* FROM current JOIN originals ON original_id=id WHERE current.key=?", (request.key,)).fetchone()
+            if row is None or row["state"] != "active" or row["sha256"] != selected.sha256 or AssetRights(**json.loads(row["rights"])) != selected.rights:
+                raise AssetReuseError("selected original metadata changed; resolve again")
+            prompt = _source_text(row["prompt"], "registered source prompt")
+            provenance = _source_text(row["provenance"], "registered source provenance")
+            return AssetProvenance(row["id"], request.key, sha256, prompt, provenance, selected.rights)
 
     def _register(self, request, generated, use):
         if not isinstance(generated, GeneratedAsset) or not isinstance(generated.rights, AssetRights):

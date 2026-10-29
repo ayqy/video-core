@@ -13,15 +13,13 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  native-production:
+  game-asset-stage:
     if: github.repository == 'ayqy/video-core' && github.event.repository.private == false
     runs-on: macos-15-intel
-    timeout-minutes: 40
+    timeout-minutes: 15
     env:
       VIDEO_SOURCE_COMMIT: ${{ github.sha }}
       PYTHONDONTWRITEBYTECODE: '1'
-      HOMEBREW_NO_AUTO_UPDATE: '1'
-      HOMEBREW_NO_ENV_HINTS: '1'
     steps:
       - name: Read the exact public source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -29,61 +27,76 @@ jobs:
           ref: ${{ github.sha }}
           persist-credentials: false
 
-      - name: Verify source and fresh environment
+      - name: Verify exact source and unchanged native production inputs
         shell: bash
         run: |
-          python3 - <<'PY'
+          python3 -B - <<'PYCODE'
           from pathlib import Path
-          import hashlib, os, platform, plistlib, re, subprocess
+          import ast, hashlib, os, re, subprocess, sys
           root = Path(os.environ['GITHUB_WORKSPACE'])
           head = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=root, text=True).strip()
           assert head == os.environ['VIDEO_SOURCE_COMMIT']
           manifest = (root / 'SOURCE-MANIFEST.md').read_text()
-          rows = re.findall(r'(?m)^\| ([a-f0-9]{64}) \| ([0-9]+) \| ([^|\n]+) \|$', manifest)
-          names = {name for digest, size, name in rows}
-          assert len(rows) == len(names) and rows
-          for digest, size, name in rows:
+          entries = re.findall(r'(?m)^\| ([a-f0-9]{64}) \| ([0-9]+) \| ([^|\n]+) \|$', manifest)
+          rows = {name: (digest, int(size)) for digest, size, name in entries}
+          assert len(entries) == len(rows) == 261
+          for name, (digest, size) in rows.items():
               relative = Path(name)
               assert not relative.is_absolute() and '..' not in relative.parts
-              data = (root / relative).read_bytes()
-              assert len(data) == int(size) and hashlib.sha256(data).hexdigest() == digest, name
+              path = root / relative
+              assert not path.is_symlink() and path.is_file()
+              assert not any(parent.is_symlink() for parent in path.parents)
+              data = path.read_bytes()
+              assert len(data) == size and hashlib.sha256(data).hexdigest() == digest, name
           metadata = {'.gitignore', 'docs/.nojekyll', 'docs/index.html', 'docs/privacy.html',
                       'docs/site.css', 'docs/support.html', 'docs/terms.html'}
           tracked = set(subprocess.check_output(['git', 'ls-files'], cwd=root, text=True).splitlines())
-          assert tracked == names | metadata | {'SOURCE-MANIFEST.md'}
+          assert tracked == set(rows) | metadata | {'SOURCE-MANIFEST.md'}
           assert not any((root / name).exists() for name in ['MacApp', 'App', 'Premium',
               'Sources/VideoGame', 'Sources/VideoCartoon', 'Sources/VideoAdvanced'])
-          apps = []
-          for base in [Path('/Applications'), Path('/System/Applications'), Path.home() / 'Applications']:
-              if base.exists():
-                  for app in base.rglob('*.app'):
-                      info = app / 'Contents/Info.plist'
-                      if info.is_file():
-                          value = plistlib.loads(info.read_bytes())
-                          if value.get('CFBundleIdentifier') in {'com.ayqy.video.mac', 'com.ayqy.video'}:
-                              apps.append(str(app))
-          assert not apps, 'Video App is installed'
-          assert not (Path.home() / 'Library/Containers/com.ayqy.video.mac').exists()
-          process = subprocess.check_output(['ps', '-axo', 'comm='], text=True)
-          assert not any('/VideoMac.app/' in line or '/知幕.app/' in line for line in process.splitlines())
-          for base in [root, Path.home() / 'Library/Application Support/Video', Path.home() / '.video']:
-              if base.exists():
-                  assert not list(base.rglob('*.videolicense'))
-                  assert not list(base.rglob('*.videoplugin'))
-                  assert not list(base.rglob('render-catalog*.videomodules'))
-          print('clean_environment=verified; app=absent; paid_module=absent; activation=not_supplied')
+          # This reviewed profile changes only the two new generic Python files,
+          # the cache's provenance API/tests, and explanatory publication text.
+          # Bind the complete remaining 254 files (including Package.swift, all
+          # native source/rules and the real production recipe) to the successful
+          # exact public baseline. A changed/new/missing file fails this plan.
+          BASE_PUBLIC_COMMIT = '70f68a8735825a11e063e2836693550102549ef2'
+          BASE_NATIVE_RUN = '40915484069'
+          ADDITIONS = {'Integrations/game_asset_production.py', 'Integrations/test_game_asset_production.py'}
+          REVIEWED_CHANGED = ADDITIONS | {'Integrations/asset_reuse.py', 'Integrations/test_asset_reuse.py',
+              'Integrations/README.md', '.github/workflows/free-production.yml', 'README.md'}
+          PROTECTED_COUNT = 254
+          PROTECTED_SHA256 = 'caffd750166a24a7be688c531127642f924f3524bca23f62d96082af979313b4'
+          assert ADDITIONS <= set(rows) and REVIEWED_CHANGED <= set(rows)
+          protected = {name: value for name, value in rows.items() if name not in REVIEWED_CHANGED}
+          digest_input = ''.join(f'{name}\0{protected[name][0]}\0{protected[name][1]}\n' for name in sorted(protected))
+          assert len(protected) == PROTECTED_COUNT and hashlib.sha256(digest_input.encode()).hexdigest() == PROTECTED_SHA256, (
+              'Native/source dependency scope changed: revise the affected validation plan before reusing evidence')
+          # The prior real CLI media/restore recipe imports only the standard
+          # library. It neither imports the changed AssetCache nor calls the new
+          # provenance API; source-byte equality above fixes this invocation mode.
+          recipe = root / 'Integrations/examples/free_production.py'
+          tree = ast.parse(recipe.read_text(), filename=str(recipe))
+          for node in ast.walk(tree):
+              if isinstance(node, ast.Import):
+                  assert all(item.name.split('.')[0] in sys.stdlib_module_names for item in node.names)
+              elif isinstance(node, ast.ImportFrom):
+                  assert node.level == 0 and (node.module or '').split('.')[0] in sys.stdlib_module_names
+              elif isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+                  assert node.func.id not in {'__import__', 'eval', 'exec', 'compile'}
           print('source_commit=' + head + '; manifest_payloads=' + str(len(rows)))
-          print('system=' + platform.platform() + '; architecture=' + platform.machine())
-          print('image=' + os.environ.get('ImageOS', 'unknown') + '; image_version=' + os.environ.get('ImageVersion', 'unknown'))
-          PY
+          print('unchanged_protected_inputs=' + str(len(protected)) + '; sha256=' + PROTECTED_SHA256)
+          print('native_prior_evidence_reused=true; base_public_commit=' + BASE_PUBLIC_COMMIT + '; successful_run=' + BASE_NATIVE_RUN)
+          print('current_native_build=false; current_swift_rules=false; current_media_chain=false; recipe_uses_changed_cache=false')
+          PYCODE
 
-      - name: Check affected story actions and speech energy rules
+      - name: Validate complete affected game asset and provenance Python rules
         shell: bash
         run: |
-          python3 -B - <<'PY'
-          import sys, unittest
+          python3 -B - <<'PYCODE'
+          from collections import Counter
+          import hashlib, json, sys, unittest
           sys.path.insert(0, 'Integrations')
-          modules = ['test_story_action', 'test_speech_energy']
+          modules = ['test_game_asset_production', 'test_asset_reuse']
           suite = unittest.TestSuite(unittest.defaultTestLoader.loadTestsFromName(name) for name in modules)
           def identities(node):
               for item in node:
@@ -93,204 +106,44 @@ jobs:
                       yield item.id()
           expected = list(identities(suite))
           assert expected and len(expected) == len(set(expected)) == suite.countTestCases()
-          result = unittest.TextTestRunner(verbosity=1).run(suite)
-          assert result.wasSuccessful() and result.testsRun == len(expected) and not result.skipped
-          print('affected_story_python_methods=' + str(len(expected)))
-          print('unchanged_host_and_tts_rules=prior_evidence_reused; model_request=not_run; account_change=not_run')
-          PY
+          assert all(identity.split('.')[0] in modules for identity in expected)
+          assert set(identity.split('.')[0] for identity in expected) == set(modules)
+          class ExactResult(unittest.TextTestResult):
+              def __init__(self, *args, **kwargs):
+                  super().__init__(*args, **kwargs)
+                  self.started_ids, self.passed_ids = [], []
+              def startTest(self, test):
+                  self.started_ids.append(test.id())
+                  super().startTest(test)
+              def addSuccess(self, test):
+                  self.passed_ids.append(test.id())
+                  super().addSuccess(test)
+          result = unittest.TextTestRunner(verbosity=1, resultclass=ExactResult).run(suite)
+          assert result.wasSuccessful() and not result.skipped
+          assert result.testsRun == len(expected) and result.started_ids == expected and result.passed_ids == expected
+          inventory = json.dumps(sorted(expected), ensure_ascii=False, separators=(',', ':')).encode()
+          print('affected_python_rules=passed; distinct_test_ids=' + str(len(expected)))
+          print('affected_python_modules=' + json.dumps(dict(Counter(name.split('.')[0] for name in expected)), sort_keys=True))
+          print('affected_python_test_ids_sha256=' + hashlib.sha256(inventory).hexdigest())
+          print('source_selection_rules_only=true; synthetic_rule_pngs=not_production_assets; native_cli_or_render_execution=false')
+          print('unchanged_story_speech_host_tts_and_purchase_rules=prior_evidence_reused; model_request=not_run; account_change=not_run')
+          PYCODE
 
-      - name: Prepare normal media tools
-        shell: bash
-        run: |
-          if ! command -v ffmpeg >/dev/null || ! command -v ffprobe >/dev/null; then
-            brew install ffmpeg
-          fi
-          ffmpeg -version | head -n 1
-          swift --version
-
-      - name: Build the standalone free CLI
-        shell: bash
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-          import hashlib, os, re, subprocess
-          root = Path(os.environ['GITHUB_WORKSPACE'])
-          scratch = Path(os.environ['RUNNER_TEMP']) / 'video-free-build'
-          log = Path(os.environ['RUNNER_TEMP']) / 'video-free-build.log'
-          result = None
-          try:
-              with log.open('wb') as stream:
-                  result = subprocess.run(['swift', 'build', '--package-path', str(root),
-                      '--scratch-path', str(scratch), '--disable-sandbox', '--jobs', '2',
-                      '-c', 'release', '--product', 'video'], stdout=stream,
-                      stderr=subprocess.STDOUT, timeout=1500)
-              lines = log.read_text(errors='replace').splitlines()
-              errors = [line[:700] for line in lines if re.search(r'error:|fatal error:', line, re.I)]
-              warnings = [line for line in lines if 'warning:' in line]
-              print('build_warnings=' + str(len(warnings)) + '; build_errors=' + str(len(errors)))
-              for line in errors[-12:]:
-                  print(line)
-              assert result.returncode == 0, 'Free CLI build failed'
-              directory = subprocess.check_output(['swift', 'build', '--package-path', str(root),
-                  '--scratch-path', str(scratch), '-c', 'release', '--show-bin-path'], text=True).strip()
-              binary = (Path(directory) / 'video').resolve(strict=True)
-              print('cli_sha256=' + hashlib.sha256(binary.read_bytes()).hexdigest())
-              with Path(os.environ['GITHUB_ENV']).open('a') as stream:
-                  stream.write('VIDEO_FREE_BINARY=' + str(binary) + '\n')
-          finally:
-              log.unlink(missing_ok=True)
-          PY
-
-      - name: Check affected shared scene, protocol and rendering rules
-        shell: bash
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-          import os, re, subprocess
-          root = Path(os.environ['GITHUB_WORKSPACE'])
-          scratch = Path(os.environ['RUNNER_TEMP']) / 'video-free-build'
-          log = Path(os.environ['RUNNER_TEMP']) / 'video-free-rules.log'
-          # Complete classes affected by shared scene/schema/protocol/drawing changes.
-          # Unchanged TTS, purchase, desktop UI and host suites retain prior evidence.
-          suites = {
-              ('VideoCoreTests', 'StoryActionTests'): (14, None),
-              ('VideoCoreTests', 'PluginProtocolTests'): (14, None),
-              ('VideoCoreTests', 'VendorFreeModuleTrustTests'): (14, None),
-              ('VideoCoreTests', 'AgentSchemasTests'): (3, None),
-              ('VideoCoreTests', 'ClassicArtworkTests'): (12, None),
-              ('VideoCoreTests', 'KnowledgeParticipantAppearanceTests'): (8, None),
-              ('VideoCoreTests', 'KnowledgeDoorSourceTests'): (6, None),
-              ('VideoCoreTests', 'KnowledgeParticipantCharacterBindingTests'): (6, None),
-              ('VideoCoreTests', 'ClassicSceneEditingTests'): (22, None),
-              ('VideoCoreTests', 'KnowledgeSoundTests'): (24, None),
-              ('VideoCoreTests', 'LayerTests'): (5, None),
-              ('VideoCoreTests', 'LayerEntranceTests'): (7, None),
-              ('VideoCoreTests', 'CartoonPerformanceTests'): (10, None),
-              ('VideoCoreTests', 'KnowledgeStoryboardTests'): (22, None),
-              ('VideoCoreTests', 'KnowledgeSimulationTests'): (25, None),
-              ('VideoCoreTests', 'KnowledgeRuleTableTests'): (21, None),
-              ('VideoCoreTests', 'KnowledgePresentationScheduleTests'): (9, None),
-              ('VideoCoreTests', 'KnowledgeCounterfactualExplanationTests'): (21, None),
-              ('VideoMediaTests', 'CinemaSubtitleTests'): (13, None),
-              ('VideoMediaTests', 'PaperPresentationMediaTests'): (11, None),
-              ('VideoMediaTests', 'DataPresentationPainterTests'): (10, None),
-              ('VideoMediaTests', 'MediaTests'): (11, None),
-              ('VideoMediaTests', 'PluginProcessTests'): (18, None),
-              ('VideoMediaTests', 'RenderInvocationTests'): (4, None),
-          }
-          method_counts = {}
-          expected_methods = set()
-          filters = []
-          for (target, suite), (source_count, selection) in suites.items():
-              source_name = ('ContentProjectTests.swift' if suite in {'ContentProjectTests', 'ProductFactsTests'}
-                             else 'ClassicArtworkTests.swift' if suite in {'KnowledgeParticipantAppearanceTests', 'KnowledgeDoorSourceTests'}
-                             else 'ClassicSceneEditingTests.swift' if suite in {'KnowledgeParticipantCharacterBindingTests', 'KnowledgeSoundTests'}
-                             else suite + '.swift')
-              source = (root / 'Tests' / target / source_name).read_text()
-              if suite in {'ContentProjectTests', 'ProductFactsTests', 'DomainTests', 'ClassicArtworkTests', 'KnowledgeParticipantAppearanceTests', 'KnowledgeDoorSourceTests', 'KnowledgeParticipantCharacterBindingTests', 'ClassicSceneEditingTests', 'KnowledgeSoundTests'}:
-                  declaration = re.search(r'(?m)^final class ' + re.escape(suite) + r'\s*:\s*XCTestCase\s*\{', source)
-                  assert declaration, suite + ' declaration missing'
-                  source = source[declaration.end():]
-                  following = re.search(r'(?m)^(?:final )?class \w+\s*:', source)
-                  if following:
-                      source = source[:following.start()]
-              methods = re.findall(r'(?m)^[ \t]*(?:@\w+(?:\([^\n)]*\))?[ \t]+)*func[ \t]+(test\w+)[ \t]*\(', source)
-              assert len(methods) == len(set(methods)), (target, suite, methods)
-              if source_count is None:
-                  assert suite == 'StoryActionTests' and 10 <= len(methods) <= 64, (suite, methods)
-              else:
-                  assert len(methods) == source_count, (target, suite, methods)
-              selected = list(selection) if selection is not None else methods
-              assert selected and len(selected) == len(set(selected)) and set(selected) <= set(methods), suite
-              method_counts[target + '.' + suite] = len(selected)
-              expected_methods.update((target, suite, method) for method in selected)
-              filters.append('^' + re.escape(target) + r'\.' + re.escape(suite) +
-                             '/(?:' + '|'.join(re.escape(method) for method in selected) + ')$')
-          expected = len(expected_methods)
-          assert len(suites) == 24 and expected == sum(method_counts.values()) == 310
-          print('affected_suite_methods=' + str(method_counts))
-          print('scope=affected_complete_classes; unchanged_modules=prior_evidence_reused; system_tts=not_run')
-          try:
-              executable = Path(os.environ['VIDEO_FREE_BINARY']).resolve(strict=True)
-              environment = dict(os.environ, VIDEO_TEST_CLI=str(executable))
-              with log.open('wb') as stream:
-                  result = subprocess.run(['swift', 'test', '--package-path', str(root),
-                      '--scratch-path', str(scratch), '--disable-sandbox', '--jobs', '2',
-                      '-c', 'release', '--filter', '|'.join(filters)],
-                      stdout=stream, stderr=subprocess.STDOUT, timeout=900, env=environment)
-              lines = log.read_text(errors='replace').splitlines()
-              errors = [line[:700] for line in lines if re.search(r'error:|fatal error:', line, re.I)]
-              for line in errors[-12:]:
-                  print(line)
-              for line in lines:
-                  if re.search(r'Executed \d+ tests?|Test Suite .* (passed|failed)', line):
-                      print(line[:700])
-              assert result.returncode == 0, 'Affected shared scene/protocol/rendering rules failed'
-              # Check actual per-method starts and passes, not a coincidentally
-              # equal summary count. Handle the Darwin and dotted XCTest names.
-              case_pattern = re.compile(
-                  r"^Test Case '(?:-\[(?:(?P<objc_target>\w+)\.)?(?P<objc_suite>\w+) "
-                  r"(?P<objc_method>test\w+)\]|(?:(?P<swift_target>\w+)\.)?"
-                  r"(?P<swift_suite>\w+)\.(?P<swift_method>test\w+))' "
-                  r"(?P<event>started|passed|failed|skipped)\b")
-              started, passed = [], []
-              for line in lines:
-                  match = case_pattern.match(line)
-                  if match is None:
-                      assert not (line.startswith("Test Case '") and
-                                  re.search(r"' (started|passed|failed|skipped)\b", line)), line[:700]
-                      continue
-                  suite = match['objc_suite'] or match['swift_suite']
-                  method = match['objc_method'] or match['swift_method']
-                  target = match['objc_target'] or match['swift_target']
-                  if target is None:
-                      candidates = {item[0] for item in expected_methods if item[1:] == (suite, method)}
-                      assert len(candidates) == 1, (suite, method)
-                      target = candidates.pop()
-                  identity = (target, suite, method)
-                  assert identity in expected_methods, ('Unexpected test executed', identity)
-                  if match['event'] == 'started':
-                      started.append(identity)
-                  elif match['event'] == 'passed':
-                      passed.append(identity)
-                  else:
-                      raise AssertionError(('Test did not pass', identity, match['event']))
-              assert len(started) == expected and set(started) == expected_methods, ('Missing/duplicate starts', sorted(expected_methods - set(started)))
-              assert len(passed) == expected and set(passed) == expected_methods, ('Missing/duplicate passes', sorted(expected_methods - set(passed)))
-              counts = [int(value) for value in re.findall(r'Executed (\d+) tests?', '\n'.join(lines))]
-              assert expected in counts, 'Affected rule execution did not cover all declared methods'
-              print('affected_rules=passed; distinct_tests=' + str(expected))
-          finally:
-              log.unlink(missing_ok=True)
-          PY
-
-      - name: Produce and restore a normal complete video
-        shell: bash
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-          import hashlib, os, subprocess, sys
-          temporary = Path(os.environ['RUNNER_TEMP']).resolve(strict=True)
-          binary = Path(os.environ['VIDEO_FREE_BINARY'])
-          digest = hashlib.sha256(binary.read_bytes()).hexdigest()
-          subprocess.run([sys.executable, '-B', 'Integrations/examples/free_production.py',
-              '--binary', str(binary), '--binary-sha256', digest,
-              '--output', str(temporary / 'video-first-production'),
-              '--cache', str(temporary / 'free-production-cache')], check=True, timeout=900)
-          PY
-
-      - name: Keep the bounded quality handoff
+      - name: Record this invocation and prior evidence boundaries
         if: success()
         shell: bash
         run: |
-          python3 - <<'PY'
+          python3 -B - <<'PYCODE'
           from pathlib import Path
           import os
-          report = Path(os.environ['RUNNER_TEMP']) / 'video-first-production/summary.md'
-          text = report.read_text()
-          assert 0 < len(text.encode()) < 64000
+          text = ('Game asset/provenance Python rules passed for this exact public commit.\n\n'
+                  'The complete protected native input set matched public 70f68a8735825a11e063e2836693550102549ef2. '
+                  'Its successful Free production run 40915484069 supplies the unchanged CLI build, shared Swift rules '
+                  'and ordinary complete video/source-restore evidence. Those stages were not repeated here.\n\n'
+                  'Real generated originals, normal workspace binding and the trusted game7 media chain require their '
+                  'separate current production receipts. Python transport rules and source publication do not grant '
+                  'source rights, paid entitlements, speech/caption confirmation or whole-film approval.\n')
           with Path(os.environ['GITHUB_STEP_SUMMARY']).open('a') as stream:
               stream.write(text)
-          print(text)
-          print('free_production=passed; quality_handoff=needs_review; app_activation=not_used')
-          PY
+          print('game_asset_python_scope=passed; native_evidence=verified_reuse; media_quality=needs_review')
+          PYCODE

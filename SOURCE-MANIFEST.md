@@ -2,10 +2,10 @@
 
 VideoFree source export · package_free.py · version 1
 
-生成时间：2026-10-30 00:46:59 北京时间
+生成时间：2026-10-30 02:23:44 北京时间
 
-- 源码与必要元数据：259个文件；4021582字节（不含本清单）。
-- 整体内容指纹：`3ae5ba7244687e1af7dc99fb7d0633cbe064a98c0a42a4fc5083900f7777460d`。
+- 源码与必要元数据：261个文件；4064445字节（不含本清单）。
+- 整体内容指纹：`2ad679c61528c285b11d64887f5fc64d390ccb49e0bfe56f1ae4c133167e3320`。
 - 来源：受控原始工程中的逐文件白名单；Package.swift与唯一免费制作workflow来自Distribution/Free精确模板，README由发行脚本生成。
 - 本包不含.git，不可作为新业务checkout；本清单生成过程不执行构建、设备验收、签名安装或公共上传，各阶段以独立证据为准。
 - 排除：App、VideoGame、VideoCartoon、Premium、高级实现运行时测试、私有仓库地址、凭据、客户数据、缓存、日志及媒体过程产物。
@@ -14,9 +14,9 @@ VideoFree source export · package_free.py · version 1
 
 | SHA-256 | 字节数 | 包内路径 / 原工程来源 |
 |---|---:|---|
-| f58fc910c478d457934cfd7911b8ad5f0016ab61f790324dab26d6a25b07637a | 16998 | .github/workflows/free-production.yml |
-| 248bde3e471dd8cb7f588e56031cace869331737a21ab0ad3e4a1824d1d5213a | 34061 | Integrations/README.md |
-| 2ff174ec064ca614f24e8ba67ae5c7042a2caa883af162bafd27a8a4520d5ed7 | 26522 | Integrations/asset_reuse.py |
+| 63ffa61fa5109dac7d7d41acc22bf1d034e9a5c739d3a8f108f151e47b96fed5 | 8986 | .github/workflows/free-production.yml |
+| 5979a0e8a6a3405d3673de27b65af743650da07d0f1937a5e728b424e94a018e | 35923 | Integrations/README.md |
+| d3fff83675a3f8fd9d161b1fd561f4113c3d06a0124e6eb9c60578e244ea88e7 | 28392 | Integrations/asset_reuse.py |
 | 91f902f9ceedb5b26bfae07ecd097aa47fb9e69b807eae6ff289153770655142 | 25400 | Integrations/check_install.py |
 | 8cae02411044ade544a6877a000d5790ff7b17d6ab781294a8aa737ea6ef8fe0 | 6866 | Integrations/check_package.py |
 | 97be2d4d0e162985ee2ef10c122aeb6a76d963c96f654d4d9af20e8f91b91898 | 33011 | Integrations/claude_stream.py |
@@ -29,6 +29,7 @@ VideoFree source export · package_free.py · version 1
 | af03ab8a8b4fdbd68030d7fca1a906912c494ee99c619916c99f98edbe0e080a | 34345 | Integrations/examples/free_production.py |
 | a00e4d4b144f3d9ed4f854b8fa31a673123959c7c6b4152079b713ebeb1fb04b | 5858 | Integrations/expressive_tts.md |
 | 28de136b08c7db6cce53a9b41457f53ba40edc69c18278fd56dadfebc03213ea | 15883 | Integrations/expressive_tts.py |
+| 31bf2eefc113e23de0ee5bda07a6872c9c5b7f00e9b3417103842bd8a1e7656a | 26182 | Integrations/game_asset_production.py |
 | f3cda5bceed4b2f2cd8832e427fdf6b83e9ecbaa4ff1fc7beaf3805bfb4573f7 | 16732 | Integrations/install.py |
 | 62f9d807ade91cb2bac3b92933ee0dbf5d957fb52619f6e4979c905d0da8527f | 3842 | Integrations/narration_reference.py |
 | 6c9e7b8a1b3a447b36d1356701559016a2ad5990499ce6c404af7314d420e5d8 | 3636 | Integrations/package.py |
@@ -49,12 +50,13 @@ VideoFree source export · package_free.py · version 1
 | 3b816e75deb8d443f0881b6a01c7721c7e85305988a7bc2d56ed6b825ad58397 | 5553 | Integrations/skills/video/references/protocol.md |
 | ffd0bd3b0c2c12fdda69b8bdeb5801cfcd09492b2d7a239ff3da8cfd70d5db8d | 5342 | Integrations/speech_energy.py |
 | 69067b615491a885232c0a5f002aff20f81cbd0c4a05d349333c0ce3b3a2ee22 | 10572 | Integrations/story_action.py |
-| 0614484a5056b4c576593e250c5d58dfedf0cd1b7e8c34e16cfc8266210f246c | 15192 | Integrations/test_asset_reuse.py |
+| 8e2b4a3758da07e9d440d7410a77b41b0a4111d7cc5ef78ab37d90899746c33e | 18404 | Integrations/test_asset_reuse.py |
 | 5445bb3a7631b593015148bff31a49bcc1d881c199f4eb94bddc8104b9deafe4 | 32261 | Integrations/test_claude_stream.py |
 | b7aefaa995a4d9b348197865d5ef309d7f704484ee379f92c9a39256716f93cb | 64107 | Integrations/test_codex_broker.py |
 | 863aeaab77ca998dd2f928a8e0feeac9cf21b6aaf61bd5dd25bea1f9decfa771 | 9771 | Integrations/test_codex_events.py |
 | 0984ebf332a60489d46380fd8601ae2dce4bdc92cabaf0919321492943285453 | 29945 | Integrations/test_codex_production.py |
 | a6be5192e921223a3bd3a5c0b0750d80c2abfac439bc2bedb5282f65ba85fca6 | 8905 | Integrations/test_discover.py |
+| f5afd95375aeaa8689af051be3029d23bb55b874fd4c41429e7375945667b8dc | 16955 | Integrations/test_game_asset_production.py |
 | a746b63b68954816b49a4e666e3472eeb9700e3c96c85047d87fd7d2e9c99b12 | 7488 | Integrations/test_pencil_production.py |
 | 5e371767fdd7f3828665ceec23bd573c81e885fa565e8e77d25e1acfa02d5910 | 10373 | Integrations/test_production_motion.py |
 | f82ae813561cfb2e11d718349d474eae4fb21ddd0da5b8056c0b11be3f372f18 | 53105 | Integrations/test_qwen_stream.py |
@@ -71,7 +73,7 @@ VideoFree source export · package_free.py · version 1
 | cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30 | 11358 | LICENSE |
 | c369f09e50d62d1a1c8eff1500888667ff7a192d0fdc7b32d39c800dfa1e9721 | 1597 | NOTICE |
 | e3dae895ffcaa4ce4470f1dc9d63eee5071f829d63cfe227360c3dabfbdd0d91 | 1213 | Package.swift |
-| c5ee9f16a76e47f144eca751c42fd86caaf6a445d05ac43770019a994433df08 | 4707 | README.md |
+| 74cfaa523dbbf2573b149b2e8dcc7966b83a73acea7c1e5cff90b98a5046e32e | 5501 | README.md |
 | bbfe59a972a3e8e09e347c04bc22c0eacd2544881af8a4b6068bfc30b38466e8 | 80 | Sources/CSQLite/module.modulemap |
 | b052d8e561e942f97b503033ecd2eaa2b35213bdbf374983efe9e68eabdfc024 | 21 | Sources/CSQLite/shim.h |
 | 347257a3cd5bcb0e501506a29ab4dc2892a46d2560a111a8d779b124e594ebb9 | 60 | Sources/CZlib/module.modulemap |
