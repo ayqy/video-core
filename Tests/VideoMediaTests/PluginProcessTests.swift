@@ -2,6 +2,7 @@ import XCTest
 import CryptoKit
 import CoreGraphics
 import ImageIO
+import Darwin
 @testable import VideoMedia
 import VideoCore
 
@@ -112,6 +113,64 @@ final class PluginProcessTests:XCTestCase {
         private let lock=NSLock();private var stored:Data?
         func set(_ data:Data?){lock.lock();stored=data;lock.unlock()}
         func get()->Data?{lock.lock();defer{lock.unlock()};return stored}
+    }
+    private func blockedOutput(_ pipe:Pipe)throws->Data {
+        let fd=pipe.fileHandleForWriting.fileDescriptor
+        guard fcntl(fd,F_SETFL,O_NONBLOCK)==0,fcntl(fd,F_SETNOSIGPIPE,1)==0 else{throw VideoError.unavailable("fixture pipe flags")}
+        let chunk=Data(repeating:90,count:65536);var prefix=Data()
+        while prefix.count<1024*1024 {
+            let count=chunk.withUnsafeBytes{Darwin.write(fd,$0.baseAddress!,chunk.count)}
+            if count>0{prefix.append(chunk.prefix(count));continue}
+            if count<0,errno==EINTR{continue}
+            guard count<0,errno==EAGAIN || errno==EWOULDBLOCK else{throw VideoError.unavailable("fixture pipe fill")}
+            return prefix
+        }
+        throw VideoError.unavailable("fixture did not reach actual pipe backpressure")
+    }
+    func test_pipe_output_preserves_all_bytes_across_actual_backpressure_and_eof()throws {
+        let pipe=Pipe(),prefix=try blockedOutput(pipe),payload=Data((0..<524288).map{UInt8($0%251)})
+        let release=DispatchSemaphore(value:0),done=DispatchSemaphore(value:0),received=ChunkResult()
+        defer{release.signal();try? pipe.fileHandleForWriting.close();try? pipe.fileHandleForReading.close()}
+        DispatchQueue.global().async {
+            defer{done.signal()}
+            guard release.wait(timeout:.now()+3) == .success else{return}
+            do{var bytes=Data();while let chunk=try PluginStdioInput.readChunk(pipe.fileHandleForReading.fileDescriptor){bytes.append(chunk)};received.set(bytes)}catch{received.set(nil)}
+        }
+        var checks=0
+        do{
+            try PluginPipeOutput.write(payload,descriptor:pipe.fileHandleForWriting.fileDescriptor,until:Date().addingTimeInterval(3)){
+                checks+=1;if checks==2{release.signal()}
+            }
+        }catch{release.signal();try? pipe.fileHandleForWriting.close();_ = done.wait(timeout:.now()+3);throw error}
+        try pipe.fileHandleForWriting.close()
+        XCTAssertEqual(done.wait(timeout:.now()+3),.success)
+        XCTAssertEqual(received.get(),prefix+payload);XCTAssertGreaterThan(checks,2)
+    }
+    func test_pipe_output_rechecks_revocation_while_the_pipe_remains_full()throws {
+        let pipe=Pipe(),prefix=try blockedOutput(pipe)
+        defer{try? pipe.fileHandleForWriting.close();try? pipe.fileHandleForReading.close()}
+        var checks=0
+        XCTAssertThrowsError(try PluginPipeOutput.write(Data("must not pass".utf8),descriptor:pipe.fileHandleForWriting.fileDescriptor,until:Date().addingTimeInterval(1)){
+            checks+=1;if checks==2{throw VideoError.permission("fixture live grant revoked")}
+        }){XCTAssertEqual($0 as? VideoError,.permission("fixture live grant revoked"))}
+        XCTAssertEqual(checks,2);try pipe.fileHandleForWriting.close()
+        var actual=Data();while let chunk=try PluginStdioInput.readChunk(pipe.fileHandleForReading.fileDescriptor){actual.append(chunk)}
+        XCTAssertEqual(actual,prefix,"revocation must not append the pending request")
+    }
+    func test_pipe_output_rejects_expired_full_closed_and_invalid_pipes()throws {
+        let pipe=Pipe(),prefix=try blockedOutput(pipe),fd=pipe.fileHandleForWriting.fileDescriptor
+        defer{try? pipe.fileHandleForWriting.close();try? pipe.fileHandleForReading.close()}
+        let pending=Data("pending".utf8)
+        XCTAssertThrowsError(try PluginPipeOutput.write(pending,descriptor:fd,until:Date().addingTimeInterval(-1),check:{}))
+        XCTAssertThrowsError(try PluginPipeOutput.write(pending,descriptor:fd,until:Date().addingTimeInterval(0.02),check:{}))
+        try pipe.fileHandleForWriting.close()
+        var actual=Data();while let chunk=try PluginStdioInput.readChunk(pipe.fileHandleForReading.fileDescriptor){actual.append(chunk)}
+        XCTAssertEqual(actual,prefix,"deadlines must not write any pending bytes")
+        let closed=Pipe();defer{try? closed.fileHandleForWriting.close()}
+        XCTAssertEqual(fcntl(closed.fileHandleForWriting.fileDescriptor,F_SETNOSIGPIPE,1),0)
+        try closed.fileHandleForReading.close()
+        XCTAssertThrowsError(try PluginPipeOutput.write(pending,descriptor:closed.fileHandleForWriting.fileDescriptor,until:Date().addingTimeInterval(1),check:{}))
+        XCTAssertThrowsError(try PluginPipeOutput.write(pending,descriptor:-1,until:Date().addingTimeInterval(1),check:{}))
     }
     func test_live_bridge_input_returns_a_short_request_before_stdin_eof()throws {
         let pipe=Pipe(),done=DispatchSemaphore(value:0),result=ChunkResult()

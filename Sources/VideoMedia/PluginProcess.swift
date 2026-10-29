@@ -301,6 +301,35 @@ public enum PluginStdioBridge {
     }
 }
 
+/// Preserve short writes without adding a fixed sleep to every full pipe.
+/// The caller still owns byte limits, peer identity and the response deadline.
+enum PluginPipeOutput {
+    static func write(_ data:Data,descriptor:Int32,until:Date,check:()throws->Void)throws {
+        var offset=0
+        while offset<data.count {
+            try check()
+            guard Date()<until else{throw VideoError.unavailable("插件请求写入超过调用截止")}
+            let count=data.withUnsafeBytes{Darwin.write(descriptor,$0.baseAddress!.advanced(by:offset),data.count-offset)}
+            if count>0{offset+=count;continue}
+            guard count<0 else{throw VideoError.unavailable("插件桥未接收完整请求")}
+            let failure=errno
+            if failure==EINTR{continue}
+            guard failure==EAGAIN || failure==EWOULDBLOCK else{throw VideoError.unavailable("插件桥未接收完整请求")}
+            // Readiness may wake immediately. Five milliseconds is only the
+            // previous authorization/cancel check interval, never a fixed nap.
+            try check()
+            let remaining=until.timeIntervalSinceNow
+            guard remaining>0 else{throw VideoError.unavailable("插件请求写入超过调用截止")}
+            var descriptorState=pollfd(fd:descriptor,events:Int16(POLLOUT),revents:0)
+            let result=poll(&descriptorState,1,Int32(max(1,min(5,ceil(remaining*1000)))))
+            if result<0{if errno==EINTR{continue};throw VideoError.unavailable("插件请求管道未能继续写入")}
+            guard descriptorState.revents & Int16(POLLERR|POLLHUP|POLLNVAL)==0 else{throw VideoError.unavailable("插件桥在完整请求前关闭")}
+            // Timeout, interruption and readiness all return through the same
+            // live scope check before another byte can be written.
+        }
+    }
+}
+
 /// One exact render invocation owns one headless bridge and one isolated XPC process.
 final class PluginProcessClient {
     let process=Process(),input=Pipe(),output=Pipe(),errors=Pipe();let invocation:PluginInvocation
@@ -338,11 +367,7 @@ final class PluginProcessClient {
     func exchange(_ request:PluginRPCRequest,scope:RenderInvocation)throws->PluginRPCResponse {
         try check(scope);guard request.invocation==invocation || request.input?.invocation==invocation else{throw VideoError.permission("插件请求不属于原完整调用")}
         var data=try Codec.data(request);guard data.count<=PluginProtocolRules.maximumRequestBytes else{throw VideoError.invalid("插件请求超过有界长度")};data.append(10)
-        var offset=0
-        while offset<data.count {
-            try check(scope);let count=data.withUnsafeBytes{write(input.fileHandleForWriting.fileDescriptor,$0.baseAddress!.advanced(by:offset),data.count-offset)}
-            if count>0{offset+=count}else if errno==EAGAIN || errno==EINTR{Thread.sleep(forTimeInterval:0.005)}else{throw VideoError.unavailable("插件桥未接收完整请求")}
-        }
+        try PluginPipeOutput.write(data,descriptor:input.fileHandleForWriting.fileDescriptor,until:scope.deadline){try self.check(scope)}
         let answer=try next(until:min(scope.deadline,Date().addingTimeInterval(10))){try self.check(scope)};try check(scope)
         let(event,pid)=try PluginBridgeWire.parse(answer)
         guard event=="response",peer==nil || peer==pid else{throw VideoError.permission("插件响应来自其他进程或不是方法回执")};peer=pid

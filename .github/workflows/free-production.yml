@@ -291,7 +291,7 @@ jobs:
               ('VideoMediaTests', 'DataPresentationPainterTests'): (10, None),
               ('VideoMediaTests', 'AudioMixMediaTests'): (9, None),
               ('VideoMediaTests', 'ScriptJobsTests'): (32, None),
-              ('VideoMediaTests', 'PluginProcessTests'): (15, None),
+              ('VideoMediaTests', 'PluginProcessTests'): (18, None),
               ('VideoMediaTests', 'RenderInvocationTests'): (4, None),
               ('VideoCoreTests', 'AgentJobAccessTests'): (9, None),
               ('VideoCoreTests', 'JobOperationTests'): (26, None),
@@ -334,7 +334,7 @@ jobs:
               filters.append('^' + re.escape(target) + r'\.' + re.escape(suite) +
                              '/(?:' + '|'.join(re.escape(method) for method in selected) + ')$')
           expected = len(expected_methods)
-          assert expected == sum(method_counts.values()) == 699
+          assert expected == sum(method_counts.values()) == 702
           print('affected_suite_methods=' + str(method_counts))
           print('system_tts_methods=not_selected; import_only_methods=2')
           try:
