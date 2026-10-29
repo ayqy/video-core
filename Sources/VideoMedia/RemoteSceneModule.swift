@@ -8,12 +8,38 @@ public protocol ScopedSceneRenderModule:SceneRenderModule {
     func close(invocationID:String)throws
 }
 
+/// Advisory zero-cost preflight, scoped to one immutable visual input group.
+/// Execute still receives and validates each complete frame; this is never an
+/// authorization, task, raster or live-scope cache. Retain only the last group.
+struct PluginFramePreflight {
+    private var accepted:PluginFrameInput?
+    mutating func perform(_ input:PluginFrameInput,digest:String,check:()throws->Void,
+                          exchange:(PluginMethod)throws->PluginRPCResponse)throws {
+        try check()
+        if var previous=accepted {
+            previous.sourceFrame=input.sourceFrame
+            if previous==input {return}
+        }
+        for method in [PluginMethod.validate,.estimate] {
+            try check()
+            let answer=try exchange(method)
+            guard answer.inputDigest==digest,answer.cost?.budgetReference==input.invocation.budgetReference,
+                  answer.cost?.actual==Money(0,input.invocation.currency),answer.task==nil else {
+                throw VideoError.permission("插件预检/费用不属于原冻结输入或预算")
+            }
+        }
+        try check()
+        accepted=input
+    }
+}
+
 /// No closed implementation is linked here. Each scope talks to its verified package's service.
 public final class RemoteSceneModule:ScopedSceneRenderModule,@unchecked Sendable {
     public let package:VerifiedPluginPackage
     public var manifest:PluginManifest{package.module}
     private final class Session {
         let client:PluginProcessClient;let mutex=NSLock();let cancellation:RenderCancellation
+        var preflight=PluginFramePreflight()
         init(_ client:PluginProcessClient,cancellation:RenderCancellation){self.client=client;self.cancellation=cancellation}
     }
     private let mutex=NSLock()
@@ -63,9 +89,8 @@ public final class RemoteSceneModule:ScopedSceneRenderModule,@unchecked Sendable
         let props=PluginVisualProps(scene:scene),client=session.client
         let input=PluginFrameInput(invocation:client.invocation,props:props,sourceFrame:localFrame,fps:fps,canvasWidth:context.width,canvasHeight:context.height,rect:PluginRect(x:rect.minX,y:rect.minY,width:rect.width,height:rect.height),assets:try resources.pluginRasterAssets(props:props))
         try PluginProtocolRules.validate(input,capabilityID:manifest.capabilities[0]);let digest=try input.contentDigest()
-        for method in [PluginMethod.validate,.estimate] {
-            let answer=try client.exchange(PluginRPCRequest(requestID:Codec.id(),method:method,input:input,invocation:client.invocation),scope:invocation)
-            guard answer.inputDigest==digest,answer.cost?.budgetReference==client.invocation.budgetReference,answer.cost?.actual==Money(0,client.invocation.currency),answer.task==nil else{throw VideoError.permission("插件预检/费用不属于原冻结输入或预算")}
+        try session.preflight.perform(input,digest:digest,check:{try invocation.check()}) { method in
+            try client.exchange(PluginRPCRequest(requestID:Codec.id(),method:method,input:input,invocation:client.invocation),scope:invocation)
         }
         var answer=try client.exchange(PluginRPCRequest(requestID:digest+"-execute",method:.execute,input:input,invocation:client.invocation),scope:invocation)
         guard let initial=answer.task else{throw VideoError.unavailable("插件没有返回原帧的异步任务")}

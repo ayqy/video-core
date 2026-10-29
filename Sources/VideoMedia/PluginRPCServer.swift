@@ -10,6 +10,8 @@ public final class PluginRPCServer:@unchecked Sendable {
     private let descriptor:PluginDescription
     private let module:any SceneRenderModule
     private let lock=NSLock()
+    private let resourceLock=NSLock()
+    private var resourceBank:(assets:[PluginRasterAsset],resources:RenderResources)?
     private let drawing=DispatchQueue(label:"video.plugin.actual-drawing",qos:.userInitiated)
     private let terminate:@Sendable ()->Void
     private let taskTimeout:Double
@@ -89,6 +91,15 @@ public final class PluginRPCServer:@unchecked Sendable {
         _=try scope(request);try PluginInputCompatibility.requireKnowledgeSupport(value.props.simulation,pluginID:descriptor.pluginID,inputSchema:descriptor.inputSchemaVersion,appearances:value.props.artwork?.knowledgeParticipants);try PluginInputCompatibility.requireCartoonSupport(value.props.cartoonPerformance,pluginID:descriptor.pluginID,inputSchema:descriptor.inputSchemaVersion);try PluginProtocolRules.validate(value,capabilityID:descriptor.capabilityID)
         return value
     }
+    private func resources(_ assets:[PluginRasterAsset])throws->RenderResources {
+        resourceLock.lock();defer{resourceLock.unlock()}
+        // Full value equality includes actual bytes, hash, dimensions and IDs.
+        // The caller still validates the complete input and live invocation.
+        if let bank=resourceBank,bank.assets==assets {return bank.resources}
+        let decoded=try RenderResources.pluginResources(assets:assets)
+        resourceBank=(assets,decoded)
+        return decoded
+    }
     private func handle(_ request:PluginRPCRequest)throws->PluginRPCResponse {
         switch request.method {
         case .handshake,.describe:
@@ -100,10 +111,12 @@ public final class PluginRPCServer:@unchecked Sendable {
             return PluginRPCResponse(requestID:request.requestID,ok:true,state:state,descriptor:descriptor)
         case .validate,.estimate:
             let value=try input(request)
-            _=try RenderResources.pluginResources(assets:value.assets)
+            _=try resources(value.assets)
             return PluginRPCResponse(requestID:request.requestID,ok:true,state:"validated",inputDigest:try value.contentDigest(),cost:PluginCost(currency:value.invocation.currency,budgetReference:value.invocation.budgetReference))
         case .execute:
             let value=try input(request),digest=try value.contentDigest()
+            let resources=try resources(value.assets)
+            try PluginProtocolRules.validate(value.invocation)
             lock.lock()
             if let previous=executeReceipts[request.requestID] {
                 guard previous.digest==digest else{lock.unlock();throw VideoError.conflict("同执行请求标识对应不同冻结输入")}
@@ -120,7 +133,9 @@ public final class PluginRPCServer:@unchecked Sendable {
             timer.schedule(deadline:.now()+min(taskTimeout,value.invocation.deadlineUnixTime-Date().timeIntervalSince1970));timer.setEventHandler{[weak self] in self?.expire(taskID:task.taskID)}
             taskWatchdog=timer;timer.resume()
             lock.unlock()
-            drawing.async{[weak self] in self?.draw(value,taskID:task.taskID,digest:digest)}
+            // Bind this task's immutable bank before another preflight can
+            // replace the one-entry cache while drawing is queued or blocked.
+            drawing.async{[weak self] in self?.draw(value,resources:resources,taskID:task.taskID,digest:digest)}
             return PluginRPCResponse(requestID:request.requestID,ok:true,state:"running",inputDigest:digest,task:task,cost:PluginCost(currency:value.invocation.currency,budgetReference:value.invocation.budgetReference))
         case .progress,.cancel:
             let expected=try scope(request)
@@ -142,12 +157,11 @@ public final class PluginRPCServer:@unchecked Sendable {
             return PluginRPCResponse(requestID:request.requestID,ok:true,state:task.state.rawValue,inputDigest:task.inputDigest,task:task,cost:PluginCost(currency:expected.currency,budgetReference:expected.budgetReference))
         }
     }
-    private func draw(_ input:PluginFrameInput,taskID:String,digest:String) {
+    private func draw(_ input:PluginFrameInput,resources:RenderResources,taskID:String,digest:String) {
         do {
             lock.lock();let canDraw = !closing && tasks[taskID]?.state == .running;lock.unlock()
             guard canDraw else{return finishCancelled(taskID)}
             try PluginProtocolRules.validate(input,capabilityID:descriptor.capabilityID)
-            let resources=try RenderResources.pluginResources(assets:input.assets)
             let w=input.canvasWidth,h=input.canvasHeight,r=input.rect
             guard let context=CGContext(data:nil,width:w,height:h,bitsPerComponent:8,bytesPerRow:w*4,space:CGColorSpace(name:CGColorSpace.sRGB)!,bitmapInfo:CGImageAlphaInfo.premultipliedLast.rawValue) else{throw VideoError.unavailable("插件无法分配有界透明画布")}
             let rect=CGRect(x:r.x,y:r.y,width:r.width,height:r.height);context.clip(to:rect)

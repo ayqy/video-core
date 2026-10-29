@@ -2,10 +2,10 @@
 
 VideoFree source export · package_free.py · version 1
 
-生成时间：2026-10-29 13:51:32 北京时间
+生成时间：2026-10-29 15:40:58 北京时间
 
-- 源码与必要元数据：252个文件；3920683字节（不含本清单）。
-- 整体内容指纹：`27a3bc488ff5052af99d37673400bcd44dadf9d3ccf3a3a259bf78dd0b7fdb6b`。
+- 源码与必要元数据：252个文件；3922476字节（不含本清单）。
+- 整体内容指纹：`219a7f8fd3741b82bd763d95dceffbb81d9510dc47c2eb4dc7654d10bdad59c0`。
 - 来源：受控原始工程中的逐文件白名单；Package.swift与唯一免费制作workflow来自Distribution/Free精确模板，README由发行脚本生成。
 - 本包不含.git，不可作为新业务checkout；本清单生成过程不执行构建、设备验收、签名安装或公共上传，各阶段以独立证据为准。
 - 排除：App、VideoGame、VideoCartoon、Premium、高级实现运行时测试、私有仓库地址、凭据、客户数据、缓存、日志及媒体过程产物。
@@ -164,12 +164,12 @@ VideoFree source export · package_free.py · version 1
 | 76a872883c6d2197b74295532b84f28adcaf884dce0cd04325e3e46815ee925c | 4199 | Sources/VideoMedia/PaperPresentationPainter.swift |
 | a10eed97164e8f7f6f897692b3eb88e410e27ec8b6aaba7a9ea6193832917618 | 12474 | Sources/VideoMedia/PencilBuiltinAssets.swift |
 | 6f71e49b2d9621bb8cbfb9fbd1817f6a639c5c781358dc8438ffbfbaf289cb4f | 30351 | Sources/VideoMedia/PluginProcess.swift |
-| 71710c31b4d49d28bca2d8ca05f4fa845c8ab09bdf70e86aef5561d76128c4dd | 14184 | Sources/VideoMedia/PluginRPCServer.swift |
+| e3fb16ba22f72d562c7a0d097cba2c63266a5a26d911dc53bc2789f58b07501b | 15025 | Sources/VideoMedia/PluginRPCServer.swift |
 | b6ecc97e5f3e179f6c4daf869b94f8e8310868d84336400e11e57f0e9dff44fd | 2742 | Sources/VideoMedia/PluginXPCServer.swift |
 | 9b5a83d4b5f2d3ee77ca26d518268e9bd25b01d767d43d558b30d32a1948814a | 2806 | Sources/VideoMedia/Preview.swift |
 | 4eccc0ef4b35ea271e2ce6333c42c694567e76617cab5e83238ac601879e5af2 | 8745 | Sources/VideoMedia/ProviderClient.swift |
 | f5aacbebebab273379616f4889ededbfe5f7a8f4ca39ada829e495fd3fa84cc1 | 10429 | Sources/VideoMedia/RemoteJobs.swift |
-| 2342314200b24b7dc6bd3ea8365bf8d1189e226702331125546e8a9f43fd83cd | 9531 | Sources/VideoMedia/RemoteSceneModule.swift |
+| 1388a56f3e18b35fb96dc36600872acd396c07a81a2cc0d9aea66a777de86c51 | 10483 | Sources/VideoMedia/RemoteSceneModule.swift |
 | 99c32974aa3f0d3728f870ea823844ee5937133b27984209fab3f69e52ca917f | 6074 | Sources/VideoMedia/RenderInvocation.swift |
 | 07ef90ba7279c944f57afadace82d3d4dd80a6e585ac124fb6a8713d144eb7b2 | 37202 | Sources/VideoMedia/RenderModules.swift |
 | 468fc22b1ff89e310f13db29b3dba689f3d42eaf72dc1ccb577d4ffeb069c1dc | 45111 | Sources/VideoMedia/Renderer.swift |
