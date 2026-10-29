@@ -107,4 +107,30 @@ final class PluginProcessTests:XCTestCase {
         XCTAssertThrowsError(try NativeProcessProbe.run(program,[],root:root,inputData:Data(repeating:0,count:4097)))
         XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath:root.path),[])
     }
+    final class ChunkResult:@unchecked Sendable {
+        private let lock=NSLock();private var stored:Data?
+        func set(_ data:Data?){lock.lock();stored=data;lock.unlock()}
+        func get()->Data?{lock.lock();defer{lock.unlock()};return stored}
+    }
+    func test_live_bridge_input_returns_a_short_request_before_stdin_eof()throws {
+        let pipe=Pipe(),done=DispatchSemaphore(value:0),result=ChunkResult()
+        defer{try? pipe.fileHandleForWriting.close();try? pipe.fileHandleForReading.close()}
+        DispatchQueue.global().async {
+            result.set(try? PluginStdioInput.readChunk(pipe.fileHandleForReading.fileDescriptor))
+            done.signal()
+        }
+        try pipe.fileHandleForWriting.write(contentsOf:Data("one\n".utf8))
+        guard done.wait(timeout:.now()+2) == .success else {
+            // Release a broken fill-until-EOF reader before failing the assertion.
+            try? pipe.fileHandleForWriting.close()
+            XCTAssertEqual(done.wait(timeout:.now()+2),.success)
+            XCTFail("the live bridge must read a complete short request while stdin stays open")
+            return
+        }
+        XCTAssertEqual(result.get(),Data("one\n".utf8))
+        try pipe.fileHandleForWriting.write(contentsOf:Data("two\nthree\n".utf8))
+        XCTAssertEqual(try PluginStdioInput.readChunk(pipe.fileHandleForReading.fileDescriptor),Data("two\nthree\n".utf8))
+        try pipe.fileHandleForWriting.close()
+        XCTAssertNil(try PluginStdioInput.readChunk(pipe.fileHandleForReading.fileDescriptor))
+    }
 }

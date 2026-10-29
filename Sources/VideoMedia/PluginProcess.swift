@@ -220,6 +220,21 @@ private final class PluginReplyBox:@unchecked Sendable {
     func fail(){lock.lock();failed=true;lock.unlock()}
 }
 
+/// A pipe request is complete at its newline, not when the writer closes stdin.
+/// Foundation read(upToCount:) can wait for the requested count or EOF on Darwin.
+enum PluginStdioInput {
+    static func readChunk(_ descriptor:Int32)throws->Data? {
+        var bytes=[UInt8](repeating:0,count:65536)
+        while true {
+            let count=Darwin.read(descriptor,&bytes,bytes.count)
+            if count>0{return Data(bytes.prefix(count))}
+            if count==0{return nil}
+            if errno==EINTR{continue}
+            throw VideoError.unavailable("插件桥输入无法继续读取")
+        }
+    }
+}
+
 /// Trusted headless bridge. It contains no premium renderer and emits no diagnostics or input text.
 public enum PluginStdioBridge {
     public static func run()->Never {
@@ -245,7 +260,7 @@ public enum PluginStdioBridge {
                 let output=try PluginBridgeWire.response(answer,pid:peer.pid)
                 FileHandle.standardOutput.write(output);FileHandle.standardOutput.write(Data([10]))
             }
-            while let data=try FileHandle.standardInput.read(upToCount:65536),!data.isEmpty {
+            while let data=try PluginStdioInput.readChunk(STDIN_FILENO) {
                 buffer.append(data)
                 while let newline=buffer.firstIndex(of:10){let line=Data(buffer[..<newline]);buffer.removeSubrange(...newline);try request(line)}
                 guard buffer.count<=PluginProtocolRules.maximumRequestBytes else{throw VideoError.invalid("桥消息超限")}
