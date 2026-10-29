@@ -54,6 +54,17 @@ class StoryActionTests(unittest.TestCase):
         with self.assertRaises(StoryError):
             compile_story(source, value)
 
+    def test_typed_causality_is_explicitly_preserved_for_host_verification(self):
+        value=plan();causal=dict(version=1,poolSubjectID='coin',actors=[],sources=[],bindings=[])
+        value['scenes'][0]['causality']=causal
+        result=compile_story(project(),value)['edits'][0]['replaceScene']['_1']
+        self.assertEqual(result['storyCausality'],causal)
+        self.assertIsNot(result['storyCausality'],causal)
+        source=project();source['revisions'][0]['scenes'][0]['storyCausality']=causal
+        self.assertNotIn('storyCausality',compile_story(source,plan())['edits'][0]['replaceScene']['_1'])
+        value['scenes'][0]['causality']['untyped']=True
+        with self.assertRaises(StoryError):compile_story(project(),value)
+
     def test_dry_run_rejection_never_submits_edit(self):
         calls = []
         def invoke(command, body, dry):

@@ -110,6 +110,14 @@ Claude的3-turn/0.10美元上限会话与缩减后的1-turn/0.01美元上限探�
 源码包不附游戏素材或高级实现。正常绑定撤销对应声音和字幕确认，整片仍待独立审核。
 运行规则：`python3 -B -m unittest discover -s Integrations -p test_game_asset_production.py`。
 
+### 共用因果模型与故事动作
+
+`causal_story.py`提供内容设计后的共享作者API：通过Core运行因果模型并保留真实轨迹，再把轨迹中的原因和结果绑定到已经存在的`story_action.py`动作。它通过正常CLI版本编辑写入可选的Host字段`storyCausality`，不修改游戏或卡通插件ABI。
+
+旧工程没有该字段仍可读取。原始模型、完整轨迹及讲稿仅属于Host工程，不进入`PluginVisualProps`视觉白名单；正常编辑仍会使受影响确认失效。此阶段不生成角色图片、补写未运行的反事实结果、授予素材用途或自动确认声音、字幕和整片审核。
+
+运行规则：`python3 -B -m unittest discover -s Integrations -p test_causal_story.py`。正常编排依赖故事动作规则，公共CI会同时完整验证两个Python模块及实际受影响Core分支。
+
 ### Codex受控动态工具
 
 `codex_events.py`只核验有界事件流、完整命令生命周期和失败状态。`exec --json`的`command_execution`开始事件发生于进程启动之后，因此事件比对白名单只能用于事后审计，不能当作执行前许可。旧控制器未保留错误正文，原失败不能补写为认证失败；新摘要仅保留错误消息哈希、有限协议码及明确标注的模式推断，不输出原始错误或会话文本。

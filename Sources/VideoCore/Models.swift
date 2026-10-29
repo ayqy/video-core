@@ -82,6 +82,8 @@ public struct Scene: Codable, Equatable, Identifiable, Sendable {
     public var characterProfile: CharacterProfile?
     public var cartoonPerformance: CartoonPerformance?
     public var storyActions: [StoryAction]?
+    /// Host-only verified causal branches; absent in existing project encodings.
+    public var storyCausality: StoryCausality?
     public var gameWorld: GameWorld?
     public var cartoonRig: CartoonRig?
     public var narrativeSources: [NarrativeSource]?
@@ -114,6 +116,7 @@ public struct Scene: Codable, Equatable, Identifiable, Sendable {
         try LayerRules.validate(scene:self,assets:assets)
         try ClassicArtworkRules.validate(scene:self,assets:assets)
         try StorySceneRules.validate(scene:self,assets:assets)
+        try StoryCausalRules.validate(scene:self)
         if let framing=mediaFraming {
             try framing.validate()
             guard kind == .image || kind == .video,

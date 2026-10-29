@@ -93,7 +93,7 @@ def compile_story(project: dict, spec: dict) -> dict:
     need(len(scenes) == len(revision['scenes']), 'duplicate scene identity')
     edits, seen = [], set()
     for entry in entries:
-        object_fields(entry, ('scene_id', 'mode', 'actions'), ('world', 'rig', 'layers', 'artwork', 'duration_frames'))
+        object_fields(entry, ('scene_id', 'mode', 'actions'), ('world', 'rig', 'layers', 'artwork', 'duration_frames', 'causality'))
         identity = entry['scene_id']; mode = entry['mode']
         need(identity in scenes and identity not in seen and mode in ('game', 'cartoon', 'pencil'),
              'unknown, duplicate scene or presentation mode')
@@ -107,6 +107,14 @@ def compile_story(project: dict, spec: dict) -> dict:
         need(all(c['endFrame'] <= duration for c in scene.get('captions', [])), 'captions exceed new duration')
         scene['durationFrames'] = duration
         scene['storyActions'] = copy.deepcopy(entry['actions'])
+        # Explicit Host-only evidence. No PluginVisualProps payload is added.
+        # A presentation replacement clears stale prior causal bindings unless
+        # this author supplies a complete new typed causal contract.
+        scene.pop('storyCausality', None)
+        if 'causality' in entry:
+            object_fields(entry['causality'], ('version','poolSubjectID','actors','sources','bindings'))
+            need(entry['causality']['version'] == 1, 'unsupported typed story causality')
+            scene['storyCausality'] = copy.deepcopy(entry['causality'])
         # The author makes a complete explicit presentation replacement. All
         # original audio, content, rule recording and previous revisions stay.
         for old in ('gameWorld', 'cartoonRig', 'cartoonPerformance', 'paperPresentation'):

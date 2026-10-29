@@ -33,8 +33,9 @@ public enum Editor {
             case .replaceScene(let id, var scene):
                 guard let i = revision.scenes.firstIndex(where: { $0.id == id }) else { throw VideoError.notFound("片段不存在") }; let old = revision.scenes[i]; guard !old.locked else { throw VideoError.permission("镜头已锁定，请先解锁再编辑") }; scene.id = id
                 try LayerRules.protectLocked(old:old,new:scene)
-                if old.storyActions != scene.storyActions || old.gameWorld != scene.gameWorld || old.cartoonRig != scene.cartoonRig ||
-                    ((old.storyActions != nil || old.gameWorld != nil || old.cartoonRig != nil) && (old.durationFrames != scene.durationFrames || old.kind != scene.kind)) {
+                if old.storyActions != scene.storyActions || old.storyCausality != scene.storyCausality || old.gameWorld != scene.gameWorld || old.cartoonRig != scene.cartoonRig ||
+                    ((old.storyActions != nil || old.storyCausality != nil || old.gameWorld != nil || old.cartoonRig != nil) && (old.durationFrames != scene.durationFrames || old.kind != scene.kind)) ||
+                    ((old.storyCausality != nil || scene.storyCausality != nil) && (old.speed != scene.speed || old.pauseFrames != scene.pauseFrames)) {
                     scene.voice?.listened=false
                     for j in scene.captions.indices {scene.captions[j].confirmed=false}
                     revision.invalidated += ["故事过程、地图状态、原音能量口型与声音字幕重新复核"]
@@ -125,7 +126,7 @@ public enum Editor {
                 guard let i = revision.scenes.firstIndex(where: { $0.id == id }), !revision.scenes[i].locked else { throw VideoError.permission("片段不存在或已锁定") }; let original = revision.scenes[i]
                 guard frame > 0, frame < original.durationFrames else { throw VideoError.invalid("拆分点必须位于片段内部") }
                 guard original.voice == nil else { throw VideoError.review("有配音的片段请先解除配音并重新录制两段，避免截断句子") }
-                guard original.storyActions==nil,original.gameWorld==nil,original.cartoonRig==nil else {throw VideoError.review("动态世界、过程动作与原音口型须按新镜头重新编排后拆分；不会复制旧源帧或旧声音cue")}
+                guard original.storyActions==nil,original.storyCausality==nil,original.gameWorld==nil,original.cartoonRig==nil else {throw VideoError.review("动态世界、因果来源、过程动作与原音口型须按新镜头重新编排后拆分；不会复制旧源帧或旧声音cue")}
                 guard !(original.layers ?? []).contains(where:{$0.locked}) else { throw VideoError.permission("请先解锁元素，再拆分场景") }
                 let hasEntrances=(original.layers ?? []).contains{$0.entrance != nil}
                 if original.speed != 1 || hasEntrances {
@@ -290,7 +291,7 @@ public enum Quality {
             do {try FontRightsRules.validate(fontName:s.fontName ?? "PingFangSC-Medium",workspaceID:revision.workspaceID,evidenceIDs:s.evidenceIDs,evidence:database.evidence,commercial:commercial,now:now)}
             catch{issues.append(QualityIssue(s.id+"font_rights",(error as? VideoError)?.localizedDescription ?? "镜头字体授权尚未核对"))}
             if s.kind == .simulation || s.kind == .cartoon {
-                if s.kind == .simulation {
+                if s.kind == .simulation && !(s.gameWorld != nil && s.storyCausality != nil && s.simulation.knowledge == nil && s.simulationRecording == nil) {
                     do {try SimulationReplay.verify(scene:s,fps:revision.fps)}
                     catch {issues.append(QualityIssue(s.id+"simulation_recording",(error as? VideoError)?.localizedDescription ?? "规则录制尚未核对"))}
                 }
