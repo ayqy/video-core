@@ -41,6 +41,34 @@ final class RenderInvocationTests:XCTestCase {
             XCTAssertThrowsError(try invocation.check())
         }
     }
+    func testExternalCommitsImmediatelyRevokePreviewAndClaimedJobScope()throws {
+        try fixture { repo,workspace,project in
+            let external=try Repository(root:repo.root)
+            let revision=project.current
+            let preview=try RenderInvocation.preview(repository:repo,projectID:project.id,revision:revision,access:WorkspaceAccessContext(workspaceID:workspace.id,principal:"reviewer"))
+            try preview.check()
+            try external.transaction{$0.workspaces[0].grants[0].revoked=true}
+            XCTAssertThrowsError(try preview.check()) {error in XCTAssertEqual((error as? VideoError)?.code,"permission_required")}
+            try external.transaction{$0.workspaces[0].grants[0].revoked=false}
+            try preview.check()
+
+            let quote=Quote(projectID:project.id,revisionID:revision.id,digest:try revision.contentDigest(),upper:Money(0),unit:"CNY",provider:"native",expiresAt:Date().addingTimeInterval(300),confirmed:true)
+            let submitted=try JobRules.submit(workspaceID:workspace.id,project:project,quote:quote,requestKey:"external-lease",existing:[],budget:BudgetPolicy())
+            let job=try JobOperations.claim(submitted,owner:"worker")
+            try repo.transaction{$0.jobs=[job]}
+            let token=try XCTUnwrap(job.lease?.token)
+            let invocation=try RenderInvocation.job(repository:repo,claimed:job,revision:revision,token:token,cancellation:RenderCancellation())
+            try invocation.check()
+            try external.transaction{$0.jobs[0].lease?.token=Codec.id()}
+            XCTAssertThrowsError(try invocation.check()) {error in XCTAssertEqual((error as? VideoError)?.code,"permission_required")}
+            try external.transaction{$0.jobs[0].lease?.token=token}
+            try invocation.check()
+            try external.transaction{$0.jobs[0]=JobRules.cancel($0.jobs[0])}
+            XCTAssertThrowsError(try invocation.check()) {error in XCTAssertEqual((error as? VideoError)?.code,"permission_required")}
+            try external.transaction{$0.projects[0].revisions[0].scenes[0].body="另一个连接修改了冻结内容"}
+            XCTAssertThrowsError(try preview.check()) {error in XCTAssertEqual((error as? VideoError)?.code,"revision_conflict")}
+        }
+    }
     func testSynchronousQueueSeesCancellationAndExactDeadline()throws {
         try fixture { repo,workspace,project in
             let cancellation=RenderCancellation()

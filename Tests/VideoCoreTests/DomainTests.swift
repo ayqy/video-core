@@ -1,5 +1,6 @@
 import XCTest
 import CryptoKit
+import Dispatch
 import VideoCore
 
 final class DomainTests:XCTestCase {
@@ -80,6 +81,141 @@ final class DomainTests:XCTestCase {
         XCTAssertThrowsError(try repo.transaction { $0.products.append(self.product("missing-workspace")) }); XCTAssertEqual(try repo.read().generation,before.generation)
         let other=try Repository(root:url); try other.transaction{$0.workspaces[0].name="改名"}; XCTAssertThrowsError(try repo.transaction(expectedGeneration:before.generation){$0.workspaces[0].name="覆盖"})
         let asset=try repo.ingest(Data("真实源内容".utf8),name:"讲稿.txt",workspaceID:w.id,mediaType:"text"); try repo.transaction{$0.assets.append(asset)}; let backup=try repo.backup(); let copy=try Repository.restore(backup,to:restored); try copy.verifyAssets(copy.read()); XCTAssertEqual(try copy.read().assets.first?.hash,asset.hash); XCTAssertThrowsError(try Repository.restore(backup,to:restored)); try repo.clearCache(); XCTAssertTrue(FileManager.default.fileExists(atPath:repo.assetURL(asset).path))
+    }
+    func testRepositoryReadRefreshesExternalCommitAndRevokedGrant() throws {
+        let url=root(); defer {try? FileManager.default.removeItem(at:url)}
+        let writer=try Repository(root:url), now=Date()
+        var workspace=Workspace(name:"授权中的项目",owner:"owner")
+        let project=try self.project(workspace.id)
+        workspace.grants=[Grant(principal:"reviewer",role:.reviewer,projectIDs:[project.id],revisionIDs:[project.current.id],expiresAt:now.addingTimeInterval(3600))]
+        try writer.transaction{$0.workspaces=[workspace];$0.products=[project.current.product!];$0.projects=[project]}
+        let reader=try Repository(root:url,readOnly:true)
+        let access=WorkspaceAccessContext(workspaceID:workspace.id,principal:"reviewer")
+        let before=try reader.read()
+        let beforeDigest=try reader.readWithRevisionDigest(projectID:project.id,revisionID:project.current.id).digest
+        _=try WorkspaceAccessRules.revision(projectID:project.id,revisionID:project.current.id,access:access,in:before,now:now)
+        XCTAssertEqual(try reader.read().generation,before.generation)
+        try writer.transaction{$0.workspaces[0].name="已撤销共享";$0.workspaces[0].grants[0].revoked=true;$0.projects[0].revisions[0].scenes[0].body="外部提交的新版本内容"}
+        let snapshot=try reader.readWithRevisionDigest(projectID:project.id,revisionID:project.current.id)
+        let after=snapshot.database
+        XCTAssertEqual(after.generation,before.generation+1)
+        XCTAssertEqual(after.workspaces[0].name,"已撤销共享")
+        XCTAssertNotEqual(snapshot.digest,beforeDigest)
+        XCTAssertEqual(snapshot.digest,try after.projects[0].current.contentDigest())
+        XCTAssertThrowsError(try WorkspaceAccessRules.revision(projectID:project.id,revisionID:project.current.id,access:access,in:after,now:now)) {error in
+            XCTAssertEqual((error as? VideoError)?.code,"permission_required")
+        }
+        try writer.transaction{$0.projects=[]}
+        XCTAssertThrowsError(try reader.readWithRevisionDigest(projectID:project.id,revisionID:project.current.id))
+    }
+    func testRepositoryReadRefreshesOwnSuccessfulCommit() throws {
+        let url=root(); defer {try? FileManager.default.removeItem(at:url)}
+        let repo=try Repository(root:url)
+        let workspace=Workspace(name:"提交前",owner:"owner"), project=try self.project(workspace.id)
+        try repo.transaction{$0.workspaces=[workspace];$0.products=[project.current.product!];$0.projects=[project]}
+        let before=try repo.read()
+        let beforeDigest=try repo.readWithRevisionDigest(projectID:project.id,revisionID:project.current.id).digest
+        try repo.transaction(expectedGeneration:before.generation){$0.workspaces[0].name="同一连接已提交";$0.projects[0].revisions[0].scenes[0].body="本连接提交的新版本内容"}
+        let snapshot=try repo.readWithRevisionDigest(projectID:project.id,revisionID:project.current.id)
+        let after=snapshot.database
+        XCTAssertEqual(after.generation,before.generation+1)
+        XCTAssertEqual(after.workspaces[0].name,"同一连接已提交")
+        XCTAssertNotEqual(snapshot.digest,beforeDigest)
+        XCTAssertEqual(snapshot.digest,try after.projects[0].current.contentDigest())
+        XCTAssertEqual(try Repository(root:url,readOnly:true).read().workspaces[0].name,after.workspaces[0].name)
+    }
+    func testRepositoryReadKeepsCommittedSnapshotAfterRollback() throws {
+        let url=root(); defer {try? FileManager.default.removeItem(at:url)}
+        let repo=try Repository(root:url)
+        let workspace=Workspace(name:"已提交原文",owner:"owner"), project=try self.project(workspace.id)
+        try repo.transaction{$0.workspaces=[workspace];$0.products=[project.current.product!];$0.projects=[project];$0.terminology["rollback"]="原值"}
+        let before=try repo.read()
+        let beforeDigest=try repo.readWithRevisionDigest(projectID:project.id,revisionID:project.current.id).digest
+        XCTAssertThrowsError(try repo.transaction { state -> Void in
+            state.workspaces[0].name="不可暴露的中间值"
+            state.terminology["rollback"]="未提交值"
+            state.projects[0].revisions[0].scenes[0].body="未提交的版本内容"
+            XCTAssertEqual(try repo.read().workspaces[0].name,"已提交原文")
+            XCTAssertEqual(try repo.readWithRevisionDigest(projectID:project.id,revisionID:project.current.id).digest,beforeDigest)
+            throw VideoError.invalid("主动回滚夹具")
+        }) {error in XCTAssertEqual((error as? VideoError)?.code,"invalid_input")}
+        let snapshot=try repo.readWithRevisionDigest(projectID:project.id,revisionID:project.current.id)
+        let after=snapshot.database
+        XCTAssertEqual(after.generation,before.generation)
+        XCTAssertEqual(after.workspaces[0].name,"已提交原文")
+        XCTAssertEqual(after.terminology["rollback"],"原值")
+        XCTAssertEqual(snapshot.digest,beforeDigest)
+        XCTAssertEqual(snapshot.digest,try after.projects[0].current.contentDigest())
+        try repo.transaction{$0.terminology["rollback"]="随后正常提交";$0.projects[0].revisions[0].scenes[0].body="回滚后的有效提交"}
+        XCTAssertEqual(try repo.read().terminology["rollback"],"随后正常提交")
+        XCTAssertNotEqual(try repo.readWithRevisionDigest(projectID:project.id,revisionID:project.current.id).digest,beforeDigest)
+    }
+    func testRepositoryReadReturnsIndependentValueSnapshots() throws {
+        let url=root(); defer {try? FileManager.default.removeItem(at:url)}
+        let repo=try Repository(root:url)
+        var workspace=Workspace(name:"保留原名",owner:"owner")
+        let project=try self.project(workspace.id)
+        workspace.grants=[Grant(principal:"reviewer",role:.reviewer,projectIDs:[project.id],revisionIDs:[project.current.id],expiresAt:Date().addingTimeInterval(3600))]
+        try repo.transaction{$0.workspaces=[workspace];$0.products=[project.current.product!];$0.projects=[project];$0.terminology["snapshot"]="保留原值"}
+        let original=try repo.readWithRevisionDigest(projectID:project.id,revisionID:project.current.id)
+        var returned=original.database
+        let generation=returned.generation
+        returned.workspaces[0].name="只修改返回值"
+        returned.workspaces[0].grants[0].revoked=true
+        returned.terminology["snapshot"]="只修改返回字典"
+        returned.projects[0].revisions[0].scenes[0].body="只修改返回版本"
+        let snapshot=try repo.readWithRevisionDigest(projectID:project.id,revisionID:project.current.id)
+        let next=snapshot.database
+        XCTAssertEqual(next.generation,generation)
+        XCTAssertEqual(next.workspaces[0].name,"保留原名")
+        XCTAssertFalse(next.workspaces[0].grants[0].revoked)
+        XCTAssertEqual(next.terminology["snapshot"],"保留原值")
+        XCTAssertEqual(snapshot.digest,original.digest)
+        XCTAssertEqual(snapshot.digest,try next.projects[0].current.contentDigest())
+        XCTAssertNotEqual(snapshot.digest,try returned.projects[0].current.contentDigest())
+        XCTAssertThrowsError(try repo.readWithRevisionDigest(projectID:project.id,revisionID:"missing-revision"))
+        XCTAssertEqual(try Repository(root:url,readOnly:true).read().terminology["snapshot"],"保留原值")
+    }
+    func testRepositoryConcurrentReadsAndCommitsPreserveSnapshots() throws {
+        final class Failures: @unchecked Sendable {
+            private let lock=NSLock()
+            private var messages:[String]=[]
+            func record(_ message:String) {lock.lock();defer{lock.unlock()};messages.append(message)}
+            func read()->[String] {lock.lock();defer{lock.unlock()};return messages}
+        }
+        let url=root(); defer {try? FileManager.default.removeItem(at:url)}
+        let repo=try Repository(root:url)
+        let workspace=Workspace(name:"并发提交",owner:"owner")
+        var project=try self.project(workspace.id)
+        project.revisions[0].scenes[0].body="第0次提交"
+        try repo.transaction{$0.workspaces=[workspace];$0.products=[project.current.product!];$0.projects=[project];$0.terminology["writes"]="0"}
+        let projectID=project.id, revisionID=project.current.id
+        let generation=try repo.read().generation
+        let independentReader=try Repository(root:url,readOnly:true)
+        XCTAssertEqual(try independentReader.read().terminology["writes"],"0")
+        let failures=Failures(), writes=12
+        DispatchQueue.concurrentPerform(iterations:writes) { _ in
+            do {
+                try repo.transaction { state in
+                    guard let value=Int(state.terminology["writes"] ?? "") else {throw VideoError.invalid("计数夹具缺失")}
+                    state.terminology["writes"]=String(value+1)
+                    state.projects[0].revisions[0].scenes[0].body="第\(value+1)次提交"
+                }
+                let snapshot=try repo.readWithRevisionDigest(projectID:projectID,revisionID:revisionID)
+                guard let count=Int(snapshot.database.terminology["writes"] ?? ""), snapshot.database.generation==generation+count,
+                      snapshot.database.projects[0].current.scenes[0].body=="第\(count)次提交",
+                      snapshot.digest == (try snapshot.database.projects[0].current.contentDigest()) else {throw VideoError.invalid("读取混入不同提交的值或摘要")}
+            } catch {failures.record(String(describing:error))}
+        }
+        XCTAssertEqual(failures.read(),[])
+        let snapshot=try repo.readWithRevisionDigest(projectID:projectID,revisionID:revisionID)
+        let independentlyRead=try independentReader.readWithRevisionDigest(projectID:projectID,revisionID:revisionID)
+        let after=snapshot.database
+        XCTAssertEqual(after.terminology["writes"],String(writes))
+        XCTAssertEqual(after.generation,generation+writes)
+        XCTAssertEqual(independentlyRead.database.terminology["writes"],String(writes))
+        XCTAssertEqual(independentlyRead.database.generation,after.generation)
+        XCTAssertEqual(independentlyRead.digest,snapshot.digest)
     }
     func testPluginABISignaturePolicyAxesAndPermission() throws {
         let key=Curve25519.Signing.PrivateKey(); let policy=CommercialPolicy(pluginID:"game",version:1,access:"paid"); let payload=try Codec.data(policy); let signed=SignedDocument(payload:payload,signature:try key.signature(for:payload)); let decoded=try signed.verified(as:CommercialPolicy.self,publicKey:key.publicKey.rawRepresentation); XCTAssertEqual(decoded.access,"paid")

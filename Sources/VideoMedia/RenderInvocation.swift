@@ -50,8 +50,9 @@ public struct RenderInvocation: @unchecked Sendable {
         let digest = try revision.contentDigest(), database = try repository.read()
         let nonce = Codec.id()
         let scope = RenderInvocation(id: nonce, workspaceID: access.workspaceID, projectID: projectID, revisionID: revision.id, revisionDigest: digest, jobID: nil, budgetReference: "preview:"+nonce, budgetLimit: Money(0,database.budget.project.currency), deadline: deadline, cancellation: cancellation) {
-            let (_, stored) = try WorkspaceAccessRules.revision(projectID:projectID,revisionID:revision.id,access:access,in:repository.read())
-            guard try stored.contentDigest() == digest else { throw VideoError.conflict("预览版本已改变，请重新选择当前版本") }
+            let snapshot = try repository.readWithRevisionDigest(projectID:projectID,revisionID:revision.id)
+            _ = try WorkspaceAccessRules.revision(projectID:projectID,revisionID:revision.id,access:access,in:snapshot.database)
+            guard snapshot.digest == digest else { throw VideoError.conflict("预览版本已改变，请重新选择当前版本") }
         }
         try scope.verify(revision:revision)
         return scope
@@ -61,10 +62,11 @@ public struct RenderInvocation: @unchecked Sendable {
     /// cancellation, workspace changes and version edits revoke it immediately.
     static func job(repository: Repository, claimed: Job, revision: Revision, token: String, cancellation: RenderCancellation) throws -> RenderInvocation {
         let scope = RenderInvocation(workspaceID:claimed.workspaceID,projectID:claimed.projectID,revisionID:claimed.revisionID,revisionDigest:claimed.digest,jobID:claimed.id,budgetReference:claimed.quote.id,budgetLimit:claimed.quote.upper,deadline:Date().addingTimeInterval(4*60*60),cancellation:cancellation) {
-            let database = try repository.read()
+            let snapshot = try repository.readWithRevisionDigest(projectID:claimed.projectID,revisionID:claimed.revisionID)
+            let database = snapshot.database
             guard let current = database.jobs.first(where:{$0.id == claimed.id}), current.state == .running, current.lease?.token == token, let expires = current.lease?.expiresAt, expires > Date(), current.workspaceID == claimed.workspaceID, current.projectID == claimed.projectID, current.revisionID == claimed.revisionID, current.digest == claimed.digest, current.quote.id == claimed.quote.id, current.quote.upper == claimed.quote.upper, current.quote.provider == "native" else { throw VideoError.permission("制作任务已取消、租约失效或预算凭据改变，插件结果未接受") }
             let project = try database.project(current.projectID)
-            guard project.workspaceID == current.workspaceID, let stored = project.revisions.first(where:{$0.id == current.revisionID}), try stored.contentDigest() == current.digest else { throw VideoError.conflict("制作任务的冻结版本已变化") }
+            guard project.workspaceID == current.workspaceID, project.revisions.contains(where:{$0.id == current.revisionID}), snapshot.digest == current.digest else { throw VideoError.conflict("制作任务的冻结版本已变化") }
         }
         try scope.verify(revision:revision)
         return scope

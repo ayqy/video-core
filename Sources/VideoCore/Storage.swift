@@ -82,6 +82,9 @@ public struct Database: Codable, Sendable {
 /// The snapshot is atomically versioned; WAL and busy timeout preserve concurrent readers.
 public final class Repository: @unchecked Sendable {
     public let root: URL; private var db: OpaquePointer?; private let lock = NSRecursiveLock();private let readOnly:Bool
+    private var cachedSnapshot: (dataVersion: Int64, database: Database)?
+    private struct RevisionDigestKey: Hashable { let projectID: String; let revisionID: String }
+    private var revisionDigests: [RevisionDigestKey: String] = [:]
     public init(root requestedRoot: URL,readOnly:Bool=false) throws {
         // Keep a stable physical generation even if an installer's current pointer changes later.
         let root=requestedRoot.standardizedFileURL.resolvingSymlinksInPath()
@@ -104,7 +107,39 @@ public final class Repository: @unchecked Sendable {
         if sqlite3_step(stmt) == SQLITE_ROW { let count = Int(sqlite3_column_bytes(stmt, 0)); guard let bytes = sqlite3_column_blob(stmt, 0) else { throw VideoError.invalid("数据库记录损坏") }; let result = try Codec.decoder().decode(Database.self, from: Data(bytes: bytes, count: count)); guard result.schema == 1 else { throw VideoError.unavailable("数据库版本不支持") }; return result }
         return Database()
     }
-    public func read() throws -> Database { lock.lock(); defer { lock.unlock() }; return try readUnlocked() }
+    private func dataVersionUnlocked() throws -> Int64 {
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(db, "PRAGMA data_version", -1, &statement, nil) == SQLITE_OK else { throw VideoError.unavailable("数据库版本读取失败") }
+        defer { sqlite3_finalize(statement) }
+        guard sqlite3_step(statement) == SQLITE_ROW, sqlite3_column_type(statement, 0) == SQLITE_INTEGER else { throw VideoError.unavailable("数据库版本读取失败") }
+        let version = sqlite3_column_int64(statement, 0)
+        guard sqlite3_step(statement) == SQLITE_DONE else { throw VideoError.unavailable("数据库版本读取失败") }
+        return version
+    }
+    public func read() throws -> Database {
+        lock.lock(); defer { lock.unlock() }
+        let version = try dataVersionUnlocked()
+        if let snapshot = cachedSnapshot, snapshot.dataVersion == version { return snapshot.database }
+        let state = try readUnlocked()
+        // Use the version read before SELECT. An external commit between them
+        // may cause one extra reload next time, never label old data as current.
+        revisionDigests.removeAll(keepingCapacity: true)
+        cachedSnapshot = (version, state)
+        return state
+    }
+    /// The digest belongs to the returned decoded snapshot. Authorization is
+    /// deliberately left to each caller and must still run on every use.
+    public func readWithRevisionDigest(projectID: String, revisionID: String) throws -> (database: Database, digest: String) {
+        lock.lock(); defer { lock.unlock() }
+        let database = try read()
+        let project = try database.project(projectID)
+        guard let revision = project.revisions.first(where: { $0.id == revisionID }) else { throw VideoError.notFound("项目版本不存在") }
+        let key = RevisionDigestKey(projectID: projectID, revisionID: revisionID)
+        if let digest = revisionDigests[key] { return (database, digest) }
+        let digest = try revision.contentDigest()
+        revisionDigests[key] = digest
+        return (database, digest)
+    }
     /// File staging must fail before creating an output for a read-only repository.
     func requireProductionExportWriteAccess() throws {
         lock.lock(); defer { lock.unlock() }
@@ -119,8 +154,8 @@ public final class Repository: @unchecked Sendable {
             var state = try readUnlocked(); if let expectedGeneration, state.generation != expectedGeneration { throw VideoError.conflict("数据已在另一窗口修改，请刷新后重试") }
             let result = try mutate(&state); try state.validate(); state.generation += 1; let data = try Codec.data(state)
             var stmt: OpaquePointer?; guard sqlite3_prepare_v2(db, "INSERT OR REPLACE INTO snapshot(id,payload) VALUES(1,?)", -1, &stmt, nil) == SQLITE_OK else { throw VideoError.unavailable("保存数据失败") }; defer { sqlite3_finalize(stmt) }
-            let rc = data.withUnsafeBytes { sqlite3_bind_blob(stmt, 1, $0.baseAddress, Int32($0.count), unsafeBitCast(-1, to: sqlite3_destructor_type.self)) }; guard rc == SQLITE_OK, sqlite3_step(stmt) == SQLITE_DONE else { throw VideoError.unavailable("保存数据失败") }; try sql("COMMIT"); return result
-        } catch { try? sql("ROLLBACK"); throw error }
+            let rc = data.withUnsafeBytes { sqlite3_bind_blob(stmt, 1, $0.baseAddress, Int32($0.count), unsafeBitCast(-1, to: sqlite3_destructor_type.self)) }; guard rc == SQLITE_OK, sqlite3_step(stmt) == SQLITE_DONE else { throw VideoError.unavailable("保存数据失败") }; try sql("COMMIT"); cachedSnapshot = nil; revisionDigests.removeAll(keepingCapacity: true); return result
+        } catch { cachedSnapshot = nil; revisionDigests.removeAll(keepingCapacity: true); try? sql("ROLLBACK"); throw error }
     }
     public func assetURL(_ asset: Asset) -> URL { root.appendingPathComponent(asset.relativePath) }
     public func ingest(_ data: Data, name: String, workspaceID: String, mediaType: String, durationFrames: Int? = nil) throws -> Asset {
