@@ -36,6 +36,7 @@ public enum PluginNativeCode {
 /// Bounded native capture shared by installation self-tests and publisher probes.
 /// The caller verifies executable identity; this adapter grants no execution rights.
 public enum NativeProcessProbe {
+    private enum FailureCause:String {case exitNonzero="exit_nonzero",signal,timeout,stdoutLimit="stdout_limit",stderrLimit="stderr_limit"}
     public static func run(_ executable:URL,_ arguments:[String],root:URL,timeout:TimeInterval=20,includeStderr:Bool=false,inputData:Data?=nil)throws->Data {
         guard timeout.isFinite,timeout>0,timeout<=30,(inputData?.count ?? 0)<=4096 else {
             throw VideoError.invalid("原生只读探针的时限或输入超过有限边界")
@@ -54,19 +55,37 @@ public enum NativeProcessProbe {
             if task.isRunning{task.terminate();let limit=Date().addingTimeInterval(1);while task.isRunning && Date()<limit{Thread.sleep(forTimeInterval:0.025)};if task.isRunning{kill(task.processIdentifier,SIGKILL)}}
             task.waitUntilExit()
         }
+        let started=ProcessInfo.processInfo.systemUptime
         try task.run()
         // A failed pipe write must also reap the launched bridge, never orphan it.
         defer{stop()}
         if let inputData,let stdin{try stdin.fileHandleForWriting.write(contentsOf:inputData);try stdin.fileHandleForWriting.close()}
         let deadline=Date().addingTimeInterval(timeout)
+        var stopCause:FailureCause?
         while task.isRunning && Date()<deadline {
             let a=(try? out.resourceValues(forKeys:[.fileSizeKey]).fileSize) ?? 0,b=(try? err.resourceValues(forKeys:[.fileSizeKey]).fileSize) ?? 0
-            if a>4*1024*1024 || b>1024*1024{break}
+            if a>4*1024*1024{stopCause = .stdoutLimit;break}
+            if b>1024*1024{stopCause = .stderrLimit;break}
             Thread.sleep(forTimeInterval:0.025)
         }
+        if task.isRunning,stopCause==nil{stopCause = .timeout}
         if task.isRunning{stop()}else{task.waitUntilExit()}
         try stdout.synchronize();try stderr.synchronize()
-        guard task.terminationReason == .exit,task.terminationStatus==0,Date()<deadline,(try out.resourceValues(forKeys:[.fileSizeKey]).fileSize ?? 0)<=4*1024*1024,(try err.resourceValues(forKeys:[.fileSizeKey]).fileSize ?? 0)<=1024*1024 else{throw VideoError.unavailable("原生只读探针的退出状态、时限或输出边界未通过")}
+        let outBytes=(try out.resourceValues(forKeys:[.fileSizeKey]).fileSize ?? 0),errBytes=(try err.resourceValues(forKeys:[.fileSizeKey]).fileSize ?? 0)
+        let cause:FailureCause?
+        if let stopCause{cause=stopCause}
+        else if outBytes>4*1024*1024{cause = .stdoutLimit}
+        else if errBytes>1024*1024{cause = .stderrLimit}
+        else if Date()>=deadline{cause = .timeout}
+        else if task.terminationReason != .exit{cause = .signal}
+        else if task.terminationStatus != 0{cause = .exitNonzero}
+        else{cause=nil}
+        if let cause {
+            let reason=task.terminationReason == .exit ? "exit":"signal"
+            let elapsed=Int(max(0,ProcessInfo.processInfo.systemUptime-started)*1000)
+            // Numeric facts only: never include captured bytes, request input, arguments or environment.
+            throw VideoError.unavailable("原生只读探针未通过：cause=\(cause.rawValue); exitreason=\(reason); status=\(task.terminationStatus); elapsed_ms=\(elapsed); out_bytes=\(outBytes); err_bytes=\(errBytes)")
+        }
         return try Data(contentsOf:out)+(includeStderr ? Data(contentsOf:err):Data())
     }
 }
@@ -119,7 +138,7 @@ private struct PluginBridgeParent {
         var code:SecCode?
         guard SecCodeCopyGuestWithAttributes(nil,[kSecGuestAttributePid as String:pid] as CFDictionary,[],&code)==errSecSuccess,let code else{throw VideoError.permission("桥父进程缺少有效动态代码身份")}
         var role:Bool?
-        for (identifier,probe) in [("com.ayqy.video.mac",false),("com.ayqy.video.advanced",false),("com.ayqy.video.install",true),("com.ayqy.video.publisher",true)] {
+        for (identifier,probe) in [("com.ayqy.video.mac",false),("com.ayqy.video.advanced",false),("com.ayqy.video.install",true),("com.ayqy.video.publisher",true),("com.ayqy.video.publisher.vendor-free",true)] {
             var requirement:SecRequirement?
             if SecRequirementCreateWithString(PluginNativeCode.requirement(identifier:identifier) as CFString,[],&requirement)==errSecSuccess,
                SecCodeCheckValidity(code,SecCSFlags(rawValue:kSecCSStrictValidate),requirement)==errSecSuccess{role=probe;break}

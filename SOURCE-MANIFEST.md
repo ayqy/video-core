@@ -2,10 +2,10 @@
 
 VideoFree source export · package_free.py · version 1
 
-生成时间：2026-10-29 09:20:35 北京时间
+生成时间：2026-10-29 09:53:34 北京时间
 
-- 源码与必要元数据：252个文件；3886764字节（不含本清单）。
-- 整体内容指纹：`f8dcb0c038da5e6218375364e0de658feb3451987db1a922bc36e864e2929770`。
+- 源码与必要元数据：252个文件；3887905字节（不含本清单）。
+- 整体内容指纹：`0432f212c4093924ca5d37b05359f6d8de7cbcf5c33e0ac1d27316417ff705ad`。
 - 来源：受控原始工程中的逐文件白名单；Package.swift与唯一免费制作workflow来自Distribution/Free精确模板，README由发行脚本生成。
 - 本包不含.git，不可作为新业务checkout；本清单生成过程不执行构建、设备验收、签名安装或公共上传，各阶段以独立证据为准。
 - 排除：App、VideoGame、VideoCartoon、Premium、高级实现运行时测试、私有仓库地址、凭据、客户数据、缓存、日志及媒体过程产物。
@@ -163,7 +163,7 @@ VideoFree source export · package_free.py · version 1
 | 7d9c92154321451ef83c7412812e7aee06e7e0c926f12258a29cbe7c6d17f5da | 12599 | Sources/VideoMedia/Painter.swift |
 | 76a872883c6d2197b74295532b84f28adcaf884dce0cd04325e3e46815ee925c | 4199 | Sources/VideoMedia/PaperPresentationPainter.swift |
 | a10eed97164e8f7f6f897692b3eb88e410e27ec8b6aaba7a9ea6193832917618 | 12474 | Sources/VideoMedia/PencilBuiltinAssets.swift |
-| 68c8308a53963dc30b431801aea57ae6a5a50b17681466e373cd47bb6ab3b8f6 | 25772 | Sources/VideoMedia/PluginProcess.swift |
+| 280e7e1abf2df62ed6189ceea151d5e3e9188e238b53606ea2b7e013ecc4b7ad | 26913 | Sources/VideoMedia/PluginProcess.swift |
 | 71710c31b4d49d28bca2d8ca05f4fa845c8ab09bdf70e86aef5561d76128c4dd | 14184 | Sources/VideoMedia/PluginRPCServer.swift |
 | b6ecc97e5f3e179f6c4daf869b94f8e8310868d84336400e11e57f0e9dff44fd | 2742 | Sources/VideoMedia/PluginXPCServer.swift |
 | 9b5a83d4b5f2d3ee77ca26d518268e9bd25b01d767d43d558b30d32a1948814a | 2806 | Sources/VideoMedia/Preview.swift |
