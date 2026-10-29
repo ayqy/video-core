@@ -199,6 +199,18 @@ public enum RenderCatalogResolver {
     }
     public static func verify(_ data: Data, publicKey: Data, implementationDigest: String, minimumPolicyVersions: [String: Int], supportedCapabilities: [String: String], policyHistory: ModulePolicyHistory? = nil, now: Date = Date()) throws -> [VerifiedRenderCatalogEntry] {
         guard data.count <= 2 * 1024 * 1024, data.starts(with: Data("bplist00".utf8)) else { throw VideoError.invalid("目录须为不超过2MiB的二进制PropertyList封套") }
+        // A restricted package pair is never an in-process catalog or a second
+        // key candidate for this legacy SignedDocument path.
+        if let object=try PropertyListSerialization.propertyList(from:data,format:nil) as? [String:Any],
+           let entries=object["entries"] as? [[String:Any]] {
+            for entry in entries {
+                for name in ["manifest","policy"] {
+                    if let document=entry[name] as? [String:Any],!Set(document.keys).isDisjoint(with:["format","purpose","issuerKeySHA256","pairSHA256"]) {
+                        throw VideoError.permission("旧进程内目录只接受原发行者SignedDocument；受限免费封套须使用独立插件包")
+                    }
+                }
+            }
+        }
         let catalog: RenderModuleCatalog
         do { catalog = try PropertyListDecoder().decode(RenderModuleCatalog.self, from: data) }
         catch { throw VideoError.invalid("高级模块目录格式损坏") }
@@ -326,11 +338,13 @@ public final class RenderModuleRegistry: @unchecked Sendable {
         try registerResolved(module,manifest:manifest,policy:policy,installedDigest:BuiltinExecutableIdentity.current().digest,signedLicense:signedLicense,storeAccess:storeAccess,publicKey:publicKey,grantedPermissions:grantedPermissions,minimumPolicyVersion:minimumPolicyVersion,now:now)
     }
     public func registerRemote(_ module:RemoteSceneModule,signedLicense:SignedDocument?=nil,publicKey:Data,minimumPolicyVersion:Int=1,now:Date=Date())throws {
+        if module.package.authority == .restrictedFreeVendor {try VendorFreeModuleTrust.validateScope(manifest:module.package.manifest,policy:module.package.policy)}
         try PluginPackageRules.verifyFiles(module.package.manifest,root:module.package.rootURL)
         try PluginNativeCode.verify(root:module.package.rootURL,execution:module.package.execution)
         try registerResolved(module,manifest:module.package.module,policy:module.package.policy,installedDigest:module.package.manifest.implementationDigest,signedLicense:signedLicense,storeAccess:nil,publicKey:publicKey,grantedPermissions:[],minimumPolicyVersion:minimumPolicyVersion,now:now)
     }
     public func registerRemoteStoreKit(_ module:RemoteSceneModule,transaction:VerificationResult<StoreKit.Transaction>,publicKey:Data,minimumPolicyVersion:Int=1,now:Date=Date())throws {
+        guard module.package.authority == .publisher else {throw VideoError.permission("受限发行根仅发布免费模块，不接受付费或商店权益声明")}
         guard case .verified(let verified)=transaction,verified.environment != .xcode,
               let expected=Self.storeProduct(for:module.manifest.id,applicationBundleID:Bundle.main.bundleIdentifier ?? ""),verified.productID==expected,verified.appBundleID==Bundle.main.bundleIdentifier,
               verified.productType == .nonConsumable || verified.productType == .autoRenewable else{throw VideoError.permission("商店交易或高级模块身份不符")}

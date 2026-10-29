@@ -21,11 +21,16 @@ public final class RemoteSceneModule:ScopedSceneRenderModule,@unchecked Sendable
     private var closed:[String:(token:PluginWeakCancellation,result:Result<Void,VideoError>)]=[:]
     private var closing:[String:PluginCloseReceipt]=[:]
     public init(package:VerifiedPluginPackage)throws {
+        if package.authority == .restrictedFreeVendor {
+            try VendorFreeModuleTrust.validateScope(manifest:package.manifest,policy:package.policy)
+        }
         try PluginPackageRules.verifyFiles(package.manifest,root:package.rootURL)
         try PluginNativeCode.verify(root:package.rootURL,execution:package.execution)
         self.package=package
     }
     public static func load(root:URL,publicKey:Data,architecture:String,minimumPolicyVersion:Int=1,declarationsRoot:URL?=nil,now:Date=Date())throws->RemoteSceneModule {
+        // publicKey remains the original publisher/licence authority. Restricted
+        // free packages resolve their separate compiled identity inside VideoCore.
         let package=try PluginPackageRules.verify(root:root,declarationsRoot:declarationsRoot,publicKey:publicKey,architecture:architecture,osMajor:ProcessInfo.processInfo.operatingSystemVersion.majorVersion,minimumPolicyVersion:minimumPolicyVersion,now:now,implementationDigest:{try MachOCodeIdentity.digest(PluginPackageRules.read($0,limit:512*1024*1024))},validateCode:PluginNativeCode.verify)
         return try RemoteSceneModule(package:package)
     }

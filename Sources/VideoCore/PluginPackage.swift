@@ -28,14 +28,19 @@ public struct PluginPackageManifest: Codable, Sendable {
         self.module=module;self.execution=execution;self.files=files;implementationDigest=module.implementationDigest
     }
 }
+public enum PluginPackageAuthority: String, Sendable {
+    case publisher
+    case restrictedFreeVendor
+}
 /// Constructed only after both publisher signatures, exact files and actual native code probes.
 public struct VerifiedPluginPackage: Sendable {
     public let rootURL:URL
     public let manifest:PluginPackageManifest
     public let policy:CommercialPolicy
+    public let authority:PluginPackageAuthority
     public var module:PluginManifest{manifest.module}
     public var execution:PluginExecutionDescriptor{manifest.execution}
-    fileprivate init(rootURL:URL,manifest:PluginPackageManifest,policy:CommercialPolicy){self.rootURL=rootURL;self.manifest=manifest;self.policy=policy}
+    fileprivate init(rootURL:URL,manifest:PluginPackageManifest,policy:CommercialPolicy,authority:PluginPackageAuthority){self.rootURL=rootURL;self.manifest=manifest;self.policy=policy;self.authority=authority}
 }
 public enum PluginPackageRules {
     public static let manifestName="manifest.videoplugin"
@@ -58,9 +63,10 @@ public enum PluginPackageRules {
     }
     public static func validate(_ manifest:PluginPackageManifest,policy:CommercialPolicy,architecture:String,osMajor:Int,minimumPolicyVersion:Int=1,now:Date=Date())throws {
         let module=manifest.module,expected=try PluginExecutionDescriptor(pluginID:module.id,architecture:architecture)
+        guard let capability=capabilities[module.id] else {throw VideoError.permission("未知独立插件能力")}
         guard manifest.format==1,manifest.policyRef==policyName,manifest.execution==expected,osMajor>=expected.minimumOSMajor,
               module.abi==1,module.minimumCore==1,PluginInputCompatibility.supports(pluginID:module.id,version:module.inputSchema),module.outputSchema==1,
-              module.capabilities==[capabilities[module.id]!],module.permissions.isEmpty,
+              module.capabilities==[capability],module.permissions.isEmpty,
               module.version.utf8.count<=100,module.version.range(of:"^[0-9]+\\.[0-9]+\\.[0-9]+(?:-[A-Za-z0-9.-]+)?$",options:.regularExpression) != nil,
               manifest.implementationDigest==module.implementationDigest,module.implementationDigest.range(of:"^[a-f0-9]{64}$",options:.regularExpression) != nil,
               ["open","closed"].contains(module.sourceVisibility),policy.pluginID==module.id,
@@ -129,10 +135,18 @@ public enum PluginPackageRules {
     public static func verify(root:URL,declarationsRoot:URL?=nil,publicKey:Data,architecture:String,osMajor:Int,minimumPolicyVersion:Int=1,now:Date=Date(),implementationDigest:(URL)throws->String,validateCode:(URL,PluginExecutionDescriptor)throws->Void)throws->VerifiedPluginPackage {
         let declarationBytes:(manifest:Data,policy:Data)
         if let declarationsRoot{declarationBytes=try declarations(declarationsRoot)}else{declarationBytes=(try read(root.appendingPathComponent(manifestName),limit:2*1024*1024),try read(root.appendingPathComponent(policyName),limit:2*1024*1024))}
-        let document=try PropertyListDecoder().decode(SignedDocument.self,from:declarationBytes.manifest)
-        let policyDocument=try PropertyListDecoder().decode(SignedDocument.self,from:declarationBytes.policy)
-        guard publicKey.count==32,document.signature.count==64,policyDocument.signature.count==64 else{throw VideoError.permission("独立插件包签名封套无效")}
-        let manifest=try document.verified(as:PluginPackageManifest.self,publicKey:publicKey),policy=try policyDocument.verified(as:CommercialPolicy.self,publicKey:publicKey)
+        let manifest:PluginPackageManifest,policy:CommercialPolicy,authority:PluginPackageAuthority
+        if try VendorFreeModuleTrust.usesRestrictedEnvelope(declarationBytes.manifest) || VendorFreeModuleTrust.usesRestrictedEnvelope(declarationBytes.policy) {
+            (manifest,policy)=try VendorFreeModuleTrust.verify(manifest:declarationBytes.manifest,policy:declarationBytes.policy)
+            authority = .restrictedFreeVendor
+        } else {
+            let document=try PropertyListDecoder().decode(SignedDocument.self,from:declarationBytes.manifest)
+            let policyDocument=try PropertyListDecoder().decode(SignedDocument.self,from:declarationBytes.policy)
+            guard publicKey.count==32,document.signature.count==64,policyDocument.signature.count==64 else{throw VideoError.permission("独立插件包签名封套无效")}
+            manifest=try document.verified(as:PluginPackageManifest.self,publicKey:publicKey)
+            policy=try policyDocument.verified(as:CommercialPolicy.self,publicKey:publicKey)
+            authority = .publisher
+        }
         try validate(manifest,policy:policy,architecture:architecture,osMajor:osMajor,minimumPolicyVersion:minimumPolicyVersion,now:now)
         try verifyFiles(manifest,root:root)
         guard try implementationDigest(root.appendingPathComponent(manifest.execution.serviceExecutable))==manifest.implementationDigest else{throw VideoError.permission("独立插件实际服务Mach-O代码身份不匹配")}
@@ -143,7 +157,7 @@ public enum PluginPackageRules {
             let current=try declarations(declarationsRoot)
             guard current.manifest==declarationBytes.manifest,current.policy==declarationBytes.policy else{throw VideoError.conflict("独立插件验签期间声明被改写")}
         }
-        return VerifiedPluginPackage(rootURL:root.standardizedFileURL,manifest:manifest,policy:policy)
+        return VerifiedPluginPackage(rootURL:root.standardizedFileURL,manifest:manifest,policy:policy,authority:authority)
     }
 }
 

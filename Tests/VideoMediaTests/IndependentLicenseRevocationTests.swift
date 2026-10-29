@@ -61,6 +61,33 @@ final class IndependentLicenseRevocationTests: XCTestCase {
         XCTAssertNoThrow(try restarted.check(license(id: "new-renewal-id")))
         XCTAssertThrowsError(try restarted.check(original))
     }
+    func testRestrictedFreeIssuerCannotRewriteOrClearOriginalRevocationHistory()throws {
+        let originalKey=Curve25519.Signing.PrivateKey(),newIssuer=Curve25519.Signing.PrivateKey(),directory=try root(),original=license()
+        let store=try IndependentLicenseRevocationStore(root:directory,publicKey:originalKey.publicKey.rawRepresentation)
+        try store.remember(revoked(original,key:originalKey))
+        let state=directory.appendingPathComponent(IndependentLicenseRevocationStore.stateName),before=try Data(contentsOf:state)
+        var changed=original;changed.revoked=true
+        let payload=try Codec.data(changed),issuer=Codec.hash(newIssuer.publicKey.rawRepresentation),pair=String(repeating:"a",count:64)
+        let context=try VendorFreeModuleTrust.signingPayload(purpose:VendorFreeModuleTrust.policyPurpose,issuerKeySHA256:issuer,pairSHA256:pair,payload:payload)
+        let restricted=RestrictedFreeModuleDocument(purpose:VendorFreeModuleTrust.policyPurpose,issuerKeySHA256:issuer,pairSHA256:pair,payload:payload,signature:try newIssuer.signature(for:context))
+        let encoder=PropertyListEncoder();encoder.outputFormat = .binary
+        let downgraded=try PropertyListDecoder().decode(SignedDocument.self,from:encoder.encode(restricted))
+        XCTAssertThrowsError(try downgraded.verified(as:ModuleLicense.self,publicKey:newIssuer.publicKey.rawRepresentation))
+        XCTAssertThrowsError(try store.remember(downgraded))
+        XCTAssertThrowsError(try IndependentLicenseRevocationStore(root:directory,publicKey:newIssuer.publicKey.rawRepresentation).hasRevocations())
+        XCTAssertEqual(before,try Data(contentsOf:state))
+        let restarted=try IndependentLicenseRevocationStore(root:directory,publicKey:originalKey.publicKey.rawRepresentation)
+        XCTAssertTrue(try restarted.hasRevocations());XCTAssertThrowsError(try restarted.check(original))
+    }
+    func testOriginalLicenceSignaturesKeepTheirOriginalRootAndRevokedSemantics()throws {
+        let original=Curve25519.Signing.PrivateKey(),newIssuer=Curve25519.Signing.PrivateKey(),now=Date()
+        var value=license(),active=try signed(value,key:original)
+        XCTAssertNoThrow(try active.verified(as:ModuleLicense.self,publicKey:original.publicKey.rawRepresentation).validate(now:now))
+        XCTAssertThrowsError(try active.verified(as:ModuleLicense.self,publicKey:newIssuer.publicKey.rawRepresentation))
+        value.revoked=true
+        active=try signed(value,key:original)
+        XCTAssertThrowsError(try active.verified(as:ModuleLicense.self,publicKey:original.publicKey.rawRepresentation).validate(now:now))
+    }
     func testDryRunDoesNotInitializeAndKnownStateCannotDisappearOrResetToEmpty() throws {
         let key = Curve25519.Signing.PrivateKey(), directory = try root(), original = license()
         let store = try IndependentLicenseRevocationStore(root: directory, publicKey: key.publicKey.rawRepresentation)

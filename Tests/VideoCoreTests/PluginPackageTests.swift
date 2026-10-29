@@ -35,6 +35,14 @@ final class PluginPackageTests:XCTestCase {
         var policy=p;policy.pluginID=other.module.id
         XCTAssertNoThrow(try PluginPackageRules.validate(other,policy:policy,architecture:"x86_64",osMajor:14,now:now))
     }
+    func testOriginalXMLPackageDocumentsRetainTheOriginalPublisherAuthority()throws {
+        let (root,manifest,policy,key)=try fixture(),encoder=PropertyListEncoder();encoder.outputFormat = .xml
+        try encoder.encode(sign(manifest,key:key)).write(to:root.appendingPathComponent(PluginPackageRules.manifestName))
+        try encoder.encode(sign(policy,key:key)).write(to:root.appendingPathComponent(PluginPackageRules.policyName))
+        var counter=0
+        let package=try verified(root,manifest,key,counter:&counter)
+        XCTAssertEqual(package.authority,.publisher);XCTAssertEqual(package.policy.access,"paid");XCTAssertEqual(counter,2)
+    }
     func testWrongSignatureAndTamperedFileAreRejectedBeforeCodeProbe()throws{
         let (r,m,_,k)=try fixture();var n=0
         XCTAssertThrowsError(try verified(r,m,Curve25519.Signing.PrivateKey(),counter:&n));XCTAssertEqual(n,0)

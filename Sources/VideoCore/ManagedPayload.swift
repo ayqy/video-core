@@ -16,6 +16,7 @@ public enum ManagedPayloadRules {
     }
     public static func allowedPaths(for product:ManagedReleaseProduct,format:Int=1)->Set<String> {
         var result=requiredPaths(for:product,format:format).union(["bin/video-install"])
+        if product == .advancedCLI && format==2 {result.insert(VendorFreeModuleTrust.resourceName)}
         if product == .advancedCLI && format==2{for id in PluginPackageRules.moduleSuffixes.keys{let prefix=try! PluginPackageRules.packagePath(pluginID:id)+"/";result.formUnion(try! PluginPackageRules.allowedPaths(pluginID:id).map{prefix+$0})}}
         return result
     }
@@ -36,7 +37,7 @@ public enum ManagedPayloadRules {
             if !isExecutable {
                 guard file.bytes>0,file.bytes<=2*1024*1024 else{throw VideoError.invalid("发行许可、公钥或目录文件为空或超过2MiB")}
             }
-            if file.path=="publisher.pub" && file.bytes != 32{throw VideoError.invalid("发行公钥须为32字节")}
+            if ["publisher.pub",VendorFreeModuleTrust.resourceName].contains(file.path) && file.bytes != 32{throw VideoError.invalid("发行公钥须为32字节")}
         }
     }
 }

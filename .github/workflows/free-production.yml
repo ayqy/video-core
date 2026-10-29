@@ -268,7 +268,10 @@ jobs:
               ('VideoCoreTests', 'ProviderRulesTests'): (14, None),
               ('VideoCoreTests', 'ProductFactsTests'): (20, None),
               ('VideoCoreTests', 'DomainTests'): (20, None),
-              ('VideoCoreTests', 'PluginPackageTests'): (16, None),
+              ('VideoCoreTests', 'PluginPackageTests'): (17, None),
+              ('VideoCoreTests', 'VendorFreeModuleTrustTests'): (14, None),
+              ('VideoCoreTests', 'ManagedPayloadTests'): (8, None),
+              ('VideoMediaTests', 'IndependentLicenseRevocationTests'): (13, None),
               ('VideoCoreTests', 'ModuleCatalogPublicationTests'): (22, None),
               ('VideoCoreTests', 'LayerTests'): (5, None),
               ('VideoCoreTests', 'LayerEntranceTests'): (7, None),
@@ -330,7 +333,7 @@ jobs:
               filters.append('^' + re.escape(target) + r'\.' + re.escape(suite) +
                              '/(?:' + '|'.join(re.escape(method) for method in selected) + ')$')
           expected = len(expected_methods)
-          assert expected == sum(method_counts.values()) == 649
+          assert expected == sum(method_counts.values()) == 685
           print('affected_suite_methods=' + str(method_counts))
           print('system_tts_methods=not_selected; import_only_methods=2')
           try:
