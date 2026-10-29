@@ -2,10 +2,10 @@
 
 VideoFree source export · package_free.py · version 1
 
-生成时间：2026-10-29 10:18:16 北京时间
+生成时间：2026-10-29 10:41:50 北京时间
 
-- 源码与必要元数据：252个文件；3890054字节（不含本清单）。
-- 整体内容指纹：`324256dead02eb43406caeed91326e9475183bc9fe3ba87ffcb403ac7ed64c83`。
+- 源码与必要元数据：252个文件；3893781字节（不含本清单）。
+- 整体内容指纹：`4c577803dc765ba2c9175713902ec819a5ec8dbe1771bb3ce33b609039e5fdef`。
 - 来源：受控原始工程中的逐文件白名单；Package.swift与唯一免费制作workflow来自Distribution/Free精确模板，README由发行脚本生成。
 - 本包不含.git，不可作为新业务checkout；本清单生成过程不执行构建、设备验收、签名安装或公共上传，各阶段以独立证据为准。
 - 排除：App、VideoGame、VideoCartoon、Premium、高级实现运行时测试、私有仓库地址、凭据、客户数据、缓存、日志及媒体过程产物。
@@ -14,7 +14,7 @@ VideoFree source export · package_free.py · version 1
 
 | SHA-256 | 字节数 | 包内路径 / 原工程来源 |
 |---|---:|---|
-| 366af6d7281bdd55f79d1f8ae320690da09db269c7ec043166e0f935020f46a5 | 24554 | .github/workflows/free-production.yml |
+| 427c3b8d3772039dd8adbe0cdeddc41918035d7b24af1c2126a2a50c4c453d08 | 24554 | .github/workflows/free-production.yml |
 | 248bde3e471dd8cb7f588e56031cace869331737a21ab0ad3e4a1824d1d5213a | 34061 | Integrations/README.md |
 | 2ff174ec064ca614f24e8ba67ae5c7042a2caa883af162bafd27a8a4520d5ed7 | 26522 | Integrations/asset_reuse.py |
 | 91f902f9ceedb5b26bfae07ecd097aa47fb9e69b807eae6ff289153770655142 | 25400 | Integrations/check_install.py |
@@ -146,7 +146,7 @@ VideoFree source export · package_free.py · version 1
 | 0d209127a30e86897466cda960616a33e2fef114f83767f1c78848b7c283de8f | 22935 | Sources/VideoMedia/BubbleBuiltinAssets.swift |
 | d9d4403a087a3eeddac962f9384bf3a43c517ac7cd231b14b9126a45a27c599a | 15691 | Sources/VideoMedia/BubbleKnowledgeBuiltinAssets.swift |
 | 45cbf460ed3e913a2051cd977140bef36badbca1feef0b8145947daeeb01edd8 | 7891 | Sources/VideoMedia/CinemaSubtitles.swift |
-| 837aa869c66f58d4d662438328f0d315bfa87b04aff17f84d9d27b5a282bde2b | 8086 | Sources/VideoMedia/ClassicArtworkMedia.swift |
+| 11870a1ff8781dbea9909c93435d53a4067c5588f7f599b905d756fbcecf2baf | 9111 | Sources/VideoMedia/ClassicArtworkMedia.swift |
 | 6beff353416b9b4329e20ab3cbd84fcb19d34c8687427feb157b97d00ed63b4d | 10707 | Sources/VideoMedia/ClassicBuiltinAssets.swift |
 | 451de62ae66ce51bc390deb9d210ca46de5ca66e5bb52b4572a6e5e792e141a2 | 4904 | Sources/VideoMedia/CoursePreview.swift |
 | 5edf04222491105771fd69d3ad3c47861e1729a14e846babdf82005d8b43fd92 | 8064 | Sources/VideoMedia/DataPresentationPainter.swift |
@@ -257,7 +257,7 @@ VideoFree source export · package_free.py · version 1
 | 4e735b7700b6c618f736fd983eeab28e1dbe93f7ffe82c3e564ab997036d5642 | 23423 | Tests/VideoMediaTests/MediaTests.swift |
 | 2f24b48426df45f31fd87fcb62e727426a451cb8cb9c2949e0fc8d4238744d18 | 7697 | Tests/VideoMediaTests/NativeEncoderTests.swift |
 | 4107b55c496e037cb26708cfcfc224301c35ac98dc06598130c0219ac351f934 | 15795 | Tests/VideoMediaTests/PaperPresentationMediaTests.swift |
-| ee1b08293b3031087ee33fe4a1cf6d6d33b95b55002f50bb6de053df54273997 | 10962 | Tests/VideoMediaTests/PluginProcessTests.swift |
+| d9ca9f5a29ab99be0659bf37dba3a031a77f120a71e144a5197144f481978473 | 13664 | Tests/VideoMediaTests/PluginProcessTests.swift |
 | a28dfd69ed134054eb432e761061f0db09e3bb14aded4e9ce0e796af1a8c1cbb | 3748 | Tests/VideoMediaTests/RenderInvocationTests.swift |
 | f1fa3952a70af45cf3adca99715c3bab89aee643deadcdc25f76e59575e9dcf2 | 45627 | Tests/VideoMediaTests/ScriptJobsTests.swift |
 | 03edcaf754546e54eee0172e844fd13115c80b1829c720f8c6db3af3ba53282d | 7087 | Tests/VideoMediaTests/SpeechMediaTests.swift |

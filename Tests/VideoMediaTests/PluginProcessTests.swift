@@ -1,6 +1,7 @@
 import XCTest
 import CryptoKit
 import CoreGraphics
+import ImageIO
 @testable import VideoMedia
 import VideoCore
 
@@ -132,5 +133,30 @@ final class PluginProcessTests:XCTestCase {
         XCTAssertEqual(try PluginStdioInput.readChunk(pipe.fileHandleForReading.fileDescriptor),Data("two\nthree\n".utf8))
         try pipe.fileHandleForWriting.close()
         XCTAssertNil(try PluginStdioInput.readChunk(pipe.fileHandleForReading.fileDescriptor))
+    }
+    func test_plugin_atlas_keeps_the_hash_validated_original_png_bytes()throws {
+        let root=FileManager.default.temporaryDirectory.appendingPathComponent("original-png-"+UUID().uuidString)
+        defer{try? FileManager.default.removeItem(at:root)}
+        let repository=try Repository(root:root),workspace=Workspace(name:"source PNG fixture",owner:"tester")
+        let context=try XCTUnwrap(CGContext(data:nil,width:4,height:4,bitsPerComponent:8,bytesPerRow:16,space:CGColorSpaceCreateDeviceRGB(),bitmapInfo:CGImageAlphaInfo.premultipliedLast.rawValue))
+        context.setFillColor(CGColor(red:0.2,green:0.5,blue:0.8,alpha:1));context.fill(CGRect(x:0,y:0,width:4,height:4))
+        let image=try XCTUnwrap(context.makeImage()),bytes=NSMutableData()
+        let target=try XCTUnwrap(CGImageDestinationCreateWithData(bytes,"public.png" as CFString,1,nil))
+        CGImageDestinationAddImage(target,image,[kCGImagePropertyPNGDictionary:[kCGImagePropertyPNGDescription:"retained original source description"]] as CFDictionary)
+        XCTAssertTrue(CGImageDestinationFinalize(target));let original=bytes as Data
+        var asset=try repository.ingest(original,name:"source.png",workspaceID:workspace.id,mediaType:"image")
+        let proof=Evidence(workspaceID:workspace.id,title:"isolated source fixture",source:"local-test",claim:"test fixture",owner:"test",commercialAllowed:true,verified:true)
+        asset.evidenceID=proof.id
+        try repository.transaction{$0.workspaces.append(workspace);$0.assets.append(asset);$0.evidence.append(proof)}
+        let source=ClassicSource(assetID:asset.id,hash:asset.hash,source:proof.source,owner:proof.owner,license:"test-only",evidenceID:proof.id)
+        var scene=VideoCore.Scene(kind:.simulation,title:"",body:"")
+        scene.classicArtwork=ClassicArtwork.quadrants(assetID:asset.id,gameplay:.sokoban,sources:[source])
+        let resources=try ClassicArtworkMedia.load(scene:scene,workspaceID:workspace.id,repository:repository,database:repository.read(),commercial:true)
+        let sent=try resources.pluginRasterAssets(props:PluginVisualProps(scene:scene))
+        XCTAssertEqual(sent.count,1);XCTAssertEqual(sent[0].data,original);XCTAssertEqual(sent[0].sha256,asset.hash)
+        XCTAssertEqual(sent[0].width,4);XCTAssertEqual(sent[0].height,4)
+        let decoded=try XCTUnwrap(CGImageSourceCreateWithData(original as CFData,nil))
+        XCTAssertNotEqual(try ScenePainter.png(XCTUnwrap(CGImageSourceCreateImageAtIndex(decoded,0,nil))),original,"fixture must distinguish original metadata from re-encoded pixels")
+        XCTAssertEqual(try resources.pluginRasterAssets(props:PluginVisualProps(scene:scene)),sent)
     }
 }

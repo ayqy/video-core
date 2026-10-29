@@ -6,8 +6,9 @@ import VideoCore
 /// CGImage is immutable. The bank is built only after file hashes, workspace and rights are checked.
 public struct RenderResources: @unchecked Sendable {
     private let images: [String:CGImage]
+    private let encoded: [String:Data]
     public static let empty = RenderResources(images:[:])
-    fileprivate init(images:[String:CGImage]) { self.images=images }
+    fileprivate init(images:[String:CGImage],encoded:[String:Data]=[:]) { self.images=images;self.encoded=encoded }
     public func sprite(_ role:String,artwork:ClassicArtwork) throws -> CGImage {
         guard let cell=artwork.sprites.first(where:{$0.role==role}),let image=images[cell.assetID] else { throw VideoError.notFound("外部图集角色未加载："+role) }
         let rect=CGRect(x:cell.x*Double(image.width),y:cell.y*Double(image.height),width:cell.width*Double(image.width),height:cell.height*Double(image.height)).integral
@@ -22,7 +23,9 @@ public struct RenderResources: @unchecked Sendable {
         var result:[PluginRasterAsset]=[],total=0
         for id in ids.sorted() {
             guard let image=images[id] else{throw VideoError.notFound("实际图集缺失")}
-            let bytes=try ScenePainter.png(image);total+=bytes.count
+            // Keep the validated single-PNG original; re-encoding every frame
+            // can inflate a valid atlas beyond the unchanged transport budget.
+            let bytes=try encoded[id] ?? ScenePainter.png(image);total+=bytes.count
             guard bytes.count<=PluginProtocolRules.maximumAssetBytes,total<=PluginProtocolRules.maximumTotalAssetBytes else{throw VideoError.unavailable("实际图集超过插件有界传输预算，请缩小真实图集后重新核验")}
             result.append(PluginRasterAsset(assetID:id,data:bytes,sha256:Codec.hash(bytes),width:image.width,height:image.height))
         }
@@ -48,7 +51,7 @@ public enum ClassicArtworkMedia {
     public static func load(scene:VideoCore.Scene,workspaceID:String,repository:Repository,database:Database,commercial:Bool,now:Date=Date()) throws -> RenderResources {
         guard let artwork=scene.classicArtwork else { return .empty }
         try ClassicArtworkRules.validateRights(scene:scene,workspaceID:workspaceID,assets:database.assets,evidence:database.evidence,commercial:commercial,now:now)
-        var images:[String:CGImage]=[:]
+        var images:[String:CGImage]=[:],encoded:[String:Data]=[:]
         let imageIDs=Set(artwork.sprites.map(\.assetID))
         let referenced=references(artwork:artwork,database:database).assets
         for id in referenced {
@@ -58,9 +61,18 @@ public enum ClassicArtworkMedia {
             if imageIDs.contains(id) {
                 guard let source=CGImageSourceCreateWithData(data as CFData,nil),let properties=CGImageSourceCopyPropertiesAtIndex(source,0,nil) as? [CFString:Any],let w=properties[kCGImagePropertyPixelWidth] as? Int,let h=properties[kCGImagePropertyPixelHeight] as? Int,w>0,h>0,w<=8192,h<=8192,w*h<=24_000_000,let image=CGImageSourceCreateImageAtIndex(source,0,nil) else { throw VideoError.invalid("经典游戏图集损坏或分辨率超过安全上限") }
                 images[id]=image
+                // Other image formats retain the existing canonical PNG path.
+                // An original is eligible only after the full source hash,
+                // rights, actual dimensions and single-image PNG are verified.
+                if CGImageSourceGetType(source) as String? == "public.png",CGImageSourceGetCount(source)==1 {
+                    let frozen=data.withUnsafeBytes{Data(bytes:$0.baseAddress!,count:$0.count)}
+                    guard Codec.hash(frozen)==asset.hash else{throw VideoError.review("已核图集在冻结传输字节时变化，请从原件恢复后重做")}
+                    encoded[id]=frozen
+                }
+                else{encoded[id]=try ScenePainter.png(image)}
             }
         }
-        return RenderResources(images:images)
+        return RenderResources(images:images,encoded:encoded)
     }
     private static func references(artwork:ClassicArtwork,database:Database)->(assets:Set<String>,evidence:Set<String>) {
         var assets=artwork.assetIDs,evidence:Set<String>=[],pending=Array(artwork.evidenceIDs)
