@@ -5,6 +5,18 @@ import ImageIO
 import VideoCore
 
 public enum ScenePainter {
+    /// Advanced scenes own the whole image. Captions overlay the world instead
+    /// of reducing its height; author/editor metadata never becomes a second
+    /// explanation track around the picture.
+    struct FullFrameLayout {
+        let visual:CGRect
+        let caption:CGRect
+        init(width:CGFloat,height:CGFloat) {
+            visual=CGRect(x:0,y:0,width:width,height:height)
+            let margin:CGFloat=height>width ? 56:80
+            caption=CGRect(x:margin,y:height>width ? 36:26,width:width-margin*2,height:84)
+        }
+    }
     /// Reserve distinct areas for the snapshot price, captions, final CTA and
     /// playback footer. CoreText uses bottom-left canvas coordinates here.
     struct OverlayLayout {
@@ -60,6 +72,26 @@ public enum ScenePainter {
         c.saveGState(); defer { c.restoreGState() }
         if s.paperPresentation != nil {
             try PaperPresentationPainter.draw(revision:revision,scene:s,sourceFrame:mapped,isLast:index==revision.scenes.count-1,layerImages:layerImages,context:c)
+            return
+        }
+        if s.kind == .simulation || s.kind == .cartoon {
+            guard let modules else { throw VideoError.unavailable("此镜头需要独立高级模块，请核对已安装模块与权益") }
+            let stage=FullFrameLayout(width:w,height:h)
+            let held=min(max(0,mapped),s.durationFrames-1)
+            c.setFillColor(color(s.color));c.fill(stage.visual)
+            // A native presenter stands in front of the shared pencil stage.
+            // Game maps instead form the background behind authored objects.
+            // Neither module paints another copy of Host layer images.
+            if s.cartoonRig != nil {try LayerPainter.draw(scene:s,sourceFrame:held,aspect:revision.aspect,images:layerImages,context:c,fontName:s.fontName ?? "PingFangSC-Medium")}
+            let moduleFrame:Int
+            if s.gameWorld != nil || s.cartoonRig != nil {moduleFrame=held}
+            else {moduleFrame=s.kind == .simulation ? try s.renderSimulationSourceFrame(atTimelineFrame:local):mapped}
+            try modules.draw(scene:s,localFrame:moduleFrame,fps:revision.fps,rect:stage.visual,context:c,resources:resources,invocation:invocation)
+            if s.cartoonRig == nil {try LayerPainter.draw(scene:s,sourceFrame:held,aspect:revision.aspect,images:layerImages,context:c,fontName:s.fontName ?? "PingFangSC-Medium")}
+            if let caption=s.captions.first(where:{$0.startFrame<=mapped && mapped<$0.endFrame}) {
+                try CinemaSubtitles.validateClearance(scene:s,sourceFrame:held,aspect:revision.aspect,rect:stage.caption)
+                try CinemaSubtitles.draw(caption.text,in:stage.caption,context:c,fontName:s.fontName ?? "PingFangSC-Medium")
+            }
             return
         }
         c.setFillColor(color("0B1020")); c.fill(CGRect(x: 0,y: 0,width: w,height: h))

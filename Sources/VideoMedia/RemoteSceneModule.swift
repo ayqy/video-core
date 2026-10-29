@@ -84,9 +84,11 @@ public final class RemoteSceneModule:ScopedSceneRenderModule,@unchecked Sendable
     public func draw(scene:VideoCore.Scene,localFrame:Int,fps:Int,rect:CGRect,context:CGContext)throws {throw VideoError.permission("独立高级绘制必须携带Host实时核验的完整调用范围")}
     public func draw(scene:VideoCore.Scene,localFrame:Int,fps:Int,rect:CGRect,context:CGContext,resources:RenderResources)throws {throw VideoError.permission("独立高级绘制缺少调用范围")}
     public func draw(scene:VideoCore.Scene,localFrame:Int,fps:Int,rect:CGRect,context:CGContext,resources:RenderResources,invocation:RenderInvocation)throws {
-        try invocation.check();try PluginInputCompatibility.requireKnowledgeSupport(scene.simulation,pluginID:manifest.id,inputSchema:manifest.inputSchema,appearances:scene.classicArtwork?.knowledgeParticipants);try PluginInputCompatibility.requireCartoonSupport(scene.cartoonPerformance,pluginID:manifest.id,inputSchema:manifest.inputSchema);let session=try session(invocation)
+        try invocation.check();try PluginInputCompatibility.requireKnowledgeSupport(scene.simulation,pluginID:manifest.id,inputSchema:manifest.inputSchema,appearances:scene.classicArtwork?.knowledgeParticipants);try PluginInputCompatibility.requireCartoonSupport(scene.cartoonPerformance,pluginID:manifest.id,inputSchema:manifest.inputSchema)
+        try PluginInputCompatibility.requireStorySupport(storyActions:scene.storyActions,gameWorld:scene.gameWorld,cartoonRig:scene.cartoonRig,pluginID:manifest.id,inputSchema:manifest.inputSchema)
+        let session=try session(invocation)
         session.mutex.lock();defer{session.mutex.unlock()}
-        let props=PluginVisualProps(scene:scene),client=session.client
+        let props=PluginVisualProps(scene:scene,voiceBinding:resources.speechBinding),client=session.client
         let input=PluginFrameInput(invocation:client.invocation,props:props,sourceFrame:localFrame,fps:fps,canvasWidth:context.width,canvasHeight:context.height,rect:PluginRect(x:rect.minX,y:rect.minY,width:rect.width,height:rect.height),assets:try resources.pluginRasterAssets(props:props))
         try PluginProtocolRules.validate(input,capabilityID:manifest.capabilities[0]);let digest=try input.contentDigest()
         try session.preflight.perform(input,digest:digest,check:{try invocation.check()}) { method in

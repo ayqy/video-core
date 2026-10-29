@@ -81,6 +81,9 @@ public struct Scene: Codable, Equatable, Identifiable, Sendable {
     public var layers: [SceneLayer]?
     public var characterProfile: CharacterProfile?
     public var cartoonPerformance: CartoonPerformance?
+    public var storyActions: [StoryAction]?
+    public var gameWorld: GameWorld?
+    public var cartoonRig: CartoonRig?
     public var narrativeSources: [NarrativeSource]?
     public var classicArtwork: ClassicArtwork?
     public var classicArtworkRequired: Bool?
@@ -110,6 +113,7 @@ public struct Scene: Codable, Equatable, Identifiable, Sendable {
         }
         try LayerRules.validate(scene:self,assets:assets)
         try ClassicArtworkRules.validate(scene:self,assets:assets)
+        try StorySceneRules.validate(scene:self,assets:assets)
         if let framing=mediaFraming {
             try framing.validate()
             guard kind == .image || kind == .video,

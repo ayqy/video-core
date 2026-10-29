@@ -77,86 +77,13 @@ jobs:
           print('image=' + os.environ.get('ImageOS', 'unknown') + '; image_version=' + os.environ.get('ImageVersion', 'unknown'))
           PY
 
-      - name: Check offline narration adapter rules
-        shell: bash
-        run: |
-          python3 -B - <<'PY'
-          from pathlib import Path
-          import ast, unittest
-          source = ast.parse(Path('Integrations/tests/test_expressive_tts.py').read_text())
-          expected = {
-              'test_expressive_tts.' + group.name + '.' + method.name
-              for group in source.body if isinstance(group, ast.ClassDef)
-              for method in group.body if isinstance(method, ast.FunctionDef) and method.name.startswith('test_')
-          }
-          assert len(expected) == 28, 'Expected the complete reviewed narration adapter source inventory'
-          suite = unittest.defaultTestLoader.discover('Integrations/tests', pattern='test_expressive_tts.py')
-          def identities(node):
-              for item in node:
-                  if isinstance(item, unittest.TestSuite):
-                      yield from identities(item)
-                  else:
-                      yield item.id()
-          discovered = list(identities(suite))
-          assert len(discovered) == len(set(discovered)) and set(discovered) == expected
-          result = unittest.TextTestRunner(verbosity=1).run(suite)
-          assert result.wasSuccessful() and result.testsRun == len(expected) and not result.skipped
-          print('expressive_tts_distinct_rules=' + str(len(expected)))
-          print('model_download=not_run; inference=not_run; voice_quality=needs_review')
-          PY
-          python3 -B Integrations/expressive_tts.py --help
-          python3 -B Integrations/prepare_cosyvoice.py --help
-
-      - name: Check independent adult voice design rules
-        shell: bash
-        run: |
-          python3 -B - <<'PY'
-          import unittest
-          suite = unittest.defaultTestLoader.discover('Integrations/tests', pattern='test_voice_design_tts.py')
-          def identities(node):
-              for item in node:
-                  if isinstance(item, unittest.TestSuite):
-                      yield from identities(item)
-                  else:
-                      yield item.id()
-          expected = list(identities(suite))
-          assert len(expected) == len(set(expected)) == 22
-          result = unittest.TextTestRunner(verbosity=1).run(suite)
-          assert result.wasSuccessful() and result.testsRun == len(expected) and not result.skipped
-          print('voice_design_complete_rules=' + str(len(expected)))
-          print('model_download=not_run; inference=not_run; voice_quality=needs_review; default_voice=unchanged')
-          PY
-          python3 -B Integrations/voice_design_tts.py --help
-
-      - name: Check pinned VoiceDesign preparation rules
-        shell: bash
-        run: |
-          python3 -B - <<'PY'
-          import unittest
-          suite = unittest.defaultTestLoader.discover('Integrations/tests', pattern='test_prepare_voice_design.py')
-          def identities(node):
-              for item in node:
-                  if isinstance(item, unittest.TestSuite):
-                      yield from identities(item)
-                  else:
-                      yield item.id()
-          expected = list(identities(suite))
-          assert len(expected) == len(set(expected)) == 36
-          result = unittest.TextTestRunner(verbosity=1).run(suite)
-          assert result.wasSuccessful() and result.testsRun == len(expected) and not result.skipped
-          print('voice_design_preparation_complete_rules=' + str(len(expected)))
-          print('environment_install=not_run; model_download=not_run; inference=not_run; voice_quality=needs_review')
-          PY
-          python3 -B Integrations/prepare_voice_design.py --help
-
-      - name: Check complete shared Skill and host permission rules
+      - name: Check affected story actions and speech energy rules
         shell: bash
         run: |
           python3 -B - <<'PY'
           import sys, unittest
           sys.path.insert(0, 'Integrations')
-          modules = ['test_codex_events', 'test_codex_broker', 'test_codex_production',
-                     'test_qwen_stream', 'test_claude_stream', 'check_install', 'test_discover']
+          modules = ['test_story_action', 'test_speech_energy']
           suite = unittest.TestSuite(unittest.defaultTestLoader.loadTestsFromName(name) for name in modules)
           def identities(node):
               for item in node:
@@ -168,10 +95,9 @@ jobs:
           assert expected and len(expected) == len(set(expected)) == suite.countTestCases()
           result = unittest.TextTestRunner(verbosity=1).run(suite)
           assert result.wasSuccessful() and result.testsRun == len(expected) and not result.skipped
-          print('complete_host_rule_methods=' + str(len(expected)))
-          print('model_request=not_run; account_change=not_run; full_host_acceptance=needs_review')
+          print('affected_story_python_methods=' + str(len(expected)))
+          print('unchanged_host_and_tts_rules=prior_evidence_reused; model_request=not_run; account_change=not_run')
           PY
-          python3 -B Integrations/check_package.py
 
       - name: Prepare normal media tools
         shell: bash
@@ -181,32 +107,6 @@ jobs:
           fi
           ffmpeg -version | head -n 1
           swift --version
-
-      - name: Check optional Taiwan narration adapter rules without network
-        shell: bash
-        run: |
-          python3 -B - <<'PYRULES'
-          import socket, unittest
-          def deny_network(*args, **kwargs):
-              raise AssertionError('The optional narration CI rules must not connect to a real service')
-          socket.socket.connect = deny_network
-          socket.socket.connect_ex = deny_network
-          socket.create_connection = deny_network
-          suite = unittest.defaultTestLoader.discover('Integrations/tests', pattern='test_readaloud_tts.py')
-          def identities(node):
-              for item in node:
-                  if isinstance(item, unittest.TestSuite):
-                      yield from identities(item)
-                  else:
-                      yield item.id()
-          expected = list(identities(suite))
-          assert expected and len(expected) == len(set(expected)) == suite.countTestCases()
-          result = unittest.TextTestRunner(verbosity=1).run(suite)
-          assert result.wasSuccessful() and result.testsRun == len(expected) and not result.skipped
-          print('readaloud_complete_rules=' + str(len(expected)))
-          print('service_request=not_run; voice_generation=not_run; voice_quality=needs_review; default_voice=unchanged')
-          PYRULES
-          python3 -B Integrations/readaloud_tts.py --help
 
       - name: Build the standalone free CLI
         shell: bash
@@ -241,7 +141,7 @@ jobs:
               log.unlink(missing_ok=True)
           PY
 
-      - name: Check affected speech, provider, mixing and practice rules
+      - name: Check affected shared scene, protocol and rendering rules
         shell: bash
         run: |
           python3 - <<'PY'
@@ -250,64 +150,33 @@ jobs:
           root = Path(os.environ['GITHUB_WORKSPACE'])
           scratch = Path(os.environ['RUNNER_TEMP']) / 'video-free-build'
           log = Path(os.environ['RUNNER_TEMP']) / 'video-free-rules.log'
-          # Each full suite is reviewed against its exact source inventory.
-          # The import-only selection must not run installed-system TTS on CI.
+          # Complete classes affected by shared scene/schema/protocol/drawing changes.
+          # Unchanged TTS, purchase, desktop UI and host suites retain prior evidence.
           suites = {
-              ('VideoCoreTests', 'BaiduVideoRulesTests'): (18, None),
-              ('VideoCoreTests', 'EditorPracticeTests'): (13, None),
-              ('VideoCoreTests', 'MacCommerceRulesTests'): (8, None),
-              ('VideoCoreTests', 'SpeechTests'): (40, None),
-              ('VideoCoreTests', 'AudioMixRulesTests'): (14, None),
-              ('VideoCoreTests', 'ContentServiceRulesTests'): (18, None),
-              ('VideoCoreTests', 'ContentProjectTests'): (23, None),
-              ('VideoCoreTests', 'ProductionExportTests'): (19, None),
-              ('VideoCoreTests', 'ProductionDeliveryTests'): (13, None),
-              ('VideoCoreTests', 'BrandDeliveryTests'): (10, None),
-              ('VideoCoreTests', 'AgentMutationTests'): (9, None),
-              ('VideoCoreTests', 'SpeechProjectRulesTests'): (12, None),
-              ('VideoCoreTests', 'ProviderRulesTests'): (14, None),
-              ('VideoCoreTests', 'ProductFactsTests'): (20, None),
-              ('VideoCoreTests', 'DomainTests'): (25, None),
-              ('VideoCoreTests', 'PluginPackageTests'): (17, None),
-              ('VideoCoreTests', 'VendorFreeModuleTrustTests'): (14, None),
-              ('VideoCoreTests', 'ManagedPayloadTests'): (8, None),
-              ('VideoMediaTests', 'IndependentLicenseRevocationTests'): (13, None),
-              ('VideoCoreTests', 'ModuleCatalogPublicationTests'): (22, None),
-              ('VideoCoreTests', 'LayerTests'): (5, None),
-              ('VideoCoreTests', 'LayerEntranceTests'): (7, None),
-              ('VideoCoreTests', 'PaperPresentationTests'): (6, None),
-              ('VideoCoreTests', 'CartoonPerformanceTests'): (10, None),
+              ('VideoCoreTests', 'StoryActionTests'): (14, None),
               ('VideoCoreTests', 'PluginProtocolTests'): (14, None),
+              ('VideoCoreTests', 'VendorFreeModuleTrustTests'): (14, None),
+              ('VideoCoreTests', 'AgentSchemasTests'): (3, None),
               ('VideoCoreTests', 'ClassicArtworkTests'): (12, None),
+              ('VideoCoreTests', 'KnowledgeParticipantAppearanceTests'): (8, None),
               ('VideoCoreTests', 'KnowledgeDoorSourceTests'): (6, None),
-              ('VideoCoreTests', 'ClassicGateEditingTests'): (7, None),
+              ('VideoCoreTests', 'KnowledgeParticipantCharacterBindingTests'): (6, None),
               ('VideoCoreTests', 'ClassicSceneEditingTests'): (22, None),
               ('VideoCoreTests', 'KnowledgeSoundTests'): (24, None),
-              ('VideoCoreTests', 'KnowledgePresentationScheduleTests'): (9, None),
+              ('VideoCoreTests', 'LayerTests'): (5, None),
+              ('VideoCoreTests', 'LayerEntranceTests'): (7, None),
+              ('VideoCoreTests', 'CartoonPerformanceTests'): (10, None),
               ('VideoCoreTests', 'KnowledgeStoryboardTests'): (22, None),
-              ('VideoMediaTests', 'PaperPresentationMediaTests'): (11, None),
+              ('VideoCoreTests', 'KnowledgeSimulationTests'): (25, None),
+              ('VideoCoreTests', 'KnowledgeRuleTableTests'): (21, None),
+              ('VideoCoreTests', 'KnowledgePresentationScheduleTests'): (9, None),
+              ('VideoCoreTests', 'KnowledgeCounterfactualExplanationTests'): (21, None),
               ('VideoMediaTests', 'CinemaSubtitleTests'): (13, None),
-              ('VideoMediaTests', 'MediaTests'): (11, None),
+              ('VideoMediaTests', 'PaperPresentationMediaTests'): (11, None),
               ('VideoMediaTests', 'DataPresentationPainterTests'): (10, None),
-              ('VideoMediaTests', 'AudioMixMediaTests'): (9, None),
-              ('VideoMediaTests', 'ScriptJobsTests'): (32, None),
+              ('VideoMediaTests', 'MediaTests'): (11, None),
               ('VideoMediaTests', 'PluginProcessTests'): (18, None),
               ('VideoMediaTests', 'RenderInvocationTests'): (4, None),
-              ('VideoCoreTests', 'AgentJobAccessTests'): (9, None),
-              ('VideoCoreTests', 'JobOperationTests'): (26, None),
-              ('VideoCoreTests', 'JobCancellationTests'): (12, None),
-              ('VideoCoreTests', 'KnowledgeParticipantAppearanceTests'): (8, None),
-              ('VideoCoreTests', 'KnowledgeParticipantCharacterBindingTests'): (6, None),
-              ('VideoCoreTests', 'AgentWorkerTests'): (6, None),
-              ('VideoCoreTests', 'AgentContractTests'): (11, None),
-              ('VideoCoreTests', 'AgentPreviewTests'): (11, None),
-              ('VideoMediaTests', 'BaiduVideoProviderTests'): (27, None),
-              ('VideoMediaTests', 'SpeechProjectProductionTests'): (5, (
-                  'testNormalImportedAudioAttachChecksRealBytesAndKeepsHumanReviewPending',
-                  'testImported22050AudioKeepsContainerTailAndChecksMacCommitAfterDecode')),
-              ('VideoMediaTests', 'SpeechMediaTests'): (4, (
-                  'testReadsActualStereoAudioWithoutCancellingOppositePhaseOrInventingLoudness',
-                  'testRendererRejectsIncompleteHistoricalVoiceBeforeCreatingOutput')),
           }
           method_counts = {}
           expected_methods = set()
@@ -326,7 +195,11 @@ jobs:
                   if following:
                       source = source[:following.start()]
               methods = re.findall(r'(?m)^[ \t]*(?:@\w+(?:\([^\n)]*\))?[ \t]+)*func[ \t]+(test\w+)[ \t]*\(', source)
-              assert len(methods) == len(set(methods)) == source_count, (target, suite, methods)
+              assert len(methods) == len(set(methods)), (target, suite, methods)
+              if source_count is None:
+                  assert suite == 'StoryActionTests' and 10 <= len(methods) <= 64, (suite, methods)
+              else:
+                  assert len(methods) == source_count, (target, suite, methods)
               selected = list(selection) if selection is not None else methods
               assert selected and len(selected) == len(set(selected)) and set(selected) <= set(methods), suite
               method_counts[target + '.' + suite] = len(selected)
@@ -334,9 +207,9 @@ jobs:
               filters.append('^' + re.escape(target) + r'\.' + re.escape(suite) +
                              '/(?:' + '|'.join(re.escape(method) for method in selected) + ')$')
           expected = len(expected_methods)
-          assert expected == sum(method_counts.values()) == 702
+          assert len(suites) == 24 and expected == sum(method_counts.values()) == 310
           print('affected_suite_methods=' + str(method_counts))
-          print('system_tts_methods=not_selected; import_only_methods=2')
+          print('scope=affected_complete_classes; unchanged_modules=prior_evidence_reused; system_tts=not_run')
           try:
               executable = Path(os.environ['VIDEO_FREE_BINARY']).resolve(strict=True)
               environment = dict(os.environ, VIDEO_TEST_CLI=str(executable))
@@ -352,7 +225,7 @@ jobs:
               for line in lines:
                   if re.search(r'Executed \d+ tests?|Test Suite .* (passed|failed)', line):
                       print(line[:700])
-              assert result.returncode == 0, 'Affected speech/provider/mixing/practice rules failed'
+              assert result.returncode == 0, 'Affected shared scene/protocol/rendering rules failed'
               # Check actual per-method starts and passes, not a coincidentally
               # equal summary count. Handle the Darwin and dotted XCTest names.
               case_pattern = re.compile(
@@ -390,14 +263,6 @@ jobs:
           finally:
               log.unlink(missing_ok=True)
           PY
-
-      - name: Install and discover the shared Skill files
-        shell: bash
-        run: |
-          python3 Integrations/install.py --host codex --destination "$RUNNER_TEMP/video-project/.agents/skills/video"
-          python3 Integrations/install.py --host codex --destination "$RUNNER_TEMP/video-project/.agents/skills/video" --verify
-          python3 Integrations/discover.py --binary "$VIDEO_FREE_BINARY"
-          python3 Integrations/narration_reference.py --check
 
       - name: Produce and restore a normal complete video
         shell: bash

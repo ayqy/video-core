@@ -25,18 +25,11 @@ enum CinemaSubtitles {
         let frame = LayerRules.renderSourceFrame(scene: scene, sourceFrame: sourceFrame)
         for layer in scene.layers ?? [] where layer.kind == .text || layer.kind == .chart || layer.kind == .code {
             guard layer.startFrame <= frame, layer.endFrame > frame else { continue }
-            let progress = try layer.entrance?.progress(at: frame) ?? 1
-            // Match LayerPainter's actual visibility. An element whose entrance
-            // has not started cannot obscure the subtitle at this frame.
-            guard layer.opacity > 0,
-                  layer.entrance?.kind != .fade || progress > 0,
-                  layer.entrance?.kind != .revealLeft || progress > 0 else { continue }
-            let layout = layer.layout(at: frame)
-            let width = Double(aspect.width), height = Double(aspect.height)
-            let bounds = CGRect(x: (layout.x - layer.width * layout.scale / 2) * width,
-                                y: (1 - layout.y - layer.height * layout.scale / 2) * height,
-                                width: layer.width * layout.scale * width,
-                                height: layer.height * layout.scale * height)
+            let sample=try LayerPainter.sample(layer:layer,scene:scene,sourceFrame:frame,aspect:aspect)
+            // Shared motion/visibility applies equally to actual glyphs and
+            // this clearance check; a moved label cannot retain stale bounds.
+            guard sample.opacity>0,sample.revealedFraction>0 else {continue}
+            let bounds=sample.rect
             guard !bounds.intersects(rect) else {
                 throw VideoError.review("画面文字或数值与电影字幕安全区重叠，请移动图层或调整关键帧")
             }

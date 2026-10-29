@@ -89,6 +89,7 @@ public final class PluginRPCServer:@unchecked Sendable {
     private func input(_ request:PluginRPCRequest)throws->PluginFrameInput {
         guard let value=request.input else{throw VideoError.invalid("插件操作缺少实际帧输入")}
         _=try scope(request);try PluginInputCompatibility.requireKnowledgeSupport(value.props.simulation,pluginID:descriptor.pluginID,inputSchema:descriptor.inputSchemaVersion,appearances:value.props.artwork?.knowledgeParticipants);try PluginInputCompatibility.requireCartoonSupport(value.props.cartoonPerformance,pluginID:descriptor.pluginID,inputSchema:descriptor.inputSchemaVersion);try PluginProtocolRules.validate(value,capabilityID:descriptor.capabilityID)
+        try PluginInputCompatibility.requireStorySupport(storyActions:value.props.storyActions,gameWorld:value.props.gameWorld,cartoonRig:value.props.cartoonRig,pluginID:descriptor.pluginID,inputSchema:descriptor.inputSchemaVersion)
         return value
     }
     private func resources(_ assets:[PluginRasterAsset])throws->RenderResources {
@@ -115,7 +116,7 @@ public final class PluginRPCServer:@unchecked Sendable {
             return PluginRPCResponse(requestID:request.requestID,ok:true,state:"validated",inputDigest:try value.contentDigest(),cost:PluginCost(currency:value.invocation.currency,budgetReference:value.invocation.budgetReference))
         case .execute:
             let value=try input(request),digest=try value.contentDigest()
-            let resources=try resources(value.assets)
+            let resources=try resources(value.assets).bindingSpeech(value.props.voiceBinding)
             try PluginProtocolRules.validate(value.invocation)
             lock.lock()
             if let previous=executeReceipts[request.requestID] {

@@ -5,17 +5,34 @@ import VideoCore
 import Foundation
 
 enum LayerPainter {
+    struct Sample {
+        let rect:CGRect
+        let opacity:Double
+        let revealedFraction:Double
+    }
+    /// Drawing and subtitle clearance consume this one source-frame sample.
+    /// The story process adds positions/visibility to the existing layer IR;
+    /// its renderer never guesses who paid or recalculates a result.
+    static func sample(layer:SceneLayer,scene:Scene,sourceFrame:Int,aspect:Aspect)throws->Sample {
+        let frame=LayerRules.renderSourceFrame(scene:scene,sourceFrame:sourceFrame)
+        let authored=layer.layout(at:frame)
+        let action=StoryActionRules.presentation(subjectID:layer.id,actions:scene.storyActions ?? [],frame:frame)
+        let x=action.position?.x ?? authored.x,y=action.position?.y ?? authored.y
+        let w=Double(aspect.width),h=Double(aspect.height)
+        let rect=CGRect(x:(x-layer.width*authored.scale/2)*w,y:(1-y-layer.height*authored.scale/2)*h,width:layer.width*authored.scale*w,height:layer.height*authored.scale*h)
+        let entrance=try layer.entrance?.progress(at:frame) ?? 1
+        return Sample(rect:rect,opacity:layer.opacity*action.opacity*(layer.entrance?.kind == .fade ? entrance:1),
+                      revealedFraction:min(action.progress,layer.entrance?.kind == .revealLeft ? entrance:1))
+    }
     static func draw(scene:Scene,sourceFrame:Int,aspect:Aspect,images:[String:CGImage],context c:CGContext,fontName:String="PingFangSC-Medium") throws {
         let frame=LayerRules.renderSourceFrame(scene:scene,sourceFrame:sourceFrame)
         for layer in scene.layers ?? [] {
             guard layer.startFrame<=frame,layer.endFrame>frame else{continue}
-            let layout=layer.layout(at:frame);let w=Double(aspect.width),h=Double(aspect.height)
-            let rect=CGRect(x:(layout.x-layer.width*layout.scale/2)*w,y:(1-layout.y-layer.height*layout.scale/2)*h,width:layer.width*layout.scale*w,height:layer.height*layout.scale*h)
+            let sample=try sample(layer:layer,scene:scene,sourceFrame:frame,aspect:aspect),rect=sample.rect
             c.saveGState();defer { c.restoreGState() }
-            let progress=try layer.entrance?.progress(at:frame) ?? 1
-            c.setAlpha(layer.opacity * (layer.entrance?.kind == .fade ? progress:1))
-            if layer.entrance?.kind == .revealLeft {
-                c.clip(to:CGRect(x:rect.minX,y:rect.minY,width:rect.width*progress,height:rect.height))
+            c.setAlpha(CGFloat(sample.opacity))
+            if sample.revealedFraction<1 {
+                c.clip(to:CGRect(x:rect.minX,y:rect.minY,width:rect.width*CGFloat(sample.revealedFraction),height:rect.height))
             }
             let rgb=UInt32(layer.color,radix:16) ?? 0xFFFFFF;let color=CGColor(red:CGFloat((rgb>>16)&255)/255,green:CGFloat((rgb>>8)&255)/255,blue:CGFloat(rgb&255)/255,alpha:1)
             switch layer.kind {

@@ -7,8 +7,13 @@ import VideoCore
 public struct RenderResources: @unchecked Sendable {
     private let images: [String:CGImage]
     private let encoded: [String:Data]
+    public let speechBinding:CartoonSpeechBinding?
     public static let empty = RenderResources(images:[:])
-    fileprivate init(images:[String:CGImage],encoded:[String:Data]=[:]) { self.images=images;self.encoded=encoded }
+    fileprivate init(images:[String:CGImage],encoded:[String:Data]=[:],speechBinding:CartoonSpeechBinding?=nil) { self.images=images;self.encoded=encoded;self.speechBinding=speechBinding }
+    /// RPC image-bank reuse never retains a previous frame's audio identity.
+    /// This metadata grants no file/audio access; the Host reads its source
+    /// binding independently from the current workspace before transport.
+    func bindingSpeech(_ value:CartoonSpeechBinding?)->RenderResources {RenderResources(images:images,encoded:encoded,speechBinding:value)}
     public func sprite(_ role:String,artwork:ClassicArtwork) throws -> CGImage {
         guard let cell=artwork.sprites.first(where:{$0.role==role}),let image=images[cell.assetID] else { throw VideoError.notFound("外部图集角色未加载："+role) }
         let rect=CGRect(x:cell.x*Double(image.width),y:cell.y*Double(image.height),width:cell.width*Double(image.width),height:cell.height*Double(image.height)).integral
@@ -17,7 +22,10 @@ public struct RenderResources: @unchecked Sendable {
     }
     /// Snapshot only the already rights/hash-validated image bank. No source documents or audio.
     public func pluginRasterAssets(props:PluginVisualProps)throws->[PluginRasterAsset] {
-        guard let artwork=props.artwork else{throw VideoError.review("高级插件缺少实际图集")}
+        guard let artwork=props.artwork else{
+            guard props.cartoonRig != nil,images.isEmpty,encoded.isEmpty else{throw VideoError.review("高级插件缺少实际图集；仅独立原生卡通可使用空图片库")}
+            return []
+        }
         let ids=Set(artwork.sprites.map(\.assetID))
         guard ids==Set(images.keys) else{throw VideoError.permission("插件快照与已核实际图集集合不符")}
         var result:[PluginRasterAsset]=[],total=0
@@ -49,7 +57,8 @@ public struct RenderResources: @unchecked Sendable {
 }
 public enum ClassicArtworkMedia {
     public static func load(scene:VideoCore.Scene,workspaceID:String,repository:Repository,database:Database,commercial:Bool,now:Date=Date()) throws -> RenderResources {
-        guard let artwork=scene.classicArtwork else { return .empty }
+        let speechBinding=try CartoonSpeechBinding.from(scene:scene,assets:database.assets.filter{$0.workspaceID==workspaceID})
+        guard let artwork=scene.classicArtwork else { return RenderResources(images:[:],speechBinding:speechBinding) }
         try ClassicArtworkRules.validateRights(scene:scene,workspaceID:workspaceID,assets:database.assets,evidence:database.evidence,commercial:commercial,now:now)
         var images:[String:CGImage]=[:],encoded:[String:Data]=[:]
         let imageIDs=Set(artwork.sprites.map(\.assetID))
@@ -72,7 +81,7 @@ public enum ClassicArtworkMedia {
                 else{encoded[id]=try ScenePainter.png(image)}
             }
         }
-        return RenderResources(images:images,encoded:encoded)
+        return RenderResources(images:images,encoded:encoded,speechBinding:speechBinding)
     }
     private static func references(artwork:ClassicArtwork,database:Database)->(assets:Set<String>,evidence:Set<String>) {
         var assets=artwork.assetIDs,evidence:Set<String>=[],pending=Array(artwork.evidenceIDs)

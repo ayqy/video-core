@@ -84,14 +84,17 @@ enum VisualClipCache {
         var encoding: EncodingConfiguration
         var purpose: Purpose; var aspect: Aspect; var fps: Int; var index: Int; var sceneCount: Int; var startFrame: Int
         var price: Price?; var cta: String?; var sourceHash: String?; var layerHashes: [String:String];var moduleIdentity:String?; var artworkIdentity:String?
+        var cartoonSpeechBinding:CartoonSpeechBinding?=nil
     }
     struct Entry: Codable { var key: String; var bytes: Int; var sha256: String; var frames: Int }
     static func fingerprint(revision: Revision, index: Int, database: Database,modules:RenderModuleRegistry?, encoding:EncodingConfiguration?=nil) throws -> String {
         let encoding=try encoding ?? EncodingConfiguration.capture(aspect:revision.aspect,fps:revision.fps)
         var scene=revision.scenes[index]
+        let cartoonSpeechBinding=try CartoonSpeechBinding.from(scene:scene,assets:database.assets.filter{$0.workspaceID==revision.workspaceID})
         scene.voice=nil; scene.speechPlan=nil; scene.voiceGain=1; scene.sourceGain=0; scene.musicGain=0; scene.muted=false
         scene.evidenceIDs=[]; scene.courseMappingIDs=nil; scene.narrativeSources=nil; scene.locked=false
-        // Mouth motion only depends on whether speech exists, never on the wording.
+        // Legacy mouth motion depends only on speech presence. New native rig
+        // cues and their independently read source binding remain in the key.
         scene.narration=scene.narration.isEmpty ? "":"speech"
         let font=CTFontCreateWithName((scene.fontName ?? "PingFangSC-Medium") as CFString,32,nil)
         let table=CTFontCopyTable(font,0x68656164,[]) as Data? ?? Data() // OpenType 'head' includes font revision.
@@ -110,8 +113,9 @@ enum VisualClipCache {
             $0.kind != .chart && $0.kind != .code && $0.entrance == nil &&
             $0.startFrame<=heldFrame && $0.endFrame>heldFrame
         }) == true
-        let rendererVersion=version+(paperData ? "-paper-data-1":"")+(layerHold ? "-layer-tail-hold-1":"")
-        return try Codec.digest(Key(version:rendererVersion+revision.toolchain,cinemaSubtitleStyle:CinemaSubtitles.styleVersion,os:ProcessInfo.processInfo.operatingSystemVersionString,font:fontID,scene:scene,encoding:encoding,purpose:revision.purpose,aspect:revision.aspect,fps:revision.fps,index:index,sceneCount:revision.scenes.count,startFrame:revision.scenes.prefix(index).reduce(0){$0+$1.timelineFrames},price:scene.showPrice ? try revision.product?.price(at:revision.createdAt):nil,cta:index==revision.scenes.count-1 ? revision.cta:nil,sourceHash:database.assets.first{$0.id==scene.assetID}?.hash,layerHashes:Dictionary(uniqueKeysWithValues:database.assets.filter { a in scene.layers?.contains(where:{$0.assetID==a.id})==true }.map{($0.id,$0.hash)}),moduleIdentity:moduleIdentity,artworkIdentity:try ClassicArtworkMedia.fingerprint(scene:scene,database:database)))
+        let fullFrame=scene.kind == .simulation || scene.kind == .cartoon
+        let rendererVersion=version+(paperData ? "-paper-data-1":"")+(layerHold ? "-layer-tail-hold-1":"")+(fullFrame ? "-advanced-full-frame-1":"")
+        return try Codec.digest(Key(version:rendererVersion+revision.toolchain,cinemaSubtitleStyle:CinemaSubtitles.styleVersion,os:ProcessInfo.processInfo.operatingSystemVersionString,font:fontID,scene:scene,encoding:encoding,purpose:revision.purpose,aspect:revision.aspect,fps:revision.fps,index:index,sceneCount:revision.scenes.count,startFrame:revision.scenes.prefix(index).reduce(0){$0+$1.timelineFrames},price:scene.showPrice ? try revision.product?.price(at:revision.createdAt):nil,cta:index==revision.scenes.count-1 ? revision.cta:nil,sourceHash:database.assets.first{$0.id==scene.assetID}?.hash,layerHashes:Dictionary(uniqueKeysWithValues:database.assets.filter { a in scene.layers?.contains(where:{$0.assetID==a.id})==true }.map{($0.id,$0.hash)}),moduleIdentity:moduleIdentity,artworkIdentity:try ClassicArtworkMedia.fingerprint(scene:scene,database:database),cartoonSpeechBinding:cartoonSpeechBinding))
     }
     static func compose(revision r: Revision, repository: Repository, database db: Database, output: URL,modules:RenderModuleRegistry?, invocation:RenderInvocation?=nil, encoding:EncodingConfiguration?=nil, videoEncoder:NativeEncoderSelection = .automatic, progress: @escaping @Sendable (Double) throws -> Void) async throws -> Int {
         try invocation?.verify(revision:r)

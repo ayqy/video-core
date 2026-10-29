@@ -137,12 +137,12 @@ final class PluginProtocolTests:XCTestCase {
         XCTAssertEqual(descriptor.inputSchema.object?["$defs"]?.object?["KnowledgePayoffMatrix"], current["KnowledgePayoffMatrix"])
     }
     func testPublicationSchemaSelectionUsesCurrentDefaultsAndRetainsExplicitLegacyRequests() throws {
-        XCTAssertEqual(try PluginInputCompatibility.publicationSchema(pluginID: "video.game"), 6)
-        XCTAssertEqual(try PluginInputCompatibility.publicationSchema(pluginID: "video.cartoon"), 4)
-        for version in [1, 2, 3, 5, 6] {
+        XCTAssertEqual(try PluginInputCompatibility.publicationSchema(pluginID: "video.game"), 7)
+        XCTAssertEqual(try PluginInputCompatibility.publicationSchema(pluginID: "video.cartoon"), 5)
+        for version in [1, 2, 3, 5, 6, 7] {
             XCTAssertEqual(try PluginInputCompatibility.publicationSchema(pluginID: "video.game", requested: String(version)), version)
         }
-        for version in [1, 4] {
+        for version in [1, 4, 5] {
             XCTAssertEqual(try PluginInputCompatibility.publicationSchema(pluginID: "video.cartoon", requested: String(version)), version)
         }
         for value in ["", "0", "-1", "03", "+3", "3.0", " 3", "3 ", "1e0", "true", "999999999999999999999", "3\n"] {
@@ -152,7 +152,7 @@ final class PluginProtocolTests:XCTestCase {
         XCTAssertThrowsError(try PluginInputCompatibility.publicationSchema(pluginID: "video.game", requested: "4"))
         XCTAssertThrowsError(try PluginInputCompatibility.publicationSchema(pluginID: "video.cartoon", requested: "2"))
         XCTAssertThrowsError(try PluginInputCompatibility.publicationSchema(pluginID: "video.cartoon", requested: "3"))
-        XCTAssertThrowsError(try PluginInputCompatibility.publicationSchema(pluginID: "video.cartoon", requested: "5"))
+        XCTAssertThrowsError(try PluginInputCompatibility.publicationSchema(pluginID: "video.cartoon", requested: "6"))
     }
     func testRuleTableRequiresExplicitSchemaFiveWithoutChangingEarlierShapes() throws {
         var simulation=Simulation()

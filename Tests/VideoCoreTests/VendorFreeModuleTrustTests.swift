@@ -38,13 +38,14 @@ final class VendorFreeModuleTrustTests: XCTestCase {
     }
     func testCompleteFreeClosedPairPassesForOnlyCurrentModuleSchemasAndBothArchitectures()throws {
         let key=Curve25519.Signing.PrivateKey()
-        for id in ["video.game","video.cartoon"] {for architecture in ["arm64","x86_64"] {
-            let (manifest,policy)=try values(id:id,architecture:architecture),documents=try pair(manifest,policy,key:key)
+        for id in ["video.game","video.cartoon"] {for architecture in ["arm64","x86_64"] {for schema in (id == "video.game" ? [6,7]:[4,5]) {
+            var (manifest,policy)=try values(id:id,architecture:architecture);manifest.module.inputSchema=schema
+            let documents=try pair(manifest,policy,key:key)
             let verified=try verify(documents,key:key)
             XCTAssertEqual(verified.0.module,manifest.module);XCTAssertEqual(verified.1.access,"free")
             XCTAssertEqual(try VendorFreeModuleTrust.pairDigest(manifest:manifest,policy:policy),try Codec.digest(Pair(manifest:manifest,policy:policy)))
             XCTAssertNoThrow(try PluginPackageRules.validate(verified.0,policy:verified.1,architecture:architecture,osMajor:14,now:now))
-        }}
+        }}}
     }
     func testRestrictedAndOriginalSignedEnvelopesKeepXMLAndBinaryCompatibility()throws {
         let key=Curve25519.Signing.PrivateKey(),(manifest,policy)=try values()
