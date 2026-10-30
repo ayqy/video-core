@@ -132,7 +132,7 @@ public struct CartoonSpeechBinding:Codable,Equatable,Sendable {
     public var voiceAssetID:String;public var sourceSHA256:String;public var textDigest:String;public var durationFrames:Int
     public init(voiceAssetID:String,sourceSHA256:String,textDigest:String,durationFrames:Int) {self.voiceAssetID=voiceAssetID;self.sourceSHA256=sourceSHA256;self.textDigest=textDigest;self.durationFrames=durationFrames}
     public static func from(scene:Scene,assets:[Asset]) throws -> CartoonSpeechBinding? {
-        guard scene.cartoonRig?.speech != nil else {return nil}
+        guard scene.cartoonRig?.speech != nil || scene.cartoonPresenter?.speech != nil else {return nil}
         guard let voice=scene.voice,let asset=assets.first(where:{$0.id==voice.assetID}),asset.mediaType.hasPrefix("audio"),asset.durationFrames==voice.durationFrames,voice.textDigest == (try scene.speechDigest()),PluginProtocolRules.hash(asset.hash) else {throw VideoError.review("口型必须绑定当前完整原音、实际摘要、台词与时长")}
         return Self(voiceAssetID:voice.assetID,sourceSHA256:asset.hash,textDigest:voice.textDigest,durationFrames:voice.durationFrames)
     }
@@ -184,18 +184,27 @@ public enum StorySceneRules {
     public static func validate(scene:Scene,assets:[Asset]) throws {
         var subjects=Set((scene.layers ?? []).map(\.id))
         if let world=scene.gameWorld {
-            guard scene.kind == .simulation,scene.cartoonRig==nil,let artwork=scene.classicArtwork else {throw VideoError.invalid("游戏世界须绑定仿真镜头及实际图集")}
+            guard scene.kind == .simulation,scene.cartoonRig==nil,scene.cartoonPresenter==nil,let artwork=scene.classicArtwork else {throw VideoError.invalid("游戏世界须绑定仿真镜头及实际图集")}
             try world.validate(durationFrames:scene.durationFrames,availableRoles:Set(artwork.sprites.map(\.role)))
             guard subjects.isDisjoint(with:Set(world.entities.map(\.id))) else {throw VideoError.invalid("游戏实体与舞台对象标识不能冲突")}
             subjects.formUnion(world.entities.map(\.id))
         }
         if let rig=scene.cartoonRig {
-            guard scene.kind == .cartoon,scene.gameWorld==nil,scene.cartoonPerformance==nil,scene.classicArtwork==nil,scene.classicArtworkRequired==false else {throw VideoError.invalid("原创代码rig须显式使用卡通镜头，不能冒外部图集角色")}
+            guard scene.kind == .cartoon,scene.gameWorld==nil,scene.cartoonPerformance==nil,scene.cartoonPresenter==nil,scene.classicArtwork==nil,scene.classicArtworkRequired==false else {throw VideoError.invalid("原创代码rig须显式使用卡通镜头，不能冒外部图集角色")}
             let binding=try CartoonSpeechBinding.from(scene:scene,assets:assets)
             guard scene.voice==nil || rig.speech != nil else {throw VideoError.review("有声原生卡通须先按当前原音提供能量口型")}
             try rig.validate(durationFrames:scene.durationFrames,voiceBinding:binding)
             guard subjects.isDisjoint(with:Set(rig.actors.map(\.id))) else {throw VideoError.invalid("卡通演员与舞台对象标识不能冲突")}
             subjects.formUnion(rig.actors.map(\.id))
+        }
+        if let presenter=scene.cartoonPresenter {
+            guard scene.kind == .cartoon,scene.gameWorld==nil,scene.cartoonRig==nil,scene.cartoonPerformance==nil,let artwork=scene.classicArtwork else {throw VideoError.invalid("图片解说员须独立绑定卡通镜头与真实图集，不混旧rig或群戏")}
+            let binding=try CartoonSpeechBinding.from(scene:scene,assets:assets)
+            guard scene.voice==nil || presenter.speech != nil else {throw VideoError.review("有声图片解说员须提供当前完整原音能量轨")}
+            try presenter.validate(durationFrames:scene.durationFrames,sprites:artwork.sprites,imageHashes:Dictionary(assets.map{($0.id,$0.hash)},uniquingKeysWith:{a,_ in a}),voiceBinding:binding)
+            try presenter.validateActions(scene.storyActions ?? [])
+            guard !subjects.contains(presenter.id) else {throw VideoError.invalid("图片解说员与背景图层标识冲突")}
+            subjects.insert(presenter.id)
         }
         if let actions=scene.storyActions {try StoryActionRules.validate(actions,durationFrames:scene.durationFrames,subjectIDs:subjects)}
     }

@@ -85,6 +85,7 @@ public final class RemoteSceneModule:ScopedSceneRenderModule,@unchecked Sendable
     public func draw(scene:VideoCore.Scene,localFrame:Int,fps:Int,rect:CGRect,context:CGContext,resources:RenderResources)throws {throw VideoError.permission("独立高级绘制缺少调用范围")}
     public func draw(scene:VideoCore.Scene,localFrame:Int,fps:Int,rect:CGRect,context:CGContext,resources:RenderResources,invocation:RenderInvocation)throws {
         try invocation.check();try PluginInputCompatibility.requireKnowledgeSupport(scene.simulation,pluginID:manifest.id,inputSchema:manifest.inputSchema,appearances:scene.classicArtwork?.knowledgeParticipants);try PluginInputCompatibility.requireCartoonSupport(scene.cartoonPerformance,pluginID:manifest.id,inputSchema:manifest.inputSchema)
+        try PluginInputCompatibility.requirePresenterSupport(scene.cartoonPresenter,pluginID:manifest.id,inputSchema:manifest.inputSchema)
         try PluginInputCompatibility.requireStorySupport(storyActions:scene.storyActions,gameWorld:scene.gameWorld,cartoonRig:scene.cartoonRig,pluginID:manifest.id,inputSchema:manifest.inputSchema)
         let session=try session(invocation)
         session.mutex.lock();defer{session.mutex.unlock()}

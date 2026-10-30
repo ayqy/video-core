@@ -92,7 +92,7 @@ def _directory(path):
 
 
 def _png(data, *, transparent):
-    """Validate bounded single-frame 8-bit RGBA/LA PNG, including alpha pixels.
+    """Validate bounded single-frame PNG; transparent requests require real alpha.
 
     Native MaterialImporter remains the final Apple-framework decode boundary.
     Unsupported PNG variants are explicit errors, never guessed conversions.
@@ -119,9 +119,10 @@ def _png(data, *, transparent):
                 raise AssetReuseError("invalid PNG header")
             width, height, depth, color, compression, filtering, interlace = struct.unpack(">IIBBBBB", body)
             if not (0 < width <= 4096 and 0 < height <= 4096 and width * height <= 16_777_216
-                    and depth == 8 and color in (4, 6) and compression == filtering == interlace == 0):
-                raise AssetReuseError("only bounded noninterlaced 8-bit RGBA/LA PNG is supported")
-            channels = 4 if color == 6 else 2
+                    and depth == 8 and (color in (4, 6) or (color == 2 and not transparent))
+                    and compression == filtering == interlace == 0):
+                raise AssetReuseError("bounded noninterlaced 8-bit PNG required; RGB is only allowed for nontransparent requests")
+            channels = {6: 4, 4: 2, 2: 3}[color]
         elif kind == b"IDAT":
             if idat_ended:
                 raise AssetReuseError("non-contiguous PNG image data")

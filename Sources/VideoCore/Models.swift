@@ -86,6 +86,8 @@ public struct Scene: Codable, Equatable, Identifiable, Sendable {
     public var storyCausality: StoryCausality?
     public var gameWorld: GameWorld?
     public var cartoonRig: CartoonRig?
+    /// Explicit image-sequence presenter; nil preserves every existing scene encoding.
+    public var cartoonPresenter: CartoonPresenter?
     public var narrativeSources: [NarrativeSource]?
     public var classicArtwork: ClassicArtwork?
     public var classicArtworkRequired: Bool?

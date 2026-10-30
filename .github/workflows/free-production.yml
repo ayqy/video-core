@@ -13,7 +13,7 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  cartoon-rig-stage:
+  presenter-content-stage:
     if: github.repository == 'ayqy/video-core' && github.event.repository.private == false
     runs-on: macos-15-intel
     timeout-minutes: 40
@@ -40,7 +40,7 @@ jobs:
           manifest = (root / 'SOURCE-MANIFEST.md').read_text()
           entries = re.findall(r'(?m)^\| ([a-f0-9]{64}) \| ([0-9]+) \| ([^|\n]+) \|$', manifest)
           rows = {name: (digest, int(size)) for digest, size, name in entries}
-          assert len(entries) == len(rows) == 265
+          assert len(entries) == len(rows) == 271
           for name, (digest, size) in rows.items():
               relative = Path(name)
               assert not relative.is_absolute() and '..' not in relative.parts
@@ -57,18 +57,13 @@ jobs:
               'Sources/VideoGame', 'Sources/VideoCartoon', 'Sources/VideoAdvanced'])
           # Core encoding/validation changed: execute current CLI/Core below.
           # Fixed protected bytes reject any unplanned extra native or dependency edit.
-          BASE_PUBLIC_COMMIT = 'db06ab606fbeab5ab1732290b3a9be5edb575779'
-          BASE_INTEGRATION_RUN = '40944433172'
-          BASE_NATIVE_RUN = '40944433172'
-          ADDITIONS = set()
-          REVIEWED_CHANGED = ADDITIONS | {'Sources/VideoCore/StoryActions.swift', 'Sources/VideoCore/PluginProtocol.swift',
-              'Sources/VideoCore/VendorFreeModuleTrust.swift', 'Tests/VideoCoreTests/StoryActionTests.swift',
-              'Tests/VideoCoreTests/PluginProtocolTests.swift', 'Tests/VideoCoreTests/VendorFreeModuleTrustTests.swift',
-              'Integrations/story_action.py', 'Integrations/test_story_action.py',
-              'Integrations/causal_story.py', 'Integrations/test_causal_story.py',
-              'Integrations/README.md', '.github/workflows/free-production.yml', 'README.md'}
-          PROTECTED_COUNT = 252
-          PROTECTED_SHA256 = '9aee51a4c0dc2d272be5dd3f2d12857488242b53d1300460ad23b178ca024c65'
+          BASE_PUBLIC_COMMIT = '0408f480477ac5a08b78bcd18a8f1bb1fe8464d4'
+          BASE_INTEGRATION_RUN = '40950288278'
+          BASE_NATIVE_RUN = '40950288278'
+          ADDITIONS = {'Integrations/story_evaluation.py', 'Integrations/test_story_planning.py', 'Integrations/test_story_evaluation.py', 'Tests/VideoCoreTests/CartoonPresenterTests.swift', 'Integrations/story_planning.py', 'Sources/VideoCore/CartoonPresenter.swift'}
+          REVIEWED_CHANGED = ADDITIONS | {'Integrations/asset_reuse.py', 'Integrations/test_asset_reuse.py', 'Integrations/README.md', 'Integrations/skills/video/references/narration-writing.md', 'Sources/VideoCore/PluginProtocol.swift', 'Sources/VideoCore/ClassicArtwork.swift', '.github/workflows/free-production.yml', 'README.md', 'Sources/VideoCore/Models.swift', 'Sources/VideoCore/StoryCausalSources.swift', 'Sources/VideoMedia/RemoteSceneModule.swift', 'Sources/VideoMedia/Painter.swift', 'Sources/VideoCore/AgentSchemas.swift', 'Sources/VideoCore/VendorFreeModuleTrust.swift', 'Sources/VideoCore/StoryActions.swift', 'Sources/VideoMedia/PluginRPCServer.swift', 'Sources/VideoCore/Editing.swift', 'Tests/VideoCoreTests/PluginPackageTests.swift', 'Tests/VideoCoreTests/PluginProtocolTests.swift', 'Tests/VideoCoreTests/VendorFreeModuleTrustTests.swift'}
+          PROTECTED_COUNT = 245
+          PROTECTED_SHA256 = '5b29c9dec081dd88edb9394ecf891ad41243095adf8e1c879c6fcb2a4e815bbe'
           assert ADDITIONS <= set(rows) and REVIEWED_CHANGED <= set(rows)
           protected = {name: value for name, value in rows.items() if name not in REVIEWED_CHANGED}
           digest_input = ''.join(f'{name}\0{protected[name][0]}\0{protected[name][1]}\n' for name in sorted(protected))
@@ -81,14 +76,14 @@ jobs:
                 + '; media_implementation_base_run=' + BASE_NATIVE_RUN + '; current_media_chain=not_run')
           PYCODE
 
-      - name: Validate complete affected causal and story action Python rules
+      - name: Validate complete affected planning, evaluation and asset reuse Python rules
         shell: bash
         run: |
           python3 -B - <<'PYCODE'
           from collections import Counter
           import hashlib, json, sys, unittest
           sys.path.insert(0, 'Integrations')
-          modules = ['test_causal_story', 'test_story_action']
+          modules = ['test_story_planning', 'test_story_evaluation', 'test_asset_reuse']
           suite = unittest.TestSuite(unittest.defaultTestLoader.loadTestsFromName(name) for name in modules)
           def identities(node):
               for item in node:
@@ -117,7 +112,7 @@ jobs:
           print('affected_python_rules=passed; distinct_test_ids=' + str(len(expected)))
           print('affected_python_modules=' + json.dumps(dict(Counter(name.split('.')[0] for name in expected)), sort_keys=True))
           print('affected_python_test_ids_sha256=' + hashlib.sha256(inventory).hexdigest())
-          print('rig_actor_rules_only=true; real_model_request=not_run; production_film=not_run')
+          print('planning_evaluation_and_asset_reuse_rules_only=true; real_model_request=not_run; production_film=not_run')
           PYCODE
 
       - name: Build the latest standalone free CLI
@@ -163,11 +158,7 @@ jobs:
           scratch = Path(os.environ['RUNNER_TEMP']) / 'video-free-build'
           log = Path(os.environ['RUNNER_TEMP']) / 'video-free-rules.log'
           # This selection and its actual-identity verifier match the managed local driver.
-          SWIFT_SUITES = {
-              'StoryActionTests': ('StoryActionTests.swift', None),
-              'PluginProtocolTests': ('PluginProtocolTests.swift', None),
-              'VendorFreeModuleTrustTests': ('VendorFreeModuleTrustTests.swift', None),
-          }
+          SWIFT_SUITES = {'CartoonPresenterTests': ('CartoonPresenterTests.swift', None), 'PluginProtocolTests': ('PluginProtocolTests.swift', None), 'PluginPackageTests': ('PluginPackageTests.swift', None), 'VendorFreeModuleTrustTests': ('VendorFreeModuleTrustTests.swift', None)}
 
 
           def affected_methods(root=ROOT):
@@ -240,7 +231,7 @@ jobs:
           expected = affected_methods()
           counts = {suite: sum(item[1] == suite for item in expected) for suite in SWIFT_SUITES}
           print('affected_suite_methods=' + json.dumps(counts, sort_keys=True))
-          print('scope=rig_v2_schema6_and_restricted_free_scope; current_media_chain=not_run')
+          print('scope=presenter_schema7_packaging_protocol_and_restricted_free_scope; current_media_chain=not_run')
           try:
               binary = Path(os.environ['VIDEO_FREE_BINARY']).resolve(strict=True)
               environment = dict(os.environ, VIDEO_TEST_CLI=str(binary))
@@ -272,18 +263,7 @@ jobs:
           python3 -B - <<'PYCODE'
           from pathlib import Path
           import os
-          text = ('The current public CLI build, complete StoryAction/PluginProtocol/VendorFree classes '
-                  'and complete causal_story/story_action Python rules passed.\n\n'
-                  'Rig version 2 explicitly requires cartoon schema6 and allows at most eight actors. '
-                  'Legacy rig1/cartoon5 remain bounded and compatible; restricted issuer, permissions, '
-                  'free/closed scope and policy9 are unchanged. Protected payloads matched public '
-                  'db06ab606fbeab5ab1732290b3a9be5edb575779. Its actual successful Free production run '
-                  '40944433172 supplies unchanged causal-source, Domain and AgentSchemas branch evidence; '
-                  'their fixtures use the unchanged nil/rig1 invocation conditions. Those classes and the '
-                  'complete old media chain were not rerun for this commit.\n\n'
-                  'Closed cartoon painter/server rules, actual stable signing, three-method preflight/peer exit, '
-                  'issuance and current mixed game7/cartoon6 catalog recovery require separate native receipts. '
-                  'Source publication grants no rights, paid entitlement or voice/caption/whole-film approval.\n')
+          text = 'The current public CLI, complete CartoonPresenter/PluginProtocol/PluginPackage/VendorFree classes and complete story_planning/story_evaluation/asset_reuse Python rules passed.\n\nProtected source inputs match public 0408f480477ac5a08b78bcd18a8f1bb1fe8464d4 and actual successful Free production run 40950288278; prior evidence is limited to unchanged inputs and old invocation branches. This commit does not rerun unchanged causal_story/story_action Python or claim a complete current media chain. Shared media transport changes, closed raster presenter drawing, actual signing, RPC/peer exit and whole-film decode/recovery require separate native receipts. Images, original voices and private authored projects stay private; publication grants no rights, paid entitlement or media review.\n'
           with Path(os.environ['GITHUB_STEP_SUMMARY']).open('a') as stream:
               stream.write(text)
           print('current_native_build=passed; current_affected_swift_rules=passed; affected_python_rules=passed')

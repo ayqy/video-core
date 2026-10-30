@@ -82,12 +82,13 @@ public enum ScenePainter {
             // A native presenter stands in front of the shared pencil stage.
             // Game maps instead form the background behind authored objects.
             // Neither module paints another copy of Host layer images.
-            if s.cartoonRig != nil {try LayerPainter.draw(scene:s,sourceFrame:held,aspect:revision.aspect,images:layerImages,context:c,fontName:s.fontName ?? "PingFangSC-Medium")}
+            if s.cartoonRig != nil || s.cartoonPresenter != nil {try LayerPainter.draw(scene:s,sourceFrame:held,aspect:revision.aspect,images:layerImages,context:c,fontName:s.fontName ?? "PingFangSC-Medium")}
             let moduleFrame:Int
-            if s.gameWorld != nil || s.cartoonRig != nil {moduleFrame=held}
+            if s.cartoonPresenter != nil {moduleFrame=mapped}
+            else if s.gameWorld != nil || s.cartoonRig != nil {moduleFrame=held}
             else {moduleFrame=s.kind == .simulation ? try s.renderSimulationSourceFrame(atTimelineFrame:local):mapped}
             try modules.draw(scene:s,localFrame:moduleFrame,fps:revision.fps,rect:stage.visual,context:c,resources:resources,invocation:invocation)
-            if s.cartoonRig == nil {try LayerPainter.draw(scene:s,sourceFrame:held,aspect:revision.aspect,images:layerImages,context:c,fontName:s.fontName ?? "PingFangSC-Medium")}
+            if s.cartoonRig == nil && s.cartoonPresenter == nil {try LayerPainter.draw(scene:s,sourceFrame:held,aspect:revision.aspect,images:layerImages,context:c,fontName:s.fontName ?? "PingFangSC-Medium")}
             if let caption=s.captions.first(where:{$0.startFrame<=mapped && mapped<$0.endFrame}) {
                 try CinemaSubtitles.validateClearance(scene:s,sourceFrame:held,aspect:revision.aspect,rect:stage.caption)
                 try CinemaSubtitles.draw(caption.text,in:stage.caption,context:c,fontName:s.fontName ?? "PingFangSC-Medium")

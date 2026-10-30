@@ -33,8 +33,8 @@ public enum Editor {
             case .replaceScene(let id, var scene):
                 guard let i = revision.scenes.firstIndex(where: { $0.id == id }) else { throw VideoError.notFound("片段不存在") }; let old = revision.scenes[i]; guard !old.locked else { throw VideoError.permission("镜头已锁定，请先解锁再编辑") }; scene.id = id
                 try LayerRules.protectLocked(old:old,new:scene)
-                if old.storyActions != scene.storyActions || old.storyCausality != scene.storyCausality || old.gameWorld != scene.gameWorld || old.cartoonRig != scene.cartoonRig ||
-                    ((old.storyActions != nil || old.storyCausality != nil || old.gameWorld != nil || old.cartoonRig != nil) && (old.durationFrames != scene.durationFrames || old.kind != scene.kind)) ||
+                if old.storyActions != scene.storyActions || old.storyCausality != scene.storyCausality || old.gameWorld != scene.gameWorld || old.cartoonRig != scene.cartoonRig || old.cartoonPresenter != scene.cartoonPresenter ||
+                    ((old.storyActions != nil || old.storyCausality != nil || old.gameWorld != nil || old.cartoonRig != nil || old.cartoonPresenter != nil) && (old.durationFrames != scene.durationFrames || old.kind != scene.kind)) ||
                     ((old.storyCausality != nil || scene.storyCausality != nil) && (old.speed != scene.speed || old.pauseFrames != scene.pauseFrames)) {
                     scene.voice?.listened=false
                     for j in scene.captions.indices {scene.captions[j].confirmed=false}
@@ -126,7 +126,7 @@ public enum Editor {
                 guard let i = revision.scenes.firstIndex(where: { $0.id == id }), !revision.scenes[i].locked else { throw VideoError.permission("片段不存在或已锁定") }; let original = revision.scenes[i]
                 guard frame > 0, frame < original.durationFrames else { throw VideoError.invalid("拆分点必须位于片段内部") }
                 guard original.voice == nil else { throw VideoError.review("有配音的片段请先解除配音并重新录制两段，避免截断句子") }
-                guard original.storyActions==nil,original.storyCausality==nil,original.gameWorld==nil,original.cartoonRig==nil else {throw VideoError.review("动态世界、因果来源、过程动作与原音口型须按新镜头重新编排后拆分；不会复制旧源帧或旧声音cue")}
+                guard original.storyActions==nil,original.storyCausality==nil,original.gameWorld==nil,original.cartoonRig==nil,original.cartoonPresenter==nil else {throw VideoError.review("动态世界、因果来源、过程动作与原音口型须按新镜头重新编排后拆分；不会复制旧源帧或旧声音cue")}
                 guard !(original.layers ?? []).contains(where:{$0.locked}) else { throw VideoError.permission("请先解锁元素，再拆分场景") }
                 let hasEntrances=(original.layers ?? []).contains{$0.entrance != nil}
                 if original.speed != 1 || hasEntrances {
@@ -301,7 +301,7 @@ public enum Quality {
                 let nativeRig = s.kind == .cartoon && s.cartoonRig != nil
                 if !nativeRig {
                     if s.classicArtwork == nil {issues.append(QualityIssue(s.id+"classic_artwork","请绑定有来源的Q版角色与场景；旧几何预览不代表已满足当前素材要求"))}
-                    else if s.gameWorld == nil && s.classicArtwork?.derivation != .qStyle {issues.append(QualityIssue(s.id+"classic_qstyle","下载原件须绑定实际Q版处理产物及来源后再制作新成片"))}
+                    else if s.gameWorld == nil && s.cartoonPresenter == nil && s.classicArtwork?.derivation != .qStyle {issues.append(QualityIssue(s.id+"classic_qstyle","下载原件须绑定实际Q版处理产物及来源后再制作新成片"))}
                     // A full original game map is explicitly authored through
                     // GameWorld; its real roles, source identity and rights still
                     // pass the same validation instead of receiving a Q-style tag.

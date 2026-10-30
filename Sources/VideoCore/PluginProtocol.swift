@@ -2,7 +2,7 @@ import Foundation
 
 public enum PluginInputCompatibility {
     public static func supports(pluginID: String, version: Int) -> Bool {
-        version == 1 || (pluginID == "video.game" && [2,3,5,6,7].contains(version)) || (pluginID == "video.cartoon" && [4,5,6].contains(version))
+        version == 1 || (pluginID == "video.game" && [2,3,5,6,7].contains(version)) || (pluginID == "video.cartoon" && [4,5,6,7].contains(version))
     }
     /// Publisher defaults match the current endpoints. Prior schemas remain
     /// explicitly selectable, before any signing identity or output transaction.
@@ -10,7 +10,7 @@ public enum PluginInputCompatibility {
         guard ["video.game", "video.cartoon"].contains(pluginID) else {
             throw VideoError.invalid("发行协议选择需要明确的游戏或卡通模块；未访问发行身份")
         }
-        guard let requested else { return pluginID == "video.game" ? 7 : 6 }
+        guard let requested else { return 7 }
         guard requested.range(of: "^[1-9][0-9]{0,2}$", options: .regularExpression) != nil,
               let version = Int(requested), supports(pluginID: pluginID, version: version) else {
             throw VideoError.invalid("发行输入协议版本不受此模块支持；未访问发行身份")
@@ -32,14 +32,17 @@ public enum PluginInputCompatibility {
         }
     }
     public static func requireCartoonSupport(_ performance: CartoonPerformance?, pluginID: String, inputSchema: Int) throws {
-        guard performance == nil || (pluginID == "video.cartoon" && [4,5,6].contains(inputSchema)) else {
+        guard performance == nil || (pluginID == "video.cartoon" && [4,5,6,7].contains(inputSchema)) else {
             throw VideoError.unavailable("此模块不支持多角色表演输入；请安装相容且受信的卡通模块，未退回单角色摆动")
         }
+    }
+    public static func requirePresenterSupport(_ presenter:CartoonPresenter?,pluginID:String,inputSchema:Int) throws {
+        guard presenter==nil || (pluginID=="video.cartoon" && inputSchema==7) else {throw VideoError.unavailable("图片序列解说员需要显式cartoon7模块；旧包不回退或忽略新帧")}
     }
     public static func requireStorySupport(storyActions:[StoryAction]?,gameWorld:GameWorld?,cartoonRig:CartoonRig?,pluginID:String,inputSchema:Int) throws {
         guard storyActions != nil || gameWorld != nil || cartoonRig != nil else {return}
         if let rig=cartoonRig {
-            guard [1,2].contains(rig.version),rig.version != 2 || (pluginID=="video.cartoon" && inputSchema==6) else {throw VideoError.unavailable("显式卡通rig v2须使用cartoon6；未知rig版本不回退旧画法")}
+            guard [1,2].contains(rig.version),rig.version != 2 || (pluginID=="video.cartoon" && [6,7].contains(inputSchema)) else {throw VideoError.unavailable("显式卡通rig v2须使用cartoon6或7；未知rig版本不回退旧画法")}
         }
         guard supports(pluginID:pluginID,version:inputSchema),
               (pluginID == "video.game" && inputSchema>=7 && cartoonRig==nil) ||
@@ -79,13 +82,14 @@ public struct PluginVisualProps:Codable,Equatable,Sendable {
     public var cartoonPerformance:CartoonPerformance?
     public var storyActions:[StoryAction]?;public var gameWorld:GameWorld?;public var cartoonRig:CartoonRig?
     public var layers:[SceneLayer]?;public var voiceBinding:CartoonSpeechBinding?
+    public var cartoonPresenter:CartoonPresenter?
     public init(scene:Scene,voiceBinding:CartoonSpeechBinding?=nil){
         sceneID=scene.id;kind=scene.kind;durationFrames=scene.durationFrames;simulation=scene.simulation
         character=scene.character;emotion=scene.emotion;color=scene.color;fontName=scene.fontName ?? "PingFangSC-Medium";narrationPresent = !scene.narration.isEmpty
         characterProfile=scene.characterProfile.map{PluginCharacterProps(silhouette:$0.silhouette,color:$0.color,actions:$0.actions)}
         cartoonPerformance=scene.cartoonPerformance
-        storyActions=scene.storyActions;gameWorld=scene.gameWorld;cartoonRig=scene.cartoonRig
-        layers=(scene.storyActions != nil || scene.cartoonRig != nil || scene.gameWorld != nil) ? scene.layers:nil
+        storyActions=scene.storyActions;gameWorld=scene.gameWorld;cartoonRig=scene.cartoonRig;cartoonPresenter=scene.cartoonPresenter
+        layers=(scene.storyActions != nil || scene.cartoonRig != nil || scene.gameWorld != nil || scene.cartoonPresenter != nil) ? scene.layers:nil
         self.voiceBinding=voiceBinding
         artwork=scene.classicArtwork.map{PluginArtworkProps(gameplay:$0.gameplay,sprites:$0.sprites,derivation:$0.derivation,knowledgeParticipants:$0.knowledgeParticipants)};artworkRequired=scene.cartoonRig == nil
     }
@@ -95,7 +99,7 @@ public struct PluginVisualProps:Codable,Equatable,Sendable {
         var result=Scene(kind:kind,title:"",body:"",narration:narrationPresent ? "speech":"",durationFrames:durationFrames)
         result.id=sceneID;result.simulation=simulation;result.character=character;result.emotion=emotion;result.color=color;result.fontName=fontName;result.classicArtworkRequired=artworkRequired
         result.cartoonPerformance=cartoonPerformance
-        result.storyActions=storyActions;result.gameWorld=gameWorld;result.cartoonRig=cartoonRig;result.layers=layers
+        result.storyActions=storyActions;result.gameWorld=gameWorld;result.cartoonRig=cartoonRig;result.cartoonPresenter=cartoonPresenter;result.layers=layers
         if cartoonRig != nil {result.classicArtworkRequired=false}
         result.characterProfile=characterProfile.map{CharacterProfile(name:character,silhouette:$0.silhouette,color:$0.color,expressions:[],actions:$0.actions,evidenceIDs:[],voiceAssetID:nil,original:false)}
         result.classicArtwork=artwork.map{ClassicArtwork(gameplay:$0.gameplay,sprites:$0.sprites,sources:[],derivation:$0.derivation,knowledgeParticipants:$0.knowledgeParticipants)}
@@ -176,17 +180,17 @@ public enum PluginProtocolRules {
         var subjects=Set((p.layers ?? []).map(\.id))
         guard (p.layers ?? []).count<=32,subjects.count==(p.layers ?? []).count else {throw VideoError.invalid("故事舞台元素标识重复或数量超界")}
         if let rig=p.cartoonRig {
-            guard p.kind == .cartoon,p.artwork==nil,!p.artworkRequired,input.assets.isEmpty,p.gameWorld==nil,p.cartoonPerformance==nil else {throw VideoError.invalid("原创代码卡通rig不能冒图集或游戏输入")}
+            guard p.kind == .cartoon,p.artwork==nil,!p.artworkRequired,input.assets.isEmpty,p.gameWorld==nil,p.cartoonPerformance==nil,p.cartoonPresenter==nil else {throw VideoError.invalid("原创代码卡通rig不能冒图集或游戏输入")}
             try rig.validate(durationFrames:p.durationFrames,voiceBinding:p.voiceBinding)
             guard subjects.isDisjoint(with:Set(rig.actors.map(\.id))) else {throw VideoError.invalid("角色与舞台对象标识不能冲突")}
             subjects.formUnion(rig.actors.map(\.id))
             try StoryActionRules.validate(p.storyActions ?? [],durationFrames:p.durationFrames,subjectIDs:subjects)
             return
         }
-        guard p.voiceBinding==nil else {throw VideoError.invalid("只有原生卡通rig可传原音口型身份")}
+        guard p.voiceBinding==nil || p.cartoonPresenter != nil else {throw VideoError.invalid("只有已绑定原音的卡通表演可传口型身份")}
         guard p.artworkRequired,let artwork=p.artwork else{throw VideoError.review("高级插件只接受实际图集输入，不启用旧几何默认")}
         do {
-            let roles=Set(artwork.sprites.map(\.role)),required = p.gameWorld.map { Set($0.tiles+$0.entities.map(\.role)+$0.updates.compactMap(\.role)) } ?? ClassicArtworkRules.requiredRoles(knowledge: p.kind == .simulation && p.simulation.knowledge != nil, cartoon: p.kind == .cartoon)
+            let roles=Set(artwork.sprites.map(\.role)),required = p.gameWorld.map { Set($0.tiles+$0.entities.map(\.role)+$0.updates.compactMap(\.role)) } ?? p.cartoonPresenter?.roles ?? ClassicArtworkRules.requiredRoles(knowledge: p.kind == .simulation && p.simulation.knowledge != nil, cartoon: p.kind == .cartoon)
             guard !artwork.sprites.isEmpty,artwork.sprites.count<=(p.gameWorld == nil ? 32:128),roles.count==artwork.sprites.count,required.isSubset(of:roles),Set(artwork.sprites.map(\.assetID))==Set(input.assets.map(\.assetID)) else{throw VideoError.invalid("插件图块与实际图片集合不符")}
             for s in artwork.sprites {guard text(s.role,maximum:512),[s.x,s.y,s.width,s.height].allSatisfy(\.isFinite),s.x>=0,s.y>=0,s.width>0,s.height>0,s.x+s.width<=1.000001,s.y+s.height<=1.000001 else{throw VideoError.invalid("插件图块坐标无效")}}
             if let performance=p.cartoonPerformance {
@@ -202,6 +206,12 @@ public enum PluginProtocolRules {
                 try world.validate(durationFrames:p.durationFrames,availableRoles:roles)
                 guard subjects.isDisjoint(with:Set(world.entities.map(\.id))) else {throw VideoError.invalid("游戏实体与舞台对象标识不能冲突")}
                 subjects.formUnion(world.entities.map(\.id))
+            }
+            if let presenter=p.cartoonPresenter {
+                guard p.kind == .cartoon,p.gameWorld==nil,p.cartoonRig==nil,p.cartoonPerformance==nil,!subjects.contains(presenter.id) else {throw VideoError.invalid("图片解说员不能混入游戏、旧rig或其它同名舞台对象")}
+                try presenter.validate(durationFrames:p.durationFrames,sprites:artwork.sprites,imageHashes:Dictionary(uniqueKeysWithValues:input.assets.map{($0.assetID,$0.sha256)}),voiceBinding:p.voiceBinding)
+                try presenter.validateActions(p.storyActions ?? [])
+                subjects.insert(presenter.id)
             }
             if let performance=p.cartoonPerformance {subjects.formUnion(performance.actors.map(\.id))}
             try StoryActionRules.validate(p.storyActions ?? [],durationFrames:p.durationFrames,subjectIDs:subjects)
@@ -231,7 +241,7 @@ public enum PluginRPCSchemas {
             "PluginInvocation":"workspaceID:s projectID:s revisionID:s revisionDigest:s jobID?:s invocationID:s budgetReference:s currency:s budgetLimit:n deadlineUnixTime:n",
             "PluginRect":"x:n y:n width:n height:n",
             "PluginFrameInput":"invocation:PluginInvocation props:PluginVisualProps sourceFrame:i fps:i canvasWidth:i canvasHeight:i rect:PluginRect assets:[PluginRasterAsset]",
-            "PluginVisualProps":"sceneID:s kind:SceneKind durationFrames:i simulation:Simulation character:s emotion:s color:s fontName:s narrationPresent:b characterProfile?:PluginCharacterProps artwork?:PluginArtworkProps artworkRequired:b" + (inputSchemaVersion >= 4 ? " cartoonPerformance?:CartoonPerformance" : "") + (story ? " storyActions?:[StoryAction] gameWorld?:GameWorld cartoonRig?:CartoonRig layers?:[SceneLayer] voiceBinding?:CartoonSpeechBinding":""),
+            "PluginVisualProps":"sceneID:s kind:SceneKind durationFrames:i simulation:Simulation character:s emotion:s color:s fontName:s narrationPresent:b characterProfile?:PluginCharacterProps artwork?:PluginArtworkProps artworkRequired:b" + (inputSchemaVersion >= 4 ? " cartoonPerformance?:CartoonPerformance" : "") + (story ? " storyActions?:[StoryAction] gameWorld?:GameWorld cartoonRig?:CartoonRig layers?:[SceneLayer] voiceBinding?:CartoonSpeechBinding":"") + (pluginID=="video.cartoon" && inputSchemaVersion>=7 ? " cartoonPresenter?:CartoonPresenter":""),
             "PluginCharacterProps":"silhouette:CharacterSilhouette color:s actions:[s]",
             "PluginArtworkProps":"gameplay:ClassicGameplay sprites:[ClassicSprite] derivation:Derivation" + (inputSchemaVersion >= 6 ? " knowledgeParticipants?:[KnowledgeParticipantAppearance]" : ""),
             "ClassicSprite":"role:s assetID:s x:n y:n width:n height:n",
@@ -255,7 +265,7 @@ public enum PluginRPCSchemas {
             // Full source-layer schemas are reused from the normal agent contract.
             let host=AgentSchemas.definitions()
             for name in ["SceneLayer","Keyframe","LayerKind","DataPresentation","DataChart","DataSeries","DataValueKeyframe","CodePresentation","CodeHighlight","LayerEntrance","LayerEntranceKind"] {if let value=host[name] {result[name]=value}}
-            if pluginID=="video.cartoon" && inputSchemaVersion==6 {
+            if pluginID=="video.cartoon" && inputSchemaVersion>=6 {
                 var rig=result["CartoonRig"]!.object!,properties=rig["properties"]!.object!
                 properties["version"] = .object(["type":.string("integer"),"enum":.array([.number(1),.number(2)])])
                 var actors=properties["actors"]!.object!;actors["minItems"] = .number(1);actors["maxItems"] = .number(8);properties["actors"] = .object(actors)
@@ -265,6 +275,7 @@ public enum PluginRPCSchemas {
                 result["CartoonRig"] = .object(rig)
             }
         }
+        if pluginID=="video.cartoon" && inputSchemaVersion>=7 {for (key,declaration) in CartoonPresenterSchema.records {result[key]=record(declaration)}}
         if inputSchemaVersion >= 6 {
             result["KnowledgeParticipantAppearance"]=record("participantID:s poseRoles:{s}")
         }

@@ -20,11 +20,12 @@ from codex_production import resolve_sources
 from codex_events import ProtocolError
 
 
-def png(*, alpha=0, marker=20, method=0):
+def png(*, alpha=0, marker=20, method=0, rgb=False, missing_color_byte=False):
     def chunk(kind, data):
         return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data) & 0xffffffff)
-    raw = bytes((method, marker, 30, 40, alpha))
-    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", 1, 1, 8, 6, 0, 0, 0))
+    raw = bytes((method, marker, 30, 40) if rgb else (method, marker, 30, 40, alpha))
+    if missing_color_byte:raw=raw[:-1]
+    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", 1, 1, 8, 2 if rgb else 6, 0, 0, 0))
             + chunk(b"IDAT", zlib.compress(raw)) + chunk(b"IEND", b""))
 
 
@@ -45,6 +46,24 @@ class AssetReuseTests(unittest.TestCase):
         request, path = request or self.request, path or self.original
         return GeneratedAsset(path, hashlib.sha256(path.read_bytes()).hexdigest(), request.generation_prompt,
                               "真实测试原件来源\n完整回执应由生产调用方提供", rights or self.rights)
+
+    def test_opaque_rgb_background_keeps_exact_original_and_reuses_it(self):
+        request=replace(self.request,name='完整村落背景',transparent=False)
+        self.original.write_bytes(png(rgb=True))
+        selected=self.cache.register(request,self.generated(request=request))
+        self.assertEqual(selected.path.read_bytes(),self.original.read_bytes())
+        self.assertEqual(self.cache.resolve(request).sha256,selected.sha256)
+
+    def test_rgb_cannot_satisfy_a_transparent_cutout_request(self):
+        self.original.write_bytes(png(rgb=True))
+        with self.assertRaises(AssetReuseError):self.cache.register(self.request,self.generated())
+        self.assertNotEqual(self.cache.resolve(self.request).state,'available')
+
+    def test_nontransparent_rgb_still_rejects_truncated_pixels_and_invalid_filters(self):
+        request=replace(self.request,transparent=False)
+        for data in (png(rgb=True,missing_color_byte=True),png(rgb=True,method=5)):
+            self.original.write_bytes(data)
+            with self.assertRaises(AssetReuseError):self.cache.register(request,self.generated(request=request))
 
     def test_current_provenance_retains_exact_source_metadata_without_registering(self):
         generated = self.generated()

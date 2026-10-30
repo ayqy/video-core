@@ -59,7 +59,7 @@ public enum StoryCausalRules {
     public static func validate(scene:Scene)throws {
         guard let value=scene.storyCausality else {return}
         let actions=scene.storyActions ?? []
-        var subjects=Set((scene.layers ?? []).map(\.id));subjects.formUnion(scene.gameWorld?.entities.map(\.id) ?? []);subjects.formUnion(scene.cartoonRig?.actors.map(\.id) ?? [])
+        var subjects=Set((scene.layers ?? []).map(\.id));subjects.formUnion(scene.gameWorld?.entities.map(\.id) ?? []);subjects.formUnion(scene.cartoonRig?.actors.map(\.id) ?? []);if let presenter=scene.cartoonPresenter {subjects.insert(presenter.id)}
         guard value.version==1,(1...3).contains(value.sources.count),(1...64).contains(value.actors.count),(1...256).contains(value.bindings.count),subjects.contains(value.poolSubjectID),
               Set(value.sources.map(\.id)).count==value.sources.count,Set(value.actors.map(\.subjectID)).count==value.actors.count,
               Set(value.bindings.map(\.actionID)).count==value.bindings.count,try Codec.data(value).count<=4*1024*1024 else {throw VideoError.invalid("故事因果来源数量、舞台对象、重复标识或数据大小无效")}
