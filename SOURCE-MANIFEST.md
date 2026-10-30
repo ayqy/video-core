@@ -2,10 +2,10 @@
 
 VideoFree source export · package_free.py · version 1
 
-生成时间：2026-10-30 10:19:37 北京时间
+生成时间：2026-10-30 11:26:23 北京时间
 
-- 源码与必要元数据：275个文件；4263101字节（不含本清单）。
-- 整体内容指纹：`3763fe3fa3d116a4dc04d0f5d5a38c868d37d89559f3c1cf8bf49c0568bec43b`。
+- 源码与必要元数据：276个文件；4283538字节（不含本清单）。
+- 整体内容指纹：`0fc1f752913acdbb4ceb9b6f5b8f4316ab8d8c4b5eae493ee3a526097a0e37b5`。
 - 来源：受控原始工程中的逐文件白名单；Package.swift与唯一免费制作workflow来自Distribution/Free精确模板，README由发行脚本生成。
 - 本包不含.git，不可作为新业务checkout；本清单生成过程不执行构建、设备验收、签名安装或公共上传，各阶段以独立证据为准。
 - 排除：App、VideoGame、VideoCartoon、Premium、高级实现运行时测试、私有仓库地址、凭据、客户数据、缓存、日志及媒体过程产物。
@@ -14,7 +14,7 @@ VideoFree source export · package_free.py · version 1
 
 | SHA-256 | 字节数 | 包内路径 / 原工程来源 |
 |---|---:|---|
-| dbfabf20efc1ecb7a7e8aac714334c3f3a7fe2602ef32eb368b735194a96d11c | 12014 | .github/workflows/free-production.yml |
+| a432e9d43ea2b91d4bc983c17f2d20d2e8ff156d3194c81af65b89686b52d75d | 11552 | .github/workflows/free-production.yml |
 | bb06f8affed90535835440e8a05031579a302b28c26d6ef26af2c1992bcb3080 | 38625 | Integrations/README.md |
 | 39dd8274ff1e6b0649acb63281087a1144e1f4a4e0eed3dc2b92e10df2cbd121 | 28488 | Integrations/asset_reuse.py |
 | b855d428b3b24845239bb209cacc4f23767ab7b25097546d372f00fb724a7a30 | 29749 | Integrations/causal_story.py |
@@ -80,7 +80,7 @@ VideoFree source export · package_free.py · version 1
 | cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30 | 11358 | LICENSE |
 | c369f09e50d62d1a1c8eff1500888667ff7a192d0fdc7b32d39c800dfa1e9721 | 1597 | NOTICE |
 | e3dae895ffcaa4ce4470f1dc9d63eee5071f829d63cfe227360c3dabfbdd0d91 | 1213 | Package.swift |
-| 2713d90545ec6420f62843d1d46cb1717123ca1f9adfd3c350ba5cf2d4906469 | 7333 | README.md |
+| af317bfdb3154a5d48e3274ca69dd91145e2c68941ead91c49a91a2e5a262b1e | 7320 | README.md |
 | bbfe59a972a3e8e09e347c04bc22c0eacd2544881af8a4b6068bfc30b38466e8 | 80 | Sources/CSQLite/module.modulemap |
 | b052d8e561e942f97b503033ecd2eaa2b35213bdbf374983efe9e68eabdfc024 | 21 | Sources/CSQLite/shim.h |
 | 347257a3cd5bcb0e501506a29ab4dc2892a46d2560a111a8d779b124e594ebb9 | 60 | Sources/CZlib/module.modulemap |
@@ -194,7 +194,7 @@ VideoFree source export · package_free.py · version 1
 | 99425bc053706aeb1d9879d22d2068bb341caedfa35894392a12e02ee37304a3 | 15775 | Sources/VideoMedia/ScriptJobs.swift |
 | cdacae4766191de4337bdf3d73922fee49acc834203e1afcac3e20f1153d6c09 | 6940 | Sources/VideoMedia/SpeechProjectProduction.swift |
 | 81c13adf8fc3da2b78b0a1af64b69ede3504924d62bfb46e5b8ece6f0dd5605e | 12565 | Sources/VideoMedia/SpeechService.swift |
-| 236a9c6ee8387c7eba0a0f7536743fc9dcdaad5e564e2cbdd9985fb791e39b5c | 19108 | Sources/VideoMedia/VisualCache.swift |
+| 195af65a902cd83b51c69fae2a48e8746e76ed184b4c4c321451847434a4fa25 | 22972 | Sources/VideoMedia/VisualCache.swift |
 | 73405ccea354d3d9bd2f26f62727ef19ab9e2057decab8bb11c59c8cb9003e86 | 8544 | Sources/VideoMedia/VoicePromptBuiltinAssets.swift |
 | 10f826b1ef67e950bf5beddedc3aa15c14565857af6796876331e4c2125a0aa3 | 127 | Sources/VideoPluginBridge/main.swift |
 | 889d232f2f397a808d7d59eff398ccf0d0c8daa0d8e2ae9e9e08d1e16733b6ba | 4502 | Tests/VideoCLITests/baidu_contract_smoke.swift |
@@ -285,6 +285,7 @@ VideoFree source export · package_free.py · version 1
 | f1fa3952a70af45cf3adca99715c3bab89aee643deadcdc25f76e59575e9dcf2 | 45627 | Tests/VideoMediaTests/ScriptJobsTests.swift |
 | 03edcaf754546e54eee0172e844fd13115c80b1829c720f8c6db3af3ba53282d | 7087 | Tests/VideoMediaTests/SpeechMediaTests.swift |
 | fd14ec3e583f47b0a3bbdfd711bb86a0b08f47b379e1d9f053d9e5e978af19b7 | 9786 | Tests/VideoMediaTests/SpeechProjectProductionTests.swift |
+| 121762dd45c19de31f4e06764e210be20aaf3b35927eb4d232028d2a5da21a4a | 17048 | Tests/VideoMediaTests/VisualCacheResumeTests.swift |
 | 57d021b53ab176ba287ee0e32abe3a31df86a2449715bf437789cf9779cc1d4e | 486 | ThirdParty/GameAssets/voiceover/AUTHOR-LICENSE.txt |
 | 1ba6aa2cb3710fd7c6e021622b4ef0428a0107c8f2db2e0dda8de8bcbdb56fd3 | 8283 | ThirdParty/GameAssets/voiceover/go.ogg |
 | 4a49258fab1f84b00d0060e1535218b22a3b4bba61ef4d989b82e4cab15d69b3 | 7313 | ThirdParty/GameAssets/voiceover/ready.ogg |

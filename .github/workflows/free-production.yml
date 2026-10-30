@@ -13,7 +13,7 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  layer-images-stage:
+  visual-resume-stage:
     if: github.repository == 'ayqy/video-core' && github.event.repository.private == false
     runs-on: macos-15-intel
     timeout-minutes: 40
@@ -38,7 +38,7 @@ jobs:
           assert head==os.environ['VIDEO_SOURCE_COMMIT']
           entries=re.findall(r'(?m)^\| ([a-f0-9]{64}) \| ([0-9]+) \| ([^|\n]+) \|$',(root/'SOURCE-MANIFEST.md').read_text())
           rows={name:(digest,int(size)) for digest,size,name in entries}
-          assert len(entries)==len(rows)==275
+          assert len(entries)==len(rows)==276
           for name,(digest,size) in rows.items():
               relative=Path(name)
               assert not relative.is_absolute() and '..' not in relative.parts
@@ -50,17 +50,17 @@ jobs:
           tracked=set(subprocess.check_output(['git','ls-files'],cwd=root,text=True).splitlines())
           assert tracked==set(rows)|metadata|{'SOURCE-MANIFEST.md'}
           assert not any((root/name).exists() for name in ['App','MacApp','MacUITests','Examples','Premium','Sources/VideoGame','Sources/VideoCartoon','Sources/VideoAdvanced'])
-          BASE_PUBLIC_COMMIT='403da5fd4325058371bd777d76f2fb4f43c38fea'
-          BASE_NATIVE_RUN='40980421475'
-          ADDITIONS={'Integrations/layer_image_sequence_smoke.py', 'Sources/VideoCore/LayerImageSequence.swift', 'Tests/VideoCoreTests/LayerImageSequenceTests.swift', 'Tests/VideoMediaTests/LayerImageSequenceMediaTests.swift'}
-          REVIEWED_CHANGED=ADDITIONS|{'.github/workflows/free-production.yml', 'README.md', 'Sources/VideoCore/AgentSchemas.swift', 'Sources/VideoCore/Editing.swift', 'Sources/VideoCore/Layers.swift', 'Sources/VideoMedia/LayerPainter.swift'}
-          PROTECTED_COUNT=265
-          PROTECTED_SHA256='9550485866f6ed8c624b3842c0adfba19f4dee5ed22357a43dfab01255ca3349'
+          BASE_PUBLIC_COMMIT='32ba347657251bf7c77ee12cd191179874b645c5'
+          BASE_NATIVE_RUN='40991090137'
+          ADDITIONS={'Tests/VideoMediaTests/VisualCacheResumeTests.swift'}
+          REVIEWED_CHANGED=ADDITIONS|{'.github/workflows/free-production.yml', 'README.md', 'Sources/VideoMedia/VisualCache.swift'}
+          PROTECTED_COUNT=272
+          PROTECTED_SHA256='592d2e908872e00763b45b948b7c09f3ed8325896685e85b03a6c27aa47695d8'
           assert ADDITIONS<=set(rows) and REVIEWED_CHANGED<=set(rows)
           protected={name:value for name,value in rows.items() if name not in REVIEWED_CHANGED}
           digest_input=''.join(f'{name}\0{protected[name][0]}\0{protected[name][1]}\n' for name in sorted(protected))
           assert len(protected)==PROTECTED_COUNT and hashlib.sha256(digest_input.encode()).hexdigest()==PROTECTED_SHA256
-          print('manifest_payloads=275 unchanged_protected_inputs=265 source_commit='+head)
+          print('manifest_payloads=276 unchanged_protected_inputs=272 source_commit='+head)
           print('prior_unchanged_scope_run='+BASE_NATIVE_RUN+' blanket_native_reuse=false')
           PYCODE
 
@@ -71,8 +71,8 @@ jobs:
           from pathlib import Path
           import hashlib, os, re, subprocess
           root=Path(os.environ['GITHUB_WORKSPACE'])
-          scratch=Path(os.environ['RUNNER_TEMP'])/'video-free-layer-images'
-          log=Path(os.environ['RUNNER_TEMP'])/'video-free-layer-images-build.log'
+          scratch=Path(os.environ['RUNNER_TEMP'])/'video-free-visual-resume'
+          log=Path(os.environ['RUNNER_TEMP'])/'video-free-visual-resume-build.log'
           try:
               with log.open('wb') as stream:
                   result=subprocess.run(['swift','build','--package-path',str(root),'--scratch-path',str(scratch),'--disable-sandbox','--jobs','2','-c','release','--product','video'],stdout=stream,stderr=subprocess.STDOUT,timeout=1500)
@@ -88,13 +88,13 @@ jobs:
           finally:log.unlink(missing_ok=True)
           PYCODE
 
-      - name: Run complete affected Core and media classes with exact identities
+      - name: Run the complete checkpoint resume class with exact identities
         shell: bash
         run: |
           python3 -B - <<'PYCODE'
           from pathlib import Path
           import hashlib, json, os, re, subprocess
-          SWIFT_SUITES={('VideoCoreTests', 'LayerImageSequenceTests'): 'LayerImageSequenceTests.swift', ('VideoCoreTests', 'LayerTests'): 'LayerTests.swift', ('VideoCoreTests', 'AgentSchemasTests'): 'AgentSchemasTests.swift', ('VideoMediaTests', 'LayerImageSequenceMediaTests'): 'LayerImageSequenceMediaTests.swift'}
+          SWIFT_SUITES={('VideoMediaTests', 'VisualCacheResumeTests'): 'VisualCacheResumeTests.swift'}
 
           def affected_methods(root):
               expected=set()
@@ -139,15 +139,15 @@ jobs:
               return len(expected)
           root=Path(os.environ['GITHUB_WORKSPACE'])
           expected=affected_methods(root)
-          scratch=Path(os.environ['RUNNER_TEMP'])/'video-free-layer-images'
-          log=Path(os.environ['RUNNER_TEMP'])/'video-free-layer-images-rules.log'
+          scratch=Path(os.environ['RUNNER_TEMP'])/'video-free-visual-resume'
+          log=Path(os.environ['RUNNER_TEMP'])/'video-free-visual-resume-rules.log'
           try:
               with log.open('wb') as stream:
                   result=subprocess.run(['swift','test','--package-path',str(root),'--scratch-path',str(scratch),'--disable-sandbox','--jobs','2','-c','release','--filter',swift_filter(expected)],stdout=stream,stderr=subprocess.STDOUT,timeout=900,env=dict(os.environ,VIDEO_TEST_CLI=os.environ['VIDEO_FREE_BINARY']))
               text=log.read_text(errors='replace')
               for line in text.splitlines():
                   if re.search(r'error:|fatal error:|Executed \d+ tests?|Test Suite .* (passed|failed)',line,re.I):print(line[:700])
-              assert result.returncode==0,'Affected whole Core/media classes failed'
+              assert result.returncode==0,'Affected whole VisualCacheResume class failed'
               count=verify_swift_stream(text,expected)
               print('current_affected_swift_rules=passed distinct_test_ids='+str(count))
               print('actual_method_inventory_sha256='+hashlib.sha256(json.dumps(sorted(expected),separators=(',',':')).encode()).hexdigest())
@@ -172,7 +172,7 @@ jobs:
           python3 -B - <<'PYCODE'
           from pathlib import Path
           import os
-          text='Current public CLI, complete LayerImageSequence/Layer/AgentSchemas Core classes and complete atlas pixel media class passed. Actual ordinary CLI import, proof, dry-run/CAS, source split, zero-fee native render, all-frame pixel decode and backup/restore passed using only a synthetic two-color fixture.\n\nThe 265 protected payloads retain exact public 403da5fd4325058371bd777d76f2fb4f43c38fea bytes; prior successful run 40980421475 is evidence only for unchanged inputs and original branches. Old 62 rules and unchanged Python suites were not rerun. No private examples, story sprites, audio, closed painters, credentials, paid plugins or business projects were published. Synthetic infrastructure tests do not approve business video quality, audio, source rights or manual review.\n'
+          text='Current public CLI and the complete VisualCacheResume media class passed with exact method identities. Actual ordinary CLI import, proof, dry-run/CAS, source split, zero-fee native render, all-frame pixel decode and backup/restore passed using only a synthetic two-color fixture.\n\nThe 272 protected payloads retain exact public 32ba347657251bf7c77ee12cd191179874b645c5 bytes; prior successful run 40991090137 is evidence only for unchanged inputs and original branches. Old 21 layer rules, old 62 presenter rules and unchanged Python suites were not rerun. No private examples, story sprites, audio, closed painters, credentials, paid plugins or business projects were published. Synthetic infrastructure tests do not approve business video quality, audio, source rights or manual review.\n'
           with Path(os.environ['GITHUB_STEP_SUMMARY']).open('a') as stream:stream.write(text)
           print('current_native_build=passed current_affected_swift_rules=passed current_plain_media_chain=passed review=false')
           PYCODE

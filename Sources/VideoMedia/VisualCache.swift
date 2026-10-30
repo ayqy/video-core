@@ -87,6 +87,25 @@ enum VisualClipCache {
         var cartoonSpeechBinding:CartoonSpeechBinding?=nil
     }
     struct Entry: Codable { var key: String; var bytes: Int; var sha256: String; var frames: Int }
+    // Checkpoint packaging does not change drawing semantics or the existing
+    // complete-scene fingerprint. A completed legacy scene always wins.
+    static let intervalFrames=120
+    struct Interval: Codable, Equatable {
+        var version="native-scene-interval-1"
+        var sceneKey:String
+        var lowerBound:Int
+        var upperBound:Int
+        var frames:Int {upperBound-lowerBound}
+        var range:Range<Int> {lowerBound..<upperBound}
+        var key:String {get throws {try Codec.digest(self)}}
+    }
+    struct IntervalEntry: Codable {var interval:Interval;var artifact:Entry}
+    private static func valid(_ entry:Entry,key:String,frames:Int,clip:URL)->Bool {
+        guard entry.key==key,entry.frames==frames,entry.bytes>0,
+              let data=try? Data(contentsOf:clip),data.count==entry.bytes,Codec.hash(data)==entry.sha256 else{return false}
+        return true
+    }
+    private static func touch(_ clip:URL) {try? FileManager.default.setAttributes([.modificationDate:Date()],ofItemAtPath:clip.path)}
     static func fingerprint(revision: Revision, index: Int, database: Database,modules:RenderModuleRegistry?, encoding:EncodingConfiguration?=nil) throws -> String {
         let encoding=try encoding ?? EncodingConfiguration.capture(aspect:revision.aspect,fps:revision.fps)
         var scene=revision.scenes[index]
@@ -138,21 +157,52 @@ enum VisualClipCache {
             _ = try ClassicArtworkMedia.load(scene:scene,workspaceID:r.workspaceID,repository:repository,database:db,commercial:r.purpose != .education)
             let key=try fingerprint(revision:r,index:index,database:db,modules:modules,encoding:encoding)
             let clip=directory.appendingPathComponent(key+".mp4"), metadata=directory.appendingPathComponent(key+".plist")
-            var valid=false
-            if let bytes=try? Data(contentsOf:metadata), let entry=try? PropertyListDecoder().decode(Entry.self,from:bytes), entry.key==key,entry.frames==scene.timelineFrames,let data=try? Data(contentsOf:clip),data.count==entry.bytes,Codec.hash(data)==entry.sha256 { valid=true; hits += 1; try? FileManager.default.setAttributes([.modificationDate:Date()],ofItemAtPath:clip.path) }
-            if !valid {
-                let temporary=directory.appendingPathComponent(Codec.id()+".mp4")
-                do {
-                    try await renderClip(revision:r,index:index,startFrame:cursor,repository:repository,database:db,output:temporary,modules:modules,invocation:invocation,encoding:encoding) { local in try progress((Double(cursor)+Double(scene.timelineFrames)*local)/Double(r.frames)*0.75) }
-                    try invocation?.check()
-                    let bytes=try Data(contentsOf:temporary); let entry=Entry(key:key,bytes:bytes.count,sha256:Codec.hash(bytes),frames:scene.timelineFrames)
-                    if FileManager.default.fileExists(atPath:clip.path) { try FileManager.default.removeItem(at:clip) }
-                    try FileManager.default.moveItem(at:temporary,to:clip); try PropertyListEncoder().encode(entry).write(to:metadata,options:.atomic)
-                } catch { try? FileManager.default.removeItem(at:temporary); throw error }
+            if let bytes=try? Data(contentsOf:metadata),let entry=try? PropertyListDecoder().decode(Entry.self,from:bytes),
+               valid(entry,key:key,frames:scene.timelineFrames,clip:clip) {
+                try Task.checkCancellation();try invocation?.check()
+                try await insert(clip,frames:scene.timelineFrames,at:cursor,fps:r.fps,into:track)
+                try Task.checkCancellation();try invocation?.check()
+                hits += 1;touch(clip);cursor += scene.timelineFrames
+                try progress(Double(cursor)/Double(r.frames)*0.75)
+                continue
             }
-            let asset=AVURLAsset(url:clip)
-            guard let source=try await asset.loadTracks(withMediaType:.video).first else { throw VideoError.invalid("缓存视频轨道缺失") }
-            try track.insertTimeRange(CMTimeRange(start:.zero,duration:CMTime(value:Int64(scene.timelineFrames),timescale:Int32(r.fps))),of:source,at:CMTime(value:Int64(cursor),timescale:Int32(r.fps)))
+            var reusedScene=true
+            for lower in stride(from:0,to:scene.timelineFrames,by:intervalFrames) {
+                try Task.checkCancellation();try invocation?.check()
+                let interval=Interval(sceneKey:key,lowerBound:lower,upperBound:min(lower+intervalFrames,scene.timelineFrames))
+                let intervalKey=try interval.key
+                let checkpoint=directory.appendingPathComponent(intervalKey+".mp4")
+                let receipt=directory.appendingPathComponent(intervalKey+".plist")
+                let existing=(try? Data(contentsOf:receipt)).flatMap{try? PropertyListDecoder().decode(IntervalEntry.self,from:$0)}
+                if let existing,existing.interval==interval,valid(existing.artifact,key:intervalKey,frames:interval.frames,clip:checkpoint) {
+                    touch(checkpoint)
+                } else {
+                    reusedScene=false
+                    let temporary=directory.appendingPathComponent(Codec.id()+".mp4")
+                    do {
+                        try await renderClip(revision:r,index:index,startFrame:cursor,repository:repository,database:db,output:temporary,modules:modules,invocation:invocation,encoding:encoding,frameRange:interval.range) { local in
+                            try progress((Double(cursor+interval.lowerBound)+Double(interval.frames)*local)/Double(r.frames)*0.75)
+                        }
+                        try Task.checkCancellation();try invocation?.check()
+                        let bytes=try Data(contentsOf:temporary)
+                        let entry=IntervalEntry(interval:interval,artifact:Entry(key:intervalKey,bytes:bytes.count,sha256:Codec.hash(bytes),frames:interval.frames))
+                        let receiptBytes=try PropertyListEncoder().encode(entry)
+                        if FileManager.default.fileExists(atPath:checkpoint.path) {try FileManager.default.removeItem(at:checkpoint)}
+                        try FileManager.default.moveItem(at:temporary,to:checkpoint)
+                        // Publication follows completed encoding and its byte hash.
+                        // Interrupted or orphaned files without this atomic receipt
+                        // are never eligible for reuse.
+                        try receiptBytes.write(to:receipt,options:.atomic)
+                    } catch {try? FileManager.default.removeItem(at:temporary);throw error}
+                }
+                try Task.checkCancellation();try invocation?.check()
+                try await insert(checkpoint,frames:interval.frames,at:cursor+interval.lowerBound,fps:r.fps,into:track)
+                try Task.checkCancellation();try invocation?.check()
+                // A throw here retains the already published checkpoint. Next
+                // invocation reports that exact completed range before drawing.
+                try progress(Double(cursor+interval.upperBound)/Double(r.frames)*0.75)
+            }
+            if reusedScene {hits += 1}
             cursor += scene.timelineFrames
         }
         guard let exporter=AVAssetExportSession(asset:composition,presetName:AVAssetExportPresetPassthrough) else { throw VideoError.unavailable("无法建立镜头合成器") }
@@ -163,8 +213,20 @@ enum VisualClipCache {
         trim(directory:directory,limit:256*1024*1024)
         return hits
     }
-    static func renderClip(revision r: Revision,index: Int,startFrame: Int,repository: Repository,database db: Database,output: URL,modules:RenderModuleRegistry?,invocation:RenderInvocation?=nil,encoding:EncodingConfiguration,progress: @escaping (Double) throws -> Void) async throws {
-        let scene=r.scenes[index]; let writer=try AVAssetWriter(outputURL:output,fileType:AVFileType(rawValue:encoding.fileType))
+    private static func insert(_ clip:URL,frames:Int,at frame:Int,fps:Int,into track:AVMutableCompositionTrack) async throws {
+        let asset=AVURLAsset(url:clip)
+        guard let source=try await asset.loadTracks(withMediaType:.video).first else {throw VideoError.invalid("缓存视频轨道缺失")}
+        let duration=CMTime(value:Int64(frames),timescale:Int32(fps))
+        let available=try await source.load(.timeRange)
+        guard CMTimeCompare(available.start,.zero)==0,CMTimeCompare(available.duration,duration)==0 else {
+            throw VideoError.invalid("缓存视频轨道帧区间不完整")
+        }
+        try track.insertTimeRange(CMTimeRange(start:.zero,duration:duration),of:source,at:CMTime(value:Int64(frame),timescale:Int32(fps)))
+    }
+    static func renderClip(revision r: Revision,index: Int,startFrame: Int,repository: Repository,database db: Database,output: URL,modules:RenderModuleRegistry?,invocation:RenderInvocation?=nil,encoding:EncodingConfiguration,frameRange:Range<Int>?=nil,progress: @escaping (Double) throws -> Void) async throws {
+        let scene=r.scenes[index],range=frameRange ?? (0..<r.scenes[index].timelineFrames)
+        guard !range.isEmpty,range.lowerBound>=0,range.upperBound<=scene.timelineFrames else {throw VideoError.invalid("镜头缓存区间超出原时间轴")}
+        let writer=try AVAssetWriter(outputURL:output,fileType:AVFileType(rawValue:encoding.fileType))
         let input=AVAssetWriterInput(mediaType:.video,outputSettings:encoding.writerSettings); input.mediaTimeScale=encoding.mediaTimeScale;input.expectsMediaDataInRealTime=false
         let adaptor=AVAssetWriterInputPixelBufferAdaptor(assetWriterInput:input,sourcePixelBufferAttributes:encoding.pixelBufferAttributes)
         guard writer.canAdd(input) else { throw VideoError.unavailable("当前设备不支持H.264输出") };writer.add(input);guard writer.startWriting() else { throw VideoError.unavailable("画面编码无法启动") };writer.startSession(atSourceTime:.zero)
@@ -178,7 +240,7 @@ enum VisualClipCache {
             else if let source=CGImageSourceCreateWithURL(url as CFURL,nil) { picture=CGImageSourceCreateImageAtIndex(source,0,nil) }
         }
         do {
-            for local in 0..<scene.timelineFrames {
+            for local in range {
                 try Task.checkCancellation(); try invocation?.check()
                 while !input.isReadyForMoreMediaData { guard writer.status != .failed else { throw VideoError.unavailable("画面编码失败") };try await Task.sleep(nanoseconds:2_000_000);try Task.checkCancellation(); try invocation?.check() }
                 var buffer:CVPixelBuffer?;guard let pool=adaptor.pixelBufferPool,CVPixelBufferPoolCreatePixelBuffer(nil,pool,&buffer)==kCVReturnSuccess,let buffer else { throw VideoError.unavailable("帧缓冲内存不足") }
@@ -187,10 +249,10 @@ enum VisualClipCache {
                 CVPixelBufferLockBaseAddress(buffer,[])
                 guard let context=CGContext(data:CVPixelBufferGetBaseAddress(buffer),width:r.aspect.width,height:r.aspect.height,bitsPerComponent:8,bytesPerRow:CVPixelBufferGetBytesPerRow(buffer),space:CGColorSpace(name:CGColorSpace.sRGB)!,bitmapInfo:CGImageAlphaInfo.noneSkipFirst.rawValue) else { CVPixelBufferUnlockBaseAddress(buffer,[]);throw VideoError.unavailable("帧缓冲不可用") }
                 do { try ScenePainter.draw(revision:r,frame:startFrame+local,in:context,media:media,layerImages:layerImages,resources:resources,modules:modules,invocation:invocation) } catch { CVPixelBufferUnlockBaseAddress(buffer,[]);throw error };CVPixelBufferUnlockBaseAddress(buffer,[])
-                guard adaptor.append(buffer,withPresentationTime:CMTime(value:Int64(local),timescale:Int32(r.fps))) else { throw VideoError.unavailable("帧写入失败") }
-                if local%15==0 { try progress(Double(local)/Double(scene.timelineFrames)) }
+                guard adaptor.append(buffer,withPresentationTime:CMTime(value:Int64(local-range.lowerBound),timescale:Int32(r.fps))) else { throw VideoError.unavailable("帧写入失败") }
+                if (local-range.lowerBound)%15==0 { try progress(Double(local-range.lowerBound)/Double(range.count)) }
             }
-            input.markAsFinished();writer.endSession(atSourceTime:CMTime(value:Int64(scene.timelineFrames),timescale:Int32(r.fps)))
+            input.markAsFinished();writer.endSession(atSourceTime:CMTime(value:Int64(range.count),timescale:Int32(r.fps)))
             await withCheckedContinuation { (c:CheckedContinuation<Void,Never>) in writer.finishWriting { c.resume() } };guard writer.status == .completed else { throw VideoError.unavailable("镜头画面未完成") }
         } catch { writer.cancelWriting();throw error }
     }
