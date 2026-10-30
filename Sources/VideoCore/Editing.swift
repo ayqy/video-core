@@ -318,7 +318,17 @@ public enum Quality {
             let title=s.title.trimmingCharacters(in:.whitespacesAndNewlines)
             let body=s.body.trimmingCharacters(in:.whitespacesAndNewlines)
             let narration=s.narration.trimmingCharacters(in:.whitespacesAndNewlines)
-            if title.isEmpty || (body.isEmpty && narration.isEmpty) { issues.append(QualityIssue(s.id+"text", "镜头标题或知识内容为空；请填写标题，并在画面正文或独立旁白中保留知识内容")) }
+            // An ordinary narrated paper explanation can let its actual artwork
+            // carry the screen without repeating a title. Scene validation above
+            // still enforces the image layer's source, size and active frame range.
+            let narratedPaperArtwork = s.kind == .explanation && s.paperPresentation?.layout == .explanation && !narration.isEmpty && (s.layers ?? []).contains { layer in
+                guard layer.kind == .image,layer.opacity>0,let assetID=layer.assetID else {return false}
+                return database.assets.contains { asset in
+                    asset.id==assetID && asset.workspaceID==revision.workspaceID && asset.bytes>0 &&
+                    (asset.mediaType == "image" || asset.mediaType.hasPrefix("image/"))
+                }
+            }
+            if (title.isEmpty && !narratedPaperArtwork) || (body.isEmpty && narration.isEmpty) { issues.append(QualityIssue(s.id+"text", "镜头标题或知识内容为空；请填写标题，并在画面正文或独立旁白中保留知识内容")) }
             if s.kind == .image || s.kind == .video { if s.assetID == nil { issues.append(QualityIssue(s.id+"asset", "图片/录屏镜头缺少实际素材")) } }
             var refs = s.evidenceIDs
             let sourceIDs=Set([s.assetID,s.characterProfile?.voiceAssetID].compactMap{$0}+(s.layers ?? []).compactMap(\.assetID)+(s.narrativeSources ?? []).map(\.assetID))

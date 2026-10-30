@@ -2,10 +2,10 @@
 
 VideoFree source export · package_free.py · version 1
 
-生成时间：2026-10-30 11:26:23 北京时间
+生成时间：2026-10-30 14:46:47 北京时间
 
-- 源码与必要元数据：276个文件；4283538字节（不含本清单）。
-- 整体内容指纹：`0fc1f752913acdbb4ceb9b6f5b8f4316ab8d8c4b5eae493ee3a526097a0e37b5`。
+- 源码与必要元数据：277个文件；4310443字节（不含本清单）。
+- 整体内容指纹：`8b98d31831dfc14abacf0a5969ffe394ce965322bae096d9b97b675dae9bec42`。
 - 来源：受控原始工程中的逐文件白名单；Package.swift与唯一免费制作workflow来自Distribution/Free精确模板，README由发行脚本生成。
 - 本包不含.git，不可作为新业务checkout；本清单生成过程不执行构建、设备验收、签名安装或公共上传，各阶段以独立证据为准。
 - 排除：App、VideoGame、VideoCartoon、Premium、高级实现运行时测试、私有仓库地址、凭据、客户数据、缓存、日志及媒体过程产物。
@@ -14,7 +14,7 @@ VideoFree source export · package_free.py · version 1
 
 | SHA-256 | 字节数 | 包内路径 / 原工程来源 |
 |---|---:|---|
-| a432e9d43ea2b91d4bc983c17f2d20d2e8ff156d3194c81af65b89686b52d75d | 11552 | .github/workflows/free-production.yml |
+| e1faffb9730b2a2b54b5ffc4c6570c1f19ff26bad270f045534446ba78c1ef21 | 28338 | .github/workflows/free-production.yml |
 | bb06f8affed90535835440e8a05031579a302b28c26d6ef26af2c1992bcb3080 | 38625 | Integrations/README.md |
 | 39dd8274ff1e6b0649acb63281087a1144e1f4a4e0eed3dc2b92e10df2cbd121 | 28488 | Integrations/asset_reuse.py |
 | b855d428b3b24845239bb209cacc4f23767ab7b25097546d372f00fb724a7a30 | 29749 | Integrations/causal_story.py |
@@ -108,7 +108,7 @@ VideoFree source export · package_free.py · version 1
 | 17137a461b816b17ea4da94e59f6ee299b3e7dd53992b985a04e98df0e21e9a5 | 4217 | Sources/VideoCore/ContentAssetMatching.swift |
 | 47b0e7ae5a22fa142bf1ad52e25d2b2e98ecfe086dff759f356abedbdd1d1833 | 11076 | Sources/VideoCore/DataPresentation.swift |
 | de259a220515bd4285ade024dfe49eb5ac68395fbe765bf229af23757ec68d8b | 36325 | Sources/VideoCore/Dependencies.swift |
-| db7ff314792b18ea4378b3ddb57aa4a4c4a57d995f0426159870a5c9d3bde465 | 41569 | Sources/VideoCore/Editing.swift |
+| 453b5164c17b4f7fbb1cbff70f584eab4fa46ebbc590c1237e2b2e1c1797caaa | 42400 | Sources/VideoCore/Editing.swift |
 | 637390cfaf18b0c0ed51d28ac41cd52ee9f0cd83527df3abe2d8d36e47077705 | 6228 | Sources/VideoCore/EditorPracticeRules.swift |
 | ff72243377a23f6732d56c34e50d291d82e60d1a71ada1878d9ee2e7c5f641b6 | 12517 | Sources/VideoCore/Finance.swift |
 | 9e5b2b47e55fdcf7b1495a61e0df94e9b9bb2e915bbb147ebb829585e84d148b | 6424 | Sources/VideoCore/H264Rules.swift |
@@ -245,6 +245,7 @@ VideoFree source export · package_free.py · version 1
 | a9ee963eaff0cd0d475382ebdc8e956af8e6fb77adea8899a067e78dc33419ba | 21770 | Tests/VideoCoreTests/ModuleCatalogPublicationTests.swift |
 | e3b277d23a6c7a7951f541f010d35b7bce7cd9522eaaa53e726e58edcf8686b5 | 17747 | Tests/VideoCoreTests/NarrativeTests.swift |
 | c499c8ae6aca4855864eb5a5e2c5a55305643953a9c47073fc66b45c9bb41767 | 5752 | Tests/VideoCoreTests/NativeAgentTests.swift |
+| d26f07a55e80838b66d1b04d5068b0c15a1f8e63a4e3175274c64a91d583cc27 | 9288 | Tests/VideoCoreTests/PaperExplanationQualityTests.swift |
 | 4d41f8e713398ca89bd5dcb901e40305fce2999c66ab452510cbe67e45ee4f2e | 7837 | Tests/VideoCoreTests/PaperPresentationTests.swift |
 | 05bbaa27441201860ff2fab5a8d34d33ccaa2b71f03a198aa9136a66513b07bc | 21414 | Tests/VideoCoreTests/PluginPackageTests.swift |
 | 22f89a9ee58e8b3d8699beb9ec8696c3dd8b250970050541ea94968c23a314f9 | 21191 | Tests/VideoCoreTests/PluginProtocolTests.swift |
