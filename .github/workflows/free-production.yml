@@ -13,7 +13,7 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  presenter-content-stage:
+  layer-images-stage:
     if: github.repository == 'ayqy/video-core' && github.event.repository.private == false
     runs-on: macos-15-intel
     timeout-minutes: 40
@@ -27,245 +27,152 @@ jobs:
           ref: ${{ github.sha }}
           persist-credentials: false
 
-
-      - name: Verify the exact affected source and protected prior inputs
-        shell: bash
-        run: |
-          python3 -B - <<'PYCODE'
-          from pathlib import Path
-          import ast, hashlib, os, re, subprocess, sys
-          root = Path(os.environ['GITHUB_WORKSPACE'])
-          head = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=root, text=True).strip()
-          assert head == os.environ['VIDEO_SOURCE_COMMIT']
-          manifest = (root / 'SOURCE-MANIFEST.md').read_text()
-          entries = re.findall(r'(?m)^\| ([a-f0-9]{64}) \| ([0-9]+) \| ([^|\n]+) \|$', manifest)
-          rows = {name: (digest, int(size)) for digest, size, name in entries}
-          assert len(entries) == len(rows) == 271
-          for name, (digest, size) in rows.items():
-              relative = Path(name)
-              assert not relative.is_absolute() and '..' not in relative.parts
-              path = root / relative
-              assert not path.is_symlink() and path.is_file()
-              assert not any(parent.is_symlink() for parent in path.parents)
-              data = path.read_bytes()
-              assert len(data) == size and hashlib.sha256(data).hexdigest() == digest, name
-          metadata = {'.gitignore', 'docs/.nojekyll', 'docs/index.html', 'docs/privacy.html',
-                      'docs/site.css', 'docs/support.html', 'docs/terms.html'}
-          tracked = set(subprocess.check_output(['git', 'ls-files'], cwd=root, text=True).splitlines())
-          assert tracked == set(rows) | metadata | {'SOURCE-MANIFEST.md'}
-          assert not any((root / name).exists() for name in ['MacApp', 'App', 'Premium',
-              'Sources/VideoGame', 'Sources/VideoCartoon', 'Sources/VideoAdvanced'])
-          # Core encoding/validation changed: execute current CLI/Core below.
-          # Fixed protected bytes reject any unplanned extra native or dependency edit.
-          BASE_PUBLIC_COMMIT = '0408f480477ac5a08b78bcd18a8f1bb1fe8464d4'
-          BASE_INTEGRATION_RUN = '40950288278'
-          BASE_NATIVE_RUN = '40950288278'
-          ADDITIONS = {'Integrations/story_evaluation.py', 'Integrations/test_story_planning.py', 'Integrations/test_story_evaluation.py', 'Tests/VideoCoreTests/CartoonPresenterTests.swift', 'Integrations/story_planning.py', 'Sources/VideoCore/CartoonPresenter.swift'}
-          REVIEWED_CHANGED = ADDITIONS | {'Integrations/asset_reuse.py', 'Integrations/test_asset_reuse.py', 'Integrations/README.md', 'Integrations/skills/video/references/narration-writing.md', 'Sources/VideoCore/PluginProtocol.swift', 'Sources/VideoCore/ClassicArtwork.swift', '.github/workflows/free-production.yml', 'README.md', 'Sources/VideoCore/Models.swift', 'Sources/VideoCore/StoryCausalSources.swift', 'Sources/VideoMedia/RemoteSceneModule.swift', 'Sources/VideoMedia/Painter.swift', 'Sources/VideoCore/AgentSchemas.swift', 'Sources/VideoCore/VendorFreeModuleTrust.swift', 'Sources/VideoCore/StoryActions.swift', 'Sources/VideoMedia/PluginRPCServer.swift', 'Sources/VideoCore/Editing.swift', 'Tests/VideoCoreTests/PluginPackageTests.swift', 'Tests/VideoCoreTests/PluginProtocolTests.swift', 'Tests/VideoCoreTests/VendorFreeModuleTrustTests.swift'}
-          PROTECTED_COUNT = 245
-          PROTECTED_SHA256 = '5b29c9dec081dd88edb9394ecf891ad41243095adf8e1c879c6fcb2a4e815bbe'
-          assert ADDITIONS <= set(rows) and REVIEWED_CHANGED <= set(rows)
-          protected = {name: value for name, value in rows.items() if name not in REVIEWED_CHANGED}
-          digest_input = ''.join(f'{name}\0{protected[name][0]}\0{protected[name][1]}\n' for name in sorted(protected))
-          assert len(protected) == PROTECTED_COUNT and hashlib.sha256(digest_input.encode()).hexdigest() == PROTECTED_SHA256, (
-              'Protected source/dependency scope changed: revise the affected validation plan')
-          print('source_commit=' + head + '; manifest_payloads=' + str(len(rows)))
-          print('unchanged_protected_inputs=' + str(len(protected)) + '; sha256=' + PROTECTED_SHA256)
-          print('current_native_build=required; current_affected_swift_rules=required; blanket_native_reuse=false')
-          print('unchanged_implementation_evidence=verified_scope; integration_base_run=' + BASE_INTEGRATION_RUN
-                + '; media_implementation_base_run=' + BASE_NATIVE_RUN + '; current_media_chain=not_run')
-          PYCODE
-
-      - name: Validate complete affected planning, evaluation and asset reuse Python rules
-        shell: bash
-        run: |
-          python3 -B - <<'PYCODE'
-          from collections import Counter
-          import hashlib, json, sys, unittest
-          sys.path.insert(0, 'Integrations')
-          modules = ['test_story_planning', 'test_story_evaluation', 'test_asset_reuse']
-          suite = unittest.TestSuite(unittest.defaultTestLoader.loadTestsFromName(name) for name in modules)
-          def identities(node):
-              for item in node:
-                  if isinstance(item, unittest.TestSuite):
-                      yield from identities(item)
-                  else:
-                      yield item.id()
-          expected = list(identities(suite))
-          assert expected and len(expected) == len(set(expected)) == suite.countTestCases()
-          assert all(identity.split('.')[0] in modules for identity in expected)
-          assert set(identity.split('.')[0] for identity in expected) == set(modules)
-          class ExactResult(unittest.TextTestResult):
-              def __init__(self, *args, **kwargs):
-                  super().__init__(*args, **kwargs)
-                  self.started_ids, self.passed_ids = [], []
-              def startTest(self, test):
-                  self.started_ids.append(test.id())
-                  super().startTest(test)
-              def addSuccess(self, test):
-                  self.passed_ids.append(test.id())
-                  super().addSuccess(test)
-          result = unittest.TextTestRunner(verbosity=1, resultclass=ExactResult).run(suite)
-          assert result.wasSuccessful() and not result.skipped
-          assert result.testsRun == len(expected) and result.started_ids == expected and result.passed_ids == expected
-          inventory = json.dumps(sorted(expected), ensure_ascii=False, separators=(',', ':')).encode()
-          print('affected_python_rules=passed; distinct_test_ids=' + str(len(expected)))
-          print('affected_python_modules=' + json.dumps(dict(Counter(name.split('.')[0] for name in expected)), sort_keys=True))
-          print('affected_python_test_ids_sha256=' + hashlib.sha256(inventory).hexdigest())
-          print('planning_evaluation_and_asset_reuse_rules_only=true; real_model_request=not_run; production_film=not_run')
-          PYCODE
-
-      - name: Build the latest standalone free CLI
+      - name: Verify exact current payload and protected baseline
         shell: bash
         run: |
           python3 -B - <<'PYCODE'
           from pathlib import Path
           import hashlib, os, re, subprocess
-          root = Path(os.environ['GITHUB_WORKSPACE'])
-          scratch = Path(os.environ['RUNNER_TEMP']) / 'video-free-build'
-          log = Path(os.environ['RUNNER_TEMP']) / 'video-free-build.log'
-          result = None
-          try:
-              with log.open('wb') as stream:
-                  result = subprocess.run(['swift', 'build', '--package-path', str(root),
-                      '--scratch-path', str(scratch), '--disable-sandbox', '--jobs', '2',
-                      '-c', 'release', '--product', 'video'], stdout=stream,
-                      stderr=subprocess.STDOUT, timeout=1500)
-              lines = log.read_text(errors='replace').splitlines()
-              errors = [line[:700] for line in lines if re.search(r'error:|fatal error:', line, re.I)]
-              warnings = [line for line in lines if 'warning:' in line]
-              print('build_warnings=' + str(len(warnings)) + '; build_errors=' + str(len(errors)))
-              for line in errors[-12:]:
-                  print(line)
-              assert result.returncode == 0, 'Free CLI build failed'
-              directory = subprocess.check_output(['swift', 'build', '--package-path', str(root),
-                  '--scratch-path', str(scratch), '-c', 'release', '--show-bin-path'], text=True).strip()
-              binary = (Path(directory) / 'video').resolve(strict=True)
-              print('current_native_build=passed; cli_sha256=' + hashlib.sha256(binary.read_bytes()).hexdigest())
-              with Path(os.environ['GITHUB_ENV']).open('a') as stream:
-                  stream.write('VIDEO_FREE_BINARY=' + str(binary) + '\n')
-          finally:
-              log.unlink(missing_ok=True)
+          root=Path(os.environ['GITHUB_WORKSPACE'])
+          head=subprocess.check_output(['git','rev-parse','HEAD'],cwd=root,text=True).strip()
+          assert head==os.environ['VIDEO_SOURCE_COMMIT']
+          entries=re.findall(r'(?m)^\| ([a-f0-9]{64}) \| ([0-9]+) \| ([^|\n]+) \|$',(root/'SOURCE-MANIFEST.md').read_text())
+          rows={name:(digest,int(size)) for digest,size,name in entries}
+          assert len(entries)==len(rows)==275
+          for name,(digest,size) in rows.items():
+              relative=Path(name)
+              assert not relative.is_absolute() and '..' not in relative.parts
+              path=root/relative
+              assert path.is_file() and not path.is_symlink() and not any(p.is_symlink() for p in path.parents)
+              raw=path.read_bytes()
+              assert len(raw)==size and hashlib.sha256(raw).hexdigest()==digest,name
+          metadata={'.gitignore', 'docs/.nojekyll', 'docs/index.html', 'docs/privacy.html', 'docs/site.css', 'docs/support.html', 'docs/terms.html'}
+          tracked=set(subprocess.check_output(['git','ls-files'],cwd=root,text=True).splitlines())
+          assert tracked==set(rows)|metadata|{'SOURCE-MANIFEST.md'}
+          assert not any((root/name).exists() for name in ['App','MacApp','MacUITests','Examples','Premium','Sources/VideoGame','Sources/VideoCartoon','Sources/VideoAdvanced'])
+          BASE_PUBLIC_COMMIT='403da5fd4325058371bd777d76f2fb4f43c38fea'
+          BASE_NATIVE_RUN='40980421475'
+          ADDITIONS={'Integrations/layer_image_sequence_smoke.py', 'Sources/VideoCore/LayerImageSequence.swift', 'Tests/VideoCoreTests/LayerImageSequenceTests.swift', 'Tests/VideoMediaTests/LayerImageSequenceMediaTests.swift'}
+          REVIEWED_CHANGED=ADDITIONS|{'.github/workflows/free-production.yml', 'README.md', 'Sources/VideoCore/AgentSchemas.swift', 'Sources/VideoCore/Editing.swift', 'Sources/VideoCore/Layers.swift', 'Sources/VideoMedia/LayerPainter.swift'}
+          PROTECTED_COUNT=265
+          PROTECTED_SHA256='9550485866f6ed8c624b3842c0adfba19f4dee5ed22357a43dfab01255ca3349'
+          assert ADDITIONS<=set(rows) and REVIEWED_CHANGED<=set(rows)
+          protected={name:value for name,value in rows.items() if name not in REVIEWED_CHANGED}
+          digest_input=''.join(f'{name}\0{protected[name][0]}\0{protected[name][1]}\n' for name in sorted(protected))
+          assert len(protected)==PROTECTED_COUNT and hashlib.sha256(digest_input.encode()).hexdigest()==PROTECTED_SHA256
+          print('manifest_payloads=275 unchanged_protected_inputs=265 source_commit='+head)
+          print('prior_unchanged_scope_run='+BASE_NATIVE_RUN+' blanket_native_reuse=false')
           PYCODE
 
-      - name: Validate affected Core branches and actual method identities
+      - name: Build the current standalone free CLI
+        shell: bash
+        run: |
+          python3 -B - <<'PYCODE'
+          from pathlib import Path
+          import hashlib, os, re, subprocess
+          root=Path(os.environ['GITHUB_WORKSPACE'])
+          scratch=Path(os.environ['RUNNER_TEMP'])/'video-free-layer-images'
+          log=Path(os.environ['RUNNER_TEMP'])/'video-free-layer-images-build.log'
+          try:
+              with log.open('wb') as stream:
+                  result=subprocess.run(['swift','build','--package-path',str(root),'--scratch-path',str(scratch),'--disable-sandbox','--jobs','2','-c','release','--product','video'],stdout=stream,stderr=subprocess.STDOUT,timeout=1500)
+              lines=log.read_text(errors='replace').splitlines()
+              errors=[line[:700] for line in lines if re.search(r'error:|fatal error:',line,re.I)]
+              print('build_errors='+str(len(errors)))
+              for line in errors[-12:]:print(line)
+              assert result.returncode==0,'Current standalone free CLI failed to build'
+              directory=subprocess.check_output(['swift','build','--package-path',str(root),'--scratch-path',str(scratch),'-c','release','--show-bin-path'],text=True).strip()
+              binary=(Path(directory)/'video').resolve(strict=True)
+              with Path(os.environ['GITHUB_ENV']).open('a') as stream:stream.write('VIDEO_FREE_BINARY='+str(binary)+'\n')
+              print('current_native_build=passed cli_sha256='+hashlib.sha256(binary.read_bytes()).hexdigest())
+          finally:log.unlink(missing_ok=True)
+          PYCODE
+
+      - name: Run complete affected Core and media classes with exact identities
         shell: bash
         run: |
           python3 -B - <<'PYCODE'
           from pathlib import Path
           import hashlib, json, os, re, subprocess
-          ROOT = root = Path(os.environ['GITHUB_WORKSPACE'])
-          scratch = Path(os.environ['RUNNER_TEMP']) / 'video-free-build'
-          log = Path(os.environ['RUNNER_TEMP']) / 'video-free-rules.log'
-          # This selection and its actual-identity verifier match the managed local driver.
-          SWIFT_SUITES = {'CartoonPresenterTests': ('CartoonPresenterTests.swift', None), 'PluginProtocolTests': ('PluginProtocolTests.swift', None), 'PluginPackageTests': ('PluginPackageTests.swift', None), 'VendorFreeModuleTrustTests': ('VendorFreeModuleTrustTests.swift', None)}
+          SWIFT_SUITES={('VideoCoreTests', 'LayerImageSequenceTests'): 'LayerImageSequenceTests.swift', ('VideoCoreTests', 'LayerTests'): 'LayerTests.swift', ('VideoCoreTests', 'AgentSchemasTests'): 'AgentSchemasTests.swift', ('VideoMediaTests', 'LayerImageSequenceMediaTests'): 'LayerImageSequenceMediaTests.swift'}
 
-
-          def affected_methods(root=ROOT):
-              expected_methods = set()
-              for suite, (source_name, selection) in SWIFT_SUITES.items():
-                  source = (Path(root) / 'Tests/VideoCoreTests' / source_name).read_text()
-                  declaration = re.search(r'(?m)^(?:final )?class ' + re.escape(suite) + r'\s*:\s*XCTestCase\s*\{', source)
-                  if declaration is None:
-                      raise ValueError(suite + ' declaration missing')
-                  source = source[declaration.end():]
-                  following = re.search(r'(?m)^(?:final )?class \w+\s*:', source)
-                  if following:
-                      source = source[:following.start()]
-                  methods = re.findall(r'(?m)^[ \t]*(?:@\w+(?:\([^\n)]*\))?[ \t]+)*func[ \t]+(test\w+)[ \t]*\(', source)
-                  if not methods or len(methods) != len(set(methods)):
-                      raise ValueError(('missing or duplicate source method', suite, methods))
-                  selected = list(selection) if selection is not None else methods
-                  if not selected or len(selected) != len(set(selected)) or not set(selected) <= set(methods):
-                      raise ValueError(('incomplete affected branch selection', suite))
-                  expected_methods.update(('VideoCoreTests', suite, method) for method in selected)
-              return expected_methods
-
+          def affected_methods(root):
+              expected=set()
+              for (target,suite),filename in SWIFT_SUITES.items():
+                  source=(Path(root)/'Tests'/target/filename).read_text()
+                  declaration=re.search(r'(?m)^(?:final )?class '+re.escape(suite)+r'\s*:\s*XCTestCase\s*\{',source)
+                  if declaration is None:raise ValueError('Affected XCTest class missing: '+suite)
+                  source=source[declaration.end():]
+                  following=re.search(r'(?m)^(?:final )?class \w+\s*:',source)
+                  if following:source=source[:following.start()]
+                  methods=re.findall(r'(?m)^[ \t]*(?:@\w+(?:\([^\n)]*\))?[ \t]+)*func[ \t]+(test\w+)[ \t]*\(',source)
+                  if not methods or len(methods)!=len(set(methods)):raise ValueError('Incomplete or duplicate affected methods: '+suite)
+                  expected.update((target,suite,method) for method in methods)
+              return expected
 
           def swift_filter(expected):
-              if not expected:
-                  raise ValueError('empty Swift method scope')
-              return '|'.join('^' + re.escape(target) + r'\.' + re.escape(suite) + '/' + re.escape(method) + '$'
-                              for target, suite, method in sorted(expected))
+              if not expected:raise ValueError('Empty affected test scope')
+              return '|'.join('^'+re.escape(target)+r'\.'+re.escape(suite)+'/'+re.escape(method)+'$'
+                              for target,suite,method in sorted(expected))
 
-
-          def verify_swift_stream(text, expected):
-              pattern = re.compile(
-                  r"^Test Case '(?:-\[(?:(?P<objc_target>\w+)\.)?(?P<objc_suite>\w+) "
-                  r"(?P<objc_method>test\w+)\]|(?:(?P<swift_target>\w+)\.)?"
-                  r"(?P<swift_suite>\w+)\.(?P<swift_method>test\w+))' "
-                  r"(?P<event>started|passed|failed|skipped)\b")
-              started, passed = [], []
+          def verify_swift_stream(text,expected):
+              pattern=re.compile(r"^Test Case '(?:-\[(?:(?P<ot>\w+)\.)?(?P<os>\w+) (?P<om>test\w+)\]|(?:(?P<st>\w+)\.)?(?P<ss>\w+)\.(?P<sm>test\w+))' (?P<event>started|passed|failed|skipped)\b")
+              started=[];passed=[]
               for line in text.splitlines():
-                  match = pattern.match(line)
+                  match=pattern.match(line)
                   if match is None:
-                      if line.startswith("Test Case '") and re.search(r"' (started|passed|failed|skipped)\b", line):
-                          raise ValueError(('unparsed XCTest identity', line[:700]))
+                      if line.startswith("Test Case '") and re.search(r"' (started|passed|failed|skipped)\b",line):raise ValueError('Unparsed actual XCTest identity')
                       continue
-                  suite = match['objc_suite'] or match['swift_suite']
-                  method = match['objc_method'] or match['swift_method']
-                  target = match['objc_target'] or match['swift_target']
+                  suite=match['os'] or match['ss'];method=match['om'] or match['sm'];target=match['ot'] or match['st']
                   if target is None:
-                      candidates = {item[0] for item in expected if item[1:] == (suite, method)}
-                      if len(candidates) != 1:
-                          raise ValueError(('ambiguous XCTest target', suite, method))
-                      target = candidates.pop()
-                  identity = (target, suite, method)
-                  if identity not in expected:
-                      raise ValueError(('unexpected method executed', identity))
-                  if match['event'] == 'started':
-                      started.append(identity)
-                  elif match['event'] == 'passed':
-                      passed.append(identity)
-                  else:
-                      raise ValueError(('method did not pass', identity, match['event']))
-              if len(started) != len(expected) or set(started) != expected:
-                  raise ValueError(('missing or duplicate starts', sorted(expected - set(started))))
-              if len(passed) != len(expected) or set(passed) != expected:
-                  raise ValueError(('missing or duplicate passes', sorted(expected - set(passed))))
-              counts = [int(value) for value in re.findall(r'Executed (\d+) tests?', text)]
-              if len(expected) not in counts:
-                  raise ValueError('summary does not cover all selected methods')
-              return {'distinct_tests': len(expected), 'started': len(started), 'passed': len(passed)}
-
-          expected = affected_methods()
-          counts = {suite: sum(item[1] == suite for item in expected) for suite in SWIFT_SUITES}
-          print('affected_suite_methods=' + json.dumps(counts, sort_keys=True))
-          print('scope=presenter_schema7_packaging_protocol_and_restricted_free_scope; current_media_chain=not_run')
+                      candidates={r[0] for r in expected if r[1:]==(suite,method)}
+                      if len(candidates)!=1:raise ValueError('Ambiguous actual XCTest target')
+                      target=candidates.pop()
+                  identity=(target,suite,method)
+                  if identity not in expected:raise ValueError('Unexpected actual XCTest method')
+                  if match['event']=='started':started.append(identity)
+                  elif match['event']=='passed':passed.append(identity)
+                  else:raise ValueError('Actual affected XCTest failed or skipped')
+              if len(started)!=len(expected) or set(started)!=expected:raise ValueError('Missing or duplicate actual XCTest starts')
+              if len(passed)!=len(expected) or set(passed)!=expected:raise ValueError('Missing or duplicate actual XCTest passes')
+              if len(expected) not in [int(v) for v in re.findall(r'Executed (\d+) tests?',text)]:raise ValueError('Actual XCTest summary incomplete')
+              return len(expected)
+          root=Path(os.environ['GITHUB_WORKSPACE'])
+          expected=affected_methods(root)
+          scratch=Path(os.environ['RUNNER_TEMP'])/'video-free-layer-images'
+          log=Path(os.environ['RUNNER_TEMP'])/'video-free-layer-images-rules.log'
           try:
-              binary = Path(os.environ['VIDEO_FREE_BINARY']).resolve(strict=True)
-              environment = dict(os.environ, VIDEO_TEST_CLI=str(binary))
               with log.open('wb') as stream:
-                  result = subprocess.run(['swift', 'test', '--package-path', str(root),
-                      '--scratch-path', str(scratch), '--disable-sandbox', '--jobs', '2',
-                      '-c', 'release', '--filter', swift_filter(expected)], stdout=stream,
-                      stderr=subprocess.STDOUT, timeout=900, env=environment)
-              text = log.read_text(errors='replace')
-              lines = text.splitlines()
-              for line in [line[:700] for line in lines if re.search(r'error:|fatal error:', line, re.I)][-12:]:
-                  print(line)
-              for line in lines:
-                  if re.search(r'Executed \d+ tests?|Test Suite .* (passed|failed)', line):
-                      print(line[:700])
-              assert result.returncode == 0, 'Affected Core rules failed'
-              verified = verify_swift_stream(text, expected)
-              inventory = json.dumps(sorted(expected), separators=(',', ':')).encode()
-              print('current_affected_swift_rules=passed; distinct_test_ids=' + str(verified['distinct_tests']))
-              print('affected_swift_test_ids_sha256=' + hashlib.sha256(inventory).hexdigest())
-          finally:
-              log.unlink(missing_ok=True)
+                  result=subprocess.run(['swift','test','--package-path',str(root),'--scratch-path',str(scratch),'--disable-sandbox','--jobs','2','-c','release','--filter',swift_filter(expected)],stdout=stream,stderr=subprocess.STDOUT,timeout=900,env=dict(os.environ,VIDEO_TEST_CLI=os.environ['VIDEO_FREE_BINARY']))
+              text=log.read_text(errors='replace')
+              for line in text.splitlines():
+                  if re.search(r'error:|fatal error:|Executed \d+ tests?|Test Suite .* (passed|failed)',line,re.I):print(line[:700])
+              assert result.returncode==0,'Affected whole Core/media classes failed'
+              count=verify_swift_stream(text,expected)
+              print('current_affected_swift_rules=passed distinct_test_ids='+str(count))
+              print('actual_method_inventory_sha256='+hashlib.sha256(json.dumps(sorted(expected),separators=(',',':')).encode()).hexdigest())
+          finally:log.unlink(missing_ok=True)
           PYCODE
 
-      - name: Record current execution and prior evidence boundaries
-        if: success()
+      - name: Exercise actual ordinary CLI pixels and recovery
+        shell: bash
+        run: |
+          python3 -B - <<'PYCODE'
+          from pathlib import Path
+          import os, subprocess, sys
+          root=Path(os.environ['GITHUB_WORKSPACE'])
+          result=subprocess.run([sys.executable,'-B',str(root/'Integrations/layer_image_sequence_smoke.py'),'--binary',os.environ['VIDEO_FREE_BINARY'],'--scratch',os.environ['RUNNER_TEMP']],cwd=root,timeout=400)
+          assert result.returncode==0,'Actual import/edit/split/native decode/restore CLI chain failed'
+          print('current_plain_media_chain=passed synthetic_fixture_only=true business_film_review=false')
+          PYCODE
+
+      - name: Record exact evidence boundaries
         shell: bash
         run: |
           python3 -B - <<'PYCODE'
           from pathlib import Path
           import os
-          text = 'The current public CLI, complete CartoonPresenter/PluginProtocol/PluginPackage/VendorFree classes and complete story_planning/story_evaluation/asset_reuse Python rules passed.\n\nProtected source inputs match public 0408f480477ac5a08b78bcd18a8f1bb1fe8464d4 and actual successful Free production run 40950288278; prior evidence is limited to unchanged inputs and old invocation branches. This commit does not rerun unchanged causal_story/story_action Python or claim a complete current media chain. Shared media transport changes, closed raster presenter drawing, actual signing, RPC/peer exit and whole-film decode/recovery require separate native receipts. Images, original voices and private authored projects stay private; publication grants no rights, paid entitlement or media review.\n'
-          with Path(os.environ['GITHUB_STEP_SUMMARY']).open('a') as stream:
-              stream.write(text)
-          print('current_native_build=passed; current_affected_swift_rules=passed; affected_python_rules=passed')
-          print('blanket_native_reuse=false; current_media_chain=not_run; production_quality=needs_review')
+          text='Current public CLI, complete LayerImageSequence/Layer/AgentSchemas Core classes and complete atlas pixel media class passed. Actual ordinary CLI import, proof, dry-run/CAS, source split, zero-fee native render, all-frame pixel decode and backup/restore passed using only a synthetic two-color fixture.\n\nThe 265 protected payloads retain exact public 403da5fd4325058371bd777d76f2fb4f43c38fea bytes; prior successful run 40980421475 is evidence only for unchanged inputs and original branches. Old 62 rules and unchanged Python suites were not rerun. No private examples, story sprites, audio, closed painters, credentials, paid plugins or business projects were published. Synthetic infrastructure tests do not approve business video quality, audio, source rights or manual review.\n'
+          with Path(os.environ['GITHUB_STEP_SUMMARY']).open('a') as stream:stream.write(text)
+          print('current_native_build=passed current_affected_swift_rules=passed current_plain_media_chain=passed review=false')
           PYCODE

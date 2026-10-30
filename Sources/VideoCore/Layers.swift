@@ -10,7 +10,18 @@ public struct SceneLayer: Codable, Equatable, Identifiable, Sendable {
     public var dataPresentation: DataPresentation?
     /// Optional source-timed entrance; nil preserves the original layer encoding.
     public var entrance: LayerEntrance?
+    /// One real atlas, sampled continuously without expanding the 32-layer limit.
+    public var imageSequence: LayerImageSequence?
+    /// Static source-space crop; this is not an animation and excludes a sequence.
+    public var sourceRect: MediaFraming?
     public init(kind:Kind,text:String="",assetID:String?=nil,endFrame:Int) { self.kind=kind;self.text=text;self.assetID=assetID;self.endFrame=endFrame }
+    public func validateImagePresentation() throws {
+        if let sourceRect {
+            guard kind == .image,imageSequence == nil else {throw VideoError.invalid("静态源裁区仅适用于图片，不能与图片序列同时使用")}
+            try sourceRect.validate()
+        }
+        try imageSequence?.validate(kind:kind,startFrame:startFrame,endFrame:endFrame)
+    }
     public func layout(at frame:Int)->(x:Double,y:Double,scale:Double) { var s=Scene(title:"layer",body:"");s.x=x;s.y=y;s.keyframes=keyframes;return s.layout(at:frame) }
 }
 public enum LayerRules {
@@ -27,6 +38,7 @@ public enum LayerRules {
             guard (0...1).contains(l.x),(0...1).contains(l.y),(0.01...1).contains(l.width),(0.01...1).contains(l.height),(0...1).contains(l.opacity),l.startFrame>=0,l.endFrame>l.startFrame,l.endFrame<=scene.durationFrames,l.color.range(of:"^[A-Fa-f0-9]{6}$",options:.regularExpression) != nil else { throw VideoError.invalid("元素尺寸、位置、颜色、透明度或时间区间无效") }
             guard Set(l.keyframes.map(\.frame)).count==l.keyframes.count,l.keyframes.allSatisfy({$0.frame>=l.startFrame && $0.frame<l.endFrame && (0...1).contains($0.x) && (0...1).contains($0.y) && (0.1...4).contains($0.scale)}) else { throw VideoError.invalid("元素关键帧越界或重复") }
             try l.entrance?.validate(endFrame:l.endFrame)
+            try l.validateImagePresentation()
             if l.kind == .text { guard !l.text.isEmpty,l.text.count<=180 else { throw VideoError.invalid("文字元素内容为空或过密") } }
             if l.kind == .image { guard let id=l.assetID,assets.contains(where:{$0.id==id && $0.mediaType.hasPrefix("image")}) else { throw VideoError.invalid("图片元素缺少实际图片") } }
             if l.kind == .chart || l.kind == .code {

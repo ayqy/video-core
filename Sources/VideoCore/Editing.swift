@@ -53,6 +53,13 @@ public enum Editor {
                     for index in scene.captions.indices {scene.captions[index].confirmed=false}
                     revision.invalidated += ["录屏/图片取景与声音字幕重新复核"]
                 }
+                let oldSequences=(old.layers ?? []).filter{$0.imageSequence != nil || $0.sourceRect != nil}
+                let newSequences=(scene.layers ?? []).filter{$0.imageSequence != nil || $0.sourceRect != nil}
+                if oldSequences != newSequences || ((!oldSequences.isEmpty || !newSequences.isEmpty) && (old.durationFrames != scene.durationFrames || old.speed != scene.speed || old.pauseFrames != scene.pauseFrames)) {
+                    scene.voice?.listened=false
+                    for index in scene.captions.indices {scene.captions[index].confirmed=false}
+                    revision.invalidated += ["图片取景、序列、源窗口与声音字幕重新复核"]
+                }
                 let oldData=(old.layers ?? []).filter{$0.dataPresentation != nil}
                 let newData=(scene.layers ?? []).filter{$0.dataPresentation != nil}
                 if oldData != newData || (!newData.isEmpty && (old.durationFrames != scene.durationFrames || old.speed != scene.speed || old.pauseFrames != scene.pauseFrames)) {
@@ -128,7 +135,7 @@ public enum Editor {
                 guard original.voice == nil else { throw VideoError.review("有配音的片段请先解除配音并重新录制两段，避免截断句子") }
                 guard original.storyActions==nil,original.storyCausality==nil,original.gameWorld==nil,original.cartoonRig==nil,original.cartoonPresenter==nil else {throw VideoError.review("动态世界、因果来源、过程动作与原音口型须按新镜头重新编排后拆分；不会复制旧源帧或旧声音cue")}
                 guard !(original.layers ?? []).contains(where:{$0.locked}) else { throw VideoError.permission("请先解锁元素，再拆分场景") }
-                let hasEntrances=(original.layers ?? []).contains{$0.entrance != nil}
+                let hasEntrances=(original.layers ?? []).contains{$0.entrance != nil || $0.imageSequence != nil}
                 if original.speed != 1 || hasEntrances {
                     try original.validate(assets:assets)
                     let leftFrames=max(1,Int((Double(frame)/original.speed).rounded()))
@@ -175,8 +182,8 @@ public enum Editor {
                     a.simulationRecordingConfirmed=false; b.simulationRecordingConfirmed=false
                     revision.invalidated += ["拆分后的仿真源窗口、规则录制与复核"]
                 }
-                a.layers=(original.layers ?? []).filter{$0.startFrame<frame}.map { layer in var x=layer;x.endFrame=min(x.endFrame,frame);x.keyframes=x.keyframes.filter{$0.frame<x.endFrame};if !layer.keyframes.isEmpty{let point=layer.layout(at:x.endFrame-1);x.keyframes.removeAll{$0.frame==x.endFrame-1};x.keyframes.append(Keyframe(frame:x.endFrame-1,x:point.x,y:point.y,scale:point.scale))};return x }
-                b.layers=try (original.layers ?? []).filter{$0.endFrame>frame}.map { layer in var x=layer;x.id=Codec.id();x.startFrame=max(0,x.startFrame-frame);x.endFrame-=frame;x.keyframes=x.keyframes.filter{$0.frame>=frame}.map{key in var k=key;k.id=Codec.id();k.frame-=frame;return k};let point=layer.layout(at:frame+x.startFrame);x.x=point.x;x.y=point.y;if !layer.keyframes.isEmpty && !x.keyframes.contains(where:{$0.frame==x.startFrame}){x.keyframes.append(Keyframe(frame:x.startFrame,x:point.x,y:point.y,scale:point.scale))};if let data=layer.dataPresentation{x.dataPresentation=try data.advancingSource(by:frame)};if let entrance=layer.entrance{x.entrance=try entrance.advancingSource(by:frame)};return x }
+                a.layers=try (original.layers ?? []).filter{$0.startFrame<frame}.map { layer in var x=layer;x.endFrame=min(x.endFrame,frame);if let sequence=layer.imageSequence{x.imageSequence=try sequence.advancingSource(by:0)};x.keyframes=x.keyframes.filter{$0.frame<x.endFrame};if !layer.keyframes.isEmpty{let point=layer.layout(at:x.endFrame-1);x.keyframes.removeAll{$0.frame==x.endFrame-1};x.keyframes.append(Keyframe(frame:x.endFrame-1,x:point.x,y:point.y,scale:point.scale))};return x }
+                b.layers=try (original.layers ?? []).filter{$0.endFrame>frame}.map { layer in var x=layer;x.id=Codec.id();x.startFrame=max(0,x.startFrame-frame);x.endFrame-=frame;x.keyframes=x.keyframes.filter{$0.frame>=frame}.map{key in var k=key;k.id=Codec.id();k.frame-=frame;return k};let point=layer.layout(at:frame+x.startFrame);x.x=point.x;x.y=point.y;if !layer.keyframes.isEmpty && !x.keyframes.contains(where:{$0.frame==x.startFrame}){x.keyframes.append(Keyframe(frame:x.startFrame,x:point.x,y:point.y,scale:point.scale))};if let data=layer.dataPresentation{x.dataPresentation=try data.advancingSource(by:frame)};if let entrance=layer.entrance{x.entrance=try entrance.advancingSource(by:frame)};if let sequence=layer.imageSequence{x.imageSequence=try sequence.advancingSource(by:frame)};return x }
                 a.captions = original.captions.filter { $0.startFrame < frame }.map { c in var x = c; x.endFrame = min(frame, c.endFrame); x.confirmed = false; return x }
                 b.captions = original.captions.filter { $0.endFrame > frame }.map { c in var x = c; x.id = Codec.id(); x.startFrame = max(0,c.startFrame-frame); x.endFrame -= frame; x.confirmed = false; return x }
                 a.keyframes=original.keyframes.filter{$0.frame<frame}

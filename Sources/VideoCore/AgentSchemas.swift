@@ -74,7 +74,7 @@ public enum AgentSchemas {
             "SimulationPresentation":"version:i sourceStartFrame:i sourceEndFrame:i presentationFrames:i presentationOffsetFrames:i",
             "RuleTransition":"tick:i eventID:s label:s requestedDelta:i before:i after:i appliedDelta:i clippedDelta:i",
             "Keyframe":"id:s frame:i x:n y:n scale:n",
-            "SceneLayer":"id:s kind:LayerKind text:s assetID?:s x:n y:n width:n height:n color:s opacity:n startFrame:i endFrame:i locked:b keyframes:[Keyframe] dataPresentation?:DataPresentation entrance?:LayerEntrance",
+            "SceneLayer":"id:s kind:LayerKind text:s assetID?:s x:n y:n width:n height:n color:s opacity:n startFrame:i endFrame:i locked:b keyframes:[Keyframe] dataPresentation?:DataPresentation entrance?:LayerEntrance imageSequence?:LayerImageSequence sourceRect?:MediaFraming",
             "SpeechPlan":"source:s normalized:s dictionary:[SpeechTerm] mappings:[SpeechMapping] voiceIdentifier?:s rate:n confirmed:b notes:[s]",
             "SpeechTerm":"term:s pronunciation:s",
             "SpeechMapping":"sourceStart:i sourceLength:i normalizedStart:i normalizedLength:i kind:s",
@@ -85,6 +85,8 @@ public enum AgentSchemas {
         let dataRecords:[String:String] = [
             "PaperPresentation":"version:i layout:PaperLayout paperColor:s inkColor:s",
             "LayerEntrance":"version:i kind:LayerEntranceKind startFrame:i endFrame:i sourceOffsetFrames?:i",
+            "LayerImageSequence":"version:i frames:[LayerImageSequenceFrame] sourceOffsetFrames?:i",
+            "LayerImageSequenceFrame":"startFrame:i endFrame:i sourceRect:MediaFraming",
             "DataPresentation":"version:i sourceOffsetFrames?:i chart?:DataChart code?:CodePresentation",
             "DataChart":"title:s axisLabel:s minimum:n maximum:n series:[DataSeries]",
             "DataSeries":"id:s label:s color:s keyframes:[DataValueKeyframe]",
@@ -111,6 +113,11 @@ public enum AgentSchemas {
         constraint("DataPresentation","version",["const":.number(1)])
         constraint("PaperPresentation","version",["const":.number(1)])
         for color in ["paperColor","inkColor"] {constraint("PaperPresentation",color,["pattern":.string("^[A-Fa-f0-9]{6}$"),"minLength":.number(6),"maxLength":.number(6)])}
+        constraint("LayerImageSequence","version",["const":.number(1)])
+        constraint("LayerImageSequence","frames",["minItems":.number(2),"maxItems":.number(512)])
+        constraint("LayerImageSequence","sourceOffsetFrames",["minimum":.number(0),"maximum":.number(54000)])
+        constraint("LayerImageSequenceFrame","startFrame",["minimum":.number(0),"maximum":.number(53999)])
+        constraint("LayerImageSequenceFrame","endFrame",["minimum":.number(1),"maximum":.number(54000)])
         constraint("LayerEntrance","version",["const":.number(1)])
         constraint("LayerEntrance","startFrame",["minimum":.number(0),"maximum":.number(53999)])
         constraint("LayerEntrance","endFrame",["minimum":.number(1),"maximum":.number(54000)])

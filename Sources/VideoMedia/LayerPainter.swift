@@ -35,11 +35,14 @@ enum LayerPainter {
                 c.clip(to:CGRect(x:rect.minX,y:rect.minY,width:rect.width*CGFloat(sample.revealedFraction),height:rect.height))
             }
             let rgb=UInt32(layer.color,radix:16) ?? 0xFFFFFF;let color=CGColor(red:CGFloat((rgb>>16)&255)/255,green:CGFloat((rgb>>8)&255)/255,blue:CGFloat(rgb&255)/255,alpha:1)
+            try layer.validateImagePresentation()
             switch layer.kind {
             case .rectangle:c.setFillColor(color);c.fill(rect)
             case .image:
                 guard let id=layer.assetID,let image=images[id] else { throw VideoError.notFound("元素图片未加载") }
-                let ratio=min(rect.width/CGFloat(image.width),rect.height/CGFloat(image.height));c.draw(image,in:CGRect(x:rect.midX-CGFloat(image.width)*ratio/2,y:rect.midY-CGFloat(image.height)*ratio/2,width:CGFloat(image.width)*ratio,height:CGFloat(image.height)*ratio))
+                let sourceRect=try layer.imageSequence?.sourceRect(at:frame) ?? layer.sourceRect
+                let cropped=try MediaFramingRenderer.crop(image,framing:sourceRect)
+                let ratio=min(rect.width/CGFloat(cropped.width),rect.height/CGFloat(cropped.height));c.draw(cropped,in:CGRect(x:rect.midX-CGFloat(cropped.width)*ratio/2,y:rect.midY-CGFloat(cropped.height)*ratio/2,width:CGFloat(cropped.width)*ratio,height:CGFloat(cropped.height)*ratio))
             case .text:
                 guard CGRect(x:24,y:24,width:CGFloat(aspect.width-48),height:CGFloat(aspect.height-48)).contains(rect) else{throw VideoError.review("文字元素越出画面安全区，请调整位置、尺寸或关键帧")}
                 let font=CTFontCreateWithName(fontName as CFString,CGFloat(aspect == .portrait ? 30:32),nil)
