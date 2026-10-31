@@ -22,6 +22,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import unicodedata
 import zipfile
 from zoneinfo import ZoneInfo
 
@@ -164,12 +165,17 @@ print(json.dumps({'site':str(site),'python':sys.version.replace('\n',' '),'machi
                 **actual, ffmpeg=tool_identity(ffmpeg), ffprobe=tool_identity(ffprobe))
 
 
-def request_identity(identity: dict, text: str, voice: str, *, rate: str = "+0%") -> tuple[dict, str]:
+def request_identity(identity: dict, text: str, voice: str, *, rate: str = "+0%",
+                     word_boundaries: bool = False) -> tuple[dict, str]:
     validate_request(text, voice)
     rate = validate_rate(rate)
+    if type(word_boundaries) is not bool:
+        raise ReadAloudError("逐词边界选项须为布尔值")
     if identity.get("client_version") != CLIENT_VERSION or identity.get("wheel_sha256") != WHEEL_SHA256:
         raise ReadAloudError("请求客户端身份不符合固定原件")
     configuration = dict(CONFIG, rate=rate)
+    if word_boundaries:
+        configuration["boundary"] = "WordBoundary"
     request = dict(schema=1, engine=ENGINE, text=text, voice=voice, configuration=configuration,
                    runtime=identity)
     key = hashlib.sha256(json.dumps(request, sort_keys=True, ensure_ascii=False,
@@ -229,7 +235,46 @@ def flatten(value: dict, prefix: str = "") -> list[tuple[str, str]]:
     return rows
 
 
-def receipt(request: dict, key: str, audio: Path, inspection: dict, generated_at: str) -> str:
+def spoken_text(text: str) -> str:
+    """Only punctuation/space may be absent from SDK's spoken word text."""
+    return "".join(c for c in text if not c.isspace() and unicodedata.category(c)[0] != "P")
+
+
+def read_word_boundaries(path: Path, text: str, inspection: dict) -> list[dict]:
+    """Read actual normal SDK JSONL; never estimate word timing from text."""
+    if (path.is_symlink() or not path.is_file() or not 1 <= path.stat().st_size <= 512 * 1024):
+        raise ReadAloudError("SDK逐词边界原件缺失、超大或不是普通文件")
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+        if not 1 <= len(lines) <= 2048 or any(not line for line in lines):
+            raise ValueError()
+        rows = [json.loads(line) for line in lines]
+        previous_end = 0
+        for row in rows:
+            if (not isinstance(row, dict) or set(row) != {"type", "offset", "duration", "text"}
+                    or row["type"] != "WordBoundary" or type(row["offset"]) is not int
+                    or type(row["duration"]) is not int or row["offset"] < previous_end
+                    or row["duration"] <= 0 or not isinstance(row["text"], str) or not row["text"]):
+                raise ValueError()
+            previous_end = row["offset"] + row["duration"]
+        actual_duration = max(inspection["decoded_duration"], inspection["container_duration"])
+        if (not math.isfinite(actual_duration) or previous_end / 10_000_000 > actual_duration + 1 / 24000
+                or not spoken_text(text) or "".join(spoken_text(row["text"]) for row in rows) != spoken_text(text)):
+            raise ValueError()
+        return rows
+    except (ValueError, KeyError, TypeError, UnicodeError):
+        raise ReadAloudError("SDK逐词边界类型、原文覆盖、单调时间或实长校验失败；原件保留，不估算或重请求") from None
+
+
+def boundary_summary(path: Path, text: str, inspection: dict) -> dict:
+    rows = read_word_boundaries(path, text, inspection)
+    return dict(format="edge_tts_sdk_jsonl_v1", sha256=digest(path), count=len(rows),
+                ticks_per_second=10_000_000, text_coverage="exact_except_punctuation_and_space",
+                first_offset=rows[0]["offset"], last_end=rows[-1]["offset"] + rows[-1]["duration"])
+
+
+def receipt(request: dict, key: str, audio: Path, inspection: dict, generated_at: str,
+            word_metadata: dict | None = None) -> str:
     instant = datetime.fromisoformat(generated_at)  # Original time, not cache-hit time.
     if instant.tzinfo is None:
         raise ReadAloudError("原始生成时间缺少时区")
@@ -242,6 +287,8 @@ def receipt(request: dict, key: str, audio: Path, inspection: dict, generated_at
             "生成时间（UTC）：" + generated_at, "", "|字段|值|", "|---|---|"]
     fields = dict(request=request, cache_key=key, audio_sha256=digest(audio), inspection=inspection,
                   listening_confirmed=False, commercial_allowed=False, upload_consent=False)
+    if word_metadata is not None:
+        fields["word_boundaries"] = word_metadata
     rows += [f"|{name}|{value}|" for name, value in flatten(fields)]
     rows += ["", "来源：[edge-tts](https://github.com/rany2/edge-tts)；",
              "[官方ReadAloud说明](https://support.microsoft.com/en-us/accessibility/edge/accessibility-features-in-microsoft-edge)。", ""]
@@ -278,11 +325,13 @@ def stop_process(process: subprocess.Popen) -> None:
 
 
 def run_worker(runtime: Path, text: str, voice: str, output: Path, deadline: int, log: Path,
-               *, rate: str = "+0%") -> None:
+               *, rate: str = "+0%", word_boundaries: bool = False) -> None:
     rate = validate_rate(rate)
     command = [str(runtime / "venv/bin/python"), "-I", "-B", str(Path(__file__).resolve()),
                "--worker", "--allow-network", "--runtime", str(runtime), "--text", text,
                "--voice", voice, "--output", str(output), "--deadline", str(deadline), "--rate=" + rate]
+    if word_boundaries:
+        command.append("--word-boundaries")
     with log.open("xb") as f:
         process = subprocess.Popen(command, env=environment(True), stdout=f, stderr=f, start_new_session=True)
         try:
@@ -298,8 +347,10 @@ def run_worker(runtime: Path, text: str, voice: str, output: Path, deadline: int
 
 def generate_batch(runtime: Path, cache: Path, text: str, jobs: list[dict], ffmpeg: Path,
                    ffprobe: Path, *, allow_network: bool = False, deadline: int = 120,
-                   rate: str = "+0%") -> list[dict]:
+                   rate: str = "+0%", word_boundaries: bool = False) -> list[dict]:
     rate = validate_rate(rate)
+    if type(word_boundaries) is not bool:
+        raise ReadAloudError("逐词边界选项须为布尔值")
     if not 1 <= len(jobs) <= 2 or type(deadline) is not int or not 10 <= deadline <= 300:
         raise ReadAloudError("每批1–2个不同女声，每声网络期限须为10–300秒")
     outputs, voices = set(), set()
@@ -323,7 +374,8 @@ def generate_batch(runtime: Path, cache: Path, text: str, jobs: list[dict], ffmp
         staging = Path(stack.enter_context(tempfile.TemporaryDirectory(prefix="readaloud-", dir=cache)))
         states = []
         for index, job in enumerate(jobs):
-            request, key = request_identity(identity, text, job["voice"], rate=rate)
+            request, key = request_identity(identity, text, job["voice"], rate=rate,
+                                            word_boundaries=word_boundaries)
             lock = cache / (key + ".lock")
             try:
                 lock.mkdir()
@@ -339,14 +391,22 @@ def generate_batch(runtime: Path, cache: Path, text: str, jobs: list[dict], ffmp
                 inspection = inspect_mp3(audio, ffmpeg, ffprobe)
                 original = source.read_text()
                 stamps = [s.removeprefix("生成时间（UTC）：") for s in original.splitlines() if s.startswith("生成时间（UTC）：")]
-                if len(stamps) != 1 or original != receipt(request, key, audio, inspection, stamps[0]):
+                if len(stamps) != 1 or (not word_boundaries
+                        and original != receipt(request, key, audio, inspection, stamps[0])):
                     raise ReadAloudError("缓存原音、来源或请求身份不符，不静默重生")
             else:
+                if word_boundaries and any(cache.glob("failed-batch-*/" + key + ".request")):
+                    raise ReadAloudError("相同逐词请求已有失败或部分原件；先检查原批次，不自动重复提交")
                 directory = staging / str(index)
                 directory.mkdir()
                 audio, source = directory / "voice.mp3", directory / "source.md"
+            metadata = audio.with_name("word-boundaries.jsonl") if word_boundaries else None
+            word_metadata = boundary_summary(metadata, text, inspection) if reused and word_boundaries else None
+            if reused and word_boundaries:
+                if original != receipt(request, key, audio, inspection, stamps[0], word_metadata):
+                    raise ReadAloudError("缓存逐词边界或来源身份不符，不静默重生")
             states.append(dict(job=job, request=request, key=key, entry=entry, audio=audio,
-                               source=source, reused=reused))
+                               source=source, metadata=metadata, word_metadata=word_metadata, reused=reused))
         if any(not s["reused"] for s in states):
             if not allow_network:
                 raise ReadAloudError("缺少显式--allow-network；未上传正文或提交网络合成")
@@ -363,10 +423,18 @@ def generate_batch(runtime: Path, cache: Path, text: str, jobs: list[dict], ffmp
                     if state["reused"]:
                         continue
                     stamp = datetime.now(timezone.utc).isoformat()
+                    if word_boundaries:
+                        (staging / (state["key"] + ".request")).write_text(state["key"] + "\n")
+                    options = dict(rate=rate)
+                    if word_boundaries:
+                        options["word_boundaries"] = True
                     run_worker(runtime, text, state["job"]["voice"], state["audio"], deadline,
-                               logs / ("readaloud-" + str(time.time_ns()) + ".log"), rate=rate)
+                               logs / ("readaloud-" + str(time.time_ns()) + ".log"), **options)
                     inspection = inspect_mp3(state["audio"], ffmpeg, ffprobe)
-                    state["source"].write_text(receipt(state["request"], state["key"], state["audio"], inspection, stamp))
+                    if word_boundaries:
+                        state["word_metadata"] = boundary_summary(state["metadata"], text, inspection)
+                    state["source"].write_text(receipt(state["request"], state["key"], state["audio"],
+                                                       inspection, stamp, state["word_metadata"]))
                 if runtime_identity(runtime, ffmpeg, ffprobe) != identity:
                     raise ReadAloudError("生成期间客户端或依赖身份改变，不缓存或交付")
             except BaseException as error:
@@ -380,6 +448,8 @@ def generate_batch(runtime: Path, cache: Path, text: str, jobs: list[dict], ffmp
                     state["audio"].parent.rename(state["entry"])
                     state["audio"] = state["entry"] / "voice.mp3"
                     state["source"] = state["entry"] / "source.md"
+                    if word_boundaries:
+                        state["metadata"] = state["entry"] / "word-boundaries.jsonl"
         results = []
         for state in states:
             output = Path(state["job"]["output"])
@@ -389,13 +459,19 @@ def generate_batch(runtime: Path, cache: Path, text: str, jobs: list[dict], ffmp
                                 sha256=digest(output), bytes=output.stat().st_size,
                                 receipt=str(output.with_suffix(".source.md")), listening_confirmed=False,
                                 commercial_allowed=False, upload_consent=False))
+            if word_boundaries:
+                results[-1].update(word_boundaries_path=str(state["metadata"]),
+                    word_boundaries_sha256=state["word_metadata"]["sha256"],
+                    word_boundaries_count=state["word_metadata"]["count"])
         return results
 
 
-def worker(text: str, voice: str, output: Path, deadline: int, *, rate: str = "+0%") -> None:
+def worker(text: str, voice: str, output: Path, deadline: int, *, rate: str = "+0%",
+           word_boundaries: bool = False) -> None:
     validate_request(text, voice)
     rate = validate_rate(rate)
-    if output.exists() or output.is_symlink():
+    metadata = output.with_name("word-boundaries.jsonl") if word_boundaries else None
+    if output.exists() or output.is_symlink() or (metadata is not None and (metadata.exists() or metadata.is_symlink())):
         raise ReadAloudError("worker原音输出已存在")
     import asyncio
     import edge_tts
@@ -403,10 +479,12 @@ def worker(text: str, voice: str, output: Path, deadline: int, *, rate: str = "+
     if importlib.metadata.version("edge-tts") != CLIENT_VERSION:
         raise ReadAloudError("worker客户端版本不符")
     async def synthesize():
+        options = {"boundary": "WordBoundary"} if word_boundaries else {}
         client = edge_tts.Communicate(text=text, voice=voice, rate=rate,
                                      volume=CONFIG["volume"], pitch=CONFIG["pitch"],
-                                     connect_timeout=10, receive_timeout=min(60, deadline - 2))
-        await asyncio.wait_for(client.save(str(output)), timeout=deadline - 1)
+                                     connect_timeout=10, receive_timeout=min(60, deadline - 2), **options)
+        saving = client.save(str(output), str(metadata)) if word_boundaries else client.save(str(output))
+        await asyncio.wait_for(saving, timeout=deadline - 1)
     asyncio.run(synthesize())
 
 
@@ -424,6 +502,7 @@ def main() -> int:
     parser.add_argument("--rate", default="+0%",
                         help="服务原生语速，规范整数百分比-50%%至+100%%，默认+0%%；不是后期变速")
     parser.add_argument("--worker", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--word-boundaries", action="store_true", help="同一次SDK流保留真实逐词边界于缓存，供字幕读取")
     args = parser.parse_args()
     try:
         if len(args.voice) != len(args.output) or not 1 <= len(args.voice) <= 2:
@@ -431,14 +510,16 @@ def main() -> int:
         if args.worker:
             if not args.allow_network or len(args.voice) != 1 or not 10 <= args.deadline <= 300:
                 raise ReadAloudError("worker须是明确授权的单声有界网络调用")
-            worker(args.text, args.voice[0], args.output[0], args.deadline, rate=args.rate)
+            options = {"word_boundaries": True} if args.word_boundaries else {}
+            worker(args.text, args.voice[0], args.output[0], args.deadline, rate=args.rate, **options)
         else:
             if not args.cache or not args.ffmpeg or not args.ffprobe:
                 raise ReadAloudError("须指定缓存与可用ffmpeg/ffprobe检查工具")
             results = generate_batch(args.runtime, args.cache, args.text,
                                      [dict(voice=v, output=o) for v, o in zip(args.voice, args.output)],
                                      Path(args.ffmpeg).resolve(), Path(args.ffprobe).resolve(),
-                                     allow_network=args.allow_network, deadline=args.deadline, rate=args.rate)
+                                     allow_network=args.allow_network, deadline=args.deadline, rate=args.rate,
+                                     word_boundaries=args.word_boundaries)
             for result in results:
                 print(result["voice"], "rate=" + result["rate"], "reused" if result["reused"] else "generated",
                       result["bytes"], result["sha256"], "listening=pending commercial=false upload=false")

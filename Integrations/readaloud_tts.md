@@ -36,6 +36,16 @@ python -B Integrations/readaloud_tts.py --runtime .cache/readaloud --cache .cach
 
 输出MP3旁同时写对应`.source.md`。来源记录完整原稿、voice ID、locale、本次语速及其余固定配置、客户端源码与实际依赖身份、原音hash、真实解码采样数及生成时间。服务没有披露远端模型版本或随机种子，均记`unknown_not_exposed_by_service`，不伪造可重现的模型版本。SDK错误只报告类别和合法HTTP状态码，不把可能含公开client token的请求URL写到输出或日志。
 
+## 同一次请求的真实逐词边界
+
+需要按新原音排字幕时，可显式加`--word-boundaries`，或调用`generate_batch(..., word_boundaries=True)`。固定7.3.1客户端的原生默认是`SentenceBoundary`；此选项明确传入`Communicate(boundary="WordBoundary")`，再且仅一次调用正常`save(audio_fname, metadata_fname)`，由同一SDK流写出原MP3及边界。既有不启用选项的调用保持原行为，不为取时间戳再合成第二遍，也不手绘、均摊或按字数推算时间。
+
+SDK原始`word-boundaries.jsonl`仅留在请求缓存内，不伴随试听音频对外复制。每条保留SDK返回的`type/text/offset/duration`；单位为每秒10,000,000 ticks（100纳秒）。父进程校验每项确为`WordBoundary`、整数且非负的offset、正duration、单调不重叠时序、完整原文覆盖（只允许标点及空白不单独出现），并核对末尾不超过完整音频实长。缺失、错误或只返回句边界时保留实际原件并拒绝，不冒称精确逐词时间。
+
+结果额外返回`word_boundaries_path/word_boundaries_sha256/word_boundaries_count`，正常制作管线可用`read_word_boundaries(path, 完整原文, inspect_mp3(...))`读取已校验原始记录。来源正文仅记录边界摘要和hash，缓存命中再次核对音频、原文、原始边界及来源。时间投到视频帧时须注明帧率带来的量化精度，保留首帧0及完整音频尾部；边界不代表人工听审、音色选择或上传同意。
+
+边界请求及音频由同一次SDK流得到，仍受原网络期限、正常SSL和单请求正文约束。失败时原MP3、部分边界和请求标记一起保留；相同失败边界请求不得自动重提，应先检查原批次。
+
 若需要小幅加快同一声线，使用同一完整正文、新输出路径，并显式传入`--rate +6%`。这会形成不同缓存身份，不能借用`+0%`缓存、覆盖原速原件或省略新请求的联网许可。每请求复制自己的配置，不修改全局默认或其他声线。
 
 ## 缓存与失败

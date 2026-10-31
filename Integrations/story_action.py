@@ -128,8 +128,14 @@ def compile_story(project: dict, spec: dict) -> dict:
             scene['storyCausality'] = copy.deepcopy(entry['causality'])
         # The author makes a complete explicit presentation replacement. All
         # original audio, content, rule recording and previous revisions stay.
-        for old in ('gameWorld', 'cartoonRig', 'cartoonPerformance', 'paperPresentation'):
+        for old in ('gameWorld', 'cartoonRig', 'cartoonPerformance'):
             scene.pop(old, None)
+        # Editing ordinary pencil objects must retain the existing paper and
+        # its layout. Dropping it changes the renderer to the dark generic
+        # template even though the author never requested a style change.
+        # Advanced modes explicitly retire it to avoid competing painters.
+        if mode != 'pencil':
+            scene.pop('paperPresentation', None)
         # A game world uses scene-local frames for its drawings, but the saved
         # knowledge window still identifies the original recorded business facts.
         # Dropping it would revoke that recording and its existing complete take.

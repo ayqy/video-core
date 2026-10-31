@@ -6,7 +6,9 @@ tone solely to exercise full MP3 decoding, never as a narration candidate.
 import contextlib
 import copy
 import importlib.util
+import importlib.metadata
 import io
+import json
 import os
 from pathlib import Path
 import shutil
@@ -33,6 +35,15 @@ INSPECTION = dict(samples=24000, sample_rate=24000, channels=1, bitrate=48000,
 
 
 class RequestRules(unittest.TestCase):
+    def test_actual_word_boundary_mode_has_an_explicit_distinct_request_identity(self):
+        normal, key = tts.request_identity(IDENTITY, TEXT, VOICES[0])
+        timed, timed_key = tts.request_identity(IDENTITY, TEXT, VOICES[0], word_boundaries=True)
+        self.assertNotIn("boundary", normal["configuration"])
+        self.assertEqual(timed["configuration"]["boundary"], "WordBoundary")
+        self.assertNotEqual(key, timed_key)
+        with self.assertRaises(tts.ReadAloudError):
+            tts.request_identity(IDENTITY, TEXT, VOICES[0], word_boundaries="yes")
+
     def test_native_rate_is_a_bounded_canonical_integer_percentage(self):
         for rate in ("-50%", "-1%", "+0%", "+6%", "+100%"):
             with self.subTest(rate=rate):
@@ -134,6 +145,49 @@ class BatchRules(unittest.TestCase):
         self.assertEqual(text, TEXT)
         output.write_bytes(("original:" + voice + ":" + rate).encode())
         log.write_text("generated; no URL or credentials\n")
+
+    def produce_boundaries(self, runtime, text, voice, output, deadline, log,
+                           *, rate="+0%", word_boundaries=False):
+        self.assertTrue(word_boundaries)
+        self.produce(runtime, text, voice, output, deadline, log, rate=rate)
+        rows = [dict(type="WordBoundary", offset=1_000_000, duration=3_000_000, text="四个邻居想修路"),
+                dict(type="WordBoundary", offset=5_000_000, duration=4_000_000, text="凑够三枚硬币就能开工")]
+        output.with_name("word-boundaries.jsonl").write_text("".join(json.dumps(row) + "\n" for row in rows))
+
+    def test_same_call_metadata_is_bound_to_cache_and_only_returned_as_internal_path(self):
+        with patch.object(tts, "run_worker", side_effect=self.produce_boundaries) as transport:
+            first = self.generate(allow_network=True, word_boundaries=True)
+        self.assertEqual(transport.call_count, 2)
+        for row in first:
+            metadata = Path(row["word_boundaries_path"])
+            self.assertEqual(row["word_boundaries_sha256"], tts.digest(metadata))
+            self.assertEqual(row["word_boundaries_count"], 2)
+            self.assertTrue(metadata.is_relative_to(self.cache.resolve()))
+            self.assertFalse(Path(row["receipt"]).with_suffix(".jsonl").exists())
+        with patch.object(tts, "run_worker") as transport:
+            second = self.generate(self.jobs("timed-cache-hit"), word_boundaries=True)
+        transport.assert_not_called()
+        self.assertTrue(all(row["reused"] for row in second))
+        self.assertEqual(first[0]["word_boundaries_sha256"], second[0]["word_boundaries_sha256"])
+        path = Path(first[0]["word_boundaries_path"])
+        path.write_text(path.read_text().replace('"offset": 1000000', '"offset": 1000001'))
+        with patch.object(tts, "run_worker") as transport, self.assertRaises(tts.ReadAloudError):
+            self.generate(self.jobs("timed-tampered"), allow_network=True, word_boundaries=True)
+        transport.assert_not_called()
+
+    def test_partial_timed_original_is_retained_and_same_request_is_not_submitted_again(self):
+        def fail(*args, **kwargs):
+            self.produce_boundaries(*args, **kwargs)
+            raise tts.ReadAloudError("finite incomplete timing fixture")
+        with patch.object(tts, "run_worker", side_effect=fail), self.assertRaises(tts.ReadAloudError):
+            self.generate(allow_network=True, word_boundaries=True)
+        failed = list(self.cache.glob("failed-batch-*"))
+        self.assertEqual(len(failed), 1)
+        self.assertEqual(len(list(failed[0].rglob("voice.mp3"))), 1)
+        self.assertEqual(len(list(failed[0].rglob("word-boundaries.jsonl"))), 1)
+        with patch.object(tts, "run_worker") as transport, self.assertRaises(tts.ReadAloudError):
+            self.generate(self.jobs("do-not-repeat"), allow_network=True, word_boundaries=True)
+        transport.assert_not_called()
 
     def test_missing_network_consent_never_submits_or_promotes(self):
         with patch.object(tts, "run_worker") as transport, self.assertRaises(tts.ReadAloudError):
@@ -270,6 +324,44 @@ class BatchRules(unittest.TestCase):
 
 
 class FileAndProcessRules(unittest.TestCase):
+    def test_word_metadata_requires_actual_text_coverage_order_types_and_audio_duration(self):
+        valid = [dict(type="WordBoundary", offset=0, duration=2_000_000, text=TEXT)]
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "metadata.jsonl"
+            path.write_text(json.dumps(valid[0]) + "\n")
+            self.assertEqual(tts.read_word_boundaries(path, TEXT, INSPECTION), valid)
+            variants = [[{**valid[0], "type": "SentenceBoundary"}], [{**valid[0], "offset": True}],
+                        [{**valid[0], "duration": 0}], [{**valid[0], "text": "正文缺失"}],
+                        [{**valid[0], "duration": 20_000_000}], [valid[0], {**valid[0], "offset": 1}]]
+            for rows in variants:
+                path.write_text("".join(json.dumps(row) + "\n" for row in rows))
+                with self.subTest(rows=rows), self.assertRaises(tts.ReadAloudError):
+                    tts.read_word_boundaries(path, TEXT, INSPECTION)
+
+    def test_worker_collects_audio_and_word_boundaries_in_exactly_one_normal_sdk_save(self):
+        calls = []
+        module = ModuleType("edge_tts")
+        class Communicate:
+            def __init__(self, **kwargs):
+                calls.append(("init", kwargs))
+            async def save(self, output, metadata):
+                calls.append(("save", output, metadata))
+                Path(output).write_bytes(b"original transport fixture")
+                Path(metadata).write_text(json.dumps(dict(type="WordBoundary", offset=0,
+                    duration=1_000_000, text=TEXT)) + "\n")
+        module.Communicate = Communicate
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "voice.mp3"
+            with patch.dict(sys.modules, {"edge_tts": module}), \
+                    patch("importlib.metadata.version", return_value=tts.CLIENT_VERSION):
+                tts.worker(TEXT, VOICES[0], output, 10, rate="+6%", word_boundaries=True)
+            self.assertEqual(output.read_bytes(), b"original transport fixture")
+            self.assertTrue(output.with_name("word-boundaries.jsonl").is_file())
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(calls[0][1]["boundary"], "WordBoundary")
+        self.assertEqual(calls[0][1]["rate"], "+6%")
+        self.assertEqual(calls[1][0], "save")
+
     def test_parent_process_passes_native_rate_to_worker_cli(self):
         from unittest.mock import Mock
         child = Mock(pid=123456)

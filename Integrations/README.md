@@ -112,13 +112,23 @@ Claude的3-turn/0.10美元上限会话与缩减后的1-turn/0.01美元上限探�
 
 ### 共用因果模型与故事动作
 
-`causal_story.py`提供内容设计后的共享作者API：通过Core运行因果模型并保留真实轨迹，再把轨迹中的原因和结果绑定到已经存在的`story_action.py`动作。它通过正常CLI版本编辑写入可选的Host字段`storyCausality`，不修改游戏或卡通插件ABI。
+`causal_story.py`保留已认可的道路示例配方：通过Core运行因果模型并保留真实轨迹，再把轨迹中的原因和结果绑定到已经存在的`story_action.py`动作。它通过正常CLI版本编辑写入可选的Host字段`storyCausality`，不修改游戏或卡通插件ABI。
 
 旧工程没有该字段仍可读取。原始模型、完整轨迹及讲稿仅属于Host工程，不进入`PluginVisualProps`视觉白名单；正常编辑仍会使受影响确认失效。此阶段不生成角色图片、补写未运行的反事实结果、授予素材用途或自动确认声音、字幕和整片审核。
 
 运行规则：`python3 -B -m unittest discover -s Integrations -p test_causal_story.py`。共享因果作者依赖故事动作模块；按实际修改范围运行相交的完整规则。
 
 共享动作作者支持显式的`CartoonRig.version=2`，最多八个独立角色；旧`version=1`保持四人上限。rig2即使只有一名角色也需要受信cartoon schema6，不能回退给旧schema5服务。本次同时修正因果作者的条件数量预算，因此公共CI完整验证`test_causal_story.py`、`test_story_action.py`和相交Core三类。高级绘制和真实模块发行仍由各自受管阶段验证，不改变free/closed或素材用途。
+
+`knowledge_story.py`提供不绑定道路主题、角色ID、种子或镜头总长的作者入口。输入为完整的四层`StoryPlan`、明确的v3规则表、原生来源场景、人物/物件归属、镜头事件选择器和路径锚点；不接受预制动作IR、伪造轨迹或任意Scene补丁。当前支持既有游戏World或普通插画图层，不替换素材、人物适配器或声音。
+
+先用`record_sources(source_project, plan, invoke)`正常录制明确的完整来源；已有录制只通过dry-run核验，不写人审确认。来源工程须与表现工程分开。每个反事实使用相同种子，并只改变一个角色计划；正常`knowledge compare`必须返回真实的已录来源对及实际行为差异。只有请求、标签或未生效规则变化不能充当行为差异。
+
+`compile_presentation(target_project, plan, recorded)`把事件选择器编译为既有动作合同；实际执行、扣费、资金流、状态变化和结果均从唯一实际事件取值，金额不由作者填入。所有细节及其镜头均须有表现，前置细节先完成，事件和余额按源时间推进。动作的出方、收方和主体归属分别校验；同一真实资金流不能重复认领。路径使用显式锚点及中间点，同一主体连续移动端点须连贯；跨来源重复移动不做隐式复位。
+
+`apply_presentation(target_project, plan, recorded, invoke)`读回真实来源工程及冻结版本，再通过正常Core dry-run独立重算所有轨迹，最后执行一次CAS编辑。`invoke(command, body, dry_run)`是调用方已有的正常CLI路由。重复应用须重新查询目标并更新`plan.target.base_revision`；内容无变化时不产生新版本。正常编辑撤销受影响确认，既有历史与原音保留。目标旁白必须逐字等于镜头旁白拼接，不能给新知识套旧配音。
+
+示例[双方同意的资金互换](examples/knowledge_exchange.py)把同一个适配器接到两个参与人、seed19、两轮规则和五镜头；它只是有限资金协议，未模拟商品价值或交货付款。当前入口明确拒绝v1/v2转换、规则正文反事实、delivery/payment及解说员重编排；这些不能从通用作者入口推定已实现。普通`KnowledgeStoryboardPlan`原有入口继续保留。规则测试使用有界夹具，不能代替真实Core录制、完整有声成片或人工审片。
 
 ### Codex受控动态工具
 

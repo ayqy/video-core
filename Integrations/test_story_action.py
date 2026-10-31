@@ -18,6 +18,22 @@ def plan():
 
 
 class StoryActionTests(unittest.TestCase):
+    def test_pencil_action_edit_retains_the_existing_paper_without_mutating_input(self):
+        original=project();paper=dict(version=1,layout='explanation',paperColor='FFFFFF',inkColor='263238')
+        original['revisions'][0]['scenes'][0]['paperPresentation']=paper
+        snapshot=copy.deepcopy(original)
+        scene=compile_story(original,plan())['edits'][0]['replaceScene']['_1']
+        self.assertEqual(scene['paperPresentation'],paper)
+        self.assertIsNot(scene['paperPresentation'],paper)
+        self.assertEqual(original,snapshot)
+
+    def test_switching_to_advanced_cartoon_retires_the_existing_paper(self):
+        original=project();original['revisions'][0]['scenes'][0]['paperPresentation']=dict(version=1,layout='explanation',paperColor='FFFFFF',inkColor='263238')
+        spec=plan();spec['scenes'][0].update(mode='cartoon',rig=dict(version=1,actors=[dict(id='host')],cues=[]))
+        scene=compile_story(original,spec)['edits'][0]['replaceScene']['_1']
+        self.assertNotIn('paperPresentation',scene)
+        self.assertIn('paperPresentation',original['revisions'][0]['scenes'][0])
+
     def test_one_transaction_preserves_content_and_causal_inputs(self):
         original = project(); snapshot = copy.deepcopy(original); calls = []
         def invoke(command, body, dry):

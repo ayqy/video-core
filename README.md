@@ -28,7 +28,7 @@ MacApp、旧 App、VideoGame、VideoCartoon、Premium、高级实现运行时测
 
 游戏补充素材见`Integrations/README.md`中的`game_asset_production.py`：先冻结内容需要，再按明确的游戏风格参考解析素材，缺项交给真实图像工具，登记原始PNG、实际提示和具体来源后，通过正常CLI导入、来源核对及一次版本编辑绑定角色。它不附带游戏图片或高级绘制模块，不生成实体、改变知识规则或自动确认人审。
 
-`Integrations/causal_story.py`把同一份因果模型的真实运行记录绑定到已有的故事动作，再通过正常版本编辑写入Host工程。`storyCausality`是可选的Host内容合同；原场景没有此字段仍可读取，模型、原始轨迹和讲稿不进入插件视觉白名单。通用作者阶段不附游戏、卡通人物或付费绘制实现，也不把规则测试当作完整成片审核。
+`Integrations/causal_story.py`保留道路示例；`knowledge_story.py`把完整分层计划和明确的v3来源通过正常Core录制、比较、dry-run及一次CAS接到已有场景动作。金额、归属、前置关系及实际事件须分别核验，不能用请求动作代替执行。`storyCausality`是可选的Host内容合同；原场景没有此字段仍可读取，模型、原始轨迹和讲稿不进入插件视觉白名单。当前通用入口不附素材或高级绘制，不支持v1/v2转换、规则正文反事实或交货付款，不把规则测试当作完整成片审核。
 
 显式`CartoonRig.version=2`可容纳最多八个独立角色，必须使用卡通schema6；旧rig1仍最多四人，旧cartoon5不能承接rig2。模块的free/closed来源、权限及policy9保持原范围，高级人物绘制实现和素材仍不在公开源码包中。
 

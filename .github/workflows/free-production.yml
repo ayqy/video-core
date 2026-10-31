@@ -38,7 +38,7 @@ jobs:
           assert head==os.environ['VIDEO_SOURCE_COMMIT']
           entries=re.findall(r'(?m)^\| ([a-f0-9]{64}) \| ([0-9]+) \| ([^|\n]+) \|$',(root/'SOURCE-MANIFEST.md').read_text())
           rows={name:(digest,int(size)) for digest,size,name in entries}
-          assert len(entries)==len(rows)==283
+          assert len(entries)==len(rows)==287
           for name,(digest,size) in rows.items():
               relative=Path(name)
               assert not relative.is_absolute() and '..' not in relative.parts
@@ -50,22 +50,21 @@ jobs:
           tracked=set(subprocess.check_output(['git','ls-files'],cwd=root,text=True).splitlines())
           assert tracked==set(rows)|metadata|{'SOURCE-MANIFEST.md'}
           assert not any((root/name).exists() for name in ['App','MacApp','MacUITests','Examples','Premium','Sources/VideoGame','Sources/VideoCartoon','Sources/VideoAdvanced'])
-          BASE_PUBLIC_COMMIT='1ff83e02623e2f202a8bcbdb19637e22285f0b05'
-          ADDITIONS={'Integrations/narrated_opening.py','Integrations/scene_layout.py','Integrations/test_scene_layout.py',
-                     'Sources/VideoCore/TexturedPath.swift','Tests/VideoCoreTests/LayerTexturedPathTests.swift','Tests/VideoCoreTests/RouteLayoutTests.swift'}
-          REVIEWED_CHANGED=ADDITIONS|{'.github/workflows/free-production.yml','Integrations/story_action.py',
-              'Sources/VideoCore/AgentSchemas.swift','Sources/VideoCore/CartoonPresenter.swift','Sources/VideoCore/Layers.swift',
-              'Sources/VideoCore/PluginProtocol.swift','Sources/VideoCore/StoryActions.swift','Sources/VideoCore/VendorFreeModuleTrust.swift',
-              'Sources/VideoMedia/LayerPainter.swift','Sources/VideoMedia/PluginRPCServer.swift','Sources/VideoMedia/RemoteSceneModule.swift',
-              'Tests/VideoCoreTests/ModuleCatalogPublicationTests.swift','Tests/VideoCoreTests/PluginPackageTests.swift',
-              'Tests/VideoCoreTests/PluginProtocolTests.swift','Tests/VideoCoreTests/StoryActionTests.swift','Tests/VideoCoreTests/VendorFreeModuleTrustTests.swift'}
-          PROTECTED_COUNT=261
-          PROTECTED_SHA256='bd06e1ab41041459dd1cd3b6fa2f520c9a97f94cdaef21f0507d941cc1d67d41'
+          BASE_PUBLIC_COMMIT='9d32be9db4de82582cbff497d7db1815a764af0f'
+          ADDITIONS={'Integrations/knowledge_story.py','Integrations/test_knowledge_story.py',
+                     'Integrations/examples/knowledge_exchange.py','Integrations/knowledge_story_smoke.py'}
+          REVIEWED_CHANGED=ADDITIONS|{'.github/workflows/free-production.yml','README.md',
+              'Integrations/README.md','Integrations/examples/README.md',
+              'Integrations/story_action.py','Integrations/test_story_action.py',
+              'Integrations/readaloud_tts.py','Integrations/readaloud_tts.md',
+              'Integrations/tests/test_readaloud_tts.py'}
+          PROTECTED_COUNT=274
+          PROTECTED_SHA256='66a74b79e23731a2c1f338a6b1104a66daa632ffb58d72f29db5fac9f630439c'
           assert ADDITIONS<=set(rows) and REVIEWED_CHANGED<=set(rows)
           protected={name:value for name,value in rows.items() if name not in REVIEWED_CHANGED}
           digest_input=''.join(f'{name}\0{protected[name][0]}\0{protected[name][1]}\n' for name in sorted(protected))
           assert len(protected)==PROTECTED_COUNT and hashlib.sha256(digest_input.encode()).hexdigest()==PROTECTED_SHA256
-          print('manifest_payloads=283 unchanged_protected_inputs=261 source_commit='+head)
+          print('manifest_payloads=287 unchanged_protected_inputs=274 source_commit='+head)
           print('protected_baseline_commit='+BASE_PUBLIC_COMMIT+' blanket_native_reuse=false')
           PYCODE
 
@@ -110,6 +109,61 @@ jobs:
           print('semantic_layout_rules=passed distinct_test_ids='+str(len(layout_ids))+' narrated_opening_synthetic_contract=passed private_recipe_audio_fixture=excluded')
           PYCODE
 
+      - name: Run complete affected knowledge-author rules
+        shell: bash
+        run: |
+          python3 -B - <<'PYCODE'
+          import ast, sys, unittest
+          from pathlib import Path
+          root=Path.cwd()
+          sys.path.insert(0,str(root/'Integrations'))
+          import test_knowledge_story, test_story_action, test_story_planning
+          modules=(test_knowledge_story,test_story_action,test_story_planning)
+          suite=unittest.TestSuite(unittest.defaultTestLoader.loadTestsFromModule(m) for m in modules)
+          def flatten(suite):
+              for case in suite:
+                  if isinstance(case,unittest.TestSuite):yield from flatten(case)
+                  else:yield case
+          ids=[case.id() for case in flatten(suite)]
+          assert len(ids)==len(set(ids))==44
+          result=unittest.TextTestRunner(verbosity=2).run(suite)
+          assert result.wasSuccessful() and result.testsRun==len(ids) and not result.skipped
+          from examples.knowledge_exchange import protocol_models, story_plan
+          assert story_plan().complete and set(protocol_models())=={'consent','decline'}
+          print('current_knowledge_author_rules=passed distinct_test_ids='+str(len(ids))+' native_fixture_only=true review=false')
+          PYCODE
+
+      - name: Prepare real local codec tools for offline ReadAloud rules
+        shell: bash
+        run: |
+          if ! command -v ffmpeg >/dev/null || ! command -v ffprobe >/dev/null; then
+            brew install ffmpeg
+          fi
+          command -v ffmpeg
+          command -v ffprobe
+
+      - name: Run complete affected ReadAloud audio and boundary rules without network
+        shell: bash
+        run: |
+          python3 -B - <<'PYCODE'
+          import shutil, sys, unittest
+          from pathlib import Path
+          root=Path.cwd()
+          assert shutil.which('ffmpeg') and shutil.which('ffprobe'),'real local codec tools are required'
+          sys.path.insert(0,str(root/'Integrations/tests'))
+          import test_readaloud_tts
+          suite=unittest.defaultTestLoader.loadTestsFromModule(test_readaloud_tts)
+          def flatten(suite):
+              for case in suite:
+                  if isinstance(case,unittest.TestSuite):yield from flatten(case)
+                  else:yield case
+          ids=[case.id() for case in flatten(suite)]
+          assert len(ids)==len(set(ids))==31
+          result=unittest.TextTestRunner(verbosity=2).run(suite)
+          assert result.wasSuccessful() and result.testsRun==31 and not result.skipped
+          print('current_readaloud_rules=passed distinct_test_ids=31 network=false actual_voice_quality_review=false')
+          PYCODE
+
       - name: Build the current standalone free CLI
         shell: bash
         run: |
@@ -132,6 +186,22 @@ jobs:
               with Path(os.environ['GITHUB_ENV']).open('a') as stream:stream.write('VIDEO_FREE_BINARY='+str(binary)+'\n')
               print('current_native_build=passed cli_sha256='+hashlib.sha256(binary.read_bytes()).hexdigest())
           finally:log.unlink(missing_ok=True)
+          PYCODE
+
+      - name: Exercise the new author through the actual standalone CLI
+        shell: bash
+        run: |
+          python3 -B - <<'PYCODE'
+          import os, subprocess, sys
+          from pathlib import Path
+          result=subprocess.run([sys.executable,'-B','Integrations/knowledge_story_smoke.py',
+              '--binary',os.environ['VIDEO_FREE_BINARY'],'--output',str(Path(os.environ['RUNNER_TEMP'])/'knowledge-author-normal-cli')],
+              text=True,capture_output=True,timeout=120)
+          print(result.stdout,end='')
+          if result.stderr:print(result.stderr,file=sys.stderr,end='')
+          assert result.returncode==0,'Actual standalone author chain failed'
+          assert result.stdout.startswith('knowledge_story_smoke: passed (28 actual normal CLI calls; '),\
+              'Actual author, comparison, no-op and independent recovery call inventory changed'
           PYCODE
 
       - name: Run affected whole Core classes and exact compatibility methods
