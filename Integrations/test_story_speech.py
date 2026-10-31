@@ -5,12 +5,15 @@ Actual production must supply and retain the real complete audio, ffprobe
 measurement, normal SDK boundary original and independently verified sources.
 """
 from copy import deepcopy
+from decimal import Decimal
+import hashlib
+import json
 import math
 import unittest
 
 from examples.knowledge_delivery import presentation as delivery_presentation
 from story_planning import StoryPlan
-from story_speech import StorySpeechError, retime_presentation
+from story_speech import StorySpeechError, retime_presentation, retime_presentation_author_estimate
 
 
 def literal_plan():
@@ -89,6 +92,11 @@ class StorySpeechRulesTests(unittest.TestCase):
         rebuilt = StoryPlan.from_dict(result['presentation']['story'])
         self.assertTrue(rebuilt.complete)
         self.assertNotEqual(rebuilt.fingerprint, StoryPlan.from_dict(self.plan['story']).fingerprint)
+        # Captured from the unmodified pre-estimate implementation, not computed
+        # from the current output as a new expectation.
+        raw=json.dumps(result,ensure_ascii=False,sort_keys=True,separators=(',',':'),allow_nan=False).encode()
+        self.assertEqual(hashlib.sha256(raw).hexdigest(),
+                         '68fc1c91efcb4fe663ac6a96457fbaf2116de31d08e936afeaaf951cded98fd4')
 
     def test_mapping_preserves_semantics_source_native_axis_and_inputs(self):
         original, words = deepcopy(self.plan), deepcopy(self.words)
@@ -198,6 +206,65 @@ class StorySpeechRulesTests(unittest.TestCase):
         self.assertEqual(result['frames'],147)
         self.assertEqual(result['captions'][-1]['endFrame'],147)
         self.assertEqual(result['axis']['fps'],24)
+
+
+class AuthorEstimateSpeechRulesTests(unittest.TestCase):
+    """Literal authored windows only; no SDK, audio measurement or listening."""
+    def test_explicit_estimate_uses_authored_proportions_and_never_invents_observed_words(self):
+        plan=literal_plan();before=deepcopy(plan)
+        timed=retime_presentation_author_estimate(plan,'6.1')
+        self.assertEqual(plan,before);self.assertEqual(timed['frames'],183)
+        self.assertEqual([(s['start_frame'],s['end_frame']) for s in timed['axis']['segments']],
+                         [(0,18),(18,45),(45,91),(91,128),(128,183)])
+        self.assertEqual(timed['axis']['kind'],'authored-sentence-estimate')
+        self.assertEqual(timed['axis']['timing_basis'],'authored-shot-proportions')
+        self.assertFalse(timed['axis']['voice_listened']);self.assertFalse(timed['axis']['captions_confirmed'])
+        for key in ('first_word_frame','word_boundary_count','word_boundaries_sha256'):
+            self.assertNotIn(key,timed);self.assertNotIn(key,timed['axis'])
+        self.assertTrue(all(c['alignment']=='estimated_sentence_no_word_timestamps'
+                            and c['confirmed'] is False for c in timed['captions']))
+        self.assertEqual(''.join(c['text'] for c in timed['captions']),timed['axis']['narration'])
+
+    def test_estimated_axis_reuses_causal_mapping_without_changing_events_inputs_or_full_tail(self):
+        plan=literal_plan();snapshot=deepcopy(plan)
+        timed=retime_presentation_author_estimate(plan,'6.10001')
+        self.assertEqual(timed['frames'],184);self.assertEqual(timed['captions'][-1]['endFrame'],184)
+        for old,new in zip(plan['sources'],timed['presentation']['sources']):
+            self.assertEqual({k:v for k,v in old.items() if k not in ('start_frame','end_frame')},
+                             {k:v for k,v in new.items() if k not in ('start_frame','end_frame')})
+        for old,new in zip(plan['beats'],timed['presentation']['beats']):
+            self.assertEqual({k:v for k,v in old.items() if k not in ('start_frame','end_frame')},
+                             {k:v for k,v in new.items() if k not in ('start_frame','end_frame')})
+        self.assertEqual(plan,snapshot)
+        self.assertEqual(timed['axis']['segments'][-1]['original_end_frame'],600)
+        self.assertTrue(StoryPlan.from_dict(timed['presentation']['story']).complete)
+
+    def test_estimates_reject_collapsed_actions_or_shots_and_keep_default_word_gate_strict(self):
+        plan=literal_plan();plan['beats'][0].update(start_frame=2,end_frame=3)
+        with self.assertRaisesRegex(StorySpeechError,'collapses to zero'):
+            retime_presentation_author_estimate(plan,'6.1')
+        with self.assertRaisesRegex(StorySpeechError,'positive frame span'):
+            retime_presentation_author_estimate(literal_plan(),'.01')
+        for duration in (0,True,math.nan,math.inf,'bad',1801):
+            with self.subTest(duration=duration),self.assertRaises(StorySpeechError):
+                retime_presentation_author_estimate(literal_plan(),duration)
+        with self.assertRaisesRegex(StorySpeechError,'SDK WordBoundary'):
+            retime_presentation(literal_plan(),None,'6.1')
+
+    def test_actual_integer_sample_clock_keeps_exact_frame_boundary_without_rewriting_audio(self):
+        samples=241600;rate=24000;duration=str(Decimal(samples)/rate)
+        timed=retime_presentation_author_estimate(literal_plan(),duration,
+            measured_samples=samples,sample_rate=rate)
+        self.assertEqual(timed['frames'],302)
+        self.assertEqual(timed['axis']['measured_samples'],samples)
+        self.assertEqual(timed['axis']['sample_rate'],rate)
+        self.assertEqual(timed['captions'][-1]['endFrame'],302)
+        for clock in (dict(measured_samples=True,sample_rate=rate),dict(measured_samples=samples),
+                      dict(measured_samples=samples,sample_rate=0)):
+            with self.subTest(clock=clock),self.assertRaises(StorySpeechError):
+                retime_presentation_author_estimate(literal_plan(),duration,**clock)
+        with self.assertRaisesRegex(StorySpeechError,'sample clock must agree'):
+            retime_presentation_author_estimate(literal_plan(),'6',measured_samples=samples,sample_rate=rate)
 
 
 if __name__ == '__main__':

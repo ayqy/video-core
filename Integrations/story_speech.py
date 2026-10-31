@@ -1,7 +1,9 @@
 """Bind an authored knowledge presentation to one complete original voice take.
 
-This module only maps presentation frames from actual ReadAloud WordBoundary
-observations. It never generates audio, changes a rule/event/tick, retimes a
+The default maps presentation frames from actual ReadAloud WordBoundary
+observations. An explicit author-estimate entry maps authored shot proportions
+to a measured complete take without claiming observed speech timestamps.
+Neither entry generates audio, changes a rule/event/tick, retimes a
 source recording, or grants listening, subtitle or whole-film approval. The
 normal Core compiler still verifies the returned presentation against its real
 source project and the actual material-backed target scene.
@@ -50,6 +52,27 @@ def retime_presentation(presentation, boundaries, duration_seconds, *, fps=30):
     Source *display* windows change; all source models, native ticks, event
     selectors, interventions and other semantics remain byte-for-byte values.
     """
+    return _retime_presentation(presentation, boundaries, duration_seconds, fps=fps, estimated=False)
+
+
+def retime_presentation_author_estimate(presentation, duration_seconds, *, fps=30,
+                                      measured_samples=None, sample_rate=None):
+    """Map authored shot proportions to a complete measured take, not its words.
+
+    This deliberate mode has no SDK observations, first-word claim or precise
+    speech alignment. All captions remain estimated and unconfirmed. Actual
+    source-audio measurement and receipt binding belong to the normal caller.
+    """
+    clock=None
+    if measured_samples is not None or sample_rate is not None:
+        _need(type(measured_samples) is int and measured_samples>0
+              and type(sample_rate) is int and 1<=sample_rate<=192000,
+              'the measured complete sample clock needs positive integer samples and rate')
+        clock=(measured_samples,sample_rate)
+    return _retime_presentation(presentation, None, duration_seconds, fps=fps, estimated=True,sample_clock=clock)
+
+
+def _retime_presentation(presentation, boundaries, duration_seconds, *, fps, estimated,sample_clock=None):
     _need(isinstance(presentation, dict), 'an explicit knowledge presentation is required')
     _need(type(fps) is int and 1 <= fps <= 120, 'fps must be an integer from 1 to 120')
     _need(isinstance(presentation.get('target'), dict) and presentation['target'].get('fps') == fps,
@@ -78,44 +101,52 @@ def retime_presentation(presentation, boundaries, duration_seconds, *, fps=30):
     _need(duration <= Decimal(54000) / fps,
           'the complete voice exceeds the existing finite scene frame budget')
     frames = int((duration * fps).to_integral_value(rounding=ROUND_CEILING))
+    if sample_clock is not None:
+        samples,rate=sample_clock
+        _need(estimated and duration==Decimal(samples)/rate,
+              'the complete measured duration and actual sample clock must agree')
+        # Integer division avoids a recurring seconds decimal turning an exact
+        # audio/frame boundary into one spurious frame. It never changes audio.
+        frames=(samples*fps+rate-1)//rate
     _need(1 <= frames <= 54000, 'the complete voice exceeds the existing finite scene frame budget')
-    _need(isinstance(boundaries, list) and 1 <= len(boundaries) <= 2048,
-          'a bounded complete SDK WordBoundary sequence is required')
-    words, previous_end = [], 0
-    for row in boundaries:
-        _need(isinstance(row, dict) and set(row) == {'type', 'offset', 'duration', 'text'}
-              and row['type'] == 'WordBoundary' and type(row['offset']) is int
-              and type(row['duration']) is int and row['offset'] >= previous_end
-              and row['duration'] > 0 and isinstance(row['text'], str)
-              and len(row['text']) <= 16384
-              and bool(spoken_text(row['text'])),
-              'SDK word boundaries need positive nonoverlapping observed intervals and spoken text')
-        previous_end = row['offset'] + row['duration']
-        words.append((spoken_text(row['text']), row['offset']))
-    _need(Decimal(previous_end) <= duration * TICKS_PER_SECOND + Decimal(417),
-          'the complete original voice duration does not cover the last observed SDK word')
-    _need(boundaries[0]['offset'] < TICKS_PER_SECOND,
-          'the first observed spoken word must begin before one second')
-    _need(''.join(text for text, _ in words) == ''.join(clean_texts),
-          'the complete SDK spoken text must cover every authored shot exactly and in order')
-
-    # Only whole observed words can establish a new shot start. In particular,
-    # do not distribute a multi-character word's time over its characters.
-    starts, word_index = [0], 0
-    for index, expected in enumerate(clean_texts):
-        consumed = ''
-        while len(consumed) < len(expected):
-            _need(word_index < len(words), 'a shot is not covered by the actual SDK words')
-            consumed += words[word_index][0]
-            word_index += 1
-        _need(consumed == expected, 'a shot boundary falls inside an SDK word or its observed text differs')
-        if index + 1 < len(shots):
-            _need(word_index < len(words), 'an authored shot lacks an observed first word')
-            starts.append(words[word_index][1] * fps // TICKS_PER_SECOND)
-    _need(word_index == len(words), 'all original SDK words must belong to the complete story')
+    if estimated:
+        starts = [shot['start_frame'] * frames // old_frames for shot in shots]
+    else:
+        _need(isinstance(boundaries, list) and 1 <= len(boundaries) <= 2048,
+              'a bounded complete SDK WordBoundary sequence is required')
+        words, previous_end = [], 0
+        for row in boundaries:
+            _need(isinstance(row, dict) and set(row) == {'type', 'offset', 'duration', 'text'}
+                  and row['type'] == 'WordBoundary' and type(row['offset']) is int
+                  and type(row['duration']) is int and row['offset'] >= previous_end
+                  and row['duration'] > 0 and isinstance(row['text'], str)
+                  and len(row['text']) <= 16384 and bool(spoken_text(row['text'])),
+                  'SDK word boundaries need positive nonoverlapping observed intervals and spoken text')
+            previous_end = row['offset'] + row['duration']
+            words.append((spoken_text(row['text']), row['offset']))
+        _need(Decimal(previous_end) <= duration * TICKS_PER_SECOND + Decimal(417),
+              'the complete original voice duration does not cover the last observed SDK word')
+        _need(boundaries[0]['offset'] < TICKS_PER_SECOND,
+              'the first observed spoken word must begin before one second')
+        _need(''.join(text for text, _ in words) == ''.join(clean_texts),
+              'the complete SDK spoken text must cover every authored shot exactly and in order')
+        # A shot may start only at an observed whole word, never an invented
+        # subdivision of that word's time. The estimate entry does not use this.
+        starts, word_index = [0], 0
+        for index, expected in enumerate(clean_texts):
+            consumed = ''
+            while len(consumed) < len(expected):
+                _need(word_index < len(words), 'a shot is not covered by the actual SDK words')
+                consumed += words[word_index][0]
+                word_index += 1
+            _need(consumed == expected, 'a shot boundary falls inside an SDK word or its observed text differs')
+            if index + 1 < len(shots):
+                _need(word_index < len(words), 'an authored shot lacks an observed first word')
+                starts.append(words[word_index][1] * fps // TICKS_PER_SECOND)
+        _need(word_index == len(words), 'all original SDK words must belong to the complete story')
     ends = starts[1:] + [frames]
     _need(all(0 <= a < b <= frames for a, b in zip(starts, ends)),
-          'actual SDK shot windows must retain a positive frame span')
+          'speech shot windows must retain a positive frame span')
 
     segments = []
     for shot, a, b in zip(shots, starts, ends):
@@ -137,8 +168,9 @@ def retime_presentation(presentation, boundaries, duration_seconds, *, fps=30):
     for shot, segment in zip(shots_content['shots'], segments):
         shot['start_frame'] = segment['start_frame']
         shot['duration_frames'] = segment['end_frame'] - segment['start_frame']
-    result['story'] = story.rewrite('shots', shots_content,
-        '绑定完整新原音的实际逐词镜头窗；仅修改呈现时间，保留原生因果来源').to_dict()
+    note = ('按作者镜头比例估计完整原音的句段轴；并非实测词时间，须另行校时听审' if estimated else
+            '绑定完整新原音的实际逐词镜头窗；仅修改呈现时间，保留原生因果来源')
+    result['story'] = story.rewrite('shots', shots_content, note).to_dict()
     source_rows = result.get('sources')
     _need(isinstance(source_rows, list) and 1 <= len(source_rows) <= 3,
           'one to three explicit source display windows are required')
@@ -190,11 +222,20 @@ def retime_presentation(presentation, boundaries, duration_seconds, *, fps=30):
         balance['frame'] = map_frame(balance['frame'])
     captions = [dict(id='speech-shot-' + hashlib.sha256(segment['shot_id'].encode()).hexdigest()[:32],
         text=segment['text'], startFrame=segment['start_frame'], endFrame=segment['end_frame'],
-        alignment='actual_original_readaloud_word_boundaries_unconfirmed', confirmed=False)
+        alignment=('estimated_sentence_no_word_timestamps' if estimated else
+                   'actual_original_readaloud_word_boundaries_unconfirmed'), confirmed=False)
         for segment in segments]
-    first_word_frame = boundaries[0]['offset'] * fps // TICKS_PER_SECOND
-    return dict(presentation=result, captions=captions, frames=frames, first_word_frame=first_word_frame,
-        axis=dict(fps=fps, duration_seconds=str(duration), duration_frames=frames,
-                  original_duration_frames=old_frames, narration=narration,
-                  word_boundary_count=len(boundaries), first_word_frame=first_word_frame,
-                  segments=segments, voice_listened=False, captions_confirmed=False))
+    axis = dict(fps=fps, duration_seconds=str(duration), duration_frames=frames,
+                original_duration_frames=old_frames, narration=narration,
+                segments=segments, voice_listened=False, captions_confirmed=False)
+    output = dict(presentation=result, captions=captions, frames=frames, axis=axis)
+    if estimated:
+        axis.update(kind='authored-sentence-estimate', timing_basis='authored-shot-proportions',
+                    caption_alignment='estimated_sentence_no_word_timestamps')
+        if sample_clock is not None:
+            axis.update(measured_samples=sample_clock[0],sample_rate=sample_clock[1])
+    else:
+        first_word_frame = boundaries[0]['offset'] * fps // TICKS_PER_SECOND
+        axis.update(word_boundary_count=len(boundaries), first_word_frame=first_word_frame)
+        output['first_word_frame'] = first_word_frame
+    return output

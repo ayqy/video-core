@@ -124,7 +124,10 @@ class ProductionWorkflow:
         return [self.boundaries]
 
     def source_speech_inputs(self):
-        return (self.voice,self.voice.with_suffix('.source.md'),self.boundaries)
+        return (self.voice,self.speech_receipt_path(),self.boundaries)
+
+    def speech_receipt_path(self):
+        return self.voice.with_suffix('.source.md')
 
     def word_boundary_sha256(self):
         return sha(self.boundaries.read_bytes())
@@ -133,10 +136,23 @@ class ProductionWorkflow:
         return 'observed-sdk-words'
 
     def speech_receipt_fields(self):
-        rows=re.findall(r'(?m)^\|([^|\n]+)\|([^|\n]*)\|$',self.voice.with_suffix('.source.md').read_text())
+        rows=re.findall(r'(?m)^\|([^|\n]+)\|([^|\n]*)\|$',self.speech_receipt_path().read_text())
         fields={k:v for k,v in rows}
         need(len(fields)==len(rows),'the original voice receipt repeats a field')
         return fields
+
+    def validate_speech_receipt(self,fields):
+        need(fields.get('audio_sha256')==sha(self.voice.read_bytes())
+            and fields.get('word_boundaries.sha256')==self.word_boundary_sha256()
+            and fields.get('request.text')==self.narration()
+            and fields.get('request.voice')==self.VOICE_IDENTIFIER
+            and fields.get('request.configuration.boundary')=='WordBoundary',
+            'the original receipt must bind this exact full text, voice and same-request word metadata')
+
+    def speech_proof(self,axis,inputs):
+        return dict(version=1,axis_sha256=sha(axis.read_bytes()),inputs_sha256=sha(inputs.read_bytes()),
+            voice_sha256=sha(self.voice.read_bytes()),source_receipt_sha256=sha(self.speech_receipt_path().read_bytes()),
+            word_boundaries_sha256=self.word_boundary_sha256(),kind=self.speech_provenance_kind())
 
     def load_speech_axis(self,fields,axis):
         if not axis.exists():
@@ -226,7 +242,7 @@ class ProductionWorkflow:
         speech_paths=self.speech_inputs(args)
         self.ffmpeg=Path(shutil.which('ffmpeg')).resolve();self.ffprobe=Path(shutil.which('ffprobe')).resolve()
         need(sha(self.binary.read_bytes())==args.binary_sha256,'current normal Release binary differs')
-        paths=[*self.implementation_paths(),self.binary,self.voice,self.voice.with_suffix('.source.md'),
+        paths=[*self.implementation_paths(),self.binary,self.voice,self.speech_receipt_path(),
                *speech_paths,self.ffmpeg,self.ffprobe]
         paths += [Path(v['path']).resolve() for v in self.author.requirements().values()]
         self.pins={str(p):sha(p.read_bytes()) for p in paths}
@@ -250,12 +266,7 @@ class ProductionWorkflow:
         self.state.execute('CREATE TABLE IF NOT EXISTS requests (key TEXT PRIMARY KEY, response BLOB NOT NULL)')
         self.calls=[]
         fields=self.speech_receipt_fields()
-        need(fields.get('audio_sha256')==sha(self.voice.read_bytes())
-            and fields.get('word_boundaries.sha256')==self.word_boundary_sha256()
-            and fields.get('request.text')==self.narration()
-            and fields.get('request.voice')==self.VOICE_IDENTIFIER
-            and fields.get('request.configuration.boundary')=='WordBoundary',
-            'the original receipt must bind this exact full text, voice and same-request word metadata')
+        self.validate_speech_receipt(fields)
         axis=self.home/'speech-axis.plist'
         self.timed=self.load_speech_axis(fields,axis)
         need(self.timed['axis']['fps']==self.FPS and type(self.timed['frames']) is int
@@ -263,11 +274,10 @@ class ProductionWorkflow:
         save(axis,self.timed)
         self.pins[str(axis)]=sha(axis.read_bytes())
         kind=self.speech_provenance_kind()
-        need(kind in ('observed-sdk-words','retained-complete-axis'),'declare the actual speech-axis construction mode')
+        need(kind in ('observed-sdk-words','retained-complete-axis','authored-sentence-estimate'),
+            'declare the actual speech-axis construction mode')
         provenance=self.home/'speech-provenance.plist'
-        speech_proof=dict(version=1,axis_sha256=sha(axis.read_bytes()),inputs_sha256=sha(inputs.read_bytes()),
-            voice_sha256=sha(self.voice.read_bytes()),source_receipt_sha256=sha(self.voice.with_suffix('.source.md').read_bytes()),
-            word_boundaries_sha256=self.word_boundary_sha256(),kind=kind)
+        speech_proof=self.speech_proof(axis,inputs)
         if provenance.exists() and read(provenance)!=speech_proof:
             original_proof=read(provenance)
             need(upgraded_inputs is not None and original_proof==dict(speech_proof,inputs_sha256=upgraded_inputs),

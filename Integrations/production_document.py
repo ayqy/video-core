@@ -5,6 +5,7 @@ contains no Python, command, model evaluator, paid action or approval override.
 Core validates its real scenes, source recordings and causal actions normally.
 """
 from copy import deepcopy
+from decimal import Decimal
 import inspect
 import json
 from pathlib import Path
@@ -21,6 +22,8 @@ from presenter_composition import compose as compose_presenter, validate_profile
 from speech_energy import analyze_take
 from sdk_material_import import invoke_import, validate_receipt, validate_spec
 from scene_layout import present
+from story_speech import retime_presentation_author_estimate
+import voice_design_tts as voice_design
 
 
 def project_presentation(value, projection):
@@ -92,7 +95,7 @@ class ProductionDocument:
         object_keys(value, ('version', 'name', 'voice_identifier', 'aspect', 'fps', 'viewport',
                            'presentation', 'scene', 'materials'),
                     ('motion_actions','retained_speech','projection','presenter','sdk_import','supporting_files',
-                     'story_layout'))
+                     'story_layout','speech_timing'))
         need(type(value['version']) is int and value['version'] == 1
              and isinstance(value['name'], str) and 1 <= len(value['name']) <= 200
              and isinstance(value['voice_identifier'], str) and 1 <= len(value['voice_identifier']) <= 200,
@@ -108,6 +111,24 @@ class ProductionDocument:
         story = StoryPlan.from_dict(value['presentation']['story'])
         self.narration = ''.join(s['narration'] for s in story.stage('shots')['shots'])
         self.frames = story.stage('shots')['shots'][-1]['start_frame'] + story.stage('shots')['shots'][-1]['duration_frames']
+        self.estimate_receipt = None
+        timing = value.get('speech_timing')
+        if timing is not None:
+            object_keys(timing, ('version','kind','source_receipt'))
+            need(type(timing['version']) is int and timing['version']==1
+                 and timing['kind']=='authored-sentence-estimate' and value.get('retained_speech') is None,
+                 'choose one explicit author estimate or retained exact speech mode')
+            row=timing['source_receipt'];object_keys(row, ('path','sha256'))
+            need(isinstance(row['path'],str) and 1<=len(row['path'])<=4096 and '\x00' not in row['path'],
+                 'the complete original voice receipt needs an explicit ordinary path')
+            declared=Path(row['path'])
+            if not declared.is_absolute():declared=self.path.parent/declared
+            path=regular(row['path'],self.path.parent)
+            need(isinstance(row['sha256'],str) and re.fullmatch('[0-9a-f]{64}',row['sha256'])
+                 and path.stat().st_size<=32768 and sha(path.read_bytes())==row['sha256']
+                 and not any(p.is_symlink() for p in (declared,*declared.parents)),
+                 'the complete original voice receipt must match the explicit bounded source')
+            self.estimate_receipt=path
         scene = value['scene']
         need(isinstance(scene, dict) and scene.get('durationFrames') == self.frames
              and scene.get('narration') == self.narration and scene.get('sourceStartFrame') == 0
@@ -295,7 +316,14 @@ class DocumentProduction(ProductionWorkflow):
                     self.runtime_inputs.append(path)
             need(1 < len(self.runtime_inputs) <= 1024, 'bounded installed catalog required')
         self.retained = None
+        self.estimated = value.get('speech_timing') is not None
         self.voice = args.voice.resolve(strict=True)
+        if self.estimated:
+            need(args.boundaries is None, 'author estimates cannot carry SDK word boundaries')
+            raw_voice=args.voice.absolute()
+            need(not any(p.is_symlink() for p in (raw_voice,*raw_voice.parents)),
+                 'the estimated original WAV cannot use a symlink')
+            self.validate_speech_receipt(self.speech_receipt_fields())
         witness = value.get('retained_speech')
         if witness is not None:
             need(args.boundaries is None, 'choose retained exact speech or actual SDK words, never both')
@@ -305,6 +333,8 @@ class DocumentProduction(ProductionWorkflow):
     def implementation_inputs(self):
         paths=[Path(__file__),Path(inspect.getfile(FrozenSpeech)),self.document.path,
                Path(inspect.getfile(checked_runtime)),*self.document.supporting,*self.runtime_inputs]
+        if self.estimated:
+            paths += [Path(voice_design.__file__),voice_design.SOURCE_MANIFEST]
         if self.document.value.get('presenter') is not None:
             paths += [Path(inspect.getfile(compose_presenter)),Path(inspect.getfile(analyze_take)),
                       Path(__file__).with_name('scene_layout.py')]
@@ -387,6 +417,10 @@ class DocumentProduction(ProductionWorkflow):
             character='', emotion='', color='FFFFFF', showPrice=False, classicArtworkRequired=False)
 
     def speech_inputs(self, args):
+        if self.estimated:
+            need(args.boundaries is None, 'author estimates cannot carry SDK word boundaries')
+            self.boundaries=None
+            return [self.speech_receipt_path()]
         witness = self.document.value.get('retained_speech')
         if witness is None:
             need(args.boundaries is not None, 'the same-request SDK WordBoundary input is required')
@@ -397,15 +431,65 @@ class DocumentProduction(ProductionWorkflow):
         return self.retained.paths
 
     def source_speech_inputs(self):
-        return (self.voice, self.voice.with_suffix('.source.md')) if self.retained else super().source_speech_inputs()
+        return (self.voice, self.speech_receipt_path()) if self.retained or self.estimated else super().source_speech_inputs()
+
+    def speech_receipt_path(self):
+        return self.document.estimate_receipt if self.estimated else super().speech_receipt_path()
+
+    def validate_speech_receipt(self, fields):
+        if not self.estimated:
+            return super().validate_speech_receipt(fields)
+        need(self.voice.suffix.lower()=='.wav' and fields.get('text')==self.narration()
+             and fields.get('voice')==self.VOICE_IDENTIFIER
+             and fields.get('audio_sha256')==sha(self.voice.read_bytes()),
+             'the author estimate needs the exact complete original WAV, narration and source voice')
+        engine_keys=('engine','model','source_wheel','runtime_sha256','adapter_sha256','source_list_sha256')
+        need(all(isinstance(fields.get(k),str) for k in engine_keys)
+             and all(re.fullmatch('[0-9a-f]{64}',fields[k]) for k in
+                     ('runtime_sha256','adapter_sha256','source_list_sha256'))
+             and fields['source_list_sha256']==voice_design.SOURCE_MANIFEST_SHA256,
+             'the full original VoiceDesign generation identity is required')
+        try:
+            seed=int(fields.get('seed',''))
+        except ValueError:
+            raise ValueError('the original VoiceDesign seed must be a canonical integer') from None
+        need(str(seed)==fields.get('seed'),'the original VoiceDesign seed must be a canonical integer')
+        request,key=voice_design.request_identity({k:fields[k] for k in engine_keys},
+            fields['text'],fields['voice'],fields.get('instruction'),seed)
+        samples,rate=voice_design.inspect_wave(self.voice)
+        expected={k:str(v) for k,v in request.items()}
+        expected.update(cache_key=key,audio_sha256=sha(self.voice.read_bytes()),samples=str(samples))
+        actual={k:v for k,v in fields.items() if k not in ('字段','---')}
+        need(actual==expected and self.speech_receipt_path().read_text()==
+             voice_design.receipt(request,key,self.voice,samples),
+             'the complete original VoiceDesign receipt or measured samples differ')
+        self.estimated_samples,self.estimated_rate=samples,rate
+
+    def speech_proof(self, axis, inputs):
+        if not self.estimated:
+            return super().speech_proof(axis,inputs)
+        return dict(version=2,kind='authored-sentence-estimate',
+            axis_sha256=sha(axis.read_bytes()),inputs_sha256=sha(inputs.read_bytes()),
+            voice_sha256=sha(self.voice.read_bytes()),source_receipt_sha256=sha(self.speech_receipt_path().read_bytes()),
+            measured_samples=self.estimated_samples,sample_rate=self.estimated_rate,
+            timing_basis='authored-shot-proportions',caption_alignment='estimated_sentence_no_word_timestamps',
+            voice_listened=False,captions_confirmed=False)
 
     def speech_provenance_kind(self):
+        if self.estimated:return 'authored-sentence-estimate'
         return 'retained-complete-axis' if self.retained else 'observed-sdk-words'
 
     def word_boundary_sha256(self):
         return self.retained.boundaries_sha256 if self.retained else super().word_boundary_sha256()
 
     def load_speech_axis(self, fields, axis):
+        if self.estimated:
+            dummy=dict(id='target',workspaceID='workspace',revisions=[dict(id='initial',fps=self.FPS,
+                aspect=self.ASPECT,scenes=[dict(id='stage')])])
+            plan=self.presentation_for(dummy,{k:self.uid('source-'+k) for k in self.model_sources()})
+            duration=str(Decimal(self.estimated_samples)/self.estimated_rate)
+            return retime_presentation_author_estimate(plan,duration,fps=self.FPS,
+                measured_samples=self.estimated_samples,sample_rate=self.estimated_rate)
         if self.retained is None:
             return super().load_speech_axis(fields, axis)
         result = deepcopy(self.retained.timed)
@@ -418,7 +502,9 @@ class DocumentProduction(ProductionWorkflow):
         return self.document.value['name']
 
     def production_description(self):
-        timing = '复用原工程已冻结完整声轴；历史词界身份与计数保留，本次未重验SDK词界文件。' if self.retained else '完整原音与同请求SDK词界绑定。'
+        timing = ('作者句段估计轴按实测完整原音和原镜头比例重排，无词时间戳，字幕须另行校时听审。' if self.estimated else
+                  '复用原工程已冻结完整声轴；历史词界身份与计数保留，本次未重验SDK词界文件。' if self.retained else
+                  '完整原音与同请求SDK词界绑定。')
         return timing + '知识、人物、源规则、布局与动作由声明输入；Core实际录制、因果重算与正常制作，不授完整看听或上传权。'
 
     def material_evidence(self, key, path, digest, asset_id):

@@ -3,8 +3,12 @@ from copy import deepcopy
 from pathlib import Path
 import plistlib
 import tempfile
+from types import SimpleNamespace
 import unittest
+from unittest.mock import patch
 
+import production_document as document_module
+import production_workflow as workflow_module
 from production_document import ProductionDocument, DocumentProduction
 from production_workflow import sha
 from production_workflow import data
@@ -158,6 +162,107 @@ class DocumentTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,'Native .01..1'):self.load(doc)
 
 
+class AuthorEstimateDocumentTests(unittest.TestCase):
+    """Literal non-media bytes and patched sample observations, never a decoder."""
+    def setUp(self):
+        self.temp=tempfile.TemporaryDirectory();self.addCleanup(self.temp.cleanup)
+        self.base=Path(self.temp.name).resolve();self.material=self.base/'material.fixture'
+        self.material.write_bytes(b'UNIT explicit non-image bytes')
+        self.voice=self.base/'original.wav';self.voice.write_bytes(b'UNIT explicit non-audio bytes')
+        self.receipt=self.base/'source.md';self.samples=384000
+        design=document_module.voice_design
+        self.value=DocumentTests.declaration(self)
+        self.value['voice_identifier']='adult-taiwan-warm-narrative-v1'
+        engine=dict(engine=design.ENGINE,model=design.MODEL_REVISION,source_wheel=design.SOURCE_WHEEL_SHA256,
+            runtime_sha256='a'*64,adapter_sha256='b'*64,source_list_sha256=design.SOURCE_MANIFEST_SHA256)
+        self.request,self.key=design.request_identity(engine,self.value['scene']['narration'],
+            self.value['voice_identifier'],design.DESIGNS[self.value['voice_identifier']]['instruction'],1986)
+        self.original_receipt=design.receipt(self.request,self.key,self.voice,self.samples)
+        self.receipt.write_text(self.original_receipt)
+        self.binary=self.base/'cli.fixture';self.binary.write_bytes(b'UNIT never-executed binary')
+        for name in ('ffmpeg','ffprobe'):(self.base/name).write_bytes(b'UNIT never-executed tool')
+
+    def declaration(self):
+        value=deepcopy(self.value)
+        value['speech_timing']=dict(version=1,kind='authored-sentence-estimate',
+            source_receipt=dict(path=str(self.receipt),sha256=sha(self.receipt.read_bytes())))
+        return value
+
+    def args(self,value=None,label='valid',boundaries=None):
+        path=self.base/(label+'.plist');path.write_bytes(plistlib.dumps(value or self.declaration()))
+        return SimpleNamespace(document=path,voice=self.voice,boundaries=boundaries,
+            home=self.base/(label+'-home'),output=self.base/(label+'-out'),binary=self.binary,
+            binary_sha256=sha(self.binary.read_bytes()),previous_inputs_sha256=None)
+
+    def construct(self,args):
+        with patch.object(document_module.voice_design,'inspect_wave',return_value=(self.samples,24000)) as measurement, \
+             patch.object(workflow_module.shutil,'which',side_effect=lambda name:str(self.base/name)):
+            host=DocumentProduction(args)
+        self.addCleanup(host.state.close)
+        return host,measurement
+
+    def test_explicit_mode_freezes_full_source_and_has_estimated_axis_without_word_metadata(self):
+        host,measurement=self.construct(self.args())
+        self.assertGreaterEqual(measurement.call_count,1)
+        self.assertEqual(host.source_speech_inputs(),(self.voice,self.receipt))
+        self.assertIsNone(host.boundaries);self.assertEqual(host.timed['frames'],480)
+        self.assertEqual(host.timed['axis']['kind'],'authored-sentence-estimate')
+        self.assertNotIn('first_word_frame',host.timed['axis'])
+        self.assertNotIn('word_boundary_count',host.timed['axis'])
+        self.assertTrue(all(c['alignment']=='estimated_sentence_no_word_timestamps'
+                            and c['confirmed'] is False for c in host.timed['captions']))
+        proof=workflow_module.read(host.home/'speech-provenance.plist')
+        self.assertEqual(proof['version'],2);self.assertEqual(proof['kind'],'authored-sentence-estimate')
+        self.assertEqual(proof['measured_samples'],self.samples);self.assertEqual(proof['sample_rate'],24000)
+        self.assertEqual(proof['source_receipt_sha256'],sha(self.receipt.read_bytes()))
+        self.assertNotIn('word_boundaries_sha256',proof)
+        self.assertFalse(proof['voice_listened']);self.assertFalse(proof['captions_confirmed'])
+        pins=workflow_module.read(host.home/'inputs.plist')
+        self.assertEqual(pins[str(self.voice)],sha(self.voice.read_bytes()))
+        self.assertEqual(pins[str(self.receipt)],sha(self.receipt.read_bytes()))
+        self.assertEqual(host.document.value['scene']['narration'],self.value['scene']['narration'])
+        self.assertIn('无词时间戳',host.production_description())
+
+    def test_estimate_schema_rejects_unknown_modes_versions_approvals_and_retained_mix(self):
+        changes=[lambda v:v['speech_timing'].update(version=True),
+            lambda v:v['speech_timing'].update(version=2),lambda v:v['speech_timing'].update(kind='WordBoundary'),
+            lambda v:v['speech_timing'].update(confirmed=True),lambda v:v.update(retained_speech={}),
+            lambda v:v['speech_timing']['source_receipt'].update(sha256='0'*64)]
+        for index,change in enumerate(changes):
+            value=self.declaration();change(value);args=self.args(value,label='invalid-'+str(index))
+            with self.subTest(index=index),self.assertRaises(ValueError):ProductionDocument(args.document)
+            self.assertFalse(args.home.exists())
+
+    def test_estimate_cannot_claim_sdk_words_or_inherit_a_different_voice_text_or_generation_receipt(self):
+        args=self.args(label='with-words',boundaries=self.base/'unused-boundaries')
+        with self.assertRaisesRegex(ValueError,'cannot carry SDK'):DocumentProduction(args)
+        self.assertFalse(args.home.exists())
+        substitutions=[('|text|'+self.request['text']+'|','|text|different whole script|'),
+            ('|voice|adult-taiwan-warm-narrative-v1|','|voice|different-voice|'),
+            ('|cache_key|'+self.key+'|','|cache_key|'+'0'*64+'|'),
+            ('|samples|384000|','|samples|384001|'),
+            ('|speed|1.0|','|speed|1.1|'),
+            ('|instruction|'+self.request['instruction']+'|','|instruction|changed instruction|')]
+        for index,(old,new) in enumerate(substitutions):
+            self.assertIn(old,self.original_receipt)
+            self.receipt.write_text(self.original_receipt.replace(old,new))
+            args=self.args(label='bad-source-'+str(index))
+            with self.subTest(index=index),patch.object(document_module.voice_design,'inspect_wave',return_value=(self.samples,24000)), \
+                 self.assertRaises(ValueError):DocumentProduction(args)
+            self.assertFalse(args.home.exists())
+
+    def test_changed_original_receipt_or_sample_observation_cannot_reuse_the_saved_estimate(self):
+        args=self.args();host,_=self.construct(args)
+        before=(host.home/'speech-axis.plist').read_bytes()
+        with patch.object(document_module.voice_design,'inspect_wave',return_value=(self.samples+1,24000)), \
+             self.assertRaisesRegex(ValueError,'receipt or measured samples'):
+            DocumentProduction(args)
+        self.assertEqual((host.home/'speech-axis.plist').read_bytes(),before)
+        self.receipt.write_text(self.original_receipt+'changed provenance\n')
+        with self.assertRaisesRegex(ValueError,'complete original voice receipt'):
+            ProductionDocument(args.document)
+
+
 class FrozenSpeechTests(unittest.TestCase):
     """Synthetic archive shape rules only; none of these bytes are real media."""
     def setUp(self):
@@ -246,6 +351,16 @@ class FrozenSpeechTests(unittest.TestCase):
         witness=self.witness(ordinary=True)
         self.voice.with_suffix('.source.md').write_text('changed original')
         with self.assertRaises(ValueError): FrozenSpeech(witness,self.voice,self.receipt,self.plan)
+
+    def test_author_estimate_provenance_cannot_be_relabelled_as_retained_observed_axis(self):
+        witness=self.witness(ordinary=True)
+        row=witness['speech-provenance'];path=Path(row['path'])
+        proof=plistlib.loads(path.read_bytes())
+        proof.update(version=2,kind='authored-sentence-estimate',timing_basis='authored-shot-proportions')
+        proof.pop('word_boundaries_sha256')
+        path.write_bytes(plistlib.dumps(proof));row['sha256']=sha(path.read_bytes())
+        with self.assertRaisesRegex(ValueError,'complete axis and original input identities'):
+            FrozenSpeech(witness,self.voice,self.receipt,self.plan)
 
 
 if __name__ == '__main__': unittest.main()

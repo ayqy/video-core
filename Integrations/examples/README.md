@@ -40,3 +40,15 @@ python3 Integrations/examples/free_production.py \
 `story_speech.retime_presentation(presentation, boundaries, duration_seconds, fps=30)`把完整分层计划的呈现时间接到一份完整新原音：输入须为真实 ReadAloud SDK 的完整 `WordBoundary` 原记录（100纳秒整数 offset/duration）及该原音经 ffprobe 实测的完整时长，调用方保留原件和摘要。函数不生成声音、不解码音频，也不验证这些输入确由服务或探测器产生。SDK的逐词文本须按原顺序覆盖所有镜头旁白；只忽略标点和空白，缺词、额外词、重排或在一个SDK词内部拆镜头均拒绝，不虚构逐字时间。
 
 首镜从第0帧开始，首个真实发音须在1秒前；后续镜头从首个实际词的offset向下量化到目标帧，完整时长向上取整保留最后尾音。各镜头内原有动作顺序按比例映射，正时长动作若压成0帧则拒绝。函数只调整镜头、来源的显示窗口、动作和余额观察的呈现帧；原生模型、录制轴、事件tick、反事实及业务语义保持原值，后续仍须由正常Core对真实来源与已绑定素材的目标场景编译、dry-run和一次CAS校验。返回字幕与声轴的听审、字幕确认均为false；15项字面合成时序规则只验证函数约束，不授予真实配音、完整成片或人工听审通过。
+
+无逐词时间戳的完整Qwen原音可显式选择作者句段估计轴。在`ProductionDocument`中添加可选字段，路径指向该次生成保留的真实`source.md`，摘要对应其完整原件；不得用另一份声音的词记录替代：
+
+```python
+speech_timing = {
+    "version": 1,
+    "kind": "authored-sentence-estimate",
+    "source_receipt": {"path": "/absolute/cache/source.md", "sha256": "<原件SHA-256>"},
+}
+```
+
+此字段与`retained_speech`、命令行`--boundaries`互斥。正常入口核对完整原稿、音色、WAV摘要及固定Qwen请求回执，实测完整WAV的样本数和采样率。独立作者调用`retime_presentation_author_estimate(presentation, duration_seconds, fps=30, measured_samples=样本数, sample_rate=采样率)`时，样本时钟须成对提供且与完整时长一致；用返回的`presentation`和`frames`编排舞台。映射依据原作者镜头区间占比，标记为`estimated_sentence_no_word_timestamps`，不生成WordBoundary，也不证明首秒实际有声。声音听审、字幕校时和独立确认仍待完成，返回的听审、字幕确认及Review保持false；纯规则通过不代替真实完整声画验收。省略该字段时，默认WordBoundary链和FrozenSpeech原有严格合同保持不变。
