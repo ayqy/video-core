@@ -377,7 +377,7 @@ jobs:
           stream=execute(['swift','test','-c','release','--scratch-path',str(scratch),'-j','2','--filter',scope],900)
           assert verify_swift_stream(stream,expected)==48
           for identity in sorted(expected):print('current_native_passed=' + '.'.join(identity))
-          execute(['swift','build','-c','release','--scratch-path',str(scratch),'-j','2','--product','video'],300)
+          execute(['swift','build','-c','release','--scratch-path',str(scratch),'-j','2','--product','video'],600)
           bins=execute(['swift','build','-c','release','--scratch-path',str(scratch),'--show-bin-path'],30).strip()
           product=Path(bins)/'video'
           assert product.is_file() and not product.is_symlink() and os.access(product,os.X_OK)
