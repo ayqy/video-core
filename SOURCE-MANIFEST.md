@@ -2,10 +2,10 @@
 
 VideoFree source export · package_free.py · version 1
 
-生成时间：2026-11-01 03:56:48 北京时间
+生成时间：2026-11-01 06:26:50 北京时间
 
-- 源码与必要元数据：309个文件；4995156字节（不含本清单）。
-- 整体内容指纹：`0706ce2928bac5a329c6024b07a9b6ac96e2ee3232ae94345969cf2187a368d7`。
+- 源码与必要元数据：309个文件；4966063字节（不含本清单）。
+- 整体内容指纹：`02a8b1ac23a1651e7e52c0cb7fa54a38a0beb4a9e7308adf16c4019ae61d755f`。
 - 来源：受控原始工程中的逐文件白名单；Package.swift、唯一免费制作workflow与README均来自Distribution/Free精确模板。
 - 本包不含.git，不可作为新业务checkout；本清单生成过程不执行构建、设备验收、签名安装或公共上传，各阶段以独立证据为准。
 - 排除：App、VideoGame、VideoCartoon、Premium、高级实现运行时测试、私有仓库地址、凭据、客户数据、缓存、日志及媒体过程产物。
@@ -14,7 +14,7 @@ VideoFree source export · package_free.py · version 1
 
 | SHA-256 | 字节数 | 包内路径 / 原工程来源 |
 |---|---:|---|
-| a6031e1c98777fc12061b0e6aa43a625c971d871550713b44fb8920fa7aa036e | 45752 | .github/workflows/free-production.yml |
+| 79a5f71b617c85622a87a85905edf18c4844dc5caa4373dca75a98de1c80a677 | 11095 | .github/workflows/free-production.yml |
 | 961f3fc061c5e259107b5a18389d04fcfef6e4c0a161d3c46d3ee79addefdcfe | 53170 | Integrations/README.md |
 | 28833193551aa06befb3bc0fc30b69ef87f74cccae39895f4242af4321d717dd | 15308 | Integrations/actor_motion.py |
 | 39dd8274ff1e6b0649acb63281087a1144e1f4a4e0eed3dc2b92e10df2cbd121 | 28488 | Integrations/asset_reuse.py |
@@ -150,7 +150,7 @@ VideoFree source export · package_free.py · version 1
 | 8537dc2a1acdfa4eb976897c14c43e8a58b07f246e38b33ee97d8d42b53e3297 | 12974 | Sources/VideoCore/KnowledgeStoryboard.swift |
 | 0828ea38315debd85f3212781bbfa78942b8e360e00c6c199ab4388185924b43 | 3598 | Sources/VideoCore/LayerEntrance.swift |
 | 66a0e91700506437f5bc85c3f213a0f3ecfab8d6be69719648e7d80b8ed86d23 | 5580 | Sources/VideoCore/LayerImageSequence.swift |
-| 5516ff01cdf3a7803383bfe0939c295f5bff215f2c914b9fb8ff929957dcdc1e | 9745 | Sources/VideoCore/Layers.swift |
+| dc68bb5c268ed69957511a2bdee392805381106d06071d834545cac07d4a64a0 | 10468 | Sources/VideoCore/Layers.swift |
 | 6036d8aff46e3704441f07e6a20d01adfa1db9315c3c182f083bd0ccaf47bc41 | 4408 | Sources/VideoCore/LearningExample.swift |
 | d4ad46a87f3405f90a4381350dcd331956aa3a67307a69c3d1cd7e2c26042c5b | 3246 | Sources/VideoCore/LocalJobResume.swift |
 | d6c06ae9b610d6b7f636e9ddc301e53445b8ac14e1ec76ff5d435d94a4aefdbe | 8706 | Sources/VideoCore/Loudness.swift |
@@ -266,7 +266,7 @@ VideoFree source export · package_free.py · version 1
 | 10e48eff675dfc89470b5c59f1f5a8de7d33a708fce2995d73d7fc4bc27b8c25 | 6500 | Tests/VideoCoreTests/LayerEntranceTests.swift |
 | de7c666f554d1a2d8d0abf06ad6770fdec3c2cc2b23860eecc813bb66e0707a7 | 6647 | Tests/VideoCoreTests/LayerImageFlipTests.swift |
 | 2d1e9c654e2e8c356f091bcc8bf539b8bd06ff5af1e5303b254dd33cffe67e58 | 11136 | Tests/VideoCoreTests/LayerImageSequenceTests.swift |
-| 1d1ce022101887a6c65cd98df1887162fde2777ad084ffee3ca06430b465ac0c | 5782 | Tests/VideoCoreTests/LayerTests.swift |
+| d62ad167e3449e2839350382eaea67c61b3427c546f7d5e562fe414f0cdd02d7 | 10623 | Tests/VideoCoreTests/LayerTests.swift |
 | 0693145535d828cbecd2a9629931e0c6437ddd82ba8819bcf98d1538a7fb9acd | 6168 | Tests/VideoCoreTests/LayerTexturedPathTests.swift |
 | 082a8f3a9302736ee62ddc5eab2609dacac100a83145b24b55d5ed6b97ba1737 | 5928 | Tests/VideoCoreTests/LoudnessTests.swift |
 | 8d96dc578eeedbfdf5683f62849a41fc5ba8502ac3d0cd14287c3efcd70a6d3e | 6556 | Tests/VideoCoreTests/MacCommerceRulesTests.swift |

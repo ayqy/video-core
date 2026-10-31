@@ -66,7 +66,17 @@ public enum LayerRules {
         }
     }
     public static func protectLocked(old:Scene,new:Scene) throws {
-        for layer in old.layers ?? [] where layer.locked { guard new.layers?.first(where:{$0.id==layer.id})==layer else { throw VideoError.permission("元素已锁定，请先解锁此元素再修改/删除") } }
+        let locked=(old.layers ?? []).filter(\.locked)
+        for layer in locked { guard new.layers?.first(where:{$0.id==layer.id})==layer else { throw VideoError.permission("元素已锁定，请先解锁此元素再修改/删除") } }
+        let identities=Set(locked.map(\.id))
+        // Story actions override layer positions and visibility at render time.
+        // Protect the locked subjects' own actions, not references to them as a
+        // recipient. Rendering orders actions by their identity/time, so array
+        // reordering alone must not turn an unchanged action into an edit.
+        func protectedActions(_ scene:Scene)->[StoryAction] {
+            (scene.storyActions ?? []).filter{identities.contains($0.subjectID)}.sorted{$0.id<$1.id}
+        }
+        guard protectedActions(old)==protectedActions(new) else {throw VideoError.permission("元素已锁定，请先解锁此元素再修改其故事动作")}
     }
 }
 public enum CommentRules {
