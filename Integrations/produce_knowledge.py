@@ -14,6 +14,10 @@ def main():
     parser.add_argument('--boundaries', type=Path)
     parser.add_argument('--executor', type=Path)
     parser.add_argument('--catalog', type=Path)
+    parser.add_argument('--runtime',type=Path)
+    parser.add_argument('--world-importer',type=Path)
+    parser.add_argument('--world-importer-sha256')
+    parser.add_argument('--world-importer-receipt',type=Path)
     parser.add_argument('stage', choices=('prepare', 'render', 'verify'))
     args = parser.parse_args()
     args.previous_inputs_sha256 = None

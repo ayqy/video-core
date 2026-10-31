@@ -226,6 +226,52 @@ adapter调用承诺并发只生成一次，不把外部现场宣称为同一原�
 嘴形近似，不称音素对齐。旧rig和旧nil工程保持原分支；新图片解说员不能混入旧几何rig。
 此公开包仅含Host合同与规则，不含高级绘制模块、生成图片或网络参考原图。
 
+### 显式配置的解说员与 SDK 素材
+
+`presenter_composition.compose(scene, timed, profile, materials, energy)` 将已经完成的
+独立业务舞台与一个调用方指定的图片解说员组合。`profile` 须完整声明 `version: 1`、
+`id`、`material_key`、`master_role`、`frames: [{role, sourceRect}]`、原生 `clips/cues`、
+`x/y/width/height`、`anchor: bottom` 和 `layout: presenter`。实际人物、透明边缘、
+源图裁切及贴底位置均来自调用方的真实素材与显式元数据；没有默认人物或内置帧时钟。
+`materials[material_key]` 绑定正式导入的 `asset_id/evidence_id/path/sha256` 与完整
+`ClassicSource`；若另附冻结的 `frames` 表，必须与配置完全一致。同一原件可在不同
+原音与镜头中复用相同区域表，不生成替代图片或增加业务动作。
+
+调用方先以真实完整原音执行 `speech_energy.analyze_take(..., actor_id=profile['id'])`，
+再传入其结果。组合时核对当前人物、VoiceTake、原件 SHA256、文本摘要、完整时长和
+连续 RMS，解说员 cue 与 RMS 都须覆盖 `0..durationFrames`。RMS 只表示声音响度，
+仅用于选择调用方实际提供的闭口/开口图；它不提供音素、词级或语音识别时序。
+当前真实 RMS 生产链只接受不超过 **60 秒** 的完整原音；profile 纯几何与元数据合同
+所允许的更大源帧上限，不代表分析器或本入口已经支持更长原音。
+组合复用 `scene_layout.present(scene, 'presenter')`，原业务动作的数量、因果、来源、
+原音与字幕保持原事实，源对象不被修改；标题保留为元数据，屏幕正文清空。
+
+`sdk_material_import.py` 与 `native/ImportMotaMaterials.swift` 提供显式 `mota-world`
+SDK 原件导入桥接。调用方声明规范的 `ThirdParty/GameAssets` 目录、全部 **15 件**
+文件的别名/相对路径，以及每件原件的摘要、来源、所有者、权利声明和许可；桥接沿用
+已有工作区与工程的正常授权及 `Repository/importPack`，不新建替代工作区。
+Python 侧把桥接回执与正常素材清单、含源备份中的证据逐项交叉核对，保留每件真实
+`assetID/evidenceID`。JS 和说明文件只作为完整 UTF-8 被动来源文本导入，不执行
+上游 JS，不把源码文本当作图片或音频，也不从回执猜测缺失授权。
+
+普通 CLI 使用 SDK 配置时，须同时显式提供 `--world-importer`、
+`--world-importer-sha256`、`--world-importer-receipt` 和 `--runtime`。
+`production_runtime.checked_importer` 核对当前 Swift 桥接源码、原正常链接回执中的
+实际 product 及 `native_input_sha256`，将桥接可执行文件、链接回执和 Swift 源码
+三件输入一起冻结；只给一个可执行文件或匹配的文件摘要不足以进入此路径。
+
+`production_document.py` 的表现选择通过显式 `projection`、`presenter`、`sdk_import`
+及原始材料配置进入统一生产流程；图片解说员与游戏表现分别声明。高级表现须提供
+真实已安装 runtime，`production_runtime.checked_runtime` 核对正常发布的 package、
+冷启动回执、可执行文件、完整插件目录及来源摘要。Host 仍执行原有签名、信任、
+模块权益、素材授权和质量门；这些配置或导入桥接不授予许可，也不替代正常购买或
+人工声音、字幕及整片确认。公开包保留 Host/编排源码与规则，不包含闭源绘制模块。
+恢复同一来源工程时，允许正常录制产生的后继 revision；原设计、模型、种子、
+时间轴和已录 trace 仍须保持原身份，不能把任意新版本当作原来源继续。
+
+相关规则使用明确标注的合成素材字节、时间轴、RMS、回执和发布元数据，不计作真实
+Core 导入、真实声音分析、Native 构建、正常安装、视觉效果或人工审片证据。
+
 ## 本地H.264编码实现与缓存
 
 `video doctor`列出本机VideoToolbox实际发现的H.264实现。正常`jobs run`可选

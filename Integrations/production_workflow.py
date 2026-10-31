@@ -137,6 +137,17 @@ class ProductionWorkflow:
     def voice_material_name(self):return self.production_name()+'·完整原音'
     def motion_edit_description(self):return '为真实来源动作添加独立人物表现；保原音与原因果'
 
+    def import_materials(self,source_project):
+        """Ordinary originals; specialized SDK batches override only this step.
+
+        The actual source project already exists, so a batch importer can bind
+        authorization to its current identity without making a dummy project.
+        """
+        assets={}
+        for key,row in self.author.requirements().items():
+            assets[key],_=self.imported(key,row['path'],row['sha256'])
+        return assets
+
     def __init__(self,args):
         self.author=self.AUTHOR
         need(self.author is not None and isinstance(self.VOICE_IDENTIFIER,str) and self.VOICE_IDENTIFIER
@@ -269,11 +280,6 @@ class ProductionWorkflow:
         if not clock.exists():save(clock,dict(at=datetime.now(timezone.utc).isoformat(timespec='seconds').replace('+00:00','Z')))
         self.started=read(clock)['at']
         workspace=unpack(self.write('workspaces create',dict(name=self.workspace_name())));self.ws=workspace['id']
-        assets={}
-        for key,row in self.author.requirements().items():assets[key],_=self.imported(key,row['path'],row['sha256'])
-        voice_binding,voice_asset=self.imported(self.voice_material_name(),self.voice,sha(self.voice.read_bytes()))
-        assets['voice']=voice_binding
-        need(voice_asset['durationFrames']==self.timed['frames'],'normal importer and complete measured voice axis differ')
         source_scenes={}
         declarations=self.timed['presentation']['sources']
         need(len({s['id'] for s in declarations})==len(declarations) and
@@ -289,6 +295,11 @@ class ProductionWorkflow:
                 'the source author must retain the complete model, seed and native frame axis')
             source_scenes[spec['id']]=scene
         source=self.write('projects create',dict(workspace_id=self.ws,name=self.source_project_name(),aspect=self.ASPECT,scenes=list(source_scenes.values())))
+        assets=self.import_materials(self.project(source['project_id']))
+        need(set(assets)==set(self.author.requirements()),'material importer must return every declared original exactly once')
+        voice_binding,voice_asset=self.imported(self.voice_material_name(),self.voice,sha(self.voice.read_bytes()))
+        assets['voice']=voice_binding
+        need(voice_asset['durationFrames']==self.timed['frames'],'normal importer and complete measured voice axis differ')
         target=self.write('projects create',dict(workspace_id=self.ws,name=self.target_project_name(),aspect=self.ASPECT,scenes=[self.author.stage(self.uid('presentation'),self.timed,assets)]))
         pid=target['project_id'];current=self.project(pid)
         need(current['revisions'][-1]['fps']==self.FPS and self.project(source['project_id'])['revisions'][-1]['fps']==self.FPS,
