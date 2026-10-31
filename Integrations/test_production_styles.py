@@ -223,7 +223,7 @@ class PresenterPreflightRules(unittest.TestCase):
         timed.pop('voice_sha256')
         before = deepcopy((scene, timed, materials, energy))
         author = document.ProductionDocument.__new__(document.ProductionDocument)
-        author.value = dict(presenter=profile)
+        author.value = dict(presenter=profile,viewport=[1280,720])
         author.rows = {profile['material_key']:dict(path=item['path'],sha256=item['sha256'],
             **{key:item['source'][key] for key in ('source','owner','license')})}
         owner = document.DocumentProduction.__new__(document.DocumentProduction)

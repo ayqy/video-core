@@ -1,6 +1,6 @@
 """Compose an explicit imported image narrator over an independent story stage.
 
-``compose(scene, timed, profile, materials, energy)`` reads only the supplied
+``compose(scene, timed, profile, materials, energy, *, viewport)`` reads only the supplied
 material's bytes to verify its SHA256; it never decodes, draws or imports media.
 The owner must first call ``speech_energy.analyze_take`` on the actual complete
 take with ``actor_id=profile['id']``. RMS means volume, never phoneme timing.
@@ -9,6 +9,9 @@ Profile version 1 requires id, material_key, master_role, actual frames
 [{role, sourceRect}], native clips/cues, x/y/width/height, anchor='bottom' and
 layout='presenter'. No character, frame clock, crop or mouth shape is supplied
 by this module. The caller authors transparent crop edges and bottom placement.
+Optional ``story_bounds`` is an explicit normalized (left, top, right, bottom)
+business area, separate from the presenter box. Portrait defaults reserve the
+space above the actual presenter; the existing landscape default is retained.
 ``materials[material_key]`` requires asset_id, evidence_id, path, sha256 and one
 native ClassicSource dictionary under source. Optional receipt ``frames`` must
 equal the profile's table, allowing a separately frozen source table to bind it.
@@ -56,15 +59,16 @@ def _sha(value):
     return isinstance(value, str) and re.fullmatch(r'[0-9a-f]{64}', value) is not None
 
 
-def _keys(value, required, label):
-    _need(isinstance(value, dict) and set(value) == set(required),
+def _keys(value, required, label, optional=()):
+    _need(isinstance(value, dict) and set(required) <= set(value)
+          and set(value) <= set(required) | set(optional),
           label + ' must contain exactly its declared contract fields')
 
 
 def _profile(profile, duration):
     _keys(profile, ('version', 'id', 'material_key', 'master_role', 'frames',
                    'clips', 'cues', 'x', 'y', 'width', 'height', 'anchor', 'layout'),
-          'Presenter profile')
+          'Presenter profile', ('story_bounds',))
     _need(type(profile['version']) is int and profile['version'] == 1
           and _identifier(profile['id']) and _text(profile['material_key'])
           and profile['anchor'] == 'bottom' and profile['layout'] == 'presenter',
@@ -134,9 +138,34 @@ def _profile(profile, duration):
     _need(end == duration, 'Presenter cues must include the complete source tail')
 
 
-def validate_profile(profile, duration):
+def _story_bounds(profile, viewport):
+    _need(isinstance(viewport, (tuple, list)) and len(viewport) == 2
+          and all(type(v) is int and 0 < v <= 16384 for v in viewport),
+          'Supply the finite actual pixel viewport, width then height')
+    bounds = profile.get('story_bounds')
+    if bounds is None and viewport[1] > viewport[0]:
+        bounds = (.06, .06, .94, min(.89, profile['y']-profile['height']/2-.04))
+    if bounds is None:
+        return None  # Preserve the original landscape composition byte for byte.
+    _need(isinstance(bounds, (tuple, list)) and len(bounds) == 4
+          and all(_number(v) for v in bounds),
+          'Story bounds require four finite normalized edges')
+    left, top, right, bottom = bounds
+    _need(0 <= left < right <= 1 and 0 <= top < bottom <= 1,
+          'The presenter must leave a nonempty on-stage story area; revise its box or story_bounds')
+    box_left, box_right = profile['x']-profile['width']/2, profile['x']+profile['width']/2
+    box_top, box_bottom = profile['y']-profile['height']/2, profile['y']+profile['height']/2
+    _need(right <= box_left or left >= box_right or bottom <= box_top or top >= box_bottom,
+          'The independent story area must not overlap the declared presenter box')
+    return tuple(bounds)
+
+
+def validate_profile(profile, duration, *, viewport=(1280, 720), scene=None):
     """Validate explicit native metadata before any project or import write."""
     _profile(profile, duration)
+    bounds = _story_bounds(profile, viewport)
+    if scene is not None:
+        present(scene, 'presenter', viewport=viewport, target_bounds=bounds)
     return deepcopy(profile)
 
 
@@ -209,7 +238,7 @@ def _speech(scene, timed, energy, actor_id):
     return deepcopy(energy)
 
 
-def compose(scene, timed, profile, materials, energy):
+def compose(scene, timed, profile, materials, energy, *, viewport=(1280, 720)):
     """Return a deeply independent native scene using only caller-supplied facts.
 
     This does not certify imported rights, actual acoustic measurement, alpha
@@ -231,13 +260,14 @@ def compose(scene, timed, profile, materials, energy):
                                            'cartoonPresenter', 'classicArtwork')),
           'Finish the independent causal business stage before adding its narrator')
     _profile(profile, duration)
+    bounds = _story_bounds(profile, viewport)
     _need(all(isinstance(row, dict) and row.get('id') != profile['id'] for row in scene['layers'])
           and all(isinstance(row, dict) and row.get('subjectID') != profile['id']
                   and row.get('targetID') != profile['id'] for row in scene['storyActions']),
           'The narrator must remain independent of every business subject and target')
     speech = _speech(scene, timed, energy, profile['id'])
     item = _material(profile, materials)
-    projected = present(scene, 'presenter')
+    projected = present(scene, 'presenter', viewport=viewport, target_bounds=bounds)
     result = deepcopy(scene)
     result['layers'], result['storyActions'] = projected['layers'], projected['storyActions']
     result.pop('paperPresentation', None)

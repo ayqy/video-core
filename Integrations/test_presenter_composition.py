@@ -128,6 +128,42 @@ class PresenterCompositionRules(unittest.TestCase):
         self.assertNotIn('layout_projection',result)
         self.assertNotIn('layout_profile',result)
 
+    def test_portrait_uses_actual_viewport_and_leaves_story_above_bottom_presenter(self):
+        values=self.fixture();values[2].update(x=.5,y=.81,width=.62,height=.38)
+        values[0]['layers'].append(dict(id='fixture-road',kind='图片',x=.5,y=.5,
+            width=.1,height=.8,opacity=1,keyframes=[],texturedPath=dict(version=1,paths=[
+                dict(width=.1,points=[dict(x=.5,y=.1),dict(x=.5,y=.9)])])))
+        before=deepcopy(values)
+        result=compose(*values,viewport=(720,1280))
+        expected=present(values[0],'presenter',viewport=(720,1280),target_bounds=(.06,.06,.94,.58))
+        for a,b in zip(result['layers'],expected['layers']):
+            for key in ('x','y','width','height'):self.assertAlmostEqual(a[key],b[key])
+        self.assertEqual(values,before)
+        self.assertEqual(result['cartoonPresenter']['speech'],values[4])
+        self.assertEqual(result['cartoonPresenter']['y']+result['cartoonPresenter']['height']/2,1)
+        self.assertEqual(result['captions'],before[0]['captions'])
+        self.assertNotEqual(result['layers'],compose(*values)['layers'])
+
+    def test_explicit_story_area_is_respected_and_not_exported_as_native_presenter_metadata(self):
+        values=self.fixture();values[2]['story_bounds']=[.05,.1,.6,.85]
+        result=compose(*values)
+        self.assertEqual(result['layers'],present(values[0],'presenter',
+            target_bounds=values[2]['story_bounds'])['layers'])
+        self.assertNotIn('story_bounds',result['cartoonPresenter'])
+        self.assertEqual(values[2]['story_bounds'],[.05,.1,.6,.85])
+
+    def test_invalid_portrait_space_or_explicit_story_bounds_reject_before_input_mutation(self):
+        for viewport in ((0,1280),(720,True),(720,),('720',1280),(float('nan'),1280)):
+            values=self.fixture();before=deepcopy(values)
+            with self.subTest(viewport=viewport),self.assertRaises(PresenterCompositionError):
+                compose(*values,viewport=viewport)
+            self.assertEqual(values,before)
+        for bounds in ([0,0,1,1],[.1,.2,.1,.8],[0,0,.6,2],[0,0,.6,float('nan')],['0',0,.6,.8]):
+            self.reject(lambda s,t,p,m,e:p.update(story_bounds=bounds))
+        values=self.fixture();values[2].update(x=.5,y=.5,width=.6,height=1)
+        with self.assertRaisesRegex(PresenterCompositionError,'nonempty'):
+            compose(*values,viewport=(720,1280))
+
     def test_title_is_metadata_body_empty_and_paper_presentation_removed(self):
         values=self.fixture();result=compose(*values)
         self.assertEqual(result['title'],values[0]['title'])

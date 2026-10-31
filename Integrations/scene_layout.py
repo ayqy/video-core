@@ -136,8 +136,32 @@ class Projection:
 PROFILES={'presenter':(.025,.17,.595,.72),'plain':(.06,.21,.88,.68)}
 
 
-def visible_bounds(scene):
-    """Conservative union through all authored poses; invisible pool excluded."""
+def _viewport(value):
+    need(isinstance(value,(tuple,list)) and len(value)==2
+         and all(type(v) is int and 1<=v<=16384 for v in value),
+         'A viewport needs explicit positive bounded pixel width and height')
+    return value
+
+
+def _target_bounds(value):
+    need(isinstance(value,(tuple,list)) and len(value)==4
+         and all(type(v) in (int,float) and 0<=v<=1 for v in value)
+         and value[0]<value[2] and value[1]<value[3],
+         'Target bounds must be finite normalized left, top, right, bottom')
+    return value
+
+
+def visible_bounds(scene,*,viewport=(1280,720)):
+    """Union all authored poses in the actual pixel viewport; exclude hidden pools.
+
+    Ordinary layer boxes already use normalized x/y stage dimensions. Native
+    textured-road width is a fraction of pixel canvas width, so its normalized
+    y half-width is ``half * viewport_width / viewport_height``.
+    """
+    width,height=_viewport(viewport)
+    # Reducing the ratio preserves the old half*16/9 operation order exactly
+    # for the default viewport and all equivalent landscape dimensions.
+    divisor=math.gcd(width,height);aspect_width,aspect_height=width//divisor,height//divisor
     result=[]
     for layer in scene['layers']:
         if layer.get('opacity',1)<=0:continue
@@ -145,8 +169,8 @@ def visible_bounds(scene):
         if path:
             for road in path['paths']:
                 half=road['width']/2
-                # Width is normalized by canvas width; landscape is 16:9.
-                for p in road['points']:result.append((p['x']-half,p['y']-half*16/9,p['x']+half,p['y']+half*16/9))
+                half_y=half*aspect_width/aspect_height
+                for p in road['points']:result.append((p['x']-half,p['y']-half_y,p['x']+half,p['y']+half_y))
             continue
         poses=[dict(x=layer['x'],y=layer['y'],scale=1)]+layer.get('keyframes',[])
         max_scale=max(p.get('scale',1) for p in poses)
@@ -181,12 +205,24 @@ def transform(scene,projection):
     return result
 
 
-def present(scene,mode):
+def present(scene,mode,*,viewport=(1280,720),target_bounds=None):
+    """Fit the unchanged stage into a profile or explicit normalized LTRB box.
+
+    ``viewport`` is the actual renderer's pixel width/height. ``target_bounds``
+    is optional author layout metadata, not a Native Scene or layer field.
+    Omitted keywords retain the exact existing 1280x720 profile geometry.
+    """
     need(mode in PROFILES,'Unknown story presentation profile')
+    _viewport(viewport)
+    if target_bounds is None:x,y,w,h=PROFILES[mode]
+    else:
+        x,y,right,bottom=_target_bounds(target_bounds);w,h=right-x,bottom-y
     canonical=deepcopy(scene)
     prior=canonical.pop('layout_projection',None)
     if prior:canonical=transform(canonical,Projection(**prior).inverse())
-    left,top,right,bottom=visible_bounds(canonical);x,y,w,h=PROFILES[mode]
+    left,top,right,bottom=visible_bounds(canonical,viewport=viewport)
+    need(all(type(v) in (int,float) and math.isfinite(v) for v in (left,top,right,bottom))
+         and right>left and bottom>top,'Visible stage bounds need finite positive dimensions')
     scale=min(w/(right-left),h/(bottom-top))
     projection=Projection(scale,x+w/2-scale*(left+right)/2,y+h/2-scale*(top+bottom)/2)
     result=transform(canonical,projection);result['layout_projection']=projection.to_dict()

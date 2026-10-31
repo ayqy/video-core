@@ -50,27 +50,24 @@ jobs:
           tracked=set(subprocess.check_output(['git','ls-files'],cwd=root,text=True).splitlines())
           assert tracked==set(rows)|metadata|{'SOURCE-MANIFEST.md'}
           assert not any((root/name).exists() for name in ['App','MacApp','MacUITests','Examples','Premium','Sources/VideoGame','Sources/VideoCartoon','Sources/VideoAdvanced'])
-          BASE_PUBLIC_COMMIT='08bc6666609fda26297e90b13439f55cbe2c4af5'
-          ADDITIONS={
-              'Integrations/production_runtime.py', 'Integrations/test_production_styles.py',
-              'Integrations/presenter_composition.py', 'Integrations/test_presenter_composition.py',
-              'Integrations/sdk_material_import.py', 'Integrations/test_sdk_material_import.py',
-              'Integrations/native/ImportMotaMaterials.swift',
-          }
+          BASE_PUBLIC_COMMIT='79d62a878b4ff0b534318ab6aebb075f45b7a77c'
+          ADDITIONS=set()
           REVIEWED_CHANGED={
               '.github/workflows/free-production.yml', 'Integrations/README.md',
-              'Integrations/production_workflow.py', 'Integrations/production_document.py',
-              'Integrations/produce_knowledge.py',
+              'Integrations/production_document.py', 'Integrations/test_production_document.py',
+              'Integrations/presenter_composition.py', 'Integrations/test_presenter_composition.py',
+              'Integrations/scene_layout.py', 'Integrations/test_scene_layout.py',
+              'Integrations/test_production_styles.py',
           }
-          PROTECTED_COUNT=297
-          PROTECTED_SHA256='750008cdf321cf431d1ddc14cd8ddcfb06b2a019aa1101743db4c633af993639'
-          assert len(ADDITIONS)==7 and len(REVIEWED_CHANGED)==5 and not ADDITIONS&REVIEWED_CHANGED
+          PROTECTED_COUNT=300
+          PROTECTED_SHA256='2d0de24f73e4af3cc2960c748d256366b3d62dbba615374d65bf746834c4808e'
+          assert len(ADDITIONS)==0 and len(REVIEWED_CHANGED)==9 and not ADDITIONS&REVIEWED_CHANGED
           assert ADDITIONS|REVIEWED_CHANGED<=set(rows)
           protected={name:value for name,value in rows.items() if name not in ADDITIONS|REVIEWED_CHANGED}
           digest_input=''.join(f'{name}\0{protected[name][0]}\0{protected[name][1]}\n' for name in sorted(protected))
           assert len(protected)==PROTECTED_COUNT and hashlib.sha256(digest_input.encode()).hexdigest()==PROTECTED_SHA256
-          print('manifest_payloads=309 added_public_inputs=7 changed_reviewed_inputs=5 unchanged_protected_inputs=297 source_commit='+head)
-          print('protected_baseline_commit='+BASE_PUBLIC_COMMIT+' historical_scene_layout_run=41209745910 current_knowledge_production_checks=pending')
+          print('manifest_payloads=309 added_public_inputs=0 changed_reviewed_inputs=9 unchanged_protected_inputs=300 source_commit='+head)
+          print('protected_baseline_commit='+BASE_PUBLIC_COMMIT+' current_knowledge_production_checks=pending')
           PYCODE
 
       - name: Execute only the affected knowledge production rules
@@ -80,7 +77,8 @@ jobs:
           import sys, unittest
           sys.path.insert(0, 'Integrations')
           modules=('test_production_workflow', 'test_production_document',
-                   'test_presenter_composition', 'test_sdk_material_import', 'test_production_styles')
+                   'test_presenter_composition', 'test_sdk_material_import', 'test_production_styles',
+                   'test_scene_layout')
           suite=unittest.TestSuite(unittest.defaultTestLoader.loadTestsFromName(name) for name in modules)
           def cases(suite):
               for item in suite:
@@ -95,14 +93,17 @@ jobs:
               'test_presenter_composition.PresenterCompositionRules.test_cue_clock_rejects_missing_tail_gaps_overlap_unknown_clip_and_offsets',
               'test_presenter_composition.PresenterCompositionRules.test_energy_cannot_mix_actor_voice_source_text_or_duration',
               'test_presenter_composition.PresenterCompositionRules.test_existing_advanced_scene_trim_speed_or_pause_cannot_be_hidden',
+              'test_presenter_composition.PresenterCompositionRules.test_explicit_story_area_is_respected_and_not_exported_as_native_presenter_metadata',
               'test_presenter_composition.PresenterCompositionRules.test_finite_metadata_budgets_reject_excess_sprite_clip_and_cue_counts',
               'test_presenter_composition.PresenterCompositionRules.test_interior_holes_and_overlaps_reject_even_with_matching_head_and_tail',
+              'test_presenter_composition.PresenterCompositionRules.test_invalid_portrait_space_or_explicit_story_bounds_reject_before_input_mutation',
               'test_presenter_composition.PresenterCompositionRules.test_material_key_asset_evidence_hash_and_classic_source_must_agree',
               'test_presenter_composition.PresenterCompositionRules.test_minimum_required_material_receipt_works_without_an_extra_frame_manifest',
               'test_presenter_composition.PresenterCompositionRules.test_native_maximum_continuous_rms_budget_is_accepted',
               'test_presenter_composition.PresenterCompositionRules.test_native_maximum_sprite_clip_frame_and_cue_budgets_are_accepted',
               'test_presenter_composition.PresenterCompositionRules.test_nonfinite_bad_typed_or_outside_crop_and_box_reject',
               'test_presenter_composition.PresenterCompositionRules.test_only_shared_layout_geometry_changes_business_actions_and_layers',
+              'test_presenter_composition.PresenterCompositionRules.test_portrait_uses_actual_viewport_and_leaves_story_above_bottom_presenter',
               'test_presenter_composition.PresenterCompositionRules.test_presenter_cannot_alias_business_layer_subject_or_target',
               'test_presenter_composition.PresenterCompositionRules.test_prior_shared_layout_is_rebased_without_stale_native_scene_metadata',
               'test_presenter_composition.PresenterCompositionRules.test_profile_requires_all_explicit_contract_fields_and_no_unknown_defaults',
@@ -114,8 +115,11 @@ jobs:
               'test_production_document.DocumentTests.test_changed_material_unknown_symbol_and_wrong_narration_reject',
               'test_production_document.DocumentTests.test_conflicting_executor_catalog_rejects_without_a_production_home',
               'test_production_document.DocumentTests.test_foreign_business_claims_captions_and_unknown_fields_reject_before_import',
+              'test_production_document.DocumentTests.test_invalid_or_conflicting_story_layout_rejects_before_import',
               'test_production_document.DocumentTests.test_material_voice_cannot_replace_the_reserved_actual_audio_binding',
               'test_production_document.DocumentTests.test_named_exchange_and_cost_intervention_use_one_interface_without_delivery_ids',
+              'test_production_document.DocumentTests.test_plain_portrait_layout_uses_complete_motion_and_keeps_business_clock',
+              'test_production_document.DocumentTests.test_presenter_portrait_viewport_reaches_the_actual_composer',
               'test_production_document.DocumentTests.test_quantity_and_actor_names_are_model_values_not_a_three_coin_guard',
               'test_production_document.DocumentTests.test_real_material_binding_keeps_declared_source_and_receipt_ids',
               'test_production_document.DocumentTests.test_stage_does_not_stretch_a_voice_axis_or_migrate_review',
@@ -156,6 +160,18 @@ jobs:
               'test_production_workflow.SourceObservationContracts.test_frozen_source_revision_or_workspace_cannot_silently_advance',
               'test_production_workflow.SourceObservationContracts.test_one_or_three_sources_use_their_own_native_time_axis_and_observed_values',
               'test_production_workflow.SpeechAxisHookContracts.test_explicit_presentation_hook_owns_content_and_declared_frame_rate',
+              'test_scene_layout.SceneLayoutTests.test_arbitrary_place_names_have_real_connected_routes_and_a_shared_cut',
+              'test_scene_layout.SceneLayoutTests.test_invalid_actual_viewport_or_target_bounds_reject_without_mutation',
+              'test_scene_layout.SceneLayoutTests.test_motion_is_arc_length_continuous_exact_at_ends_and_still_transfers_remain_still',
+              'test_scene_layout.SceneLayoutTests.test_network_builder_accepts_different_cast_size_and_connects_every_declared_need',
+              'test_scene_layout.SceneLayoutTests.test_omitted_viewport_preserves_exact_default_profile_projection',
+              'test_scene_layout.SceneLayoutTests.test_portrait_explicit_story_box_fits_roads_poses_and_action_geometry_together',
+              'test_scene_layout.SceneLayoutTests.test_profile_maps_layer_action_waypoints_and_road_width_without_touching_sources_or_causes',
+              'test_scene_layout.SceneLayoutTests.test_repeated_cross_viewport_projection_does_not_accumulate_geometry_drift',
+              'test_scene_layout.SceneLayoutTests.test_road_bounds_follow_actual_viewport_and_all_authored_polyline_points',
+              'test_scene_layout.SceneLayoutTests.test_transparent_logical_subject_keeps_legal_size_and_projects_position_reversibly',
+              'test_scene_layout.SceneLayoutTests.test_visible_enlargement_cannot_exceed_native_maximum_size',
+              'test_scene_layout.SceneLayoutTests.test_visible_small_layer_rejects_before_native_with_its_actual_identity',
               'test_sdk_material_import.SyntheticInvocationRules.test_duplicate_json_or_native_rejection_is_not_accepted',
               'test_sdk_material_import.SyntheticInvocationRules.test_symlink_workspace_and_missing_resources_are_rejected_before_invocation',
               'test_sdk_material_import.SyntheticInvocationRules.test_uses_rtk_and_exact_four_explicit_argument_pairs_without_shell',
@@ -176,7 +192,7 @@ jobs:
           result=unittest.TextTestRunner(verbosity=2).run(suite)
           assert result.wasSuccessful() and result.testsRun==len(expected) and not result.skipped and not result.expectedFailures
           for identity in sorted(identities):print('knowledge_production_passed='+identity)
-          print('current_knowledge_production_rules='+str(len(expected))+' current_native_rules=0 current_scene_layout_rules=0 current_release_builds=0 media_executed=false human_review=false')
+          print('current_knowledge_production_rules='+str(len(expected))+' current_native_rules=0 current_scene_layout_rules=12 current_release_builds=0 media_executed=false human_review=false')
           PYCODE
 
       - name: Record exact evidence boundaries
@@ -184,13 +200,13 @@ jobs:
         run: |
           python3 -B - <<'PYCODE'
           import os
-          text=("Current scope executes only the declared pure production-workflow, production-document, presentation-style, image-presenter and SDK-receipt rule inventory, with exact identities and no skips or expected failures. "
+          text=("Current scope executes exactly 100 declared pure production-workflow, production-document, viewport-layout, presentation-style, image-presenter and SDK-receipt rules, with exact identities and no skips or expected failures. "
                 "CLI responses, source traces, runtime receipts, material bytes and RMS in these tests are explicit synthetic observations; they do not establish real Core import, rendering, acoustic measurement, installed publication, rights or whole-film approval. "
-                "The seven added public inputs provide explicit presenter/source composition, normal-runtime validation and a source-only native SDK import bridge. Callers still supply a complete evaluated StoryPlan, native stage, finite v3 sources, actual materials, current normal runtime and complete original audio with its provenance. RMS is volume only, never phoneme alignment. The fifteen SDK source files remain passive; upstream JS is never executed. "
-                "The other 297 payloads remain byte-identical to public baseline 08bc6666609fda26297e90b13439f55cbe2c4af5; only five reviewed existing inputs change. The earlier 32 production-workflow/document rules are historical on that baseline and are rerun here by exact identity. Its seven layout rules remain historical run 41209745910 only. "
+                "The reviewed changes pass the actual renderer viewport through shared layout and presenter composition, with optional explicit story bounds and an ordinary plain-layout entry. They preserve the existing default landscape composition; normalized geometry reprojection does not promise pixel-isotropic shapes across different aspects. Callers still supply a complete evaluated StoryPlan, native stage, finite v3 sources, actual materials, current normal runtime and complete original audio with its provenance. RMS is volume only, never phoneme alignment. The fifteen SDK source files remain passive; upstream JS is never executed. "
+                "The other 300 payloads remain byte-identical to public baseline 79d62a878b4ff0b534318ab6aebb075f45b7a77c; nine reviewed existing inputs change and no inputs are added. Existing production rules and all seven existing layout rules are rerun here by exact identity; the current layout inventory is 12 pure rules. "
                 "The 13 actor metadata rules, 12 native image-flip/RPC methods and ordinary Release CLI build remain historical run 41203531757; they are not rerun or counted as current passes. "
                 "Story speech and normal delivery remain historical run 41196437622, causal Core and author evidence remain historical run 41191732445, and older Python evidence remains historical run 41190009527. "
                 "This workflow does not build native products, execute business media, call TTS, read private assets or credentials, export closed painters, or grant listening, captions, commercial rights, upload consent or human-review approval.\n")
           with open(os.environ['GITHUB_STEP_SUMMARY'],'a') as stream:stream.write(text)
-          print('current_native_rules=0 current_scene_layout_rules=0 current_actor_motion_rules=0 current_release_builds=0 historical_scene_layout_run=41209745910 real_business_media_executed=false review=false')
+          print('current_native_rules=0 current_scene_layout_rules=12 current_actor_motion_rules=0 current_release_builds=0 real_business_media_executed=false review=false')
           PYCODE

@@ -107,6 +107,56 @@ class DocumentTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'both installed advanced'):
             DocumentProduction(args)
 
+    def test_plain_portrait_layout_uses_complete_motion_and_keeps_business_clock(self):
+        from scene_layout import present
+        from test_presenter_composition import inputs
+        scene,_,_,_,_=inputs(self.base,duration=480)
+        value=self.declaration();value.update(aspect='9:16',viewport=[720,1280],
+            story_layout=dict(mode='plain',bounds=[.06,.10,.94,.88]))
+        # The declaration has no injected causal claim; geometry is authored
+        # before Core attaches the actual independent source facts.
+        value['scene']['layers']=deepcopy(scene['layers'])
+        value['motion_actions']=deepcopy(scene['storyActions'])
+        document=self.load(value)
+        before=deepcopy(scene)
+        result=document.animate(scene,{}, {})
+        expected=present(scene,'plain',viewport=(720,1280),target_bounds=(.06,.10,.94,.88))
+        self.assertEqual(result['layers'],expected['layers'])
+        self.assertEqual(result['storyActions'],expected['storyActions'])
+        for key in ('voice','captions','storyCausality','durationFrames','narration'):
+            self.assertEqual(result[key],before[key])
+        self.assertEqual(scene,before)
+        self.assertNotIn('layout_projection',result)
+        self.assertNotIn('layout_profile',result)
+
+    def test_presenter_portrait_viewport_reaches_the_actual_composer(self):
+        from presenter_composition import compose
+        from test_presenter_composition import inputs
+        scene,timed,profile,materials,energy=inputs(self.base,duration=480,material='characters')
+        profile.update(x=.5,y=.81,width=.62,height=.38)
+        value=self.declaration();value.update(aspect='9:16',viewport=[720,1280],presenter=profile)
+        value['scene']['layers']=deepcopy(scene['layers'])
+        value['motion_actions']=deepcopy(scene['storyActions'])
+        document=self.load(value);document.energy=energy;document.voice_sha256=timed['voice_sha256']
+        row=document.rows['characters']
+        source=dict(assetID=materials['characters']['asset_id'],evidenceID=materials['characters']['evidence_id'],
+            hash=row['sha256'],source=row['source'],owner=row['owner'],license=row['license'])
+        actual=dict(characters=dict(materials['characters'],path=str(row['path']),sha256=row['sha256'],source=source))
+        result=document.animate(scene,timed,materials)
+        self.assertEqual(result,compose(scene,timed,profile,actual,energy,viewport=(720,1280)))
+
+    def test_invalid_or_conflicting_story_layout_rejects_before_import(self):
+        for layout in (dict(mode='game'),dict(mode='plain',bounds=[0,0,0,.8]),
+                       dict(mode='plain',bounds=[0,0,1,2]),dict(mode='plain',unknown=True)):
+            doc=self.declaration();doc['story_layout']=layout
+            with self.subTest(layout=layout),self.assertRaises(ValueError):self.load(doc)
+        from test_presenter_composition import inputs
+        scene,_,profile,_,_=inputs(self.base,duration=480,material='characters')
+        profile.update(x=.5,y=.81,width=.62,height=.38,story_bounds=[.06,.06,.061,.061])
+        doc=self.declaration();doc.update(aspect='9:16',viewport=[720,1280],presenter=profile)
+        doc['scene']['layers']=deepcopy(scene['layers'])
+        with self.assertRaisesRegex(ValueError,'Native .01..1'):self.load(doc)
+
 
 class FrozenSpeechTests(unittest.TestCase):
     """Synthetic archive shape rules only; none of these bytes are real media."""

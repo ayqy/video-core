@@ -20,6 +20,7 @@ from production_runtime import checked_runtime, checked_importer
 from presenter_composition import compose as compose_presenter, validate_profile
 from speech_energy import analyze_take
 from sdk_material_import import invoke_import, validate_receipt, validate_spec
+from scene_layout import present
 
 
 def project_presentation(value, projection):
@@ -90,7 +91,8 @@ class ProductionDocument:
         value = self.value
         object_keys(value, ('version', 'name', 'voice_identifier', 'aspect', 'fps', 'viewport',
                            'presentation', 'scene', 'materials'),
-                    ('motion_actions','retained_speech','projection','presenter','sdk_import','supporting_files'))
+                    ('motion_actions','retained_speech','projection','presenter','sdk_import','supporting_files',
+                     'story_layout'))
         need(type(value['version']) is int and value['version'] == 1
              and isinstance(value['name'], str) and 1 <= len(value['name']) <= 200
              and isinstance(value['voice_identifier'], str) and 1 <= len(value['voice_identifier']) <= 200,
@@ -149,7 +151,7 @@ class ProductionDocument:
         profile=value.get('presenter')
         if profile is not None:
             need(self.frames<=60*value['fps'], 'the current actual RMS analyzer supports at most sixty seconds')
-            validate_profile(profile,self.frames)
+            validate_profile(profile,self.frames,viewport=value['viewport'])
             need(profile['material_key'] in self.rows,'the presenter needs its explicitly declared actual original')
             need(scene.get('kind')=='图文讲解' and not any(scene.get(k) for k in
                  ('gameWorld','cartoonRig','cartoonPerformance','cartoonPresenter','classicArtwork')),
@@ -164,6 +166,18 @@ class ProductionDocument:
         actions = value.get('motion_actions', [])
         need(isinstance(actions, list) and len(actions) <= 256
              and len({a.get('id') for a in actions}) == len(actions), 'bounded unique authored motion required')
+        if profile is not None:
+            draft = deepcopy(scene)
+            draft['storyActions'] = deepcopy(actions)
+            validate_profile(profile, self.frames, viewport=value['viewport'], scene=draft)
+        layout = value.get('story_layout')
+        if layout is not None:
+            object_keys(layout, ('mode',), ('bounds',))
+            need(layout['mode'] == 'plain' and profile is None and projected['target']['mode'] == 'pencil',
+                 'an explicit plain story layout is separate from game and presenter composition')
+            draft = deepcopy(scene)
+            draft['storyActions'] = deepcopy(actions)
+            present(draft, 'plain', viewport=value['viewport'], target_bounds=layout.get('bounds'))
 
     def bind(self, value, assets):
         if isinstance(value, dict):
@@ -209,6 +223,12 @@ class ProductionDocument:
         result = deepcopy(scene)
         if 'motion_actions' in self.value:
             result['storyActions'] = deepcopy(self.value['motion_actions'])
+        layout = self.value.get('story_layout')
+        if layout is not None:
+            result = present(result, layout['mode'], viewport=self.value['viewport'],
+                             target_bounds=layout.get('bounds'))
+            result.pop('layout_projection', None)
+            result.pop('layout_profile', None)
         if self.value.get('presenter') is not None:
             actual={}
             for key,row in self.rows.items():
@@ -218,7 +238,8 @@ class ProductionDocument:
                         hash=row['sha256'],source=row['source'],owner=row['owner'],license=row['license']))
             measured=deepcopy(timed)
             measured['voice_sha256']=self.voice_sha256
-            result=compose_presenter(result,measured,self.value['presenter'],actual,self.energy)
+            result=compose_presenter(result,measured,self.value['presenter'],actual,self.energy,
+                                    viewport=self.value['viewport'])
         return result
 
 
@@ -287,6 +308,8 @@ class DocumentProduction(ProductionWorkflow):
         if self.document.value.get('presenter') is not None:
             paths += [Path(inspect.getfile(compose_presenter)),Path(inspect.getfile(analyze_take)),
                       Path(__file__).with_name('scene_layout.py')]
+        elif self.document.value.get('story_layout') is not None:
+            paths.append(Path(inspect.getfile(present)))
         if self.document.value.get('sdk_import') is not None:
             paths.append(Path(inspect.getfile(invoke_import)))
         return paths

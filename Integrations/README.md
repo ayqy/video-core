@@ -228,11 +228,16 @@ adapter调用承诺并发只生成一次，不把外部现场宣称为同一原�
 
 ### 显式配置的解说员与 SDK 素材
 
-`presenter_composition.compose(scene, timed, profile, materials, energy)` 将已经完成的
+`presenter_composition.compose(scene, timed, profile, materials, energy, *, viewport=(1280, 720))` 将已经完成的
 独立业务舞台与一个调用方指定的图片解说员组合。`profile` 须完整声明 `version: 1`、
 `id`、`material_key`、`master_role`、`frames: [{role, sourceRect}]`、原生 `clips/cues`、
 `x/y/width/height`、`anchor: bottom` 和 `layout: presenter`。实际人物、透明边缘、
 源图裁切及贴底位置均来自调用方的真实素材与显式元数据；没有默认人物或内置帧时钟。
+`viewport` 按像素宽、高传入实际渲染画布；制作 `9:16` 时应传 `(720, 1280)`。
+可选的 `profile.story_bounds` 是规范坐标 `[left, top, right, bottom]`，原点在左上，
+四边须在 `0..1` 内且形成非空区域，并与显式解说员框分离。省略它时，竖版将业务区
+安排在解说员框上方并保留间隔；框上方没有可用区域时明确拒绝，调用方须调整框或
+显式业务区。省略 `viewport` 和 `story_bounds` 的旧横版调用保持原布局。
 `materials[material_key]` 绑定正式导入的 `asset_id/evidence_id/path/sha256` 与完整
 `ClassicSource`；若另附冻结的 `frames` 表，必须与配置完全一致。同一原件可在不同
 原音与镜头中复用相同区域表，不生成替代图片或增加业务动作。
@@ -243,8 +248,19 @@ adapter调用承诺并发只生成一次，不把外部现场宣称为同一原�
 仅用于选择调用方实际提供的闭口/开口图；它不提供音素、词级或语音识别时序。
 当前真实 RMS 生产链只接受不超过 **60 秒** 的完整原音；profile 纯几何与元数据合同
 所允许的更大源帧上限，不代表分析器或本入口已经支持更长原音。
-组合复用 `scene_layout.present(scene, 'presenter')`，原业务动作的数量、因果、来源、
+组合复用 `scene_layout.present(scene, 'presenter', viewport=viewport, target_bounds=...)`，
+道路边界按实际画布宽高换算，业务图层、关键帧与动作路径一起投影；这不承诺不同画幅
+之间的像素等比重投影。原业务动作的数量、因果、来源、
 原音与字幕保持原事实，源对象不被修改；标题保留为元数据，屏幕正文清空。
+
+普通铅笔业务舞台可在 `ProductionDocument` 声明中单独设置
+`story_layout: {mode: 'plain', bounds: [left, top, right, bottom]}`；`bounds` 可省略，
+使用共享 plain 区域。此配置只适用于 pencil 表现，不能与图片解说员或 game 表现混用。
+入口使用声明中与 `aspect` 一致的实际 `viewport`：`16:9` 为 `[1280, 720]`，
+`9:16` 为 `[720, 1280]`。声明先验证区域，随后对完整动作几何进行布局；选择此路径时
+`scene_layout.py` 也进入 `implementation_inputs` 冻结清单。未声明 `story_layout`
+的普通制作入口沿用既有行为。布局只处理几何，不改业务模型、资源、原音或字幕时序，
+也不替代字幕净空检查及最终真实画面确认。
 
 `sdk_material_import.py` 与 `native/ImportMotaMaterials.swift` 提供显式 `mota-world`
 SDK 原件导入桥接。调用方声明规范的 `ThirdParty/GameAssets` 目录、全部 **15 件**
@@ -260,7 +276,7 @@ Python 侧把桥接回执与正常素材清单、含源备份中的证据逐项�
 实际 product 及 `native_input_sha256`，将桥接可执行文件、链接回执和 Swift 源码
 三件输入一起冻结；只给一个可执行文件或匹配的文件摘要不足以进入此路径。
 
-`production_document.py` 的表现选择通过显式 `projection`、`presenter`、`sdk_import`
+`production_document.py` 的表现选择通过显式 `projection`、`presenter`、`story_layout`、`sdk_import`
 及原始材料配置进入统一生产流程；图片解说员与游戏表现分别声明。高级表现须提供
 真实已安装 runtime，`production_runtime.checked_runtime` 核对正常发布的 package、
 冷启动回执、可执行文件、完整插件目录及来源摘要。Host 仍执行原有签名、信任、
