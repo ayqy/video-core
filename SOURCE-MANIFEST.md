@@ -2,10 +2,10 @@
 
 VideoFree source export · package_free.py · version 1
 
-生成时间：2026-10-31 18:10:26 北京时间
+生成时间：2026-10-31 19:19:47 北京时间
 
-- 源码与必要元数据：291个文件；4566648字节（不含本清单）。
-- 整体内容指纹：`bc32c3592f76973db06c6c07d88687b6f401ee7c675ce5e558be9d49c3a4d92c`。
+- 源码与必要元数据：293个文件；4587140字节（不含本清单）。
+- 整体内容指纹：`7f2d34dc055f7519354418c035577c5b745e4920201b4aae8c0c9cc268810ece`。
 - 来源：受控原始工程中的逐文件白名单；Package.swift与唯一免费制作workflow来自Distribution/Free精确模板，README由发行脚本生成。
 - 本包不含.git，不可作为新业务checkout；本清单生成过程不执行构建、设备验收、签名安装或公共上传，各阶段以独立证据为准。
 - 排除：App、VideoGame、VideoCartoon、Premium、高级实现运行时测试、私有仓库地址、凭据、客户数据、缓存、日志及媒体过程产物。
@@ -14,7 +14,7 @@ VideoFree source export · package_free.py · version 1
 
 | SHA-256 | 字节数 | 包内路径 / 原工程来源 |
 |---|---:|---|
-| 97ce7711ed35eeda12c51c8897a68ae27201fc39cfd9cffa038328199a32a44c | 14109 | .github/workflows/free-production.yml |
+| 353441050a23ab9b8c5671dd3a7263c3d2673ffa67d202d3d9d040d6d08880d2 | 8460 | .github/workflows/free-production.yml |
 | 853ed55ec629fd0f06a4c3850d06081d6e5bd2c5d60999637662d6dc564f3389 | 42491 | Integrations/README.md |
 | 39dd8274ff1e6b0649acb63281087a1144e1f4a4e0eed3dc2b92e10df2cbd121 | 28488 | Integrations/asset_reuse.py |
 | b855d428b3b24845239bb209cacc4f23767ab7b25097546d372f00fb724a7a30 | 29749 | Integrations/causal_story.py |
@@ -26,7 +26,7 @@ VideoFree source export · package_free.py · version 1
 | 331a2efd301fd9cf623d76e9e47bf85f3fa43fb8d1b6b3281831e418013075f0 | 41267 | Integrations/codex_production.py |
 | a7c3eef63ba036caa939577e231d5b78eab80ca8e0e9f2eeb47286ab453bc011 | 1771 | Integrations/cosyvoice-cpu-lock.txt |
 | 36bdcf361abca71ae28992a3d5fd2f1c658738f9ba954a21ddb41fc7516b7ceb | 6332 | Integrations/discover.py |
-| 83cf523d4b78bbcfe40448a5780352bdc07dee722cc51ae001dcd016cac0da5d | 6093 | Integrations/examples/README.md |
+| 21d3bc29cdefa300c84eacd482c6ea1f852b99ffc11e784456d76def4b3b7a01 | 7419 | Integrations/examples/README.md |
 | af03ab8a8b4fdbd68030d7fca1a906912c494ee99c619916c99f98edbe0e080a | 34345 | Integrations/examples/free_production.py |
 | 50010c3eba6eb1cddfefe04c47af7decbbcb6cba748be658ad2e2f6c8bdba3f7 | 9551 | Integrations/examples/knowledge_action_cost.py |
 | 1b8353ca4c0fa66a1f6dba945d7dd9bbe879c3f3e8c4df285b1a8c5396f032de | 13728 | Integrations/examples/knowledge_delivery.py |
@@ -62,6 +62,7 @@ VideoFree source export · package_free.py · version 1
 | 4e6c3d244692e2df763696499bf72f986df492d06686cdd4039140dc3e124901 | 12366 | Integrations/story_action.py |
 | 2313faf2c95eda4066453410e8b575629ba07517250d28ab04eb40ffef2b471d | 4768 | Integrations/story_evaluation.py |
 | 5682aac94f1ee5556819f5072affa7264a510ed333e17ade7879238cc49b0403 | 16093 | Integrations/story_planning.py |
+| ba031e4db5f560df0bb8cd509282778d7e598c89f47ecebc64f6649d867c3668 | 11990 | Integrations/story_speech.py |
 | f2b806a04eac051eb79b00c3043226753926bad31489f79a5ae4a1b2c498b934 | 19660 | Integrations/test_asset_reuse.py |
 | 3d58a5bbc9c94ceb34de0eef1d44eca4a99fa655708fd268be95578705b2ca91 | 13233 | Integrations/test_causal_story.py |
 | 5445bb3a7631b593015148bff31a49bcc1d881c199f4eb94bddc8104b9deafe4 | 32261 | Integrations/test_claude_stream.py |
@@ -80,6 +81,7 @@ VideoFree source export · package_free.py · version 1
 | 2ca1ab302d1d104e3597baca439d062d41dc04f6db3a689807cf3c241521c191 | 7169 | Integrations/test_story_action.py |
 | 7738ba898bc5ebaa352320a1a0069c2259395c7be87fbed9ecab9e78e2430999 | 2350 | Integrations/test_story_evaluation.py |
 | 6ece442e3dd06cdb6ad28da4620afdae98ee52cf17020504f0dec977ed461716 | 7342 | Integrations/test_story_planning.py |
+| bf91550e865bc0c2e2a31d0d3a2b376181e269579c1968becb444196f11bcd1a | 12825 | Integrations/test_story_speech.py |
 | 8862227b00ea0e6f84b2af37f84955bb48b0becf631e9cce0cf50010027f6d84 | 39805 | Integrations/tests/test_expressive_tts.py |
 | 0ba4172bde961e0fe11a7847eb44f146e59a5e5a7f52a7d19777ad0b2c30c355 | 30183 | Integrations/tests/test_prepare_voice_design.py |
 | 2fca7c9c8d7b029690e3e4314454a82530ac83bdcc9006864f97597c85635ff5 | 25992 | Integrations/tests/test_readaloud_tts.py |

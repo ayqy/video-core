@@ -13,7 +13,7 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  knowledge-delivery-stage:
+  story-speech-stage:
     if: github.repository == 'ayqy/video-core' && github.event.repository.private == false
     runs-on: macos-15-intel
     timeout-minutes: 40
@@ -38,7 +38,7 @@ jobs:
           assert head==os.environ['VIDEO_SOURCE_COMMIT']
           entries=re.findall(r'(?m)^\| ([a-f0-9]{64}) \| ([0-9]+) \| ([^|\n]+) \|$',(root/'SOURCE-MANIFEST.md').read_text())
           rows={name:(digest,int(size)) for digest,size,name in entries}
-          assert len(entries)==len(rows)==291
+          assert len(entries)==len(rows)==293
           for name,(digest,size) in rows.items():
               relative=Path(name)
               assert not relative.is_absolute() and '..' not in relative.parts
@@ -50,17 +50,31 @@ jobs:
           tracked=set(subprocess.check_output(['git','ls-files'],cwd=root,text=True).splitlines())
           assert tracked==set(rows)|metadata|{'SOURCE-MANIFEST.md'}
           assert not any((root/name).exists() for name in ['App','MacApp','MacUITests','Examples','Premium','Sources/VideoGame','Sources/VideoCartoon','Sources/VideoAdvanced'])
-          BASE_PUBLIC_COMMIT='362301be78e6a5db1026bbb054320fa3d783f68c'
-          ADDITIONS=set()
-          REVIEWED_CHANGED={'.github/workflows/free-production.yml', 'Tests/VideoCoreTests/StoryCausalSourcesTests.swift', 'Sources/VideoCore/StoryCausalSources.swift', 'Integrations/knowledge_story_smoke.py'}
-          PROTECTED_COUNT=287
-          PROTECTED_SHA256='fea8c074ef49704b7b16df37b5fc52ae4e3af0c67564dcfa58b7e2571b965a2b'
+          BASE_PUBLIC_COMMIT='b114079889f914ab36c95d2ccae3868d615ca613'
+          ADDITIONS={'Integrations/story_speech.py', 'Integrations/test_story_speech.py'}
+          REVIEWED_CHANGED={'.github/workflows/free-production.yml', 'Integrations/examples/README.md'}
+          PROTECTED_COUNT=289
+          PROTECTED_SHA256='fe72d080bad622c3946479106dda0abe7be7ca596f9e96a5800a424ed9b954b7'
+          assert len(ADDITIONS)==2 and not ADDITIONS & REVIEWED_CHANGED
           assert ADDITIONS<=set(rows) and REVIEWED_CHANGED<=set(rows)
-          protected={name:value for name,value in rows.items() if name not in REVIEWED_CHANGED}
+          protected={name:value for name,value in rows.items() if name not in (REVIEWED_CHANGED | ADDITIONS)}
           digest_input=''.join(f'{name}\0{protected[name][0]}\0{protected[name][1]}\n' for name in sorted(protected))
           assert len(protected)==PROTECTED_COUNT and hashlib.sha256(digest_input.encode()).hexdigest()==PROTECTED_SHA256
-          print('manifest_payloads=291 unchanged_protected_inputs=287 source_commit='+head)
-          print('protected_baseline_commit='+BASE_PUBLIC_COMMIT+' blanket_native_reuse=false')
+          print('manifest_payloads=293 unchanged_protected_inputs=289 source_commit='+head)
+          print('protected_baseline_commit='+BASE_PUBLIC_COMMIT+' reused_core_and_legacy_author_run=41191732445 blanket_native_reuse=false')
+          PYCODE
+
+      - name: Verify the fifteen complete original voice timing rules
+        shell: bash
+        run: |
+          python3 -B - <<'PYCODE'
+          import sys, unittest
+          sys.path.insert(0, 'Integrations')
+          suite=unittest.defaultTestLoader.discover('Integrations', pattern='test_story_speech.py')
+          assert suite.countTestCases()==15,'Exact new literal timing rule inventory changed'
+          result=unittest.TextTestRunner(verbosity=2).run(suite)
+          assert result.wasSuccessful() and result.testsRun==15 and not result.skipped, 'A new timing rule failed, skipped or was not executed'
+          print('current_story_speech_literal_rules=15 sdk_executed=false audio_decoded=false human_review=false')
           PYCODE
 
       - name: Build the current standalone free CLI
@@ -87,27 +101,12 @@ jobs:
           finally:log.unlink(missing_ok=True)
           PYCODE
 
-      - name: Exercise the new author through the actual standalone CLI
+      - name: Exercise the unchanged delivery author through the current standalone CLI
         shell: bash
         run: |
           python3 -B - <<'PYCODE'
           import os, subprocess, sys
           from pathlib import Path
-          result=subprocess.run([sys.executable,'-B','Integrations/knowledge_story_smoke.py',
-              '--binary',os.environ['VIDEO_FREE_BINARY'],'--output',str(Path(os.environ['RUNNER_TEMP'])/'knowledge-author-normal-cli')],
-              text=True,capture_output=True,timeout=120)
-          print(result.stdout,end='')
-          if result.stderr:print(result.stderr,file=sys.stderr,end='')
-          assert result.returncode==0,'Actual standalone author chain failed'
-          assert result.stdout.startswith('knowledge_story_smoke: passed (28 actual normal CLI calls; '),\
-              'Actual author, comparison, no-op and independent recovery call inventory changed'
-          cost=subprocess.run([sys.executable,'-B','Integrations/knowledge_story_smoke.py',
-              '--binary',os.environ['VIDEO_FREE_BINARY'],'--output',str(Path(os.environ['RUNNER_TEMP'])/'knowledge-cost-normal-cli'),'--action-cost'],
-              text=True,capture_output=True,timeout=120)
-          print(cost.stdout,end='')
-          if cost.stderr:print(cost.stderr,file=sys.stderr,end='')
-          assert cost.returncode==0,'Actual single-cost normal author chain failed'
-          assert cost.stdout.startswith('knowledge_story_smoke: passed (30 actual normal CLI calls; action_cost=v2; '), 'Exact v2 normal call inventory differs'
           delivery=subprocess.run([sys.executable,'-B','Integrations/knowledge_story_smoke.py',
               '--binary',os.environ['VIDEO_FREE_BINARY'],'--output',str(Path(os.environ['RUNNER_TEMP'])/'knowledge-delivery-normal-cli'),'--delivery'],
               text=True,capture_output=True,timeout=120)
@@ -117,90 +116,17 @@ jobs:
           assert delivery.stdout.startswith('knowledge_story_smoke: passed (32 actual normal CLI calls; delivery=v1; '), 'Exact delivery call inventory differs'
           PYCODE
 
-      - name: Run complete affected Core causal class with exact identities
-        shell: bash
-        run: |
-          python3 -B - <<'PYCODE'
-          from pathlib import Path
-          import hashlib, json, os, re, subprocess
-          SWIFT_SUITES={('VideoCoreTests',suite):suite+'.swift' for suite in
-                        ('StoryCausalSourcesTests',)}
-          SELECTED={}
-
-          def affected_methods(root):
-              expected=set()
-              for (target,suite),filename in SWIFT_SUITES.items():
-                  source=(Path(root)/'Tests'/target/filename).read_text()
-                  declaration=re.search(r'(?m)^(?:final )?class '+re.escape(suite)+r'\s*:\s*XCTestCase\s*\{',source)
-                  if declaration is None:raise ValueError('Affected XCTest class missing: '+suite)
-                  source=source[declaration.end():]
-                  following=re.search(r'(?m)^(?:final )?class \w+\s*:',source)
-                  if following:source=source[:following.start()]
-                  methods=re.findall(r'(?m)^[ \t]*(?:@\w+(?:\([^\n)]*\))?[ \t]+)*func[ \t]+(test\w+)[ \t]*\(',source)
-                  if not methods or len(methods)!=len(set(methods)):raise ValueError('Incomplete or duplicate affected methods: '+suite)
-                  expected.update((target,suite,method) for method in methods)
-              for (target,suite),methods in SELECTED.items():
-                  source=(Path(root)/'Tests'/target/(suite+'.swift')).read_text()
-                  declared=re.findall(r'(?m)^[ \t]*func[ \t]+(test\w+)[ \t]*\(',source)
-                  if not methods or len(set(methods))!=len(methods) or not set(methods)<=set(declared):raise ValueError('Selected compatibility method missing or duplicated')
-                  expected.update((target,suite,method) for method in methods)
-              return expected
-
-          def swift_filter(expected):
-              if not expected:raise ValueError('Empty affected test scope')
-              return '|'.join('^'+re.escape(target)+r'\.'+re.escape(suite)+'/'+re.escape(method)+'$'
-                              for target,suite,method in sorted(expected))
-
-          def verify_swift_stream(text,expected):
-              pattern=re.compile(r"^Test Case '(?:-\[(?:(?P<ot>\w+)\.)?(?P<os>\w+) (?P<om>test\w+)\]|(?:(?P<st>\w+)\.)?(?P<ss>\w+)\.(?P<sm>test\w+))' (?P<event>started|passed|failed|skipped)\b")
-              started=[];passed=[]
-              for line in text.splitlines():
-                  match=pattern.match(line)
-                  if match is None:
-                      if line.startswith("Test Case '") and re.search(r"' (started|passed|failed|skipped)\b",line):raise ValueError('Unparsed actual XCTest identity')
-                      continue
-                  suite=match['os'] or match['ss'];method=match['om'] or match['sm'];target=match['ot'] or match['st']
-                  if target is None:
-                      candidates={r[0] for r in expected if r[1:]==(suite,method)}
-                      if len(candidates)!=1:raise ValueError('Ambiguous actual XCTest target')
-                      target=candidates.pop()
-                  identity=(target,suite,method)
-                  if identity not in expected:raise ValueError('Unexpected actual XCTest method')
-                  if match['event']=='started':started.append(identity)
-                  elif match['event']=='passed':passed.append(identity)
-                  else:raise ValueError('Actual affected XCTest failed or skipped')
-              if len(started)!=len(expected) or set(started)!=expected:raise ValueError('Missing or duplicate actual XCTest starts')
-              if len(passed)!=len(expected) or set(passed)!=expected:raise ValueError('Missing or duplicate actual XCTest passes')
-              if len(expected) not in [int(v) for v in re.findall(r'Executed (\d+) tests?',text)]:raise ValueError('Actual XCTest summary incomplete')
-              return len(expected)
-          root=Path(os.environ['GITHUB_WORKSPACE'])
-          expected=affected_methods(root)
-          assert len(expected)==30,'Exact current complete causal class inventory changed'
-          scratch=Path(os.environ['RUNNER_TEMP'])/'video-free-paper-explanation'
-          log=Path(os.environ['RUNNER_TEMP'])/'video-free-paper-explanation-rules.log'
-          try:
-              with log.open('wb') as stream:
-                  result=subprocess.run(['swift','test','--package-path',str(root),'--scratch-path',str(scratch),'--disable-sandbox','--jobs','2','-c','release','--filter',swift_filter(expected)],stdout=stream,stderr=subprocess.STDOUT,timeout=900,env=dict(os.environ,VIDEO_TEST_CLI=os.environ['VIDEO_FREE_BINARY']))
-              text=log.read_text(errors='replace')
-              for line in text.splitlines():
-                  if re.search(r'error:|fatal error:|Executed \d+ tests?|Test Suite .* (passed|failed)',line,re.I):print(line[:700])
-              assert result.returncode==0,'Affected Core classes or selected compatibility methods failed'
-              count=verify_swift_stream(text,expected)
-              print('current_affected_swift_rules=passed distinct_test_ids='+str(count))
-              print('actual_method_inventory_sha256='+hashlib.sha256(json.dumps(sorted(expected),separators=(',',':')).encode()).hexdigest())
-          finally:log.unlink(missing_ok=True)
-          PYCODE
-
       - name: Record exact evidence boundaries
         shell: bash
         run: |
           python3 -B - <<'PYCODE'
           import os
-          text=("Current public CLI and changed knowledge-author source passed the exact 30-method Core causal class and three normal author chains. "
-                "The v1 actor-plan case retains its wire and 28 real calls. The explicit v2 cost case obtains both complete traces from Core, changes only one existing action cost, binds visual quantities to actual deductions and transfers, rejects forged traces without a revision, and independently restores its complete backup. "
-                "The delivery case records two real sources, binds one good and a later reverse payment, rejects payment without completed delivery, rejects direct-CLI duplicate delivery claims and independently restores all histories. These are internal author-contract checks with ordinary layers; no media, voice, rights or human review is granted. "
-                "The 50 unchanged Python rules reuse successful prior run 41190009527; layout, ReadAloud, paper media and advanced painters are unchanged and reuse earlier evidence; they were not rerun or counted as new passes. "
+          text=("Current public CLI was rebuilt and the unchanged delivery author executed 32 actual normal CLI calls, including its Core recording, dependency refusals, CAS, no-op and independent backup recovery. "
+                "The 15 new story_speech rules used explicitly synthetic literal timing inputs; they did not run the SDK, decode audio or validate an actual voice take. "
+                "The protected 289 payloads are byte-identical to public baseline b114079889f914ab36c95d2ccae3868d615ca613. Its successful run 41191732445 supplies the unchanged 30-method Core causal class, 28-call v1 author and 30-call cost-v2 author evidence; those were not rerun or counted as current passes. "
+                "The unchanged 50 Python rules retain their original successful run 41190009527 as already carried by baseline run 41191732445. Layout, ReadAloud service calls, paper media and advanced painters retain their original evidence and were not rerun. "
+                "Actual new voice/media integration is separately verified in its private production environment; this public run grants no real voice, subtitle, material rights or whole-film human approval. "
                 "No private art, advanced implementation, original business audio or credentials were published.\n")
           with open(os.environ['GITHUB_STEP_SUMMARY'],'a') as stream:stream.write(text)
-          print('current_native_build=passed current_causal_native_rules=30 current_author_v1_cost_v2_delivery=passed media_executed=false review=false')
+          print('current_native_build=passed current_story_speech_literal_rules=15 current_delivery_cli_calls=32 current_causal_native_rules=0 reused_causal_native_rules=30 current_legacy_v1_cost_v2_calls=0 media_executed=false review=false')
           PYCODE
