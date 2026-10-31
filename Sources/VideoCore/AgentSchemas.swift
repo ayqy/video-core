@@ -152,29 +152,41 @@ public enum AgentSchemas {
         for (key,declaration) in StoryActionSchema.records { var record=entity(declaration).object!;record["additionalProperties"] = .boolean(false);result[key] = .object(record) }
         for (key,declaration) in StoryCausalSchema.records {var record=entity(declaration).object!;record["additionalProperties"] = .boolean(false);result[key] = .object(record)}
         for (key,values) in StoryCausalSchema.enums {result[key] = .object(["type":.string("string"),"enum":.array(values.map(AgentValue.string))])}
-        constraint("StoryCausality","version",["enum":.array([.number(1),.number(2)])])
+        constraint("StoryCausality","version",["enum":.array([.number(1),.number(2),.number(3)])])
         constraint("StoryCausality","sources",["minItems":.number(1),"maxItems":.number(3)])
         constraint("StoryCausality","actors",["minItems":.number(1),"maxItems":.number(64)])
         constraint("StoryCausality","bindings",["minItems":.number(1),"maxItems":.number(256)])
         constraint("StoryCausalBinding","requires",["maxItems":.number(32)])
         constraint("StoryCausalActionCost","actionID",["pattern":.string("^[A-Za-z0-9_-]{1,40}$"),"minLength":.number(1),"maxLength":.number(40)])
         constraint("StoryCausalActionCost","newCost",["minimum":.number(0),"maximum":.number(100_000)])
-        // The new optional field is absent in v1, never an explicit null. Old
+        constraint("StoryCausalRuleChange","ruleID",["pattern":.string("^[A-Za-z0-9_-]{1,40}$"),"minLength":.number(1),"maxLength":.number(40)])
+        // New optional fields are absent in old versions, never explicit nulls. Old
         // actor-plan DTOs and their nullable legacy fields keep their wire form.
         var causalSource=result["StoryCausalSource"]!.object!,sourceProperties=causalSource["properties"]!.object!
-        sourceProperties["actionCost"]=shape("StoryCausalActionCost");causalSource["properties"] = .object(sourceProperties)
-        causalSource["not"] = .object(["required":.array([.string("intervention"),.string("actionCost")])])
-        causalSource["allOf"] = .array([.object([
-            "if":.object(["required":.array([.string("actionCost")])]),
-            "then":.object(["required":.array([.string("parentID")]),"properties":.object(["parentID":shape("s")])])
+        sourceProperties["actionCost"]=shape("StoryCausalActionCost");sourceProperties["ruleChange"]=shape("StoryCausalRuleChange")
+        causalSource["properties"] = .object(sourceProperties)
+        causalSource["not"] = .object(["anyOf":.array([
+            .object(["required":.array([.string("intervention"),.string("actionCost")])]),
+            .object(["required":.array([.string("intervention"),.string("ruleChange")])]),
+            .object(["required":.array([.string("actionCost"),.string("ruleChange")])])
         ])])
+        causalSource["allOf"] = .array(["actionCost","ruleChange"].map { field in .object([
+            "if":.object(["required":.array([.string(field)])]),
+            "then":.object(["required":.array([.string("parentID")]),"properties":.object(["parentID":shape("s")])])
+        ]) })
         result["StoryCausalSource"] = .object(causalSource)
         var causality=result["StoryCausality"]!.object!
-        causality["allOf"] = .array([.object([
-            "if":.object(["properties":.object(["version":.object(["const":.number(1)])])]),
-            "then":.object(["properties":.object(["sources":.object(["items":.object(["not":.object(["required":.array([.string("actionCost")])])])])])]),
-            "else":.object(["properties":.object(["sources":.object(["contains":.object(["required":.array([.string("actionCost")])])])])])
-        ])])
+        func versionedSources(_ version:Int,_ requirements:[String:AgentValue])->AgentValue {
+            .object(["if":.object(["properties":.object(["version":.object(["const":.number(Decimal(version))])])]),
+                "then":.object(["properties":.object(["sources":.object(requirements)])])])
+        }
+        let withoutRuleChange:AgentValue = .object(["not":.object(["required":.array([.string("ruleChange")])])])
+        causality["allOf"] = .array([
+            versionedSources(1,["items":.object(["not":.object(["anyOf":.array([
+                .object(["required":.array([.string("actionCost")])]),.object(["required":.array([.string("ruleChange")])])])])])]),
+            versionedSources(2,["items":withoutRuleChange,"contains":.object(["required":.array([.string("actionCost")])])]),
+            versionedSources(3,["contains":.object(["required":.array([.string("ruleChange")])])])
+        ])
         result["StoryCausality"] = .object(causality)
         for (key,values) in StoryActionSchema.enums { result[key] = .object(["type":.string("string"),"enum":.array(values.map(AgentValue.string))]) }
         for (key,declaration) in CartoonPresenterSchema.records {var record=entity(declaration).object!;record["additionalProperties"] = .boolean(false);result[key] = .object(record)}
@@ -182,6 +194,11 @@ public enum AgentSchemas {
         for (key,values) in CartoonPerformanceSchema.enums { result[key] = .object(["type":.string("string"),"enum":.array(values.map(AgentValue.string))]) }
         for (key, declaration) in KnowledgeSimulationSchema.records { result[key] = entity(declaration) }
         for (key, values) in KnowledgeSimulationSchema.enums { result[key] = .object(["type": .string("string"), "enum": .array(values.map(AgentValue.string))]) }
+        // These existing DTO decoders already reject unknown nested fields;
+        // discovery must expose that same rule-replacement contract.
+        for key in ["KnowledgeRule","KnowledgeRuleCondition","KnowledgeRuleEffect"] {
+            var record=result[key]!.object!;record["additionalProperties"] = .boolean(false);result[key] = .object(record)
+        }
         let enums:[String:[String]]=["Purpose":Purpose.allCases.map(\.rawValue),"SceneKind":SceneKind.allCases.map(\.rawValue),"Aspect":Aspect.allCases.map(\.rawValue),"RangeKind":CourseMapping.RangeKind.allCases.map(\.rawValue),"CustomerKind":CustomerKind.allCases.map(\.rawValue),"RevenueKind":RevenueKind.allCases.map(\.rawValue),"Settlement":Settlement.allCases.map(\.rawValue),"AuthorizationScope":AuthorizationScope.allCases.map(\.rawValue),"LayerKind":SceneLayer.Kind.allCases.map(\.rawValue),"PaperLayout":PaperPresentation.Layout.allCases.map(\.rawValue),"LayerEntranceKind":LayerEntrance.Kind.allCases.map(\.rawValue),"CharacterSilhouette":CharacterSilhouette.allCases.map(\.rawValue),"BaiduSegmentKind":["text","image","video"],"BillingKind":["charge","refundRequested","refundReceived"],"ClassicGameplay":ClassicGameplay.allCases.map(\.rawValue),"ClassicDerivation":ClassicArtwork.Derivation.allCases.map(\.rawValue),"ClassicAudioUse":ClassicAudioCue.Use.allCases.map(\.rawValue)]
         for (key,values) in enums{result[key] = .object(["type":.string("string"),"enum":.array(values.map(AgentValue.string))])}
         let edits:[String:String] = ["insertScene":"_0:Scene _1:i","replaceScene":"_0:s _1:Scene","removeScene":"_0:s","moveScene":"_0:s _1:i","splitScene":"_0:s _1:i","lockScene":"_0:s _1:b","aspect":"_0:Aspect","cta":"_0:s","music":"_0?:s","audioQuality":"_0?:AudioQualityPolicy","productionBrief":"_0?:ProductionBrief","purpose":"_0:Purpose","restore":"_0:s","lockLayer":"_0:s _1:s _2:b","recordSimulation":"_0:s","confirmSimulationRecording":"_0:s"]

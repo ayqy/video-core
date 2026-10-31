@@ -214,6 +214,72 @@ class ArtifactPreservationContracts(unittest.TestCase):
         self.assertTrue(all(Path(a['path']).is_file() for a in rows))
 
 
+class MotionIntegrityContracts(unittest.TestCase):
+    """Synthetic declarations only; no Native execution or media acceptance."""
+    def scene(self):
+        return dict(id='UNIT-scene',durationFrames=90,narration='UNIT unchanged speech',
+            voice=dict(assetID='UNIT-voice',durationFrames=90,listened=False),
+            sourceStartFrame=0,speed=1,pauseFrames=0,
+            layers=[dict(id='UNIT-coin'),dict(id='UNIT-recipient')],
+            storyActions=[dict(id='UNIT-give',kind='transfer',subjectID='UNIT-coin',targetID='UNIT-recipient',
+                startFrame=10,endFrame=30,quantity=3,**{'from':dict(x=.2,y=.6),'to':dict(x=.5,y=.6)})],
+            storyCausality=dict(version=3,poolSubjectID='UNIT-coin',actors=[],sources=[dict(id='UNIT-source')],
+                bindings=[dict(actionID='UNIT-give',sourceID='UNIT-source')]))
+
+    def animate(self,scene,change):
+        host=ProductionWorkflow.__new__(ProductionWorkflow);host.timed=dict(UNIT='unchanged timing')
+        def author(value,timed,assets):
+            change(value)
+            return value
+        host.author=SimpleNamespace(animate=author)
+        return host.animate_scene(scene,{})
+
+    def test_continuous_pickup_and_putdown_preserve_original_binding_clock_quantity_and_take(self):
+        scene=self.scene();snapshot=deepcopy(scene)
+        def change(value):
+            value['storyActions'].extend([
+                dict(id='UNIT-pickup',kind='move',subjectID='UNIT-coin',startFrame=0,endFrame=10,
+                     **{'from':dict(x=.1,y=.6),'to':dict(x=.2,y=.6)}),
+                dict(id='UNIT-putdown',kind='move',subjectID='UNIT-coin',startFrame=40,endFrame=60,
+                     **{'from':dict(x=.5,y=.6),'to':dict(x=.7,y=.7)})])
+        animated=self.animate(scene,change)
+        self.assertEqual(scene,snapshot)
+        self.assertEqual(animated['storyActions'][0],snapshot['storyActions'][0])
+        for key in ('storyCausality','voice','narration','durationFrames','sourceStartFrame','speed','pauseFrames'):
+            self.assertEqual(animated[key],snapshot[key])
+        self.assertEqual(len(animated['storyActions']),3)
+
+    def test_animation_cannot_add_unbound_transfer_or_quantity(self):
+        extras=[dict(id='UNIT-invented',kind='transfer',subjectID='UNIT-coin',targetID='UNIT-recipient',
+                     startFrame=40,endFrame=60,quantity=999,**{'from':dict(x=.5,y=.6),'to':dict(x=.7,y=.6)}),
+                dict(id='UNIT-invented',kind='show',subjectID='UNIT-recipient',startFrame=40,endFrame=60,quantity=999)]
+        for extra in extras:
+            scene=self.scene();snapshot=deepcopy(scene)
+            with self.subTest(extra=extra),self.assertRaisesRegex(ValueError,'unbound visual movements'):
+                self.animate(scene,lambda value:value['storyActions'].append(deepcopy(extra)))
+            self.assertEqual(scene,snapshot)
+
+    def test_animation_keyframes_cannot_mask_a_disconnected_next_movement(self):
+        scene=self.scene()
+        def change(value):
+            value['layers'][0]['keyframes']=[dict(frame=40,x=.8,y=.6)]
+            value['storyActions'].append(dict(id='UNIT-jump',kind='move',subjectID='UNIT-coin',startFrame=40,endFrame=60,
+                **{'from':dict(x=.8,y=.6),'to':dict(x=.9,y=.6)}))
+        with self.assertRaisesRegex(ValueError,'previous actual endpoint'):self.animate(scene,change)
+
+    def test_animation_still_cannot_modify_bound_clock_kind_recipient_or_quantity(self):
+        for fields in (dict(startFrame=11),dict(endFrame=31),dict(kind='move'),dict(targetID='UNIT-other'),dict(quantity=999)):
+            with self.subTest(fields=fields),self.assertRaisesRegex(ValueError,'cannot change business action'):
+                self.animate(self.scene(),lambda value:value['storyActions'][0].update(fields))
+
+    def test_animation_without_causality_preserves_its_existing_legacy_contract(self):
+        scene=self.scene();scene.pop('storyCausality')
+        extra=dict(id='UNIT-legacy',kind='transfer',subjectID='UNIT-coin',targetID='UNIT-recipient',
+                   startFrame=40,endFrame=60,quantity=999,**{'from':dict(x=.8,y=.6),'to':dict(x=.9,y=.6)})
+        animated=self.animate(scene,lambda value:value['storyActions'].append(deepcopy(extra)))
+        self.assertEqual(animated['storyActions'][-1],extra)
+
+
 class SourceObservationContracts(unittest.TestCase):
     def verify(self,project,state):
         cli=FakeCLI();cli.projects=[project];host=bare_host(cli)
@@ -227,6 +293,27 @@ class SourceObservationContracts(unittest.TestCase):
             before=deepcopy((project,state));cli=self.verify(project,state)
             self.assertEqual((project,state),before)
             self.assertEqual([r[0] for r in cli.calls],['projects list'])
+
+    def test_v3_rule_change_witness_must_match_the_persistent_source_exactly(self):
+        # These are literal observations for the receipt comparison only;
+        # native validity, rule execution and model behavior are not mocked as passes.
+        project,state=literal_sources(count=2)
+        state['plan']['version']=state['recorded']['version']=3
+        declared=state['plan']['sources'][1]
+        witness=dict(ruleID='UNIT-rule',rule=dict(id='UNIT-rule',label='UNIT-replacement',
+            conditions=[],effects=[dict(kind='transfer',amount=5)]))
+        declared.update(parent_id=state['plan']['sources'][0]['id'],rule_change=deepcopy(witness))
+        stored=state['recorded']['sources'][1]
+        stored.update(parentID=declared['parent_id'],ruleChange=deepcopy(witness))
+        before=deepcopy((project,state));self.verify(project,state)
+        self.assertEqual((project,state),before)
+        for issue in ('missing','changed','undeclared'):
+            changed=deepcopy(state);row=changed['recorded']['sources'][1]
+            if issue=='missing':row.pop('ruleChange')
+            elif issue=='changed':row['ruleChange']['rule']['effects'][0]['amount']=999
+            else:changed['plan']['sources'][1].pop('rule_change')
+            with self.subTest(issue=issue),self.assertRaisesRegex(ValueError,'complete persistent Core observations'):
+                self.verify(project,changed)
 
     def test_caller_trace_model_seed_window_or_row_set_cannot_replace_persistent_observations(self):
         changes=[lambda s:s['recorded']['sources'][0]['trace']['events'][0]['actors'][0].update(resources=999),

@@ -124,11 +124,49 @@ Claude的3-turn/0.10美元上限会话与缩减后的1-turn/0.01美元上限探�
 
 先用`record_sources(source_project, plan, invoke)`正常录制明确的完整来源；已有录制只通过dry-run核验，不写人审确认。来源工程须与表现工程分开。每个反事实使用相同种子。显式计划v1只改变一个角色计划；计划v2可另用独立的`action_cost: {actionID, newCost}`声明改变一项现有行动成本（0至100000的整数），同一来源不可混用两种干预。v2必须至少有一项成本反事实，父模型的其余字段须逐一保持；正常`knowledge compare`必须返回真实的已录来源对及实际行为差异。只有请求、标签或未生效规则变化不能充当行为差异。
 
+显式计划v3增加`rule_change: {ruleID, rule}`，其中`rule`必须包含原生规则的完整
+`id/label/conditions/effects`。`ruleID`指向父模型中唯一已有规则，替换规则的`id`须相同，
+整行须实际改变；规则之外的完整模型、其他规则、顺序、种子和原生来源时间轴均保持。
+根来源不含任何干预；每个子来源在`intervention`、`action_cost`和`rule_change`中恰好
+声明一种。v3至少包含一项规则替换，也可有后续单角色计划或单成本子来源。
+v1/v2原字段和编码保持；它们不能夹带`rule_change`。
+
+例如，在已经设计好父子来源、独立来源场景和展示窗口之后，可明确替换一条付款规则
+中的金额。`rule_index`及`effect_index`由作者选定，不能由素材名称或画面推断：
+
+```python
+from copy import deepcopy
+
+plan['version'] = 3
+replacement = deepcopy(parent['model']['ruleTable']['rules'][rule_index])
+assert replacement['effects'][effect_index]['kind'] == 'transfer'
+replacement['effects'][effect_index]['amount'] = 4
+child['rule_change'] = {'ruleID': replacement['id'], 'rule': replacement}
+child['model'] = deepcopy(parent['model'])
+child['model']['ruleTable']['rules'][rule_index] = deepcopy(replacement)
+```
+
+该例以不含其他干预的子来源为前提；子来源仍须指向同种子的较早父来源。替换
+`conditions`也使用同一完整规则合同，不提供脚本或任意模型补丁。作者声明不表示
+规则一定会生效：正常Core重新验证完整模型并计算所有来源，资源不足、条件不满足
+和规则未应用分别保留其实际结果。v3每个子来源都须与父来源存在实际语义行为差异；
+仅改标签、摘要、请求、诊断或未应用匹配会拒绝。Python不解释条件或计算资金流。
+正常记录和表现来源使用精确的`ruleChange: {ruleID, rule}`原生字段，完整源模型、
+轨迹及此声明一同保留；`ProductionWorkflow`恢复读回也核对该声明，不接受同轨迹下
+丢失或替换的来源见证。该扩展仅属于Host的`storyCausality.version=3`，不改变插件ABI。
+
 `compile_presentation(target_project, plan, recorded)`把事件选择器编译为既有动作合同；实际执行、扣费、资金流、状态变化和结果均从唯一实际事件取值，金额不由作者填入。所有细节及其镜头均须有表现，前置细节先完成，事件和余额按源时间推进。动作的出方、收方和主体归属分别校验；同一真实资金流不能重复认领。路径使用显式锚点及中间点，同一主体连续移动端点须连贯；跨来源重复移动不做隐式复位。
+
+已有因果来源的场景在完整动作编译及`ProductionWorkflow.animate_scene`后继续核对
+同一约束：原业务动作的ID、类型、对象、时窗、接收人及数量保持，只允许显式修改
+几何路径或增加普通视觉动作。`transfer`或含`quantity`的动作须有原因果绑定；取出、
+跟手、携带和放下使用普通`move`，不能另造一笔付款或交货。后加普通动作也须从前一
+`move/transfer`的实际终点继续，不能绕过端点检查；同一主体的移动绑定不能跨来源，
+分支需要独立主体。该检查不识别图片、推断持有人或授予动作效果审核。
 
 `apply_presentation(target_project, plan, recorded, invoke)`读回真实来源工程及冻结版本，再通过正常Core dry-run独立重算所有轨迹，最后执行一次CAS编辑。`invoke(command, body, dry_run)`是调用方已有的正常CLI路由。重复应用须重新查询目标并更新`plan.target.base_revision`；内容无变化时不产生新版本。正常编辑撤销受影响确认，既有历史与原音保留。目标旁白必须逐字等于镜头旁白拼接，不能给新知识套旧配音。
 
-示例[双方同意的资金互换](examples/knowledge_exchange.py)把同一个适配器接到两个参与人、seed19、两轮规则和五镜头；它只是有限资金协议，未模拟商品价值或交货付款。另见[单一成本反事实](examples/knowledge_action_cost.py)：两条来源只把确认成本由一枚改为两枚，由Core正常重算扣费、实际互换和最终余额；仅改变输入摘要或未生效动作成本不足以授权不同结果。录制与编译均复查实际差异，旧v1来源不增加新字段。当前入口明确拒绝旧知识模型v1/v2转换、任意规则正文反事实及解说员重编排；这些不能从通用作者入口推定已实现。普通`KnowledgeStoryboardPlan`原有入口继续保留。规则测试使用有界夹具，不能代替真实Core录制、完整有声成片或人工审片。
+示例[双方同意的资金互换](examples/knowledge_exchange.py)把同一个适配器接到两个参与人、seed19、两轮规则和五镜头；它只是有限资金协议，未模拟商品价值或交货付款。另见[单一成本反事实](examples/knowledge_action_cost.py)：两条来源只把确认成本由一枚改为两枚，由Core正常重算扣费、实际互换和最终余额；仅改变输入摘要或未生效动作成本不足以授权不同结果。录制与编译均复查实际差异，旧v1来源不增加新字段。当前入口明确拒绝旧知识模型v1/v2转换、一次混改多条规则或其他模型字段及解说员重编排；这些不能从通用作者入口推定已实现。普通`KnowledgeStoryboardPlan`原有入口继续保留。规则测试使用有界夹具，不能代替真实Core录制、完整有声成片或人工审片。
 
 [先交货后付款](examples/knowledge_delivery.py)复用上述入口和Core既有的`delivery/payment`绑定。`delivery`选择器声明`actor_id/rule_id/from_state_id/to_state_id/to_actor_id`，只认实际已应用的状态转换；表现为一件自有货物移交给另一真实角色。`payment`选择器声明`rule_id/from_actor_id/to_actor_id`，金额只读真实结算，且须在`requires`中引用同分支、同一对买卖双方的完整交货动作。交货真实事件须严格早于付款事件，动作也须完成；同tick内先画货再画钱不能冒充先交后付。剧情细节明确接收人，货物与钱使用独立主体；重复交货及同笔钱按transfer/payment两种名称重复认领均拒绝。示例只改变卖家的交货计划，对照不交货也不收钱；不计算商品价值，不默认提供图片、声音或媒体审核。
 
@@ -305,6 +343,16 @@ Python 侧把桥接回执与正常素材清单、含源备份中的证据逐项�
 
 相关规则使用明确标注的合成素材字节、时间轴、RMS、回执和发布元数据，不计作真实
 Core 导入、真实声音分析、Native 构建、正常安装、视觉效果或人工审片证据。
+
+公开`Free production` CI保留原106条Python规则，并按精确方法清单执行八模块174条
+纯规则：知识适配器46、故事动作16、生产流程31、声明入口16、解说员27、SDK导入13、
+表现风格13、布局12。CLI回执和轨迹夹具仍属于合成观察。该CI另执行当前48个Core
+方法（完整40个`StoryCausalSourcesTests`及8个相关方法），逐项核对实际开始、通过及
+总数，拒绝缺项、重复、失败、跳过和零测试；随后在同一SwiftPM缓存构建一个普通
+Release `video` CLI。这两类计数分别证明适配合同、原生规则与编译，不代替真实CLI
+业务CAS、媒体制作、声画效果、完整工程恢复或人审。公开载荷仍为309件；相对基准
+`8cc76071b3de425d6e1670c7c787d4eded235550`，仅12件既有输入在审定修改范围内，
+其余297件逐字节保持，无新增公开材料或闭源绘制实现。
 
 ## 本地H.264编码实现与缓存
 

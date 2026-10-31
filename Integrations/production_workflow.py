@@ -329,6 +329,15 @@ class ProductionWorkflow:
             need({k:v for k,v in action.items() if k not in ('from','to','waypoints')}==
                 {k:v for k,v in after[identity].items() if k not in ('from','to','waypoints')},
                 'actor motion cannot change business action identity, kind, subject, time, recipient or quantity')
+        if original.get('storyCausality') is not None:
+            from story_action import actions_for_scene
+            subjects={layer['id'] for layer in animated.get('layers',[])}
+            subjects.update(entity['id'] for entity in (animated.get('gameWorld') or {}).get('entities',[]))
+            subjects.update(actor['id'] for actor in (animated.get('cartoonRig') or {}).get('actors',[]))
+            if animated.get('cartoonPresenter'):
+                subjects.add(animated['cartoonPresenter']['id'])
+            actions_for_scene(animated.get('storyActions',[]),subjects,animated['durationFrames'],
+                              causality=original['storyCausality'])
         return animated
 
     def prepare(self):
@@ -464,7 +473,8 @@ class ProductionWorkflow:
             trace=_trace(declared,scenes[declared['scene_id']],self.FPS)
             row=dict(id=declared['id'],model=deepcopy(declared['model']),seed=declared['seed'],trace=trace,
                 startFrame=declared['start_frame'],endFrame=declared['end_frame'])
-            for original,stored in (('parent_id','parentID'),('intervention','intervention'),('action_cost','actionCost')):
+            for original,stored in (('parent_id','parentID'),('intervention','intervention'),('action_cost','actionCost'),
+                                    ('rule_change','ruleChange')):
                 if original in declared:row[stored]=deepcopy(declared[original])
             expected.append(row)
         need(expected==recorded['sources'],'recorded source rows must equal the complete persistent Core observations')

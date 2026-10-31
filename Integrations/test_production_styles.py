@@ -215,6 +215,9 @@ class PresenterPreflightRules(unittest.TestCase):
 
     def test_real_adapter_join_keeps_the_frozen_timed_object_and_business_facts(self):
         scene, timed, profile, materials, energy = presenter_inputs(self.base)
+        # This adapter crosses the shared causal boundary. Link the synthetic
+        # binding to its already declared literal source, without inventing one.
+        scene['storyCausality']['bindings'][0]['sourceID'] = scene['storyCausality']['sources'][0]['id']
         item = materials[profile['material_key']]
         scene['evidenceIDs'].append(item['evidence_id'])
         voice = self.base/'synthetic-voice.fixture'

@@ -16,7 +16,7 @@ jobs:
   knowledge-production-stage:
     if: github.repository == 'ayqy/video-core' && github.event.repository.private == false
     runs-on: macos-15-intel
-    timeout-minutes: 10
+    timeout-minutes: 20
     env:
       VIDEO_SOURCE_COMMIT: ${{ github.sha }}
       PYTHONDONTWRITEBYTECODE: '1'
@@ -50,20 +50,30 @@ jobs:
           tracked=set(subprocess.check_output(['git','ls-files'],cwd=root,text=True).splitlines())
           assert tracked==set(rows)|metadata|{'SOURCE-MANIFEST.md'}
           assert not any((root/name).exists() for name in ['App','MacApp','MacUITests','Examples','Premium','Sources/VideoGame','Sources/VideoCartoon','Sources/VideoAdvanced'])
-          BASE_PUBLIC_COMMIT='a10f360fa996bb1fe01601af233e4807fee7b183'
+          BASE_PUBLIC_COMMIT='8cc76071b3de425d6e1670c7c787d4eded235550'
           ADDITIONS=set()
           REVIEWED_CHANGED={
-              '.github/workflows/free-production.yml', 'Integrations/README.md',
-              'Integrations/production_workflow.py', 'Integrations/test_production_workflow.py',
+              '.github/workflows/free-production.yml',
+              'Integrations/README.md',
+              'Integrations/knowledge_story.py',
+              'Integrations/production_workflow.py',
+              'Integrations/story_action.py',
+              'Integrations/test_knowledge_story.py',
+              'Integrations/test_production_styles.py',
+              'Integrations/test_production_workflow.py',
+              'Integrations/test_story_action.py',
+              'Sources/VideoCore/AgentSchemas.swift',
+              'Sources/VideoCore/StoryCausalSources.swift',
+              'Tests/VideoCoreTests/StoryCausalSourcesTests.swift',
           }
-          PROTECTED_COUNT=305
-          PROTECTED_SHA256='ca4ddfe64973f945d852385f30ce65027c62151defa0d74757d1c13370d33e1c'
-          assert len(ADDITIONS)==0 and len(REVIEWED_CHANGED)==4 and not ADDITIONS&REVIEWED_CHANGED
+          PROTECTED_COUNT=297
+          PROTECTED_SHA256='66685f166661d1aebbbb313564d4faa0fa22b1f23a47712ecb79f362ee357a8b'
+          assert len(ADDITIONS)==0 and len(REVIEWED_CHANGED)==12 and not ADDITIONS&REVIEWED_CHANGED
           assert ADDITIONS|REVIEWED_CHANGED<=set(rows)
           protected={name:value for name,value in rows.items() if name not in ADDITIONS|REVIEWED_CHANGED}
           digest_input=''.join(f'{name}\0{protected[name][0]}\0{protected[name][1]}\n' for name in sorted(protected))
           assert len(protected)==PROTECTED_COUNT and hashlib.sha256(digest_input.encode()).hexdigest()==PROTECTED_SHA256
-          print('manifest_payloads=309 added_public_inputs=0 changed_reviewed_inputs=4 unchanged_protected_inputs=305 source_commit='+head)
+          print('manifest_payloads=309 added_public_inputs=0 changed_reviewed_inputs=12 unchanged_protected_inputs=297 source_commit='+head)
           print('protected_baseline_commit='+BASE_PUBLIC_COMMIT+' current_knowledge_production_checks=pending')
           PYCODE
 
@@ -73,21 +83,59 @@ jobs:
           python3 -B - <<'PYCODE'
           import sys, unittest
           sys.path.insert(0, 'Integrations')
-          modules=('test_production_workflow', 'test_production_document',
-                   'test_presenter_composition', 'test_sdk_material_import', 'test_production_styles',
-                   'test_scene_layout')
+          modules=('test_production_workflow', 'test_production_document', 'test_presenter_composition', 'test_sdk_material_import', 'test_production_styles', 'test_scene_layout', 'test_knowledge_story', 'test_story_action')
           suite=unittest.TestSuite(unittest.defaultTestLoader.loadTestsFromName(name) for name in modules)
           def cases(suite):
               for item in suite:
                   if isinstance(item, unittest.TestSuite):yield from cases(item)
                   else:yield item
           expected={
-              'test_production_workflow.ArtifactPreservationContracts.test_all_four_identities_are_deeply_preserved_and_existing_equal_bytes_are_idempotent',
-              'test_production_workflow.ArtifactPreservationContracts.test_distinct_native_paths_cannot_collide_on_a_persistent_basename',
-              'test_production_workflow.ArtifactPreservationContracts.test_foreign_root_escape_leaf_and_parent_symlinks_reject_before_output_creation',
-              'test_production_workflow.ArtifactPreservationContracts.test_invalid_late_original_metadata_or_bytes_reject_before_any_output_write',
-              'test_production_workflow.ArtifactPreservationContracts.test_last_existing_target_conflicts_and_symlinks_leave_all_other_targets_unwritten',
-              'test_production_workflow.ArtifactPreservationContracts.test_workflow_decode_boundary_uses_persisted_mp4_by_mime_without_starting_a_decoder',
+              'test_knowledge_story.KnowledgeStoryTests.test_actual_presentation_dry_cas_and_refreshed_plan_are_idempotent',
+              'test_knowledge_story.KnowledgeStoryTests.test_apply_verifies_real_source_project_revision_scene_and_persisted_trace',
+              'test_knowledge_story.KnowledgeStoryTests.test_arbitrary_native_sources_generate_owned_flows_states_and_routes',
+              'test_knowledge_story.KnowledgeStoryTests.test_balance_comes_from_the_actual_actor_and_merges_existing_update',
+              'test_knowledge_story.KnowledgeStoryTests.test_both_transfer_endpoints_and_deposit_source_are_owned',
+              'test_knowledge_story.KnowledgeStoryTests.test_corrupt_or_partial_sources_and_wrong_final_balances_are_rejected',
+              'test_knowledge_story.KnowledgeStoryTests.test_cost_is_explicit_v2_only_mutually_exclusive_and_not_a_noop',
+              'test_knowledge_story.KnowledgeStoryTests.test_cost_source_cannot_smuggle_any_other_model_or_wire_change',
+              'test_knowledge_story.KnowledgeStoryTests.test_detail_dependencies_cannot_be_dropped_by_removing_beat_requires',
+              'test_knowledge_story.KnowledgeStoryTests.test_each_story_detail_and_each_shot_use_must_have_a_real_compiled_beat',
+              'test_knowledge_story.KnowledgeStoryTests.test_incorrect_native_state_and_false_outcome_are_rejected',
+              'test_knowledge_story.KnowledgeStoryTests.test_matched_rule_without_applied_transfer_cannot_show_money',
+              'test_knowledge_story.KnowledgeStoryTests.test_native_presentation_rejects_before_real_cas',
+              'test_knowledge_story.KnowledgeStoryTests.test_native_source_failure_stops_before_mutation_or_fabrication',
+              'test_knowledge_story.KnowledgeStoryTests.test_old_models_unsafe_trade_and_rule_change_branches_are_explicitly_rejected',
+              'test_knowledge_story.KnowledgeStoryTests.test_one_actual_transfer_cannot_be_claimed_twice',
+              'test_knowledge_story.KnowledgeStoryTests.test_pencil_reuses_the_same_actions_without_a_game_or_second_interpreter',
+              'test_knowledge_story.KnowledgeStoryTests.test_recording_uses_one_normal_dry_cas_then_exact_query_and_compare',
+              'test_knowledge_story.KnowledgeStoryTests.test_requested_but_unfunded_action_is_not_a_performed_action',
+              'test_knowledge_story.KnowledgeStoryTests.test_requested_only_rejections_and_diagnostic_order_are_not_behavior',
+              'test_knowledge_story.KnowledgeStoryTests.test_same_source_movement_must_continue_and_cross_source_reset_is_not_implicit',
+              'test_knowledge_story.KnowledgeStoryTests.test_source_identity_readback_does_not_replace_native_presentation_validation',
+              'test_knowledge_story.KnowledgeStoryTests.test_source_project_is_separate_and_frozen_before_any_native_call',
+              'test_knowledge_story.KnowledgeStoryTests.test_source_time_cannot_go_backwards_without_explicit_dependencies',
+              'test_knowledge_story.KnowledgeStoryTests.test_speak_rejects_missing_or_overlong_actual_model_labels',
+              'test_knowledge_story.KnowledgeStoryTests.test_speak_uses_only_actual_executed_action_and_resulting_state_labels',
+              'test_knowledge_story.KnowledgeStoryTests.test_state_change_cannot_borrow_another_story_actor',
+              'test_knowledge_story.KnowledgeStoryTests.test_story_detail_event_and_actual_narration_must_match',
+              'test_knowledge_story.KnowledgeStoryTests.test_transfer_amount_is_read_from_the_actual_unique_flow_and_never_supplied',
+              'test_knowledge_story.KnowledgeStoryTests.test_unknown_fields_nonfinite_anchors_stale_revisions_and_hidden_recipients_rejected',
+              'test_knowledge_story.KnowledgeStoryTests.test_v1_canonical_edits_story_specs_and_plan_digests_are_unchanged',
+              'test_knowledge_story.KnowledgeStoryTests.test_v2_can_declare_a_later_legacy_actor_plan_without_rewriting_its_dto',
+              'test_knowledge_story.KnowledgeStoryTests.test_v2_cost_record_compile_and_apply_reuse_normal_calls_and_real_observations',
+              'test_knowledge_story.KnowledgeStoryTests.test_v2_old_recording_rejected_by_core_is_never_replaced_or_confirmed',
+              'test_knowledge_story.KnowledgeStoryTests.test_v2_rejects_digest_only_and_requested_only_observations_in_record_and_compile',
+              'test_knowledge_story.KnowledgeStoryTests.test_v2_requires_exact_persisted_cost_model_and_core_dry_verification',
+              'test_knowledge_story.KnowledgeStoryTests.test_v3_allows_later_cost_or_actor_plan_children_only_along_the_exact_parent',
+              'test_knowledge_story.KnowledgeStoryTests.test_v3_amount_and_condition_replacements_record_compile_and_apply_without_mutating_inputs',
+              'test_knowledge_story.KnowledgeStoryTests.test_v3_balances_read_the_selected_actual_amount_or_failed_condition_observation',
+              'test_knowledge_story.KnowledgeStoryTests.test_v3_core_rejection_is_terminal_for_the_attempt_and_never_grants_confirmation',
+              'test_knowledge_story.KnowledgeStoryTests.test_v3_digest_labels_requested_choices_and_inactive_matches_are_not_actual_behavior',
+              'test_knowledge_story.KnowledgeStoryTests.test_v3_recorded_rule_change_must_match_the_exact_declared_wire_object',
+              'test_knowledge_story.KnowledgeStoryTests.test_v3_replacement_cannot_change_any_other_complete_model_or_source_identity',
+              'test_knowledge_story.KnowledgeStoryTests.test_v3_replacement_is_one_unique_complete_changed_same_id_rule_with_strict_nested_fields',
+              'test_knowledge_story.KnowledgeStoryTests.test_v3_rule_change_is_versioned_and_each_child_has_exactly_one_intervention',
+              'test_knowledge_story.KnowledgeStoryTests.test_windows_future_dependencies_and_scene_local_axis_are_strict',
               'test_presenter_composition.PresenterCompositionRules.test_actual_frame_table_is_stable_for_the_same_original_across_takes',
               'test_presenter_composition.PresenterCompositionRules.test_arbitrary_actor_material_duration_quantity_and_business_ids_compose',
               'test_presenter_composition.PresenterCompositionRules.test_changed_missing_empty_or_symlink_original_is_rejected',
@@ -144,12 +192,23 @@ jobs:
               'test_production_styles.SourceRevisionRules.test_new_import_requires_the_exact_current_revision',
               'test_production_styles.SourceRevisionRules.test_recording_cannot_hide_model_seed_time_scene_identity_or_branch_changes',
               'test_production_styles.SourceRevisionRules.test_reused_import_survives_normal_recording_successors_without_mutation',
+              'test_production_workflow.ArtifactPreservationContracts.test_all_four_identities_are_deeply_preserved_and_existing_equal_bytes_are_idempotent',
+              'test_production_workflow.ArtifactPreservationContracts.test_distinct_native_paths_cannot_collide_on_a_persistent_basename',
+              'test_production_workflow.ArtifactPreservationContracts.test_foreign_root_escape_leaf_and_parent_symlinks_reject_before_output_creation',
+              'test_production_workflow.ArtifactPreservationContracts.test_invalid_late_original_metadata_or_bytes_reject_before_any_output_write',
+              'test_production_workflow.ArtifactPreservationContracts.test_last_existing_target_conflicts_and_symlinks_leave_all_other_targets_unwritten',
+              'test_production_workflow.ArtifactPreservationContracts.test_workflow_decode_boundary_uses_persisted_mp4_by_mime_without_starting_a_decoder',
               'test_production_workflow.FrozenInputContracts.test_changed_pinned_bytes_fail_before_even_a_cached_operation',
               'test_production_workflow.FrozenInputContracts.test_extra_helper_or_asset_changes_are_not_controller_upgrades',
               'test_production_workflow.FrozenInputContracts.test_freeze_includes_engine_actual_caller_author_inputs_assets_and_original_speech',
               'test_production_workflow.FrozenInputContracts.test_old_home_missing_the_new_engine_pin_is_never_silently_migrated',
               'test_production_workflow.FrozenInputContracts.test_only_explicit_retained_controller_change_may_upgrade',
               'test_production_workflow.FrozenInputContracts.test_speech_provenance_binds_the_actual_axis_original_inputs_and_same_request_receipt',
+              'test_production_workflow.MotionIntegrityContracts.test_animation_cannot_add_unbound_transfer_or_quantity',
+              'test_production_workflow.MotionIntegrityContracts.test_animation_keyframes_cannot_mask_a_disconnected_next_movement',
+              'test_production_workflow.MotionIntegrityContracts.test_animation_still_cannot_modify_bound_clock_kind_recipient_or_quantity',
+              'test_production_workflow.MotionIntegrityContracts.test_animation_without_causality_preserves_its_existing_legacy_contract',
+              'test_production_workflow.MotionIntegrityContracts.test_continuous_pickup_and_putdown_preserve_original_binding_clock_quantity_and_take',
               'test_production_workflow.OriginalJobContracts.test_expired_lease_reclaims_and_resumes_only_the_original_job',
               'test_production_workflow.OriginalJobContracts.test_failed_or_interrupted_jobs_resume_before_running_the_same_identity',
               'test_production_workflow.OriginalJobContracts.test_live_original_lease_performs_no_execution_or_replacement',
@@ -162,6 +221,7 @@ jobs:
               'test_production_workflow.SourceObservationContracts.test_caller_trace_model_seed_window_or_row_set_cannot_replace_persistent_observations',
               'test_production_workflow.SourceObservationContracts.test_frozen_source_revision_or_workspace_cannot_silently_advance',
               'test_production_workflow.SourceObservationContracts.test_one_or_three_sources_use_their_own_native_time_axis_and_observed_values',
+              'test_production_workflow.SourceObservationContracts.test_v3_rule_change_witness_must_match_the_persistent_source_exactly',
               'test_production_workflow.SpeechAxisHookContracts.test_explicit_presentation_hook_owns_content_and_declared_frame_rate',
               'test_scene_layout.SceneLayoutTests.test_arbitrary_place_names_have_real_connected_routes_and_a_shared_cut',
               'test_scene_layout.SceneLayoutTests.test_invalid_actual_viewport_or_target_bounds_reject_without_mutation',
@@ -188,6 +248,22 @@ jobs:
               'test_sdk_material_import.SyntheticReceiptRules.test_source_or_evidence_cannot_be_replaced_with_generated_defaults',
               'test_sdk_material_import.SyntheticReceiptRules.test_source_page_must_retain_complete_original_bytes',
               'test_sdk_material_import.SyntheticReceiptRules.test_unknown_or_changed_scope_identity_is_rejected',
+              'test_story_action.StoryActionTests.test_causal_binding_identity_cannot_be_missing_duplicated_or_detached_from_source',
+              'test_story_action.StoryActionTests.test_causal_branches_need_distinct_subjects_even_with_unbound_bridge_between_them',
+              'test_story_action.StoryActionTests.test_causal_disconnected_move_cannot_teleport_after_completed_transfer',
+              'test_story_action.StoryActionTests.test_causal_unbound_transfers_and_any_new_quantity_fail_before_editor_submission',
+              'test_story_action.StoryActionTests.test_causal_visual_moves_can_pick_up_hold_and_put_down_without_changing_bound_amount_or_axis',
+              'test_story_action.StoryActionTests.test_causality_two_is_host_evidence_without_upgrading_the_story_envelope',
+              'test_story_action.StoryActionTests.test_dry_run_rejection_never_submits_edit',
+              'test_story_action.StoryActionTests.test_explicit_causality_three_does_not_change_story_one_or_legacy_causality',
+              'test_story_action.StoryActionTests.test_explicit_rig_two_supports_eight_independent_actors_without_widening_rig_one',
+              'test_story_action.StoryActionTests.test_incomplete_map_and_unrelated_voice_cannot_enter_normal_editor',
+              'test_story_action.StoryActionTests.test_no_causality_preserves_legacy_independent_authored_positions',
+              'test_story_action.StoryActionTests.test_one_transaction_preserves_content_and_causal_inputs',
+              'test_story_action.StoryActionTests.test_pencil_action_edit_retains_the_existing_paper_without_mutating_input',
+              'test_story_action.StoryActionTests.test_stale_axis_or_unidentified_handover_is_rejected_before_mutation',
+              'test_story_action.StoryActionTests.test_switching_to_advanced_cartoon_retires_the_existing_paper',
+              'test_story_action.StoryActionTests.test_typed_causality_is_explicitly_preserved_for_host_verification',
           }
           identities=[case.id() for case in cases(suite)]
           assert len(identities)==len(set(identities))==suite.countTestCases()==len(expected)
@@ -195,7 +271,117 @@ jobs:
           result=unittest.TextTestRunner(verbosity=2).run(suite)
           assert result.wasSuccessful() and result.testsRun==len(expected) and not result.skipped and not result.expectedFailures
           for identity in sorted(identities):print('knowledge_production_passed='+identity)
-          print('current_knowledge_production_rules='+str(len(expected))+' current_artifact_preservation_rules=6 current_native_rules=0 current_scene_layout_rules=12 current_release_builds=0 media_executed=false human_review=false')
+          print('current_knowledge_production_rules='+str(len(expected))+' current_artifact_preservation_rules=6 current_knowledge_story_rules=46 current_story_action_rules=16 current_workflow_rules=31 current_scene_layout_rules=12 native_executed_in_this_step=false media_executed=false human_review=false')
+          PYCODE
+
+
+      - name: Execute exact affected Core methods and build the normal CLI
+        shell: bash
+        run: |
+          python3 -B - <<'PYCODE'
+          import os, re, subprocess, sys
+          from pathlib import Path
+          expected={
+              ('VideoCoreTests', 'AgentMutationTests', 'testEditReplayReturnsOriginalRevisionAndRevokedGrantIsRejected'),
+              ('VideoCoreTests', 'AgentSchemasTests', 'testDiscoveryShowsActualNestedRequiredFieldsAndEnumPayloads'),
+              ('VideoCoreTests', 'AgentSchemasTests', 'testEncodedRepresentativeEntitiesHaveEveryRequiredNestedFieldAndResolvableRefs'),
+              ('VideoCoreTests', 'KnowledgeCounterfactualExplanationTests', 'testConstrainedRequestIsVisibleWithoutAClaimThatItWasExecuted'),
+              ('VideoCoreTests', 'KnowledgeCounterfactualExplanationTests', 'testExplanationIsDeterministicReadOnlyAndDoesNotChangeTheOldWireValue'),
+              ('VideoCoreTests', 'StoryActionTests', 'testActionValidationRejectsUnknownObjectsOverlapAndNonfiniteCoordinates'),
+              ('VideoCoreTests', 'StoryActionTests', 'testDeliveryConstructionAndSpeechKeepCorrectProcessAndTerminalStates'),
+              ('VideoCoreTests', 'StoryActionTests', 'testNewWorldPreservesRecordedKnowledgeWindowAndOriginalTakeUntilExplicitTimingChange'),
+              ('VideoCoreTests', 'StoryCausalSourcesTests', 'testActionCostBoundsIdentityNoOpAndMixedDeclarationsAreRejected'),
+              ('VideoCoreTests', 'StoryCausalSourcesTests', 'testActionDependenciesRejectFutureCyclesAndUnboundReferences'),
+              ('VideoCoreTests', 'StoryCausalSourcesTests', 'testBindingsRequireDeclaredActionsEventsSubjectsAndAppropriateFields'),
+              ('VideoCoreTests', 'StoryCausalSourcesTests', 'testBranchWindowsAndCountsAreBoundedAndDisjoint'),
+              ('VideoCoreTests', 'StoryCausalSourcesTests', 'testCausalSceneCannotSplitWithoutReauthoringAndRestoreKeepsVerifiedSources'),
+              ('VideoCoreTests', 'StoryCausalSourcesTests', 'testCausalWorldPreviewUsesCompleteBranchesWithoutInventingLegacyRecording'),
+              ('VideoCoreTests', 'StoryCausalSourcesTests', 'testCausalWorldQualityStillRejectsBadSourcesAndRequiresRightsAndMediaReview'),
+              ('VideoCoreTests', 'StoryCausalSourcesTests', 'testCostBranchCannotChangeAnotherInputOrReuseTheOldTrace'),
+              ('VideoCoreTests', 'StoryCausalSourcesTests', 'testCostBranchRejectsDigestOnlyChangesWithoutObservedConsequences'),
+              ('VideoCoreTests', 'StoryCausalSourcesTests', 'testCostDecodingRejectsNullHiddenFieldsAndNonIntegerValues'),
+              ('VideoCoreTests', 'StoryCausalSourcesTests', 'testCostMetadataNeverReachesPluginProps'),
+              ('VideoCoreTests', 'StoryCausalSourcesTests', 'testCounterfactualRequiresSingleActualParentPlanChange'),
+              ('VideoCoreTests', 'StoryCausalSourcesTests', 'testDeliveryRequiresActualStateChangeAndOwnedCargo'),
+              ('VideoCoreTests', 'StoryCausalSourcesTests', 'testDiscoveryExposesStrictBoundedHostContractWithoutPluginABIChange'),
+              ('VideoCoreTests', 'StoryCausalSourcesTests', 'testDiscoveryKeepsBoundedStrictCostAndVersionSpecificPresence'),
+              ('VideoCoreTests', 'StoryCausalSourcesTests', 'testEditorCausalChangeRemovalAndTimingRevokeReviewsButKeepOriginalVoice'),
+              ('VideoCoreTests', 'StoryCausalSourcesTests', 'testLegacyNilSceneEncodingAndValidationStayUnchanged'),
+              ('VideoCoreTests', 'StoryCausalSourcesTests', 'testLegacyV1WireDigestReplayAndRestoreStayUnchanged'),
+              ('VideoCoreTests', 'StoryCausalSourcesTests', 'testLegacyV2WireDigestAndRestoreStayUnchanged'),
+              ('VideoCoreTests', 'StoryCausalSourcesTests', 'testLegacyWorldNonWorldAndMixedSingleSourceKeepOriginalRecordingGate'),
+              ('VideoCoreTests', 'StoryCausalSourcesTests', 'testMoneyPropIsIndependentOfPayerBodyButActualTransferIsNotDuplicated'),
+              ('VideoCoreTests', 'StoryCausalSourcesTests', 'testOneDeliveryTransitionCannotCreateTwoOwnedGoodsForSameOrDifferentRecipients'),
+              ('VideoCoreTests', 'StoryCausalSourcesTests', 'testPaymentRequiresSameHouseholdBuyerAndEarlierRealDelivery'),
+              ('VideoCoreTests', 'StoryCausalSourcesTests', 'testPaymentUsesExactAppliedTransferRouteAmountAndRecipient'),
+              ('VideoCoreTests', 'StoryCausalSourcesTests', 'testPerformedActionRejectsRequestedButUnfundedAction'),
+              ('VideoCoreTests', 'StoryCausalSourcesTests', 'testPluginPropsNeverLeakHostModelsTracesOrCausalBindings'),
+              ('VideoCoreTests', 'StoryCausalSourcesTests', 'testRuleBranchRejectsOldPartialWrongSeedAndFutureParentTraces'),
+              ('VideoCoreTests', 'StoryCausalSourcesTests', 'testRuleConditionChangeUsesTheSameNativeMechanism'),
+              ('VideoCoreTests', 'StoryCausalSourcesTests', 'testRuleDecodingRejectsNullMixedAndUnknownNestedFields'),
+              ('VideoCoreTests', 'StoryCausalSourcesTests', 'testRuleDiscoveryAndHostOnlyMetadataStayExplicit'),
+              ('VideoCoreTests', 'StoryCausalSourcesTests', 'testRuleIdentityNoOpAndUnrelatedModelChangesAreRejected'),
+              ('VideoCoreTests', 'StoryCausalSourcesTests', 'testRuleLabelDiagnosticAndUnappliedChangesDoNotCountAsBehavior'),
+              ('VideoCoreTests', 'StoryCausalSourcesTests', 'testRuleReplacementRecomputesActualFlowsAndRoundTrips'),
+              ('VideoCoreTests', 'StoryCausalSourcesTests', 'testRuleVersionPresenceAndRootDeclarationAreRejected'),
+              ('VideoCoreTests', 'StoryCausalSourcesTests', 'testStrictDecodingRejectsUnknownKeysNestedTraceFieldsLegacyAliasesAndVersions'),
+              ('VideoCoreTests', 'StoryCausalSourcesTests', 'testTamperedTraceWrongSeedAndPartialReplayAreRejected'),
+              ('VideoCoreTests', 'StoryCausalSourcesTests', 'testThreeBranchesVerifyCompleteTracesAndConserveTwentyCoins'),
+              ('VideoCoreTests', 'StoryCausalSourcesTests', 'testV2ActionCostVerifiesTheCompleteModelAndActualCostConsequences'),
+              ('VideoCoreTests', 'StoryCausalSourcesTests', 'testV2MayRetainLegacyPlanChildrenButV1CannotCarryCosts'),
+              ('VideoCoreTests', 'StoryCausalSourcesTests', 'testV3RetainsPlanAndCostChildrenWithExactlyOneIntervention'),
+          }
+          assert len(expected)==48
+          root=Path(os.environ['GITHUB_WORKSPACE'])
+          for suite in {row[1] for row in expected}:
+              available=re.findall(r'^\s*func\s+(test\w+)\s*\(', (root/'Tests/VideoCoreTests'/(suite+'.swift')).read_text(),re.M)
+              selected={row[2] for row in expected if row[1]==suite}
+              assert len(available)==len(set(available)) and selected<=set(available)
+              if suite=='StoryCausalSourcesTests':assert selected==set(available) and len(selected)==40
+          def verify_swift_stream(text, expected):
+              pattern=re.compile(r"^Test Case '(?:-\[(?:(?P<ot>\w+)\.)?(?P<os>\w+) (?P<om>test\w+)\]|(?:(?P<st>\w+)\.)?(?P<ss>\w+)\.(?P<sm>test\w+))' (?P<event>started|passed|failed|skipped)\b")
+              started=[];passed=[]
+              for line in text.splitlines():
+                  match=pattern.match(line)
+                  if match is None:
+                      if line.startswith("Test Case '") and re.search(r"' (started|passed|failed|skipped)\b",line):raise ValueError('Unparsed actual XCTest identity')
+                      continue
+                  suite=match['os'] or match['ss'];method=match['om'] or match['sm'];target=match['ot'] or match['st']
+                  if target is None:
+                      candidates={row[0] for row in expected if row[1:]==(suite,method)}
+                      if len(candidates)!=1:raise ValueError('Ambiguous actual XCTest target')
+                      target=candidates.pop()
+                  identity=(target,suite,method)
+                  if identity not in expected:raise ValueError('Unexpected actual XCTest method')
+                  if match['event']=='started':
+                      if identity in started:raise ValueError('Duplicate actual XCTest start')
+                      started.append(identity)
+                  elif match['event']=='passed':
+                      if identity not in started or identity in passed:raise ValueError('Unstarted or duplicate actual XCTest pass')
+                      passed.append(identity)
+                  else:raise ValueError('Actual affected XCTest failed or skipped')
+              if len(started)!=len(expected) or set(started)!=expected:raise ValueError('Missing actual XCTest starts')
+              if len(passed)!=len(expected) or set(passed)!=expected:raise ValueError('Missing actual XCTest passes')
+              if len(expected) not in [int(v) for v in re.findall(r'Executed (\d+) tests?',text)]:raise ValueError('Actual XCTest summary incomplete')
+              return len(expected)
+          def execute(argv,seconds):
+              result=subprocess.run(argv,cwd=root,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,timeout=seconds)
+              if result.returncode!=0:
+                  print(result.stdout[-6000:],file=sys.stderr)
+                  raise RuntimeError('Affected native command failed')
+              assert len(result.stdout.encode())<=16*1024*1024, 'Bounded native diagnostics required'
+              return result.stdout
+          scratch=Path(os.environ['RUNNER_TEMP'])/'video-production-swiftpm'
+          scope='|'.join('^'+re.escape(target)+r'\.'+re.escape(suite)+'/'+re.escape(method)+'$'
+                         for target,suite,method in sorted(expected))
+          stream=execute(['swift','test','-c','release','--scratch-path',str(scratch),'-j','2','--filter',scope],900)
+          assert verify_swift_stream(stream,expected)==48
+          for identity in sorted(expected):print('current_native_passed=' + '.'.join(identity))
+          execute(['swift','build','-c','release','--scratch-path',str(scratch),'-j','2','--product','video'],300)
+          bins=execute(['swift','build','-c','release','--scratch-path',str(scratch),'--show-bin-path'],30).strip()
+          product=Path(bins)/'video'
+          assert product.is_file() and not product.is_symlink() and os.access(product,os.X_OK)
+          print('current_native_rules=48 current_story_causal_rules=40 current_release_cli_builds=1 media_executed=false review=false')
           PYCODE
 
       - name: Record exact evidence boundaries
@@ -203,13 +389,14 @@ jobs:
         run: |
           python3 -B - <<'PYCODE'
           import os
-          text=("Current scope executes exactly 106 declared pure production-workflow, production-document, viewport-layout, presentation-style, image-presenter and SDK-receipt rules, with exact identities and no skips or expected failures. "
-                "CLI responses, source traces, runtime receipts, material bytes and RMS in these tests are explicit synthetic observations; they do not establish real Core import, rendering, acoustic measurement, installed publication, rights or whole-film approval. "
-                "The reviewed changes share exact native artifact preservation between the production verifier and ordinary callers: all four source receipts and existing destination conflicts are validated before writing persistent copies, equal existing copies are reused, and only copied receipt paths change. This does not inspect media or change a native job, quote, revision, original artifact or review state. Callers retain their own complete source, audio, timing, rights and normal production gates. "
-                "The other 305 payloads remain byte-identical to public baseline a10f360fa996bb1fe01601af233e4807fee7b183; four reviewed existing inputs change and no inputs are added. All 100 existing pure rules are retained and rerun by exact identity, including 12 layout rules. Six new artifact-preservation rules use explicit non-media bytes and a mocked decoder boundary; no native product or decoder is started. The private ordinary recipes and their real media are outside this public payload and this CI execution. "
-                "The 13 actor metadata rules, 12 native image-flip/RPC methods and ordinary Release CLI build remain historical run 41203531757; they are not rerun or counted as current passes. "
-                "Story speech and normal delivery remain historical run 41196437622, causal Core and author evidence remain historical run 41191732445, and older Python evidence remains historical run 41190009527. "
-                "This workflow does not build native products, execute business media, call TTS, read private assets or credentials, export closed painters, or grant listening, captions, commercial rights, upload consent or human-review approval.\n")
+          text=("Current scope executes exactly 174 declared pure Python rules across eight modules, with exact identities, no skips and no expected failures. All 106 existing production rules are retained. "
+                "Python CLI responses, source traces, runtime receipts, material bytes and RMS are explicit synthetic observations; those fixtures establish adapter contracts, not native execution or media quality. "
+                "This job separately executes exactly 48 current Core XCTest methods, including all 40 StoryCausalSourcesTests and eight related schema, counterfactual, action and CAS methods. Every selected method must start and pass exactly once; unparsed identities, missing tests, duplicates, failures, skips and a missing 48-test summary are rejected. It then builds one normal Release video CLI with the same SwiftPM scratch directory. Native rule execution and compilation do not establish a real CLI business transaction, rendering or listening. "
+                "Host-only story causality version 3 explicitly replaces one existing complete same-ID rule per selected child source and independently recomputes complete native traces. Other model fields, seeds and source clocks stay fixed. Each child has exactly one actor-plan, action-cost or rule-change intervention; version 3 requires at least one rule change and an actual semantic behavior difference. Amount changes, unmet constraints, inactive rules and source-binding failures remain distinct. Legacy version 1/2 wire values are preserved and no plugin ABI changes. "
+                "Shared motion checks preserve original business actions, reject unbound transfers or quantities, and require successive movement endpoints to connect; visual taking, holding or putting down does not create another payment. Source-observation readback also retains the exact ruleChange witness. "
+                "The other 297 payloads remain byte-identical to public baseline 8cc76071b3de425d6e1670c7c787d4eded235550; twelve reviewed existing inputs change and no inputs are added. The private recipes, assets, actual CAS business production and real media are outside this public CI payload. "
+                "The 13 actor metadata rules and 12 native image-flip/RPC methods remain historical run 41203531757; they are not rerun or counted as current passes. Story speech and normal delivery remain historical run 41196437622; other historical causal evidence is not relabeled as current execution. "
+                "This workflow does not execute business media, call TTS, read private assets or credentials, export closed painters, install advanced modules, or grant listening, captions, commercial rights, upload consent or human-review approval.\n")
           with open(os.environ['GITHUB_STEP_SUMMARY'],'a') as stream:stream.write(text)
-          print('current_artifact_preservation_rules=6 current_native_rules=0 current_scene_layout_rules=12 current_actor_motion_rules=0 current_release_builds=0 real_business_media_executed=false review=false')
+          print('current_python_rules=174 current_native_rules=48 current_release_cli_builds=1 current_actor_motion_rules=0 real_business_media_executed=false review=false')
           PYCODE

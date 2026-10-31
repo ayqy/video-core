@@ -32,7 +32,14 @@ def object_fields(value, required, optional=()):
          and not value.keys() - set(required) - set(optional), 'missing or unsupported story fields')
 
 
-def actions_for_scene(actions, subjects, duration):
+def actions_for_scene(actions, subjects, duration, *, causality=None):
+    """Check authored action shape, plus existing causal ownership when supplied.
+
+    Causal scenes may add ordinary pickup/hold/put-down movement, but may not
+    invent transfers or quantities. One subject follows its actual previous
+    endpoint; independent recorded branches need independent subject IDs.
+    This validates declarations, never infers payments or samples animation.
+    """
     need(isinstance(actions, list) and len(actions) <= 256, 'too many actions')
     ids, windows = set(), {}
     for action in actions:
@@ -83,6 +90,34 @@ def actions_for_scene(actions, subjects, duration):
         ordered = sorted(intervals)
         need(all(left[1] <= right[0] for left, right in zip(ordered, ordered[1:])),
              'overlapping actions for the same object')
+    if causality is None:
+        return
+    need(isinstance(causality, dict) and isinstance(causality.get('bindings'), list)
+         and isinstance(causality.get('sources'), list), 'typed story causality needs its original bindings and sources')
+    rows = causality['bindings']; sources = causality['sources']
+    need(all(isinstance(source, dict) and isinstance(source.get('id'), str) for source in sources)
+         and len({source['id'] for source in sources}) == len(sources), 'causal source identities must be unique')
+    source_ids = {source['id'] for source in sources}
+    need(all(isinstance(row, dict) and isinstance(row.get('actionID'), str)
+             and isinstance(row.get('sourceID'), str) and row['sourceID'] in source_ids for row in rows),
+         'causal bindings must identify an original recorded source')
+    bound = {row['actionID']: row['sourceID'] for row in rows}
+    need(len(bound) == len(rows) and bound.keys() <= ids,
+         'each causal binding must identify one existing action exactly once')
+    need(all(action['id'] in bound for action in actions if action['kind'] == 'transfer' or 'quantity' in action),
+         'unbound visual movements may not invent a payment, delivery, quantity or model gain')
+    movements = {}
+    for action in actions:
+        if action['kind'] in ('move', 'transfer'):
+            movements.setdefault(action['subjectID'], []).append(action)
+    for rows in movements.values():
+        need(len({bound[action['id']] for action in rows if action['id'] in bound}) <= 1,
+             'independent recorded branches require distinct movement subjects')
+        ordered = sorted(rows, key=lambda action: (action['startFrame'], action['id']))
+        for previous, current in zip(ordered, ordered[1:]):
+            need(math.hypot(previous['to']['x'] - current['from']['x'],
+                            previous['to']['y'] - current['from']['y']) <= 1e-7,
+                 'consecutive movements must continue from the previous actual endpoint')
 
 
 def compile_story(project: dict, spec: dict) -> dict:
@@ -124,7 +159,7 @@ def compile_story(project: dict, spec: dict) -> dict:
         scene.pop('storyCausality', None)
         if 'causality' in entry:
             object_fields(entry['causality'], ('version','poolSubjectID','actors','sources','bindings'))
-            need(type(entry['causality']['version']) is int and entry['causality']['version'] in (1, 2), 'unsupported typed story causality')
+            need(type(entry['causality']['version']) is int and entry['causality']['version'] in (1, 2, 3), 'unsupported typed story causality')
             scene['storyCausality'] = copy.deepcopy(entry['causality'])
         # The author makes a complete explicit presentation replacement. All
         # original audio, content, rule recording and previous revisions stay.
@@ -181,7 +216,7 @@ def compile_story(project: dict, spec: dict) -> dict:
             need(not {'world', 'rig', 'artwork'} & entry.keys(), 'pencil stage has hidden plugin payload')
             scene.update(kind='图文讲解', classicArtworkRequired=False)
             scene.pop('classicArtwork', None)
-        actions_for_scene(entry['actions'], subjects, duration)
+        actions_for_scene(entry['actions'], subjects, duration, causality=scene.get('storyCausality'))
         if scene != scenes[identity]:
             if scene.get('voice'):
                 scene['voice']['listened'] = False

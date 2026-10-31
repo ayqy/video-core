@@ -146,6 +146,40 @@ def cost_fixture(mode='game'):
     return project,plan,recorded,source_project
 
 
+def rule_fixture(mode='game', change='amount'):
+    """Literal v3 protocol observations, never a Python rule evaluator.
+
+    Core must independently reject any invented observation. The two explicit
+    fixtures exercise an applied amount change and an unmet rule condition.
+    """
+    project,plan,recorded,source=cost_fixture(mode)
+    plan['version']=recorded['version']=3
+    parent,child=plan['sources']
+    child.pop('action_cost');child['model']=deepcopy(parent['model'])
+    replacement=deepcopy(child['model']['ruleTable']['rules'][0])
+    if change=='amount':replacement['effects'][0]['amount']=4
+    elif change=='condition':replacement['conditions'][0]=dict(kind='action',actorID='grower',actionID='wait')
+    else:raise ValueError('explicit literal test case required')
+    child['rule_change']=dict(ruleID='swap',rule=deepcopy(replacement))
+    child['model']['ruleTable']['rules'][0]=deepcopy(replacement)
+    wire=recorded['sources'][1];wire.pop('actionCost')
+    wire.update(model=deepcopy(child['model']),ruleChange=deepcopy(child['rule_change']),
+                trace=deepcopy(recorded['sources'][0]['trace']))
+    trace=wire['trace'];trace['inputDigest']='c'*64
+    for event in trace['events']:
+        if event['round']==1 and event['phase']!=PHASES[5]:continue
+        amounts=(8,10) if change=='amount' else (11,7)
+        for actor,amount in zip(event['actors'],amounts):
+            actor['resources']=amount
+            if change=='condition':actor['ruleStateID']='open'
+        if event['round']==1 and event['phase']==PHASES[5]:
+            if change=='amount':event['ruleExecution']['transfers'][0]['amount']=4
+            else:event['ruleExecution'].update(transfers=[],stateChanges=[])
+    trace['finalResources']=[dict(id=a['id'],resources=a['resources']) for a in trace['events'][-1]['actors']]
+    source['revisions'][0]['scenes'][1]['simulation']['knowledge']=deepcopy(child['model'])
+    return project,plan,recorded,source
+
+
 class NativeBoundary:
     """Synthetic protocol spy; never a native validation substitute."""
     def __init__(self,project,recorded,source_project=None):
@@ -182,6 +216,150 @@ class NativeBoundary:
 
 
 class KnowledgeStoryTests(unittest.TestCase):
+    def test_v3_amount_and_condition_replacements_record_compile_and_apply_without_mutating_inputs(self):
+        for mode in ('game','pencil'):
+            for change in ('amount','condition'):
+                with self.subTest(mode=mode,change=change):
+                    project,plan,recorded,source=rule_fixture(mode,change)
+                    before=deepcopy((project,plan,recorded,source));spy=NativeBoundary(source,recorded,source)
+                    self.assertEqual(record_sources(source,plan,spy),recorded)
+                    self.assertEqual([c[0] for c in spy.calls],['edit apply','edit apply','projects list','knowledge compare'])
+                    self.assertEqual([c[2] for c in spy.calls[:2]],[True,False])
+                    latest=deepcopy(spy.project);spy.calls=[]
+                    self.assertEqual(record_sources(latest,plan,spy),recorded)
+                    self.assertEqual([c[0] for c in spy.calls],['edit apply','projects list','knowledge compare'])
+                    compiled=compile_presentation(project,plan,recorded)
+                    self.assertEqual(compiled['story_spec']['version'],1)
+                    causal=compiled['story_spec']['scenes'][0]['causality']
+                    self.assertEqual(causal['version'],3)
+                    self.assertEqual(causal['sources'][1]['ruleChange'],plan['sources'][1]['rule_change'])
+                    self.assertNotIn('actionCost',causal['sources'][1]);self.assertNotIn('intervention',causal['sources'][1])
+                    target_spy=NativeBoundary(project,recorded,source)
+                    self.assertTrue(apply_presentation(project,plan,recorded,target_spy)['changed'])
+                    self.assertEqual([c[0] for c in target_spy.calls],['projects list','edit apply','edit apply'])
+                    self.assertEqual((project,plan,recorded,source),before)
+
+    def test_v3_balances_read_the_selected_actual_amount_or_failed_condition_observation(self):
+        for change,amount in (('amount',10),('condition',7)):
+            project,plan,recorded,_=rule_fixture(change=change)
+            plan['balances']=[dict(source_id='retain',event=dict(round=1,phase=PHASES[5]),
+                actor_id='grower',entity_id='person-grower',frame=450)]
+            compiled=compile_presentation(project,plan,recorded)
+            values=[u['value'] for u in compiled['story_spec']['scenes'][0]['world']['updates'] if 'value' in u]
+            self.assertEqual(values,[amount])
+
+    def test_v3_rule_change_is_versioned_and_each_child_has_exactly_one_intervention(self):
+        for issue in ('v1','v2','no-rule','both-cost','both-plan','root','no-parent','no-change'):
+            project,plan,recorded,source=rule_fixture()
+            if issue in ('v1','v2'):plan['version']=int(issue[-1])
+            elif issue=='no-rule':plan=cost_fixture()[1];plan['version']=3
+            elif issue=='both-cost':plan['sources'][1]['action_cost']=dict(actionID='offer',newCost=2)
+            elif issue=='both-plan':plan['sources'][1]['intervention']=fixture()[1]['sources'][1]['intervention']
+            elif issue=='root':plan['sources'][0]['rule_change']=deepcopy(plan['sources'][1]['rule_change'])
+            elif issue=='no-parent':plan['sources'][1].pop('parent_id')
+            elif issue=='no-change':plan['sources'][1].pop('rule_change')
+            spy=NativeBoundary(source,recorded,source)
+            with self.subTest(issue=issue),self.assertRaises(KnowledgeStoryError):record_sources(source,plan,spy)
+            self.assertEqual(spy.calls,[])
+
+    def test_v3_replacement_is_one_unique_complete_changed_same_id_rule_with_strict_nested_fields(self):
+        for issue in ('unknown-rule','different-id','duplicate-rule','same','missing','outer-extra',
+                      'rule-extra','condition-extra','effect-extra','boolean-amount','incomplete-effect'):
+            _,plan,_,_=rule_fixture();child=plan['sources'][1];change=child['rule_change']
+            if issue=='unknown-rule':change['ruleID']=change['rule']['id']='absent'
+            elif issue=='different-id':change['rule']['id']='other'
+            elif issue=='duplicate-rule':plan['sources'][0]['model']['ruleTable']['rules'].append(deepcopy(plan['sources'][0]['model']['ruleTable']['rules'][0]))
+            elif issue=='same':change['rule']=deepcopy(plan['sources'][0]['model']['ruleTable']['rules'][0])
+            elif issue=='missing':change['rule'].pop('conditions')
+            elif issue=='outer-extra':change['amount']=4
+            elif issue=='rule-extra':change['rule']['priority']=0
+            elif issue=='condition-extra':change['rule']['conditions'][0]['script']='hidden'
+            elif issue=='effect-extra':change['rule']['effects'][0]['script']='hidden'
+            elif issue=='boolean-amount':change['rule']['effects'][0]['amount']=True
+            elif issue=='incomplete-effect':change['rule']['effects']=[]
+            with self.subTest(issue=issue),self.assertRaises(KnowledgeStoryError):_plan(plan)
+
+    def test_v3_replacement_cannot_change_any_other_complete_model_or_source_identity(self):
+        changes=[lambda m:m.update(threshold=2),lambda m:m.update(startTick=3),
+            lambda m:m.update(knowledgeLabel='another lesson'),lambda m:m.update(benefit=0.0),
+            lambda m:m['participants'][0].update(initialResources=13),
+            lambda m:m['ruleTable']['actions'][0].update(cost=2),
+            lambda m:m['ruleTable']['plans'][0].update(defaultActionID='wait'),
+            lambda m:m['ruleTable']['rules'][0]['effects'][0].update(amount=5)]
+        for change in changes:
+            _,plan,_,_=rule_fixture();change(plan['sources'][1]['model'])
+            with self.assertRaisesRegex(KnowledgeStoryError,'single complete rule'):_plan(plan)
+        _,plan,_,_=rule_fixture();plan['sources'][1]['seed']=20
+        with self.assertRaisesRegex(KnowledgeStoryError,'same-seed'):_plan(plan)
+
+    def test_v3_recorded_rule_change_must_match_the_exact_declared_wire_object(self):
+        for issue in ('missing','different','extra-cost','old-version','wire-unknown'):
+            project,plan,recorded,_=rule_fixture();child=recorded['sources'][1]
+            if issue=='missing':child.pop('ruleChange')
+            elif issue=='different':child['ruleChange']['rule']['label']='different recorded label'
+            elif issue=='extra-cost':child['actionCost']=dict(actionID='offer',newCost=2)
+            elif issue=='old-version':recorded['version']=2
+            else:child['rule_change']=deepcopy(child['ruleChange'])
+            with self.subTest(issue=issue),self.assertRaises(KnowledgeStoryError):compile_presentation(project,plan,recorded)
+
+    def test_v3_digest_labels_requested_choices_and_inactive_matches_are_not_actual_behavior(self):
+        for issue in ('digest','label','request','match','diagnostic'):
+            project,plan,recorded,source=rule_fixture();child=plan['sources'][1]
+            if issue=='label':
+                child['rule_change']['rule']=deepcopy(plan['sources'][0]['model']['ruleTable']['rules'][0])
+                child['rule_change']['rule']['label']='只改说明名称'
+                child['model']['ruleTable']['rules'][0]=deepcopy(child['rule_change']['rule'])
+                recorded['sources'][1].update(model=deepcopy(child['model']),ruleChange=deepcopy(child['rule_change']))
+                source['revisions'][0]['scenes'][1]['simulation']['knowledge']=deepcopy(child['model'])
+            trace=recorded['sources'][1]['trace']=deepcopy(recorded['sources'][0]['trace'])
+            trace['inputDigest']='d'*64
+            if issue=='request':trace['events'][1]['actors'][0]['requestedActionID']='unfunded'
+            elif issue=='match':trace['events'][5]['ruleExecution']['matches']=[dict(ruleID='diagnostic-only')]
+            elif issue=='diagnostic':trace['rounds'][0]['diagnostic']='new wording'
+            with self.subTest(issue=issue),self.assertRaises(KnowledgeStoryError):compile_presentation(project,plan,recorded)
+            spy=NativeBoundary(source,recorded,source)
+            with self.subTest(issue=issue),self.assertRaises(KnowledgeStoryError):record_sources(source,plan,spy)
+
+    def test_v3_allows_later_cost_or_actor_plan_children_only_along_the_exact_parent(self):
+        for kind in ('action_cost','intervention'):
+            project,plan,recorded,_=rule_fixture();third=deepcopy(plan['sources'][1]);third.pop('rule_change')
+            third.update(id='third-source',scene_id='source-third',parent_id='retain',start_frame=480,end_frame=600)
+            if kind=='action_cost':
+                third['action_cost']=dict(actionID='offer',newCost=2)
+                third['model']['ruleTable']['actions'][0]['cost']=2
+            else:
+                third['model']['ruleTable']['plans'][1]['defaultActionID']='wait'
+                third['intervention']=dict(actorID='grower',plan=deepcopy(third['model']['ruleTable']['plans'][1]))
+            plan['sources'].append(third)
+            old=StoryPlan.from_dict(plan['story']);brief=deepcopy(old.to_dict()['brief']);brief['source_ids'].append('third-source');story=StoryPlan(brief)
+            for stage in ('cast','outline','details','shots'):story=story.accept(stage,old.stage(stage),story.fingerprint)
+            plan['story']=story.to_dict();self.assertTrue(_plan(plan)[0].complete)
+            # Even a legacy intervention child in v3 needs independently
+            # observed behavior; a changed model/digest alone cannot suffice.
+            trace=deepcopy(recorded['sources'][1]['trace']);trace['inputDigest']='a'*64
+            record=dict(id=third['id'],model=deepcopy(third['model']),seed=third['seed'],trace=trace,
+                startFrame=480,endFrame=600,parentID='retain')
+            record['actionCost' if kind=='action_cost' else 'intervention']=deepcopy(third[kind])
+            recorded['sources'].append(record)
+            with self.assertRaisesRegex(KnowledgeStoryError,'actual event, round or final-resource differences'):
+                compile_presentation(project,plan,recorded)
+
+    def test_v3_core_rejection_is_terminal_for_the_attempt_and_never_grants_confirmation(self):
+        project,plan,recorded,source=rule_fixture();before=deepcopy(source)
+        spy=NativeBoundary(source,recorded,source);spy.reject=True
+        with self.assertRaises(KnowledgeStoryError):record_sources(source,plan,spy)
+        self.assertEqual(len(spy.calls),1);self.assertTrue(spy.calls[0][2]);self.assertEqual(source,before)
+        self.assertTrue(all('recordSimulation' in edit for edit in spy.calls[0][1]['edits']))
+        # A synthetic spy approving an invented trace does not make it Core
+        # evidence; the production boundary still delegates the final dry-run.
+        target_spy=NativeBoundary(project,recorded,source)
+        def refuse_edit(command,body,dry):
+            if command=='edit apply':target_spy.reject=True
+            return target_spy(command,body,dry)
+        with self.assertRaises(ValueError):apply_presentation(project,plan,recorded,refuse_edit)
+        self.assertEqual([c[0] for c in target_spy.calls],['projects list','edit apply'])
+        self.assertTrue(target_spy.calls[-1][2]);self.assertEqual(project['revisions'][0]['id'],'target-v1')
+
     def test_v1_canonical_edits_story_specs_and_plan_digests_are_unchanged(self):
         expected={
             'game':('f62f5f65b53bd20c1c99e83f6e66cd0977f35e9b884956b0b3d9dee67e55869c','a0ea19bd3726b2716a36d1876c89b8871d1c21749b0a11880c6b0c606f3790e3','b86e1b0fc3ceee7eeb844b810986334d51a683581ddeaf83b4e5761321e1111d'),
