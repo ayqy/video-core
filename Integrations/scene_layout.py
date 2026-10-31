@@ -163,7 +163,14 @@ def transform(scene,projection):
     result=deepcopy(scene)
     for layer in result['layers']:
         layer.update(projection.point(layer))
-        layer['width']*=projection.scale;layer['height']*=projection.scale
+        # Permanently transparent logical subjects do not contribute visible
+        # bounds. Keep their legal boxes while projecting their coordinates;
+        # shrinking a .01 pool placeholder must not create an invalid Scene.
+        if layer.get('opacity',1)!=0:
+            layer['width']*=projection.scale;layer['height']*=projection.scale
+        need(all(type(layer[k]) in (int,float) and math.isfinite(layer[k]) and .01<=layer[k]<=1
+                 for k in ('width','height')),
+             'Projected layer '+str(layer['id'])+' dimensions must remain within Native .01..1; revise the layout')
         for key in layer.get('keyframes',[]):key.update(projection.point(key))
         for road in layer.get('texturedPath',{}).get('paths',[]):
             road['points']=[projection.point(p) for p in road['points']];road['width']*=projection.scale

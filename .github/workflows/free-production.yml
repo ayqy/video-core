@@ -13,10 +13,10 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  actor-motion-and-image-flip-stage:
+  scene-layout-stage:
     if: github.repository == 'ayqy/video-core' && github.event.repository.private == false
     runs-on: macos-15-intel
-    timeout-minutes: 40
+    timeout-minutes: 10
     env:
       VIDEO_SOURCE_COMMIT: ${{ github.sha }}
       PYTHONDONTWRITEBYTECODE: '1'
@@ -50,109 +50,47 @@ jobs:
           tracked=set(subprocess.check_output(['git','ls-files'],cwd=root,text=True).splitlines())
           assert tracked==set(rows)|metadata|{'SOURCE-MANIFEST.md'}
           assert not any((root/name).exists() for name in ['App','MacApp','MacUITests','Examples','Premium','Sources/VideoGame','Sources/VideoCartoon','Sources/VideoAdvanced'])
-          BASE_PUBLIC_COMMIT='5859c2b96ea439d00b7e0cc876e30ec25e9ab537'
-          ADDITIONS={'Integrations/actor_motion.py', 'Integrations/test_actor_motion.py', 'Tests/VideoCoreTests/LayerImageFlipTests.swift'}
-          REVIEWED_CHANGED={'.github/workflows/free-production.yml', 'README.md', 'Sources/VideoCore/Layers.swift', 'Sources/VideoCore/AgentSchemas.swift', 'Sources/VideoCore/Editing.swift', 'Sources/VideoCore/PluginProtocol.swift', 'Sources/VideoMedia/LayerPainter.swift', 'Tests/VideoCoreTests/PluginProtocolTests.swift', 'Tests/VideoMediaTests/LayerImageSequenceMediaTests.swift'}
-          PROTECTED_COUNT=284
-          PROTECTED_SHA256='5f975b314471bbf41e78e7276e79c10d4e4e2e4b1d065eeb15bb781cbb69c4bc'
-          assert len(ADDITIONS)==3 and len(REVIEWED_CHANGED)==9 and not ADDITIONS & REVIEWED_CHANGED
-          assert ADDITIONS<=set(rows) and REVIEWED_CHANGED<=set(rows)
-          protected={name:value for name,value in rows.items() if name not in (REVIEWED_CHANGED | ADDITIONS)}
+          BASE_PUBLIC_COMMIT='85f818d2ed56ec430d792b051d185d2d99bceaab'
+          ADDITIONS=set()
+          REVIEWED_CHANGED={'.github/workflows/free-production.yml', 'README.md', 'Integrations/scene_layout.py', 'Integrations/test_scene_layout.py'}
+          PROTECTED_COUNT=292
+          PROTECTED_SHA256='3f1f9e8130d1a6ab3126e7ace96cb37aa56e2c98f492b7c3fde4a7b9eaad4c04'
+          assert not ADDITIONS and len(REVIEWED_CHANGED)==4 and REVIEWED_CHANGED<=set(rows)
+          protected={name:value for name,value in rows.items() if name not in REVIEWED_CHANGED}
           digest_input=''.join(f'{name}\0{protected[name][0]}\0{protected[name][1]}\n' for name in sorted(protected))
           assert len(protected)==PROTECTED_COUNT and hashlib.sha256(digest_input.encode()).hexdigest()==PROTECTED_SHA256
-          print('manifest_payloads=296 unchanged_protected_inputs=284 source_commit='+head)
-          print('protected_baseline_commit='+BASE_PUBLIC_COMMIT+' historical_speech_delivery_run=41196437622 current_native_checks=pending')
+          print('manifest_payloads=296 unchanged_protected_inputs=292 source_commit='+head)
+          print('protected_baseline_commit='+BASE_PUBLIC_COMMIT+' historical_native_actor_release_run=41203531757 current_scene_layout_checks=pending')
           PYCODE
 
-      - name: Verify the thirteen independent actor metadata geometry rules
+      - name: Execute the seven affected scene layout rules
         shell: bash
         run: |
           python3 -B - <<'PYCODE'
           import sys, unittest
           sys.path.insert(0, 'Integrations')
-          suite=unittest.defaultTestLoader.discover('Integrations', pattern='test_actor_motion.py')
+          suite=unittest.defaultTestLoader.discover('Integrations', pattern='test_scene_layout.py')
           def cases(suite):
               for item in suite:
                   if isinstance(item, unittest.TestSuite):yield from cases(item)
                   else:yield item
+          expected={
+              'test_network_builder_accepts_different_cast_size_and_connects_every_declared_need',
+              'test_arbitrary_place_names_have_real_connected_routes_and_a_shared_cut',
+              'test_motion_is_arc_length_continuous_exact_at_ends_and_still_transfers_remain_still',
+              'test_profile_maps_layer_action_waypoints_and_road_width_without_touching_sources_or_causes',
+              'test_transparent_logical_subject_keeps_legal_size_and_projects_position_reversibly',
+              'test_visible_small_layer_rejects_before_native_with_its_actual_identity',
+              'test_visible_enlargement_cannot_exceed_native_maximum_size',
+          }
+          expected={'test_scene_layout.SceneLayoutTests.'+name for name in expected}
           identities=[case.id() for case in cases(suite)]
-          assert len(identities)==len(set(identities))==suite.countTestCases()==13, 'Exact actor metadata rule inventory changed'
-          assert all(identity.startswith('test_actor_motion.ActorMotionRulesTests.test_') for identity in identities), 'Only the public actor metadata rule class may run'
+          assert len(identities)==len(set(identities))==suite.countTestCases()==7
+          assert set(identities)==expected, 'Exact scene layout rule inventory changed'
           result=unittest.TextTestRunner(verbosity=2).run(suite)
-          assert result.wasSuccessful() and result.testsRun==13 and not result.skipped and not result.expectedFailures, 'An actor metadata rule failed, skipped or was not executed'
-          print('current_actor_motion_metadata_rules=13 core_executed=false image_viewed=false media_executed=false human_review=false')
-          PYCODE
-
-      - name: Build the current standalone free Release CLI
-        shell: bash
-        run: |
-          python3 -B - <<'PYCODE'
-          from pathlib import Path
-          import hashlib, os, re, subprocess
-          root=Path(os.environ['GITHUB_WORKSPACE'])
-          scratch=Path(os.environ['RUNNER_TEMP'])/'video-free-image-flip'
-          log=Path(os.environ['RUNNER_TEMP'])/'video-free-image-flip-build.log'
-          try:
-              with log.open('wb') as stream:
-                  result=subprocess.run(['swift','build','--package-path',str(root),'--scratch-path',str(scratch),'--disable-sandbox','--jobs','2','-c','release','--product','video'],stdout=stream,stderr=subprocess.STDOUT,timeout=1500)
-              lines=log.read_text(errors='replace').splitlines()
-              errors=[line[:700] for line in lines if re.search(r'error:|fatal error:',line,re.I)]
-              print('build_errors='+str(len(errors)))
-              for line in errors[-12:]:print(line)
-              assert result.returncode==0,'Current standalone free Release CLI failed to build'
-              directory=subprocess.check_output(['swift','build','--package-path',str(root),'--scratch-path',str(scratch),'-c','release','--show-bin-path'],text=True).strip()
-              binary=(Path(directory)/'video').resolve(strict=True)
-              print('current_native_release_build=passed cli_sha256='+hashlib.sha256(binary.read_bytes()).hexdigest())
-          finally:log.unlink(missing_ok=True)
-          PYCODE
-
-      - name: Execute only the twelve new image flip and frozen RPC methods
-        shell: bash
-        run: |
-          python3 -B - <<'PYCODE'
-          from pathlib import Path
-          import os, re, subprocess
-          root=Path(os.environ['GITHUB_WORKSPACE'])
-          core=[
-              'testLegacyNilKeepsExactBytesAndOptionalBooleanSchema',
-              'testExplicitTrueAndFalseRoundTripButNonBooleanWireValuesAreRejected',
-              'testFlipAcceptsOrdinaryCropsAndSequencesAndRejectsOtherKindsAndTextureRoutes',
-              'testFlipChangesRevisionIdentityAndRevokesExistingCaptionConfirmation',
-              'testFlipSurvivesSequenceSplitAndNormalRevisionRestore',
-          ]
-          media=[
-              'testHorizontalFlipReflectsSelectedCropAfterFitAndKeepsLegacyFalsePixels',
-              'testHorizontalFlipKeepsSequenceSourceClockMovementAndFinalPause',
-              'testHorizontalFlipKeepsStageRevealAndRestoresContextBeforeFollowingLayers',
-              'testHorizontalFlipChangesCacheAndSurvivesNormalCompleteBackupRestore',
-          ]
-          plugin=[
-              'testHostImageFlipStaysInSceneButNotPluginSnapshotOrDigest',
-              'testHistoricalRPCSceneLayerSchemaBytesAndDigestRemainFrozen',
-              'testRPCRejectsInjectedHostImageFlipInsteadOfDroppingIt',
-          ]
-          expected=['VideoCoreTests.LayerImageFlipTests/'+name for name in core]+['VideoMediaTests.LayerImageSequenceMediaTests/'+name for name in media]+['VideoCoreTests.PluginProtocolTests/'+name for name in plugin]
-          assert len(expected)==len(set(expected))==12
-          selected='^('+'|'.join(re.escape(name) for name in expected)+')$'
-          log=Path(os.environ['RUNNER_TEMP'])/'video-free-image-flip-tests.log'
-          try:
-              with log.open('wb') as stream:
-                  result=subprocess.run(['swift','test','--package-path',str(root),'--scratch-path',str(Path(os.environ['RUNNER_TEMP'])/'video-free-image-flip'),'--disable-sandbox','--jobs','2','-c','release','--filter',selected],stdout=stream,stderr=subprocess.STDOUT,timeout=1500)
-              text=log.read_text(errors='replace')
-              started=[];passed=[]
-              for line in text.splitlines():
-                  match=re.search(r"Test Case '-\[([^ ]+) (test[^ ]+)\]' (started|passed)",line)
-                  if match:
-                      identity=match[1]+'/'+match[2]
-                      (started if match[3]=='started' else passed).append(identity)
-              if result.returncode or sorted(started)!=sorted(expected) or sorted(passed)!=sorted(expected):
-                  for line in text.splitlines()[-55:]:print(line[:1000])
-              assert result.returncode==0,'A selected native image flip method failed'
-              assert sorted(started)==sorted(expected) and sorted(passed)==sorted(expected), 'The exact twelve native methods must each actually start and pass once'
-              assert re.search(r'Executed 12 tests, with 0 failures',text), 'Native test aggregate differs from the selected method inventory'
-              for identity in expected:print('native_image_flip_passed='+identity)
-              print('current_image_flip_core_methods=5 current_image_flip_media_methods=4 current_plugin_protocol_methods=3 private_art=false human_review=false')
-          finally:log.unlink(missing_ok=True)
+          assert result.wasSuccessful() and result.testsRun==7 and not result.skipped and not result.expectedFailures
+          for identity in sorted(identities):print('scene_layout_passed='+identity)
+          print('current_scene_layout_rules=7 current_native_rules=0 current_actor_motion_rules=0 current_release_builds=0 media_executed=false human_review=false')
           PYCODE
 
       - name: Record exact evidence boundaries
@@ -160,12 +98,11 @@ jobs:
         run: |
           python3 -B - <<'PYCODE'
           import os
-          text=("Current scope actually executes 13 actor_motion rules using literal atlas/anchor metadata, independently builds the current standalone ordinary Release CLI, and executes exactly five new Core image flip methods, four new native media methods and three new frozen-RPC compatibility methods. "
-                "The media methods render self-contained asymmetric test pixels for crop/fit, sequence timing, movement, reveal/context, cache identity and complete backup restoration; they use no private actor assets. Metadata and synthetic pixels do not verify real human hand contact, voice, material rights or whole-film approval. "
-                "The frozen-RPC methods verify that the Host-only field stays out of plugin snapshots, historical schema bytes and digests, and that an injected field is rejected rather than silently dropped. "
-                "The protected 284 payloads are byte-identical to public baseline 5859c2b96ea439d00b7e0cc876e30ec25e9ab537. Its 15 literal story_speech rules and 32 normal delivery-author CLI calls remain historical run 41196437622 only; neither is rerun or counted as a current pass. "
-                "The old 30-method Core causal class, 28-call v1 author and 30-call cost-v2 author remain historical run 41191732445. The 50 Python rules remain historical run 41190009527. None supplies a current whole-film claim. "
-                "The five older methods in LayerImageSequenceMediaTests and sixteen older methods in PluginProtocolTests are outside this filter. ReadAloud calls, real business media, private actor-manifest tests and advanced painters were not run. No private art, advanced implementation, original business audio or credentials were published.\n")
+          text=("Current scope actually executes exactly seven scene_layout rules using literal layer, route and projection metadata, with exact identities and no skips or expected failures. "
+                "They cover permanent zero-opacity logical layers retaining legal dimensions during reversible projection, visible undersized or oversized layers failing before a native edit, and the existing layout geometry contract. "
+                "The other 292 payloads remain byte-identical to public baseline 85f818d2ed56ec430d792b051d185d2d99bceaab. Its 13 actor metadata rules, 12 native image-flip/RPC methods and ordinary Release CLI build are historical run 41203531757 only: they are not rerun or counted as current passes. "
+                "Story speech 15 and normal delivery 32 remain historical run 41196437622; causal Core 30 and v1/cost-v2 author evidence remain historical run 41191732445; the older Python 50 remain historical run 41190009527. "
+                "This workflow does not build native products, execute media, call TTS, read private business assets or credentials, or grant whole-film, sound, rights or human-review approval.\n")
           with open(os.environ['GITHUB_STEP_SUMMARY'],'a') as stream:stream.write(text)
-          print('current_actor_motion_metadata_rules=13 current_native_release_build=passed current_image_flip_core_methods=5 current_image_flip_media_methods=4 current_plugin_protocol_methods=3 current_story_speech_rules=0 current_delivery_cli_calls=0 current_causal_native_rules=0 current_legacy_v1_cost_v2_calls=0 real_business_media_executed=false review=false')
+          print('current_scene_layout_rules=7 current_native_rules=0 current_actor_motion_rules=0 current_release_builds=0 historical_native_actor_release_run=41203531757 real_business_media_executed=false review=false')
           PYCODE

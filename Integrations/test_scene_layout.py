@@ -44,7 +44,7 @@ class SceneLayoutTests(unittest.TestCase):
 
     def test_profile_maps_layer_action_waypoints_and_road_width_without_touching_sources_or_causes(self):
         scene=dict(layers=[dict(id='person',x=.2,y=.6,width=.1,height=.2,opacity=1,keyframes=[],sourceRect=dict(x=.2,y=.3,width=.4,height=.5)),
-                           dict(id='road',x=.5,y=.5,width=1,height=1,opacity=1,keyframes=[],
+                           dict(id='road',x=.5,y=.5,width=.5,height=.5,opacity=1,keyframes=[],
                                 texturedPath=dict(version=1,paths=[dict(points=[dict(x=.2,y=.8),dict(x=.3,y=.4)],width=.08)])),
                            dict(id='unused-pool',x=.001,y=.001,width=.01,height=.01,opacity=0,keyframes=[])],
                    storyActions=[dict(kind='move',subjectID='person',startFrame=0,endFrame=10,
@@ -63,6 +63,36 @@ class SceneLayoutTests(unittest.TestCase):
             for key in ('x','y'):self.assertAlmostEqual(actual[key],expected[key])
         self.assertAlmostEqual(restored['layers'][1]['texturedPath']['paths'][0]['width'],.08)
         self.assertAlmostEqual(visible_bounds(present(host,'plain'))[0],left)
+
+    def test_transparent_logical_subject_keeps_legal_size_and_projects_position_reversibly(self):
+        scene=dict(layers=[dict(id='pool-any-name',x=.4,y=.6,width=.01,height=.01,
+                               opacity=0,keyframes=[])],storyActions=[])
+        original=deepcopy(scene);projection=Projection(.5,.1,.15)
+        projected=transform(scene,projection);pool=projected['layers'][0]
+        self.assertEqual(scene,original)
+        self.assertEqual((pool['width'],pool['height']),(.01,.01))
+        self.assertAlmostEqual(pool['x'],.3);self.assertAlmostEqual(pool['y'],.45)
+        restored=transform(projected,projection.inverse())['layers'][0]
+        self.assertAlmostEqual(restored['x'],.4);self.assertAlmostEqual(restored['y'],.6)
+        self.assertEqual((restored['width'],restored['height']),(.01,.01))
+
+    def test_visible_small_layer_rejects_before_native_with_its_actual_identity(self):
+        scene=dict(layers=[dict(id='visible-small-coin',x=.4,y=.6,width=.015,height=.02,
+                               opacity=1,keyframes=[])],storyActions=[])
+        original=deepcopy(scene)
+        with self.assertRaisesRegex(SceneLayoutError,'visible-small-coin.*Native .01..1'):
+            transform(scene,Projection(.5,0,0))
+        self.assertEqual(scene,original)
+        # Transparent subjects are not exempt from the original legal bounds.
+        scene['layers'][0].update(id='invalid-logical-box',opacity=0,width=.009)
+        with self.assertRaisesRegex(SceneLayoutError,'invalid-logical-box'):
+            transform(scene,Projection(.5,0,0))
+
+    def test_visible_enlargement_cannot_exceed_native_maximum_size(self):
+        scene=dict(layers=[dict(id='visible-large-artwork',x=.4,y=.6,width=.6,height=.3,
+                               opacity=1,keyframes=[])],storyActions=[])
+        with self.assertRaisesRegex(SceneLayoutError,'visible-large-artwork.*Native .01..1'):
+            transform(scene,Projection(2,0,0))
 
 
 if __name__=='__main__':unittest.main()
