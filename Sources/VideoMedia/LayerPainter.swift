@@ -58,7 +58,14 @@ enum LayerPainter {
                     drawTexture(cropped,path:path,fraction:sample.revealedFraction,aspect:aspect,context:c)
                     c.endTransparencyLayer()
                 } else {
-                    let ratio=min(rect.width/CGFloat(cropped.width),rect.height/CGFloat(cropped.height));c.draw(cropped,in:CGRect(x:rect.midX-CGFloat(cropped.width)*ratio/2,y:rect.midY-CGFloat(cropped.height)*ratio/2,width:CGFloat(cropped.width)*ratio,height:CGFloat(cropped.height)*ratio))
+                    let ratio=min(rect.width/CGFloat(cropped.width),rect.height/CGFloat(cropped.height))
+                    let fitted=CGRect(x:rect.midX-CGFloat(cropped.width)*ratio/2,y:rect.midY-CGFloat(cropped.height)*ratio/2,width:CGFloat(cropped.width)*ratio,height:CGFloat(cropped.height)*ratio)
+                    if layer.imageFlipHorizontal == true {
+                        // Reflect only the selected pose, after source cropping
+                        // and fit. Existing stage clipping and placement stay.
+                        c.translateBy(x:2*fitted.midX,y:0);c.scaleBy(x:-1,y:1)
+                    }
+                    c.draw(cropped,in:fitted)
                 }
             case .text:
                 guard CGRect(x:24,y:24,width:CGFloat(aspect.width-48),height:CGFloat(aspect.height-48)).contains(rect) else{throw VideoError.review("文字元素越出画面安全区，请调整位置、尺寸或关键帧")}

@@ -98,7 +98,12 @@ public struct PluginVisualProps:Codable,Equatable,Sendable {
         characterProfile=scene.characterProfile.map{PluginCharacterProps(silhouette:$0.silhouette,color:$0.color,actions:$0.actions)}
         cartoonPerformance=scene.cartoonPerformance
         storyActions=scene.storyActions;gameWorld=scene.gameWorld;cartoonRig=scene.cartoonRig;cartoonPresenter=scene.cartoonPresenter
-        layers=(scene.storyActions != nil || scene.cartoonRig != nil || scene.gameWorld != nil || scene.cartoonPresenter != nil) ? scene.layers:nil
+        // Ordinary image pixels are drawn by the Host. Keep this Host-only
+        // field out of the frozen RPC snapshot so older plugins encode the same
+        // input digest without changing the original Scene or its layer pixels.
+        layers=(scene.storyActions != nil || scene.cartoonRig != nil || scene.gameWorld != nil || scene.cartoonPresenter != nil) ? scene.layers?.map {
+            var visual=$0;visual.imageFlipHorizontal=nil;return visual
+        }:nil
         self.voiceBinding=voiceBinding
         artwork=scene.classicArtwork.map{PluginArtworkProps(gameplay:$0.gameplay,sprites:$0.sprites,derivation:$0.derivation,knowledgeParticipants:$0.knowledgeParticipants)};artworkRequired=scene.cartoonRig == nil
     }
@@ -174,6 +179,9 @@ public enum PluginProtocolRules {
     public static func validate(_ input:PluginFrameInput,capabilityID:String,now:Date=Date())throws {
         try validate(input.invocation,now:now)
         let p=input.props,r=input.rect
+        guard !(p.layers ?? []).contains(where:{$0.imageFlipHorizontal != nil}) else {
+            throw VideoError.invalid("插件RPC不接受Host专用图片翻转字段；图片像素由Host绘制")
+        }
         guard text(p.sceneID),(1...54000).contains(p.durationFrames),(0...216000).contains(input.sourceFrame),(1...120).contains(input.fps),(1...4096).contains(input.canvasWidth),(1...4096).contains(input.canvasHeight),input.canvasWidth*input.canvasHeight<=maximumCanvasPixels,[r.x,r.y,r.width,r.height].allSatisfy(\.isFinite),r.width>0,r.height>0,r.width<=Double(input.canvasWidth)*4,r.height<=Double(input.canvasHeight)*4,abs(r.x)<=Double(input.canvasWidth)*4,abs(r.y)<=Double(input.canvasHeight)*4 else{throw VideoError.invalid("插件帧、画布或裁切范围无效")}
         guard (capabilityID=="game.simulate" && p.kind == .simulation) || (capabilityID=="cartoon.animate" && p.kind == .cartoon) else{throw VideoError.invalid("插件能力与视觉输入类型不符")}
         guard [p.character,p.emotion,p.fontName].allSatisfy({text($0,maximum:512)}),p.color.range(of:"^[a-fA-F0-9]{6}$",options:.regularExpression) != nil,p.simulation.events.count<=4096,p.simulation.unit.utf8.count<=512,p.simulation.events.allSatisfy({text($0.label,maximum:512)}) else{throw VideoError.invalid("插件视觉参数或事件数量超界")}
@@ -281,6 +289,11 @@ public enum PluginRPCSchemas {
             // Full source-layer schemas are reused from the normal agent contract.
             let host=AgentSchemas.definitions()
             for name in ["SceneLayer","Keyframe","LayerKind","DataPresentation","DataChart","DataSeries","DataValueKeyframe","CodePresentation","CodeHighlight","LayerEntrance","LayerEntranceKind"] {if let value=host[name] {result[name]=value}}
+            // Preserve every published RPC schema: horizontal image reflection
+            // belongs to Host painting, not to the plugin's visual metadata.
+            if var layer=result["SceneLayer"]?.object,var properties=layer["properties"]?.object {
+                properties.removeValue(forKey:"imageFlipHorizontal");layer["properties"] = .object(properties);result["SceneLayer"] = .object(layer)
+            }
             if inputSchemaVersion>=8 {
                 for name in ["LayerTexturedPath","LayerTextureStroke"] {if let value=host[name] {result[name]=value}}
             } else if var layer=result["SceneLayer"]?.object,var properties=layer["properties"]?.object {

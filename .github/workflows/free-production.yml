@@ -13,7 +13,7 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  story-speech-stage:
+  actor-motion-and-image-flip-stage:
     if: github.repository == 'ayqy/video-core' && github.event.repository.private == false
     runs-on: macos-15-intel
     timeout-minutes: 40
@@ -38,7 +38,7 @@ jobs:
           assert head==os.environ['VIDEO_SOURCE_COMMIT']
           entries=re.findall(r'(?m)^\| ([a-f0-9]{64}) \| ([0-9]+) \| ([^|\n]+) \|$',(root/'SOURCE-MANIFEST.md').read_text())
           rows={name:(digest,int(size)) for digest,size,name in entries}
-          assert len(entries)==len(rows)==293
+          assert len(entries)==len(rows)==296
           for name,(digest,size) in rows.items():
               relative=Path(name)
               assert not relative.is_absolute() and '..' not in relative.parts
@@ -50,42 +50,48 @@ jobs:
           tracked=set(subprocess.check_output(['git','ls-files'],cwd=root,text=True).splitlines())
           assert tracked==set(rows)|metadata|{'SOURCE-MANIFEST.md'}
           assert not any((root/name).exists() for name in ['App','MacApp','MacUITests','Examples','Premium','Sources/VideoGame','Sources/VideoCartoon','Sources/VideoAdvanced'])
-          BASE_PUBLIC_COMMIT='b114079889f914ab36c95d2ccae3868d615ca613'
-          ADDITIONS={'Integrations/story_speech.py', 'Integrations/test_story_speech.py'}
-          REVIEWED_CHANGED={'.github/workflows/free-production.yml', 'Integrations/examples/README.md'}
-          PROTECTED_COUNT=289
-          PROTECTED_SHA256='fe72d080bad622c3946479106dda0abe7be7ca596f9e96a5800a424ed9b954b7'
-          assert len(ADDITIONS)==2 and not ADDITIONS & REVIEWED_CHANGED
+          BASE_PUBLIC_COMMIT='5859c2b96ea439d00b7e0cc876e30ec25e9ab537'
+          ADDITIONS={'Integrations/actor_motion.py', 'Integrations/test_actor_motion.py', 'Tests/VideoCoreTests/LayerImageFlipTests.swift'}
+          REVIEWED_CHANGED={'.github/workflows/free-production.yml', 'README.md', 'Sources/VideoCore/Layers.swift', 'Sources/VideoCore/AgentSchemas.swift', 'Sources/VideoCore/Editing.swift', 'Sources/VideoCore/PluginProtocol.swift', 'Sources/VideoMedia/LayerPainter.swift', 'Tests/VideoCoreTests/PluginProtocolTests.swift', 'Tests/VideoMediaTests/LayerImageSequenceMediaTests.swift'}
+          PROTECTED_COUNT=284
+          PROTECTED_SHA256='5f975b314471bbf41e78e7276e79c10d4e4e2e4b1d065eeb15bb781cbb69c4bc'
+          assert len(ADDITIONS)==3 and len(REVIEWED_CHANGED)==9 and not ADDITIONS & REVIEWED_CHANGED
           assert ADDITIONS<=set(rows) and REVIEWED_CHANGED<=set(rows)
           protected={name:value for name,value in rows.items() if name not in (REVIEWED_CHANGED | ADDITIONS)}
           digest_input=''.join(f'{name}\0{protected[name][0]}\0{protected[name][1]}\n' for name in sorted(protected))
           assert len(protected)==PROTECTED_COUNT and hashlib.sha256(digest_input.encode()).hexdigest()==PROTECTED_SHA256
-          print('manifest_payloads=293 unchanged_protected_inputs=289 source_commit='+head)
-          print('protected_baseline_commit='+BASE_PUBLIC_COMMIT+' reused_core_and_legacy_author_run=41191732445 blanket_native_reuse=false')
+          print('manifest_payloads=296 unchanged_protected_inputs=284 source_commit='+head)
+          print('protected_baseline_commit='+BASE_PUBLIC_COMMIT+' historical_speech_delivery_run=41196437622 current_native_checks=pending')
           PYCODE
 
-      - name: Verify the fifteen complete original voice timing rules
+      - name: Verify the thirteen independent actor metadata geometry rules
         shell: bash
         run: |
           python3 -B - <<'PYCODE'
           import sys, unittest
           sys.path.insert(0, 'Integrations')
-          suite=unittest.defaultTestLoader.discover('Integrations', pattern='test_story_speech.py')
-          assert suite.countTestCases()==15,'Exact new literal timing rule inventory changed'
+          suite=unittest.defaultTestLoader.discover('Integrations', pattern='test_actor_motion.py')
+          def cases(suite):
+              for item in suite:
+                  if isinstance(item, unittest.TestSuite):yield from cases(item)
+                  else:yield item
+          identities=[case.id() for case in cases(suite)]
+          assert len(identities)==len(set(identities))==suite.countTestCases()==13, 'Exact actor metadata rule inventory changed'
+          assert all(identity.startswith('test_actor_motion.ActorMotionRulesTests.test_') for identity in identities), 'Only the public actor metadata rule class may run'
           result=unittest.TextTestRunner(verbosity=2).run(suite)
-          assert result.wasSuccessful() and result.testsRun==15 and not result.skipped, 'A new timing rule failed, skipped or was not executed'
-          print('current_story_speech_literal_rules=15 sdk_executed=false audio_decoded=false human_review=false')
+          assert result.wasSuccessful() and result.testsRun==13 and not result.skipped and not result.expectedFailures, 'An actor metadata rule failed, skipped or was not executed'
+          print('current_actor_motion_metadata_rules=13 core_executed=false image_viewed=false media_executed=false human_review=false')
           PYCODE
 
-      - name: Build the current standalone free CLI
+      - name: Build the current standalone free Release CLI
         shell: bash
         run: |
           python3 -B - <<'PYCODE'
           from pathlib import Path
           import hashlib, os, re, subprocess
           root=Path(os.environ['GITHUB_WORKSPACE'])
-          scratch=Path(os.environ['RUNNER_TEMP'])/'video-free-paper-explanation'
-          log=Path(os.environ['RUNNER_TEMP'])/'video-free-paper-explanation-build.log'
+          scratch=Path(os.environ['RUNNER_TEMP'])/'video-free-image-flip'
+          log=Path(os.environ['RUNNER_TEMP'])/'video-free-image-flip-build.log'
           try:
               with log.open('wb') as stream:
                   result=subprocess.run(['swift','build','--package-path',str(root),'--scratch-path',str(scratch),'--disable-sandbox','--jobs','2','-c','release','--product','video'],stdout=stream,stderr=subprocess.STDOUT,timeout=1500)
@@ -93,27 +99,60 @@ jobs:
               errors=[line[:700] for line in lines if re.search(r'error:|fatal error:',line,re.I)]
               print('build_errors='+str(len(errors)))
               for line in errors[-12:]:print(line)
-              assert result.returncode==0,'Current standalone free CLI failed to build'
+              assert result.returncode==0,'Current standalone free Release CLI failed to build'
               directory=subprocess.check_output(['swift','build','--package-path',str(root),'--scratch-path',str(scratch),'-c','release','--show-bin-path'],text=True).strip()
               binary=(Path(directory)/'video').resolve(strict=True)
-              with Path(os.environ['GITHUB_ENV']).open('a') as stream:stream.write('VIDEO_FREE_BINARY='+str(binary)+'\n')
-              print('current_native_build=passed cli_sha256='+hashlib.sha256(binary.read_bytes()).hexdigest())
+              print('current_native_release_build=passed cli_sha256='+hashlib.sha256(binary.read_bytes()).hexdigest())
           finally:log.unlink(missing_ok=True)
           PYCODE
 
-      - name: Exercise the unchanged delivery author through the current standalone CLI
+      - name: Execute only the twelve new image flip and frozen RPC methods
         shell: bash
         run: |
           python3 -B - <<'PYCODE'
-          import os, subprocess, sys
           from pathlib import Path
-          delivery=subprocess.run([sys.executable,'-B','Integrations/knowledge_story_smoke.py',
-              '--binary',os.environ['VIDEO_FREE_BINARY'],'--output',str(Path(os.environ['RUNNER_TEMP'])/'knowledge-delivery-normal-cli'),'--delivery'],
-              text=True,capture_output=True,timeout=120)
-          print(delivery.stdout,end='')
-          if delivery.stderr:print(delivery.stderr,file=sys.stderr,end='')
-          assert delivery.returncode==0,'Actual delivery-before-payment normal author chain failed'
-          assert delivery.stdout.startswith('knowledge_story_smoke: passed (32 actual normal CLI calls; delivery=v1; '), 'Exact delivery call inventory differs'
+          import os, re, subprocess
+          root=Path(os.environ['GITHUB_WORKSPACE'])
+          core=[
+              'testLegacyNilKeepsExactBytesAndOptionalBooleanSchema',
+              'testExplicitTrueAndFalseRoundTripButNonBooleanWireValuesAreRejected',
+              'testFlipAcceptsOrdinaryCropsAndSequencesAndRejectsOtherKindsAndTextureRoutes',
+              'testFlipChangesRevisionIdentityAndRevokesExistingCaptionConfirmation',
+              'testFlipSurvivesSequenceSplitAndNormalRevisionRestore',
+          ]
+          media=[
+              'testHorizontalFlipReflectsSelectedCropAfterFitAndKeepsLegacyFalsePixels',
+              'testHorizontalFlipKeepsSequenceSourceClockMovementAndFinalPause',
+              'testHorizontalFlipKeepsStageRevealAndRestoresContextBeforeFollowingLayers',
+              'testHorizontalFlipChangesCacheAndSurvivesNormalCompleteBackupRestore',
+          ]
+          plugin=[
+              'testHostImageFlipStaysInSceneButNotPluginSnapshotOrDigest',
+              'testHistoricalRPCSceneLayerSchemaBytesAndDigestRemainFrozen',
+              'testRPCRejectsInjectedHostImageFlipInsteadOfDroppingIt',
+          ]
+          expected=['VideoCoreTests.LayerImageFlipTests/'+name for name in core]+['VideoMediaTests.LayerImageSequenceMediaTests/'+name for name in media]+['VideoCoreTests.PluginProtocolTests/'+name for name in plugin]
+          assert len(expected)==len(set(expected))==12
+          selected='^('+'|'.join(re.escape(name) for name in expected)+')$'
+          log=Path(os.environ['RUNNER_TEMP'])/'video-free-image-flip-tests.log'
+          try:
+              with log.open('wb') as stream:
+                  result=subprocess.run(['swift','test','--package-path',str(root),'--scratch-path',str(Path(os.environ['RUNNER_TEMP'])/'video-free-image-flip'),'--disable-sandbox','--jobs','2','-c','release','--filter',selected],stdout=stream,stderr=subprocess.STDOUT,timeout=1500)
+              text=log.read_text(errors='replace')
+              started=[];passed=[]
+              for line in text.splitlines():
+                  match=re.search(r"Test Case '-\[([^ ]+) (test[^ ]+)\]' (started|passed)",line)
+                  if match:
+                      identity=match[1]+'/'+match[2]
+                      (started if match[3]=='started' else passed).append(identity)
+              if result.returncode or sorted(started)!=sorted(expected) or sorted(passed)!=sorted(expected):
+                  for line in text.splitlines()[-55:]:print(line[:1000])
+              assert result.returncode==0,'A selected native image flip method failed'
+              assert sorted(started)==sorted(expected) and sorted(passed)==sorted(expected), 'The exact twelve native methods must each actually start and pass once'
+              assert re.search(r'Executed 12 tests, with 0 failures',text), 'Native test aggregate differs from the selected method inventory'
+              for identity in expected:print('native_image_flip_passed='+identity)
+              print('current_image_flip_core_methods=5 current_image_flip_media_methods=4 current_plugin_protocol_methods=3 private_art=false human_review=false')
+          finally:log.unlink(missing_ok=True)
           PYCODE
 
       - name: Record exact evidence boundaries
@@ -121,12 +160,12 @@ jobs:
         run: |
           python3 -B - <<'PYCODE'
           import os
-          text=("Current public CLI was rebuilt and the unchanged delivery author executed 32 actual normal CLI calls, including its Core recording, dependency refusals, CAS, no-op and independent backup recovery. "
-                "The 15 new story_speech rules used explicitly synthetic literal timing inputs; they did not run the SDK, decode audio or validate an actual voice take. "
-                "The protected 289 payloads are byte-identical to public baseline b114079889f914ab36c95d2ccae3868d615ca613. Its successful run 41191732445 supplies the unchanged 30-method Core causal class, 28-call v1 author and 30-call cost-v2 author evidence; those were not rerun or counted as current passes. "
-                "The unchanged 50 Python rules retain their original successful run 41190009527 as already carried by baseline run 41191732445. Layout, ReadAloud service calls, paper media and advanced painters retain their original evidence and were not rerun. "
-                "Actual new voice/media integration is separately verified in its private production environment; this public run grants no real voice, subtitle, material rights or whole-film human approval. "
-                "No private art, advanced implementation, original business audio or credentials were published.\n")
+          text=("Current scope actually executes 13 actor_motion rules using literal atlas/anchor metadata, independently builds the current standalone ordinary Release CLI, and executes exactly five new Core image flip methods, four new native media methods and three new frozen-RPC compatibility methods. "
+                "The media methods render self-contained asymmetric test pixels for crop/fit, sequence timing, movement, reveal/context, cache identity and complete backup restoration; they use no private actor assets. Metadata and synthetic pixels do not verify real human hand contact, voice, material rights or whole-film approval. "
+                "The frozen-RPC methods verify that the Host-only field stays out of plugin snapshots, historical schema bytes and digests, and that an injected field is rejected rather than silently dropped. "
+                "The protected 284 payloads are byte-identical to public baseline 5859c2b96ea439d00b7e0cc876e30ec25e9ab537. Its 15 literal story_speech rules and 32 normal delivery-author CLI calls remain historical run 41196437622 only; neither is rerun or counted as a current pass. "
+                "The old 30-method Core causal class, 28-call v1 author and 30-call cost-v2 author remain historical run 41191732445. The 50 Python rules remain historical run 41190009527. None supplies a current whole-film claim. "
+                "The five older methods in LayerImageSequenceMediaTests and sixteen older methods in PluginProtocolTests are outside this filter. ReadAloud calls, real business media, private actor-manifest tests and advanced painters were not run. No private art, advanced implementation, original business audio or credentials were published.\n")
           with open(os.environ['GITHUB_STEP_SUMMARY'],'a') as stream:stream.write(text)
-          print('current_native_build=passed current_story_speech_literal_rules=15 current_delivery_cli_calls=32 current_causal_native_rules=0 reused_causal_native_rules=30 current_legacy_v1_cost_v2_calls=0 media_executed=false review=false')
+          print('current_actor_motion_metadata_rules=13 current_native_release_build=passed current_image_flip_core_methods=5 current_image_flip_media_methods=4 current_plugin_protocol_methods=3 current_story_speech_rules=0 current_delivery_cli_calls=0 current_causal_native_rules=0 current_legacy_v1_cost_v2_calls=0 real_business_media_executed=false review=false')
           PYCODE

@@ -14,10 +14,17 @@ public struct SceneLayer: Codable, Equatable, Identifiable, Sendable {
     public var imageSequence: LayerImageSequence?
     /// Static source-space crop; this is not an animation and excludes a sequence.
     public var sourceRect: MediaFraming?
+    /// Reflect the selected image crop around its fitted center; nil preserves old bytes.
+    public var imageFlipHorizontal: Bool?
     /// Optional stage-space texture routes; nil preserves the original image IR.
     public var texturedPath: LayerTexturedPath?
     public init(kind:Kind,text:String="",assetID:String?=nil,endFrame:Int) { self.kind=kind;self.text=text;self.assetID=assetID;self.endFrame=endFrame }
     public func validateImagePresentation() throws {
+        if imageFlipHorizontal != nil {
+            guard kind == .image,texturedPath == nil else {
+                throw VideoError.invalid("水平翻转仅适用于普通图片，不能用于文字、数据或全舞台纹理路线")
+            }
+        }
         if let texturedPath {
             guard kind == .image,imageSequence == nil,keyframes.isEmpty else {
                 throw VideoError.invalid("舞台纹理路线只接受静态图片源，不能使用图片序列或位置关键帧")

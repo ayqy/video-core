@@ -221,4 +221,71 @@ final class PluginProtocolTests:XCTestCase {
         for name in ["StoryAction","CartoonRigActor","CartoonRigCue","CartoonSpeechTrack","SpeechEnergyCue"] {XCTAssertEqual(old[name],current[name],name)}
         for name in ["StoryCausality","StoryCausalSource","StoryCausalBinding"] {XCTAssertNil(current[name],name)}
     }
+
+    func testHostImageFlipStaysInSceneButNotPluginSnapshotOrDigest()throws {
+        var input=fixture(),scene=input.props.drawingScene()
+        scene.storyActions=[]
+        var layer=SceneLayer(kind:.image,assetID:"atlas",endFrame:scene.durationFrames)
+        layer.id="host-picture";layer.sourceRect=MediaFraming(x:0.1,y:0.2,width:0.3,height:0.4)
+        scene.layers=[layer]
+        let legacy=PluginVisualProps(scene:scene)
+        input.props=legacy
+        let legacyBytes=try Codec.data(legacy),legacyDigest=try input.contentDigest()
+        for flag in [true,false] {
+            var host=scene;host.layers?[0].imageFlipHorizontal=flag
+            let saved=try Codec.decoder().decode(Scene.self,from:Codec.data(host))
+            XCTAssertEqual(saved.layers?[0].imageFlipHorizontal,flag)
+            XCTAssertNotEqual(try Codec.data(saved),try Codec.data(scene))
+            let snapshot=PluginVisualProps(scene:saved)
+            XCTAssertEqual(host.layers?[0].imageFlipHorizontal,flag)
+            XCTAssertNil(snapshot.layers?[0].imageFlipHorizontal)
+            XCTAssertNil(snapshot.drawingScene().layers?[0].imageFlipHorizontal)
+            XCTAssertEqual(snapshot.layers?[0].sourceRect,layer.sourceRect)
+            XCTAssertEqual(try Codec.data(snapshot),legacyBytes)
+            var frozen=input;frozen.props=snapshot
+            XCTAssertEqual(try frozen.contentDigest(),legacyDigest)
+            XCTAssertNoThrow(try PluginProtocolRules.validate(frozen,capabilityID:"game.simulate"))
+        }
+    }
+    func testHistoricalRPCSceneLayerSchemaBytesAndDigestRemainFrozen()throws {
+        // The literal is the published SceneLayer definition at 0a54ff6c,
+        // including its original optional/null shapes and additionalProperties.
+        let historical=try Codec.decoder().decode(AgentValue.self,from:Data(##"{"additionalProperties":true,"properties":{"assetID":{"anyOf":[{"type":"string"},{"type":"null"}]},"color":{"type":"string"},"dataPresentation":{"anyOf":[{"$ref":"#/$defs/DataPresentation"},{"type":"null"}]},"endFrame":{"type":"integer"},"entrance":{"anyOf":[{"$ref":"#/$defs/LayerEntrance"},{"type":"null"}]},"height":{"description":"JSON decimal, never a formatted currency string","type":"number"},"id":{"type":"string"},"imageSequence":{"anyOf":[{"$ref":"#/$defs/LayerImageSequence"},{"type":"null"}]},"keyframes":{"items":{"$ref":"#/$defs/Keyframe"},"type":"array"},"kind":{"$ref":"#/$defs/LayerKind"},"locked":{"type":"boolean"},"opacity":{"description":"JSON decimal, never a formatted currency string","type":"number"},"sourceRect":{"anyOf":[{"$ref":"#/$defs/MediaFraming"},{"type":"null"}]},"startFrame":{"type":"integer"},"text":{"type":"string"},"texturedPath":{"anyOf":[{"$ref":"#/$defs/LayerTexturedPath"},{"type":"null"}]},"width":{"description":"JSON decimal, never a formatted currency string","type":"number"},"x":{"description":"JSON decimal, never a formatted currency string","type":"number"},"y":{"description":"JSON decimal, never a formatted currency string","type":"number"}},"required":["id","kind","text","x","y","width","height","color","opacity","startFrame","endFrame","locked","keyframes"],"type":"object"}"##.utf8))
+        for pluginID in ["video.game","video.cartoon"] {
+            for version in 1...8 where PluginInputCompatibility.supports(pluginID:pluginID,version:version) {
+                let definitions=PluginRPCSchemas.definitions(inputSchemaVersion:version,pluginID:pluginID)
+                if let actual=definitions["SceneLayer"] {
+                    var expected=try XCTUnwrap(historical.object)
+                    if version<8 {
+                        var properties=try XCTUnwrap(expected["properties"]?.object)
+                        properties.removeValue(forKey:"texturedPath");expected["properties"] = .object(properties)
+                    }
+                    let frozen=AgentValue.object(expected)
+                    XCTAssertEqual(try Codec.data(actual),try Codec.data(frozen),"\(pluginID) schema\(version)")
+                    XCTAssertEqual(try Codec.digest(actual),try Codec.digest(frozen),"\(pluginID) schema\(version)")
+                    XCTAssertNil(actual.object?["properties"]?.object?["imageFlipHorizontal"])
+                }
+                for schema in [PluginRPCSchemas.request(inputSchemaVersion:version,pluginID:pluginID),PluginRPCSchemas.response(inputSchemaVersion:version,pluginID:pluginID)] {
+                    XCTAssertFalse(String(decoding:try Codec.data(schema),as:UTF8.self).contains("imageFlipHorizontal"),"\(pluginID) schema\(version)")
+                }
+            }
+        }
+        XCTAssertNotNil(AgentSchemas.definitions()["SceneLayer"]?.object?["properties"]?.object?["imageFlipHorizontal"])
+    }
+    func testRPCRejectsInjectedHostImageFlipInsteadOfDroppingIt()throws {
+        var input=fixture(),scene=input.props.drawingScene()
+        scene.storyActions=[]
+        var layer=SceneLayer(kind:.image,assetID:"atlas",endFrame:scene.durationFrames)
+        layer.id="host-picture";scene.layers=[layer];input.props=PluginVisualProps(scene:scene)
+        XCTAssertNoThrow(try PluginProtocolRules.validate(input,capabilityID:"game.simulate"))
+        for flag in [true,false] {
+            var injected=input;injected.props.layers?[0].imageFlipHorizontal=flag
+            let decoded=try Codec.decoder().decode(PluginFrameInput.self,from:Codec.data(injected))
+            XCTAssertEqual(decoded.props.layers?[0].imageFlipHorizontal,flag)
+            XCTAssertThrowsError(try PluginProtocolRules.validate(decoded,capabilityID:"game.simulate")) {error in
+                XCTAssertEqual((error as? VideoError)?.code,"invalid_input")
+                XCTAssertTrue((error as? VideoError)?.errorDescription?.contains("Host专用图片翻转") == true)
+            }
+        }
+    }
 }

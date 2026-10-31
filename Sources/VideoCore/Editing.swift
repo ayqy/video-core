@@ -53,8 +53,8 @@ public enum Editor {
                     for index in scene.captions.indices {scene.captions[index].confirmed=false}
                     revision.invalidated += ["录屏/图片取景与声音字幕重新复核"]
                 }
-                let oldSequences=(old.layers ?? []).filter{$0.imageSequence != nil || $0.sourceRect != nil}
-                let newSequences=(scene.layers ?? []).filter{$0.imageSequence != nil || $0.sourceRect != nil}
+                let oldSequences=(old.layers ?? []).filter{$0.imageSequence != nil || $0.sourceRect != nil || $0.imageFlipHorizontal != nil}
+                let newSequences=(scene.layers ?? []).filter{$0.imageSequence != nil || $0.sourceRect != nil || $0.imageFlipHorizontal != nil}
                 if oldSequences != newSequences || ((!oldSequences.isEmpty || !newSequences.isEmpty) && (old.durationFrames != scene.durationFrames || old.speed != scene.speed || old.pauseFrames != scene.pauseFrames)) {
                     scene.voice?.listened=false
                     for index in scene.captions.indices {scene.captions[index].confirmed=false}
