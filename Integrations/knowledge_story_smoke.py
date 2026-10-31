@@ -150,7 +150,7 @@ def run(binary, output, *, action_cost=False, delivery=False):
                "knowledge compare", "backup create", "backup restore", "doctor"}
 
     def call(command, body=None, dry=False, *, directory=workspace, expected=True,
-             error_contains="旧轨迹仅保留作历史，请重新运行复核"):
+             error_contains="旧轨迹仅保留作历史，请重新运行复核", error_code="needs_review"):
         need(command in allowed, "unexpected command outside this author-contract test")
         need(all(sha(path.read_bytes()) == expected for path, expected in pins.items()),
              "author or binary changed during the actual CLI chain")
@@ -172,8 +172,8 @@ def run(binary, output, *, action_cost=False, delivery=False):
         need((process.returncode == 0) is expected and response.get("ok") is expected,
              command + " returned an unexpected outcome: " + str(response.get("error"))[:400])
         if not expected:
-            need(isinstance(response.get("error"), dict) and response["error"].get("code") == "needs_review"
-                 and response.get("state") == "needs_review"
+            need(isinstance(response.get("error"), dict) and response["error"].get("code") == error_code
+                 and response.get("state") == error_code
                  and error_contains in response["error"].get("message", ""),
                  command + " must reject the unsafe edit through the normal Core verifier")
         if dry and expected:
@@ -290,6 +290,24 @@ def run(binary, output, *, action_cost=False, delivery=False):
              error_contains="售货付款必须依赖同户交给本买家的真实交货")
         need(project(current["id"])["revisions"] == current["revisions"],
              "rejected premature payment must leave the full target history unchanged")
+        duplicate = deepcopy(current_scene)
+        extra_subject, extra_action = "extra-claimed-cargo", "duplicate-delivery-claim"
+        cargo_action = deepcopy(action_by_id[good["actionID"]])
+        cargo_layer = deepcopy(next(row for row in duplicate["layers"] if row["id"] == cargo_action["subjectID"]))
+        cargo_layer["id"] = extra_subject
+        cargo_action.update(id=extra_action, subjectID=extra_subject)
+        cargo_binding = deepcopy(good)
+        cargo_binding["actionID"] = extra_action
+        duplicate["layers"].append(cargo_layer)
+        duplicate["storyActions"].append(cargo_action)
+        duplicate["storyCausality"]["actors"].append(dict(actorID="seller", subjectID=extra_subject))
+        duplicate["storyCausality"]["bindings"].append(cargo_binding)
+        call("edit apply", dict(workspace_id=workspace_id, project_id=current["id"],
+             base_revision=current["revisions"][-1]["id"], edits=[{"replaceScene": {"_0": duplicate["id"], "_1": duplicate}}],
+             text="内部验证：直接CLI不可把同一交货转换认领成第二件货"), True, expected=False,
+             error_code="invalid_input", error_contains="同一次真实交货状态转换不能重复认领")
+        need(project(current["id"])["revisions"] == current["revisions"],
+             "duplicate delivery rejected by native Core must leave the full target history unchanged")
     if action_cost:
         need(current_scene["storyCausality"]["version"] == 2,
              "normal target scene must retain the actual v2 causal contract")
@@ -343,7 +361,7 @@ def run(binary, output, *, action_cost=False, delivery=False):
         print("knowledge_story_smoke: passed (" + str(len(calls))
               + " actual normal CLI calls; delivery=v1; real sources=2; delivery_tick=5; payment_tick=11;"
               + " goods=1; payment=3; balances=3/3 vs 0/6; native_missing_delivery_rejected=true;"
-              + " idempotent=true; independent_restore=true; media=false; speech=false; review=false)")
+              + " native_duplicate_delivery_rejected=true; idempotent=true; independent_restore=true; media=false; speech=false; review=false)")
     elif action_cost:
         print("knowledge_story_smoke: passed (" + str(len(calls))
               + " actual normal CLI calls; action_cost=v2; real sources=2; transfers=3/1 vs none;"

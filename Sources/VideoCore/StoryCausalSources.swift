@@ -111,7 +111,7 @@ public enum StoryCausalRules {
         guard Set(actions.map(\.id)).count==actions.count else {throw VideoError.invalid("故事动作标识不能重复")}
         let byAction=Dictionary(uniqueKeysWithValues:actions.map{($0.id,$0)})
         let bindings=Dictionary(uniqueKeysWithValues:value.bindings.map{($0.actionID,$0)})
-        var appliedTransfers=Set<String>()
+        var appliedTransfers=Set<String>(),appliedDeliveries=Set<[String]>()
         for binding in value.bindings {
             guard let source=sources[binding.sourceID],let action=byAction[binding.actionID],let event=source.trace.events.first(where:{$0.id==binding.eventID}),
                   action.startFrame>=source.startFrame,action.endFrame<=source.endFrame,binding.requires.count<=32,Set(binding.requires).count==binding.requires.count,
@@ -146,7 +146,11 @@ public enum StoryCausalRules {
                 if binding.kind == .delivery {allowed.insert("toActorID")}
                 guard let actor=binding.actorID,let rule=binding.ruleID,let before=binding.fromStateID,let after=binding.toStateID,before != after,event.phase == .settlement,
                       event.ruleExecution?.stateChanges.contains(where:{$0.ruleID==rule && $0.actorID==actor && $0.beforeStateID==before && $0.afterStateID==after})==true,owns(actor,action.subjectID) else {throw VideoError.review("状态或交货过程须对应已应用的真实状态转换和所属舞台对象")}
-                if binding.kind == .delivery {guard binding.toActorID != actor,action.kind == .transfer,action.quantity==1,owns(binding.toActorID,action.targetID) else {throw VideoError.invalid("每件货物交付须明确货主、另一实际收货人和一件货物的完整过程")}}
+                if binding.kind == .delivery {
+                    guard binding.toActorID != actor,action.kind == .transfer,action.quantity==1,owns(binding.toActorID,action.targetID) else {throw VideoError.invalid("每件货物交付须明确货主、另一实际收货人和一件货物的完整过程")}
+                    let key=[source.id,event.id,rule,actor,before,after]
+                    guard appliedDeliveries.insert(key).inserted else {throw VideoError.invalid("同一次真实交货状态转换不能重复认领为多件货物或不同收货人的交付")}
+                }
             case .outcome:
                 allowed=["outcome"]
                 guard let outcome=binding.outcome,[KnowledgePhase.resolution,.passage,.settlement].contains(event.phase),outcome==event.obstacleCleared else {throw VideoError.review("结果动画须与当前实迹已公布的实际结果一致")}

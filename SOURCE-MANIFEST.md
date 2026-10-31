@@ -2,10 +2,10 @@
 
 VideoFree source export · package_free.py · version 1
 
-生成时间：2026-10-31 17:45:20 北京时间
+生成时间：2026-10-31 18:10:26 北京时间
 
-- 源码与必要元数据：291个文件；4559260字节（不含本清单）。
-- 整体内容指纹：`269211f1618f8a7f8b42319ac6de438c46f684f904e467dd43c3883d60e1adc7`。
+- 源码与必要元数据：291个文件；4566648字节（不含本清单）。
+- 整体内容指纹：`bc32c3592f76973db06c6c07d88687b6f401ee7c675ce5e558be9d49c3a4d92c`。
 - 来源：受控原始工程中的逐文件白名单；Package.swift与唯一免费制作workflow来自Distribution/Free精确模板，README由发行脚本生成。
 - 本包不含.git，不可作为新业务checkout；本清单生成过程不执行构建、设备验收、签名安装或公共上传，各阶段以独立证据为准。
 - 排除：App、VideoGame、VideoCartoon、Premium、高级实现运行时测试、私有仓库地址、凭据、客户数据、缓存、日志及媒体过程产物。
@@ -14,7 +14,7 @@ VideoFree source export · package_free.py · version 1
 
 | SHA-256 | 字节数 | 包内路径 / 原工程来源 |
 |---|---:|---|
-| 42d6d45d94a5c924cbc24dcd914e9c6344f137baf3606248bec764a8e45e4d29 | 10190 | .github/workflows/free-production.yml |
+| 97ce7711ed35eeda12c51c8897a68ae27201fc39cfd9cffa038328199a32a44c | 14109 | .github/workflows/free-production.yml |
 | 853ed55ec629fd0f06a4c3850d06081d6e5bd2c5d60999637662d6dc564f3389 | 42491 | Integrations/README.md |
 | 39dd8274ff1e6b0649acb63281087a1144e1f4a4e0eed3dc2b92e10df2cbd121 | 28488 | Integrations/asset_reuse.py |
 | b855d428b3b24845239bb209cacc4f23767ab7b25097546d372f00fb724a7a30 | 29749 | Integrations/causal_story.py |
@@ -36,7 +36,7 @@ VideoFree source export · package_free.py · version 1
 | 31bf2eefc113e23de0ee5bda07a6872c9c5b7f00e9b3417103842bd8a1e7656a | 26182 | Integrations/game_asset_production.py |
 | f3cda5bceed4b2f2cd8832e427fdf6b83e9ecbaa4ff1fc7beaf3805bfb4573f7 | 16732 | Integrations/install.py |
 | e90a729c431b973b0ba8d50110f3d7de1b8827f4d6ec11e5a9c0cd305cf31d51 | 45867 | Integrations/knowledge_story.py |
-| 527ca99bc2c9c01da6ee282bfc64751766ff82cae8de2f64ae00609f2ed5f937 | 23242 | Integrations/knowledge_story_smoke.py |
+| 36cc3584236fe72a6ac69a2200c9da28784323f1f8a7e12f663ccb5806535fc7 | 24706 | Integrations/knowledge_story_smoke.py |
 | 537a98a3a25a99d4266cf093fecdf38d838f777e963c1027c3a6d39e5961a622 | 11016 | Integrations/layer_image_sequence_smoke.py |
 | 904ddac810cc3b978bed4a17102ffee2dafa3ef255518027b10b14f3a0613761 | 1568 | Integrations/narrated_opening.py |
 | 62f9d807ade91cb2bac3b92933ee0dbf5d957fb52619f6e4979c905d0da8527f | 3842 | Integrations/narration_reference.py |
@@ -163,7 +163,7 @@ VideoFree source export · package_free.py · version 1
 | 27594a4693ac6cf45f32d9f13b1c4ca834ac31d03375685c1a91fd337187ffbd | 9125 | Sources/VideoCore/SpeechProjectRules.swift |
 | ef7da18c9f0842d0f7c71ff6756b2ea5a7e3f4c3cf6e87ff2b8f94a9f657f140 | 31397 | Sources/VideoCore/Storage.swift |
 | 406ca0a7a657bbede85f3b0949f7d0e0138eb22948eece61e0f758883debf4f4 | 23590 | Sources/VideoCore/StoryActions.swift |
-| 396d9caf8cc1f6d74e9cdc51402ef6b1329a26356e9dc206a8ed77eced267f0f | 23640 | Sources/VideoCore/StoryCausalSources.swift |
+| d208bfd104d2e045264baa43e7bd79c45f7d6b5ec88234aa99f288aabcf9e86a | 23979 | Sources/VideoCore/StoryCausalSources.swift |
 | 92dfe39cc68c46b23be5d2427f4fad63d96e7ef50aed0692da622c973725350d | 27958 | Sources/VideoCore/Teaching.swift |
 | eedd110e80735e0534e55dfcc0233723ab35e2fd41ce240b77a2b728c08e51c4 | 11179 | Sources/VideoCore/TeachingBatch.swift |
 | 885941b4110599e791b034ef8b9dd46b7e72ad22f66f62f511d3bff965a75d4a | 3233 | Sources/VideoCore/TexturedPath.swift |
@@ -274,7 +274,7 @@ VideoFree source export · package_free.py · version 1
 | c16adb9a5d0755a624187e4d10c469591afcef297172d00c484f06b2ab83528f | 48688 | Tests/VideoCoreTests/SpeechTests.swift |
 | b981114d904d881526d32e0c8d6a21fb465aa3d82553ec99457d742f8bce192a | 4075 | Tests/VideoCoreTests/SplitTimelineRulesTests.swift |
 | 73c51a0579edc98d151c637702c84bf4866f2981a7eb6563e18b29b20450f2bd | 22949 | Tests/VideoCoreTests/StoryActionTests.swift |
-| 0b27af606b99e984437f50ddd470e987a38c37e7f98e83ec14fbf54ae8a18158 | 36241 | Tests/VideoCoreTests/StoryCausalSourcesTests.swift |
+| e0b558b1488378184ad7b8edbd38bfc0b720aa6d39956072cdd2d9aea0c560fb | 37907 | Tests/VideoCoreTests/StoryCausalSourcesTests.swift |
 | aea15ba734c2536753d15b739b26c8f68284c69294d586372a2f885bff1b706b | 17112 | Tests/VideoCoreTests/TeachingTests.swift |
 | fa21976b33dfc558041a027f2077a16d4229d4ee8327ec3f9290bb3094141f2e | 15333 | Tests/VideoCoreTests/UpstreamLicenseTests.swift |
 | 38f48268a1d364274628a28449aaad1a9e432455c7e334bd5e8b32cde81a0682 | 17242 | Tests/VideoCoreTests/VendorFreeModuleTrustTests.swift |

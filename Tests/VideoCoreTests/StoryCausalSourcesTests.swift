@@ -142,6 +142,27 @@ final class StoryCausalSourcesTests:XCTestCase {
         XCTAssertThrowsError(try mutate{$1[0].subjectID="person-b";_=$0}.validate(assets:[]))
         XCTAssertThrowsError(try mutate{$1[0].quantity=2;_=$0}.validate(assets:[]))
     }
+    func testOneDeliveryTransitionCannotCreateTwoOwnedGoodsForSameOrDifferentRecipients()throws {
+        var original=try scene()
+        var secondGood=SceneLayer(kind:.rectangle,endFrame:180);secondGood.id="second-cargo-a"
+        original.layers!.append(secondGood)
+        original.storyCausality!.actors.append(.init(actorID:"a",subjectID:secondGood.id))
+        // The same state may have additional visual views; these are not new deliveries.
+        for (index,subject) in ["person-a","road"].enumerated() {
+            let id="delivery-state-view-\(index)"
+            original.storyActions!.append(.init(id:id,kind:.show,subjectID:subject,startFrame:10+index*5,endFrame:15+index*5))
+            original.storyCausality!.bindings.append(.init(actionID:id,sourceID:"base",eventID:"2-收益结算",kind:.stateChange,actorID:"a",ruleID:"deliver-a",fromStateID:"loaded",toStateID:"delivered"))
+        }
+        try original.validate(assets:[])
+        for (recipient,target) in [("buyer","buyer"),("b","person-b")] {
+            var duplicate=original
+            duplicate.storyActions!.append(transfer("second-delivery",secondGood.id,target,35,39,1))
+            duplicate.storyCausality!.bindings.append(.init(actionID:"second-delivery",sourceID:"base",eventID:"2-收益结算",kind:.delivery,actorID:"a",ruleID:"deliver-a",toActorID:recipient,fromStateID:"loaded",toStateID:"delivered"))
+            XCTAssertThrowsError(try duplicate.validate(assets:[])) {error in
+                XCTAssertEqual(error as? VideoError,.invalid("同一次真实交货状态转换不能重复认领为多件货物或不同收货人的交付"))
+            }
+        }
+    }
     func testPerformedActionRejectsRequestedButUnfundedAction()throws {
         var scene=try scene();var value=try XCTUnwrap(scene.storyCausality),model=value.sources[0].model
         model.ruleTable!.actions[0].cost=100
