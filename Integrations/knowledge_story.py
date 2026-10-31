@@ -10,7 +10,9 @@ Public entry points use invoke(command, body, dry_run). The supported source
 contract is v3 finite rule tables and at most three sources. Version 1 retains
 the original single-actor-plan intervention. Version 2 additionally declares
 one explicit action-cost change per selected source. Matrix/public-good models
-and payment/delivery semantics are explicitly unsupported here.
+remain outside this adapter. Delivery and subsequent payment reuse Core's
+existing typed state-transition and settlement bindings; they never infer a
+sale from a label, a requested action, or a visual route alone.
 """
 from __future__ import annotations
 
@@ -29,7 +31,7 @@ class KnowledgeStoryError(ValueError):
 
 
 PHASES = ('本轮开始', '同时选择', '实际出力与扣费', '清障判定', '通行或受阻', '收益结算')
-_KINDS = {'performedAction', 'deposit', 'transfer', 'stateChange', 'outcome'}
+_KINDS = {'performedAction', 'deposit', 'transfer', 'stateChange', 'outcome', 'delivery', 'payment'}
 
 
 def _need(condition, message):
@@ -339,7 +341,7 @@ def _event(source, selector):
 
 def _resolve(effect, event):
     _need(isinstance(effect, dict) and effect.get('kind') in _KINDS,
-          'unsupported effect; payment/delivery and v1/v2 conversion are not implemented by this adapter')
+          'unsupported effect; v1/v2 model conversion is not implemented by this adapter')
     kind = effect['kind']
     if kind == 'performedAction':
         _object(effect, ('kind', 'actor_id', 'action_key'))
@@ -351,7 +353,7 @@ def _resolve(effect, event):
         rows = [a for a in event['actors'] if a['id'] == effect['from_actor_id'] and _integer(a.get('cost'), 1, 9999)]
         _need(event['phase'] == PHASES[2] and len(rows) == 1, 'deposit needs one actual positive native debit')
         return dict(kind=kind, fromActorID=effect['from_actor_id'], amount=rows[0]['cost'])
-    if kind == 'transfer':
+    if kind in ('transfer', 'payment'):
         _object(effect, ('kind', 'rule_id', 'from_actor_id', 'to_actor_id'))
         rows = [row for row in (event.get('ruleExecution') or {}).get('transfers', [])
                 if row.get('ruleID') == effect['rule_id'] and row.get('sourceActorID') == effect['from_actor_id']
@@ -364,14 +366,20 @@ def _resolve(effect, event):
         if effect['to_actor_id'] is not None:
             binding['toActorID'] = effect['to_actor_id']
         return binding
-    if kind == 'stateChange':
-        _object(effect, ('kind', 'actor_id', 'rule_id', 'from_state_id', 'to_state_id'))
+    if kind in ('stateChange', 'delivery'):
+        fields = ('kind', 'actor_id', 'rule_id', 'from_state_id', 'to_state_id')
+        _object(effect, fields + (('to_actor_id',) if kind == 'delivery' else ()))
         rows = [row for row in (event.get('ruleExecution') or {}).get('stateChanges', [])
                 if row.get('actorID') == effect['actor_id'] and row.get('ruleID') == effect['rule_id']
                 and row.get('beforeStateID') == effect['from_state_id'] and row.get('afterStateID') == effect['to_state_id']]
         _need(event['phase'] == PHASES[5] and len(rows) == 1 and effect['from_state_id'] != effect['to_state_id'],
               'state presentation needs a unique applied native transition')
-        return dict(kind=kind, actorID=effect['actor_id'], ruleID=effect['rule_id'], fromStateID=rows[0]['beforeStateID'], toStateID=rows[0]['afterStateID'])
+        binding = dict(kind=kind, actorID=effect['actor_id'], ruleID=effect['rule_id'], fromStateID=rows[0]['beforeStateID'], toStateID=rows[0]['afterStateID'])
+        if kind == 'delivery':
+            _need(_identity(effect['to_actor_id']) and effect['to_actor_id'] != effect['actor_id'],
+                  'delivery needs a different actual recipient actor')
+            binding['toActorID'] = effect['to_actor_id']
+        return binding
     _object(effect, ('kind', 'outcome'))
     _need(type(effect['outcome']) is bool and event['phase'] in PHASES[3:]
           and effect['outcome'] == event.get('obstacleCleared'), 'outcome must equal an already published native result')
@@ -441,7 +449,8 @@ def compile_presentation(target_project, plan, recorded):
     def owns(actor, subject):
         return subject == pool if actor is None else ownership.get(subject) == actor
     beats, actions, bindings, observations = {}, [], [], []
-    used_money = set()
+    used_money, used_deliveries = set(), set()
+    resolved = {}
     for beat in plan['beats']:
         _object(beat, ('id', 'detail_id', 'shot_id', 'source_id', 'event', 'effect', 'subject_id', 'start_frame', 'end_frame', 'requires', 'visual'))
         _need(beat['detail_id'] in details and beat['shot_id'] in shots and beat['source_id'] in sources, 'beat must reference an evaluated detail, shot and actual source')
@@ -466,18 +475,40 @@ def compile_presentation(target_project, plan, recorded):
         _need(subject in subjects, 'action subject is absent')
         _object(visual, ('kind',), ('from_anchor', 'to_anchor', 'via_anchors', 'target_subject_id'))
         actor = binding.get('actorID', binding.get('fromActorID'))
-        if kind in ('performedAction', 'stateChange'):
+        if kind in ('performedAction', 'stateChange', 'delivery'):
             _need(owns(actor, subject), 'action/state subject is not owned by the actual actor')
         if kind == 'performedAction':
             _need(detail['actor_id'] == actor and visual['kind'] in ('move', 'show', 'hide', 'build', 'speak'), 'performed action differs from its acting story character')
-        elif kind in ('deposit', 'transfer'):
+        elif kind in ('deposit', 'transfer', 'payment'):
             target_subject = visual.get('target_subject_id')
             _need(visual['kind'] == 'transfer' and owns(actor, subject) and target_subject in subjects
                   and target_subject != subject and owns(binding.get('toActorID'), target_subject), 'money must leave the actual payer/pool and reach the actual receiver/pool')
             _need(actor is None or detail['actor_id'] == actor, 'story payer differs from the applied transfer')
-            key = (beat['source_id'], event['round'], event['phase'], kind, binding.get('ruleID'), actor, binding.get('toActorID'))
+            # A payment is the same actual transfer as its generic view. It
+            # cannot be claimed once under each presentation kind.
+            key = (beat['source_id'], event['round'], event['phase'], 'deposit' if kind == 'deposit' else 'transfer',
+                   binding.get('ruleID'), actor, binding.get('toActorID'))
             _need(key not in used_money, 'one actual debit/transfer cannot be claimed twice')
             used_money.add(key)
+            if kind == 'payment':
+                _need(detail.get('recipient_id') == binding.get('toActorID'),
+                      'story payment must name the actual payee as its recipient')
+                _need(any(resolved[required]['kind'] == 'delivery'
+                          and resolved[required]['actorID'] == binding.get('toActorID')
+                          and resolved[required]['toActorID'] == binding.get('fromActorID')
+                          and _event(source, beats[required]['event'])['tick'] < event['tick']
+                          for required in beat['requires']),
+                      'payment must depend on completed delivery by this payee to this payer in an earlier actual source event')
+        elif kind == 'delivery':
+            target_subject = visual.get('target_subject_id')
+            _need(detail['actor_id'] == actor and detail.get('recipient_id') == binding['toActorID']
+                  and visual['kind'] == 'transfer' and target_subject in subjects
+                  and target_subject != subject and owns(binding['toActorID'], target_subject),
+                  'delivery must move one owned good to its actual distinct story recipient')
+            key = (beat['source_id'], event['tick'], binding['ruleID'], actor,
+                   binding['fromStateID'], binding['toStateID'])
+            _need(key not in used_deliveries, 'one actual delivery transition cannot be claimed as multiple goods')
+            used_deliveries.add(key)
         elif kind == 'stateChange':
             _need(detail['actor_id'] == actor and visual['kind'] in ('show', 'hide', 'build', 'speak'),
                   'state changes belong to their actual story actor and only reveal/build/hide that owned subject')
@@ -494,8 +525,8 @@ def compile_presentation(target_project, plan, recorded):
                 action['waypoints'] = [deepcopy(plan['anchors'][name]) for name in names]
         else:
             _need(not {'from_anchor', 'to_anchor', 'via_anchors', 'target_subject_id'}.intersection(visual), 'non-movement cannot hide a route or recipient')
-        if kind in ('deposit', 'transfer'):
-            action.update(targetID=visual['target_subject_id'], quantity=binding['amount'])
+        if kind in ('deposit', 'transfer', 'payment', 'delivery'):
+            action.update(targetID=visual['target_subject_id'], quantity=1 if kind == 'delivery' else binding['amount'])
         else:
             _need('target_subject_id' not in visual, 'non-transfer has a hidden recipient')
         if visual['kind'] == 'speak':
@@ -506,7 +537,7 @@ def compile_presentation(target_project, plan, recorded):
                   'spoken labels must be unique bounded text from the actual executed action or resulting native state')
             action['text'] = labels[0]
         binding.update(actionID=beat['id'], sourceID=beat['source_id'], eventID=str(event['round']) + '-' + event['phase'], requires=deepcopy(beat['requires']))
-        actions.append(action); bindings.append(binding); beats[beat['id']] = beat
+        actions.append(action); bindings.append(binding); beats[beat['id']] = beat; resolved[beat['id']] = binding
         observations.append(dict(beat_id=beat['id'], detail_id=beat['detail_id'], shot_id=beat['shot_id'], source_id=beat['source_id'],
                                  tick=event['tick'], event_id=binding['eventID'], effect=deepcopy(binding)))
     _need({row['sourceID'] for row in bindings} == set(sources), 'each recorded source needs an actual selected presentation')

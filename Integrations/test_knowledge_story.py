@@ -564,13 +564,13 @@ class KnowledgeStoryTests(unittest.TestCase):
             project,plan,recorded,_=fixture();mutate(recorded)
             with self.assertRaises(KnowledgeStoryError):compile_presentation(project,plan,recorded)
 
-    def test_v1_v2_payment_delivery_and_rule_change_branches_are_explicitly_rejected(self):
+    def test_old_models_unsafe_trade_and_rule_change_branches_are_explicitly_rejected(self):
         for version in (1,2):
             project,plan,recorded,_=fixture();plan['sources'][0]['model']['version']=version
             with self.assertRaisesRegex(KnowledgeStoryError,'v3'):compile_presentation(project,plan,recorded)
-        for kind in ('payment','delivery'):
+        for kind, reason in (('payment','payment must depend on completed delivery'),('delivery','missing or unsupported')):
             project,plan,recorded,_=fixture();plan['beats'][2]['effect']['kind']=kind
-            with self.assertRaisesRegex(KnowledgeStoryError,'unsupported effect'):compile_presentation(project,plan,recorded)
+            with self.assertRaisesRegex(KnowledgeStoryError,reason):compile_presentation(project,plan,recorded)
         project,plan,recorded,_=fixture();plan['sources'][1]['model']['threshold']=2
         with self.assertRaisesRegex(KnowledgeStoryError,'one actor-plan'):compile_presentation(project,plan,recorded)
 

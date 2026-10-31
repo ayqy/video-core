@@ -128,7 +128,9 @@ Claude的3-turn/0.10美元上限会话与缩减后的1-turn/0.01美元上限探�
 
 `apply_presentation(target_project, plan, recorded, invoke)`读回真实来源工程及冻结版本，再通过正常Core dry-run独立重算所有轨迹，最后执行一次CAS编辑。`invoke(command, body, dry_run)`是调用方已有的正常CLI路由。重复应用须重新查询目标并更新`plan.target.base_revision`；内容无变化时不产生新版本。正常编辑撤销受影响确认，既有历史与原音保留。目标旁白必须逐字等于镜头旁白拼接，不能给新知识套旧配音。
 
-示例[双方同意的资金互换](examples/knowledge_exchange.py)把同一个适配器接到两个参与人、seed19、两轮规则和五镜头；它只是有限资金协议，未模拟商品价值或交货付款。另见[单一成本反事实](examples/knowledge_action_cost.py)：两条来源只把确认成本由一枚改为两枚，由Core正常重算扣费、实际互换和最终余额；仅改变输入摘要或未生效动作成本不足以授权不同结果。录制与编译均复查实际差异，旧v1来源不增加新字段。当前入口明确拒绝旧知识模型v1/v2转换、任意规则正文反事实、delivery/payment及解说员重编排；这些不能从通用作者入口推定已实现。普通`KnowledgeStoryboardPlan`原有入口继续保留。规则测试使用有界夹具，不能代替真实Core录制、完整有声成片或人工审片。
+示例[双方同意的资金互换](examples/knowledge_exchange.py)把同一个适配器接到两个参与人、seed19、两轮规则和五镜头；它只是有限资金协议，未模拟商品价值或交货付款。另见[单一成本反事实](examples/knowledge_action_cost.py)：两条来源只把确认成本由一枚改为两枚，由Core正常重算扣费、实际互换和最终余额；仅改变输入摘要或未生效动作成本不足以授权不同结果。录制与编译均复查实际差异，旧v1来源不增加新字段。当前入口明确拒绝旧知识模型v1/v2转换、任意规则正文反事实及解说员重编排；这些不能从通用作者入口推定已实现。普通`KnowledgeStoryboardPlan`原有入口继续保留。规则测试使用有界夹具，不能代替真实Core录制、完整有声成片或人工审片。
+
+[先交货后付款](examples/knowledge_delivery.py)复用上述入口和Core既有的`delivery/payment`绑定。`delivery`选择器声明`actor_id/rule_id/from_state_id/to_state_id/to_actor_id`，只认实际已应用的状态转换；表现为一件自有货物移交给另一真实角色。`payment`选择器声明`rule_id/from_actor_id/to_actor_id`，金额只读真实结算，且须在`requires`中引用同分支、同一对买卖双方的完整交货动作。交货真实事件须严格早于付款事件，动作也须完成；同tick内先画货再画钱不能冒充先交后付。剧情细节明确接收人，货物与钱使用独立主体；重复交货及同笔钱按transfer/payment两种名称重复认领均拒绝。示例只改变卖家的交货计划，对照不交货也不收钱；不计算商品价值，不默认提供图片、声音或媒体审核。
 
 ### Codex受控动态工具
 

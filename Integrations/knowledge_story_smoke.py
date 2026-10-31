@@ -101,7 +101,28 @@ def snapshot(path):
     return json.loads(envelope["snapshot"]), envelope
 
 
-def run(binary, output, *, action_cost=False):
+def _delivery_scene(identity, subjects, story, frames):
+    """Editable ordinary props only; this author-contract test renders no media."""
+    value = scene(identity)
+    value.update(durationFrames=frames, layers=[],
+                 narration="".join(row["narration"] for row in story.stage("shots")["shots"]))
+    side = max(1280 / 13, 720 / 7)
+    def hand(column):
+        return dict(x=((1280 - 13 * side) / 2 + (column + .5) * side) / 1280,
+                    y=((720 - 7 * side) / 2 + 4 * side) / 720)
+    for key in subjects:
+        seller = key in ("seller", "cargo", "retained_cargo")
+        retained = key.startswith("retained_")
+        end = frames // 2 if key in ("cargo", "buyer_coin") else frames
+        value["layers"].append(dict(id=subjects[key], kind="色块", text="",
+            **hand(3 if seller else 9), width=.1, height=.1, color="26856C" if seller else "3265A8",
+            opacity=0 if key == "pool" else 1, startFrame=frames // 2 if retained else 0,
+            endFrame=end, locked=False, keyframes=[]))
+    return value
+
+
+def run(binary, output, *, action_cost=False, delivery=False):
+    need(not (action_cost and delivery), "select one explicit author invocation")
     deadline = time.monotonic() + 90
     binary = binary.resolve(strict=True)
     need(binary.is_file(), "the actual built normal CLI is required")
@@ -119,11 +140,17 @@ def run(binary, output, *, action_cost=False):
         from examples.knowledge_action_cost import (SUBJECTS as cost_subjects, cost_models,
             presentation as cost_presentation, story_plan as cost_story_plan)
         pins[ROOT / "Integrations/examples/knowledge_action_cost.py"] = sha((ROOT / "Integrations/examples/knowledge_action_cost.py").read_bytes())
+    if delivery:
+        from examples.knowledge_delivery import (FRAMES as delivery_frames, SUBJECTS as delivery_subjects,
+            delivery_models, presentation as delivery_presentation, story_plan as delivery_story_plan)
+        path = ROOT / "Integrations/examples/knowledge_delivery.py"
+        pins[path] = sha(path.read_bytes())
     calls = []
     allowed = {"workspaces create", "projects create", "projects list", "edit apply",
                "knowledge compare", "backup create", "backup restore", "doctor"}
 
-    def call(command, body=None, dry=False, *, directory=workspace, expected=True):
+    def call(command, body=None, dry=False, *, directory=workspace, expected=True,
+             error_contains="旧轨迹仅保留作历史，请重新运行复核"):
         need(command in allowed, "unexpected command outside this author-contract test")
         need(all(sha(path.read_bytes()) == expected for path, expected in pins.items()),
              "author or binary changed during the actual CLI chain")
@@ -147,8 +174,8 @@ def run(binary, output, *, action_cost=False):
         if not expected:
             need(isinstance(response.get("error"), dict) and response["error"].get("code") == "needs_review"
                  and response.get("state") == "needs_review"
-                 and "旧轨迹仅保留作历史，请重新运行复核" in response["error"].get("message", ""),
-                 command + " must reject the forged trace through the normal Core recording verifier")
+                 and error_contains in response["error"].get("message", ""),
+                 command + " must reject the unsafe edit through the normal Core verifier")
         if dry and expected:
             need(response.get("state") == "dry_run", command + " did not honor dry-run")
         calls.append((command, dry))
@@ -182,11 +209,12 @@ def run(binary, output, *, action_cost=False):
     created = write("workspaces create", {"name": "公开通用知识作者合同验证"})
     workspace_id = created["result"]["id"]
     scope = dict(workspace_id=workspace_id, aspect="16:9")
-    models = cost_models() if action_cost else protocol_models()
+    models = delivery_models() if delivery else cost_models() if action_cost else protocol_models()
     source_scenes = {key: scene("source-" + key, model=model) for key, model in models.items()}
     source_created = write("projects create", dict(scope, name="真实有限协议来源",
         scenes=list(source_scenes.values())))
-    target_scene = (_action_cost_scene("presentation", cost_subjects, cost_story_plan())
+    target_scene = (_delivery_scene("presentation", delivery_subjects, delivery_story_plan(), delivery_frames) if delivery
+                    else _action_cost_scene("presentation", cost_subjects, cost_story_plan())
                     if action_cost else scene("presentation"))
     target_created = write("projects create", dict(scope, name="普通图层作者内部验证",
         scenes=[target_scene]))
@@ -194,7 +222,7 @@ def run(binary, output, *, action_cost=False):
     target_project = project(target_created["project_id"])
     source_history = deepcopy(source_project["revisions"])
     target_history = deepcopy(target_project["revisions"])
-    make_plan = cost_presentation if action_cost else presentation
+    make_plan = delivery_presentation if delivery else cost_presentation if action_cost else presentation
     plan = make_plan(target_project, {key: row["id"] for key, row in source_scenes.items()})
     plan["target"]["mode"] = "pencil"
     plan["balances"] = []
@@ -204,16 +232,18 @@ def run(binary, output, *, action_cost=False):
          and latest_source["revisions"][-1]["id"] == recorded["revision"],
          "normal source recording changed earlier history")
     source_rows = {row["id"]: row for row in recorded["sources"]}
-    baseline, alternative = ("low", "high") if action_cost else ("consent", "decline")
+    baseline, alternative = ("delivered", "withheld") if delivery else ("low", "high") if action_cost else ("consent", "decline")
     flows = [(row.get("sourceActorID"), row.get("destinationActorID"), row["amount"])
         for event in source_rows[baseline]["trace"]["events"]
         for row in (event.get("ruleExecution") or {}).get("transfers", [])]
-    need(sorted(flows) == [("lan", "qing", 1), ("qing", "lan", 3)], "actual two-way native flows differ")
+    need(sorted(flows) == ([("buyer", "seller", 3)] if delivery else [("lan", "qing", 1), ("qing", "lan", 3)]),
+         "actual native payment/transfer flows differ")
     rejected_flows = [row for event in source_rows[alternative]["trace"]["events"]
         for row in (event.get("ruleExecution") or {}).get("transfers", [])]
     balances = {key: {row["id"]: row["resources"] for row in value["trace"]["finalResources"]}
                 for key, value in source_rows.items()}
-    expected_balances = ({"low": {"qing": 2, "lan": 3}, "high": {"qing": 1, "lan": 0}} if action_cost
+    expected_balances = ({"delivered": {"seller": 3, "buyer": 3}, "withheld": {"seller": 0, "buyer": 6}} if delivery
+                         else {"low": {"qing": 2, "lan": 3}, "high": {"qing": 1, "lan": 0}} if action_cost
                          else {"consent": {"qing": 3, "lan": 4}, "decline": {"qing": 5, "lan": 2}})
     need(not rejected_flows and balances == expected_balances,
          "real source counterfactual balances or no-transfer result differ")
@@ -232,11 +262,34 @@ def run(binary, output, *, action_cost=False):
     need(current["revisions"][:-1] == target_history
          and current["revisions"][-1]["id"] == applied["revision"], "author edit changed earlier target history")
     current_scene = current["revisions"][-1]["scenes"][0]
-    need(current_scene["kind"] == "图文讲解" and len(current_scene["storyActions"]) == (len(plan["beats"]) if action_cost else 9)
+    need(current_scene["kind"] == "图文讲解" and len(current_scene["storyActions"]) == (len(plan["beats"]) if action_cost or delivery else 9)
          and len(current_scene["storyCausality"]["sources"]) == 2
          and current_scene.get("voice") is None and current_scene.get("gameWorld") is None,
          "ordinary author must retain typed sources without private modules or unrelated speech")
     need(not any(current["revisions"][-1]["review"].values()), "author test must not grant human review")
+    if delivery:
+        bindings = current_scene["storyCausality"]["bindings"]
+        goods = [row for row in bindings if row["kind"] == "delivery"]
+        payments = [row for row in bindings if row["kind"] == "payment"]
+        action_by_id = {row["id"]: row for row in current_scene["storyActions"]}
+        need(len(goods) == len(payments) == 1, "one actual delivery and payment required")
+        good, paid = goods[0], payments[0]
+        need(good["actorID"] == paid["toActorID"] == "seller"
+             and good["toActorID"] == paid["fromActorID"] == "buyer"
+             and good["actionID"] in paid["requires"] and paid["amount"] == 3
+             and good["eventID"] == "1-收益结算" and paid["eventID"] == "2-收益结算"
+             and action_by_id[good["actionID"]]["quantity"] == 1
+             and action_by_id[paid["actionID"]]["quantity"] == 3
+             and action_by_id[good["actionID"]]["endFrame"] <= action_by_id[paid["actionID"]]["startFrame"],
+             "actual one-good delivery and later reverse payment lost their typed causal boundary")
+        forged = deepcopy(current_scene)
+        next(row for row in forged["storyCausality"]["bindings"] if row["kind"] == "payment")["requires"] = []
+        call("edit apply", dict(workspace_id=workspace_id, project_id=current["id"],
+             base_revision=current["revisions"][-1]["id"], edits=[{"replaceScene": {"_0": forged["id"], "_1": forged}}],
+             text="内部验证：缺交货前置的付款必须被正常Core拒绝"), True, expected=False,
+             error_contains="售货付款必须依赖同户交给本买家的真实交货")
+        need(project(current["id"])["revisions"] == current["revisions"],
+             "rejected premature payment must leave the full target history unchanged")
     if action_cost:
         need(current_scene["storyCausality"]["version"] == 2,
              "normal target scene must retain the actual v2 causal contract")
@@ -286,7 +339,12 @@ def run(binary, output, *, action_cost=False):
          "normal re-export changed actual source records, target revisions, assets or jobs")
     need(all(sha(path.read_bytes()) == expected for path, expected in pins.items()), "frozen inputs changed before completion")
     need(time.monotonic() <= deadline, "author-contract chain exceeded its 90-second deadline")
-    if action_cost:
+    if delivery:
+        print("knowledge_story_smoke: passed (" + str(len(calls))
+              + " actual normal CLI calls; delivery=v1; real sources=2; delivery_tick=5; payment_tick=11;"
+              + " goods=1; payment=3; balances=3/3 vs 0/6; native_missing_delivery_rejected=true;"
+              + " idempotent=true; independent_restore=true; media=false; speech=false; review=false)")
+    elif action_cost:
         print("knowledge_story_smoke: passed (" + str(len(calls))
               + " actual normal CLI calls; action_cost=v2; real sources=2; transfers=3/1 vs none;"
               + " balances=2/3 vs 1/0; pools=2/6; deposits=1/2; native_forged_trace_rejected=true;"
@@ -301,11 +359,14 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--binary", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--action-cost", action="store_true",
+    choice = parser.add_mutually_exclusive_group()
+    choice.add_argument("--action-cost", action="store_true",
                         help="exercise the explicit v2 one-action-cost counterfactual through the normal CLI")
+    choice.add_argument("--delivery", action="store_true",
+                        help="exercise actual delivery before a later payment through the normal CLI")
     args = parser.parse_args()
     try:
-        run(args.binary, args.output, action_cost=args.action_cost)
+        run(args.binary, args.output, action_cost=args.action_cost, delivery=args.delivery)
         return 0
     except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as error:
         print("knowledge_story_smoke: failed; dedicated workspace retained at "

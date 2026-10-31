@@ -13,7 +13,7 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  knowledge-parameter-stage:
+  knowledge-delivery-stage:
     if: github.repository == 'ayqy/video-core' && github.event.repository.private == false
     runs-on: macos-15-intel
     timeout-minutes: 40
@@ -38,7 +38,7 @@ jobs:
           assert head==os.environ['VIDEO_SOURCE_COMMIT']
           entries=re.findall(r'(?m)^\| ([a-f0-9]{64}) \| ([0-9]+) \| ([^|\n]+) \|$',(root/'SOURCE-MANIFEST.md').read_text())
           rows={name:(digest,int(size)) for digest,size,name in entries}
-          assert len(entries)==len(rows)==289
+          assert len(entries)==len(rows)==291
           for name,(digest,size) in rows.items():
               relative=Path(name)
               assert not relative.is_absolute() and '..' not in relative.parts
@@ -50,16 +50,16 @@ jobs:
           tracked=set(subprocess.check_output(['git','ls-files'],cwd=root,text=True).splitlines())
           assert tracked==set(rows)|metadata|{'SOURCE-MANIFEST.md'}
           assert not any((root/name).exists() for name in ['App','MacApp','MacUITests','Examples','Premium','Sources/VideoGame','Sources/VideoCartoon','Sources/VideoAdvanced'])
-          BASE_PUBLIC_COMMIT='68289291833a41225a6422932a6edd1bbae03d4e'
-          ADDITIONS={'Integrations/examples/knowledge_action_cost.py'}
-          REVIEWED_CHANGED=ADDITIONS|{'Integrations/examples/README.md', 'Sources/VideoCore/StoryCausalSources.swift', 'Integrations/test_story_action.py', 'Integrations/knowledge_story.py', 'Integrations/README.md', 'Integrations/test_knowledge_story.py', 'Integrations/knowledge_story_smoke.py', '.github/workflows/free-production.yml', 'Integrations/story_action.py', 'README.md', 'Tests/VideoCoreTests/StoryCausalSourcesTests.swift', 'Sources/VideoCore/AgentSchemas.swift'}
-          PROTECTED_COUNT=276
-          PROTECTED_SHA256='5cbd3ac1771a108e2933b067de9d4aac03cf41bc83dc1754b2477ab1f95ba779'
+          BASE_PUBLIC_COMMIT='a9b02458a6d3c3e1e28c57fee4f6f955393edc96'
+          ADDITIONS={'Integrations/examples/knowledge_delivery.py','Integrations/test_knowledge_delivery.py'}
+          REVIEWED_CHANGED=ADDITIONS|{'Integrations/examples/README.md','Integrations/README.md','Integrations/knowledge_story.py','Integrations/test_knowledge_story.py','Integrations/knowledge_story_smoke.py','.github/workflows/free-production.yml','README.md'}
+          PROTECTED_COUNT=282
+          PROTECTED_SHA256='aaf72d2baf88ff59568c47d884b178a7fa90cbf631b67c58082674143380c93f'
           assert ADDITIONS<=set(rows) and REVIEWED_CHANGED<=set(rows)
           protected={name:value for name,value in rows.items() if name not in REVIEWED_CHANGED}
           digest_input=''.join(f'{name}\0{protected[name][0]}\0{protected[name][1]}\n' for name in sorted(protected))
           assert len(protected)==PROTECTED_COUNT and hashlib.sha256(digest_input.encode()).hexdigest()==PROTECTED_SHA256
-          print('manifest_payloads=289 unchanged_protected_inputs=276 source_commit='+head)
+          print('manifest_payloads=291 unchanged_protected_inputs=282 source_commit='+head)
           print('protected_baseline_commit='+BASE_PUBLIC_COMMIT+' blanket_native_reuse=false')
           PYCODE
 
@@ -71,15 +71,15 @@ jobs:
           from pathlib import Path
           root=Path.cwd()
           sys.path.insert(0,str(root/'Integrations'))
-          import test_knowledge_story, test_story_action, test_story_planning
-          modules=(test_knowledge_story,test_story_action,test_story_planning)
+          import test_knowledge_story, test_knowledge_delivery
+          modules=(test_knowledge_story,test_knowledge_delivery)
           suite=unittest.TestSuite(unittest.defaultTestLoader.loadTestsFromModule(m) for m in modules)
           def flatten(suite):
               for case in suite:
                   if isinstance(case,unittest.TestSuite):yield from flatten(case)
                   else:yield case
           ids=[case.id() for case in flatten(suite)]
-          assert len(ids)==len(set(ids))==53
+          assert len(ids)==len(set(ids))==50
           result=unittest.TextTestRunner(verbosity=2).run(suite)
           assert result.wasSuccessful() and result.testsRun==len(ids) and not result.skipped
           from examples.knowledge_exchange import protocol_models, story_plan
@@ -134,92 +134,13 @@ jobs:
           if cost.stderr:print(cost.stderr,file=sys.stderr,end='')
           assert cost.returncode==0,'Actual single-cost normal author chain failed'
           assert cost.stdout.startswith('knowledge_story_smoke: passed (30 actual normal CLI calls; action_cost=v2; '), 'Exact v2 normal call inventory differs'
-          PYCODE
-
-      - name: Run affected whole Core classes and exact compatibility methods
-        shell: bash
-        run: |
-          python3 -B - <<'PYCODE'
-          from pathlib import Path
-          import hashlib, json, os, re, subprocess
-          SWIFT_SUITES={('VideoCoreTests',suite):suite+'.swift' for suite in
-                        ('StoryCausalSourcesTests',)}
-          SELECTED={
-              ('VideoCoreTests','AgentSchemasTests'):(
-                  'testDiscoveryShowsActualNestedRequiredFieldsAndEnumPayloads',
-                  'testEncodedRepresentativeEntitiesHaveEveryRequiredNestedFieldAndResolvableRefs'),
-              ('VideoCoreTests','AgentMutationTests'):(
-                  'testEditReplayReturnsOriginalRevisionAndRevokedGrantIsRejected',),
-              ('VideoCoreTests','KnowledgeCounterfactualExplanationTests'):(
-                  'testConstrainedRequestIsVisibleWithoutAClaimThatItWasExecuted',
-                  'testExplanationIsDeterministicReadOnlyAndDoesNotChangeTheOldWireValue'),
-              ('VideoCoreTests','StoryActionTests'):(
-                  'testDeliveryConstructionAndSpeechKeepCorrectProcessAndTerminalStates',
-                  'testActionValidationRejectsUnknownObjectsOverlapAndNonfiniteCoordinates',
-                  'testNewWorldPreservesRecordedKnowledgeWindowAndOriginalTakeUntilExplicitTimingChange'),
-          }
-
-          def affected_methods(root):
-              expected=set()
-              for (target,suite),filename in SWIFT_SUITES.items():
-                  source=(Path(root)/'Tests'/target/filename).read_text()
-                  declaration=re.search(r'(?m)^(?:final )?class '+re.escape(suite)+r'\s*:\s*XCTestCase\s*\{',source)
-                  if declaration is None:raise ValueError('Affected XCTest class missing: '+suite)
-                  source=source[declaration.end():]
-                  following=re.search(r'(?m)^(?:final )?class \w+\s*:',source)
-                  if following:source=source[:following.start()]
-                  methods=re.findall(r'(?m)^[ \t]*(?:@\w+(?:\([^\n)]*\))?[ \t]+)*func[ \t]+(test\w+)[ \t]*\(',source)
-                  if not methods or len(methods)!=len(set(methods)):raise ValueError('Incomplete or duplicate affected methods: '+suite)
-                  expected.update((target,suite,method) for method in methods)
-              for (target,suite),methods in SELECTED.items():
-                  source=(Path(root)/'Tests'/target/(suite+'.swift')).read_text()
-                  declared=re.findall(r'(?m)^[ \t]*func[ \t]+(test\w+)[ \t]*\(',source)
-                  if not methods or len(set(methods))!=len(methods) or not set(methods)<=set(declared):raise ValueError('Selected compatibility method missing or duplicated')
-                  expected.update((target,suite,method) for method in methods)
-              return expected
-
-          def swift_filter(expected):
-              if not expected:raise ValueError('Empty affected test scope')
-              return '|'.join('^'+re.escape(target)+r'\.'+re.escape(suite)+'/'+re.escape(method)+'$'
-                              for target,suite,method in sorted(expected))
-
-          def verify_swift_stream(text,expected):
-              pattern=re.compile(r"^Test Case '(?:-\[(?:(?P<ot>\w+)\.)?(?P<os>\w+) (?P<om>test\w+)\]|(?:(?P<st>\w+)\.)?(?P<ss>\w+)\.(?P<sm>test\w+))' (?P<event>started|passed|failed|skipped)\b")
-              started=[];passed=[]
-              for line in text.splitlines():
-                  match=pattern.match(line)
-                  if match is None:
-                      if line.startswith("Test Case '") and re.search(r"' (started|passed|failed|skipped)\b",line):raise ValueError('Unparsed actual XCTest identity')
-                      continue
-                  suite=match['os'] or match['ss'];method=match['om'] or match['sm'];target=match['ot'] or match['st']
-                  if target is None:
-                      candidates={r[0] for r in expected if r[1:]==(suite,method)}
-                      if len(candidates)!=1:raise ValueError('Ambiguous actual XCTest target')
-                      target=candidates.pop()
-                  identity=(target,suite,method)
-                  if identity not in expected:raise ValueError('Unexpected actual XCTest method')
-                  if match['event']=='started':started.append(identity)
-                  elif match['event']=='passed':passed.append(identity)
-                  else:raise ValueError('Actual affected XCTest failed or skipped')
-              if len(started)!=len(expected) or set(started)!=expected:raise ValueError('Missing or duplicate actual XCTest starts')
-              if len(passed)!=len(expected) or set(passed)!=expected:raise ValueError('Missing or duplicate actual XCTest passes')
-              if len(expected) not in [int(v) for v in re.findall(r'Executed (\d+) tests?',text)]:raise ValueError('Actual XCTest summary incomplete')
-              return len(expected)
-          root=Path(os.environ['GITHUB_WORKSPACE'])
-          expected=affected_methods(root)
-          scratch=Path(os.environ['RUNNER_TEMP'])/'video-free-paper-explanation'
-          log=Path(os.environ['RUNNER_TEMP'])/'video-free-paper-explanation-rules.log'
-          try:
-              with log.open('wb') as stream:
-                  result=subprocess.run(['swift','test','--package-path',str(root),'--scratch-path',str(scratch),'--disable-sandbox','--jobs','2','-c','release','--filter',swift_filter(expected)],stdout=stream,stderr=subprocess.STDOUT,timeout=900,env=dict(os.environ,VIDEO_TEST_CLI=os.environ['VIDEO_FREE_BINARY']))
-              text=log.read_text(errors='replace')
-              for line in text.splitlines():
-                  if re.search(r'error:|fatal error:|Executed \d+ tests?|Test Suite .* (passed|failed)',line,re.I):print(line[:700])
-              assert result.returncode==0,'Affected Core classes or selected compatibility methods failed'
-              count=verify_swift_stream(text,expected)
-              print('current_affected_swift_rules=passed distinct_test_ids='+str(count))
-              print('actual_method_inventory_sha256='+hashlib.sha256(json.dumps(sorted(expected),separators=(',',':')).encode()).hexdigest())
-          finally:log.unlink(missing_ok=True)
+          delivery=subprocess.run([sys.executable,'-B','Integrations/knowledge_story_smoke.py',
+              '--binary',os.environ['VIDEO_FREE_BINARY'],'--output',str(Path(os.environ['RUNNER_TEMP'])/'knowledge-delivery-normal-cli'),'--delivery'],
+              text=True,capture_output=True,timeout=120)
+          print(delivery.stdout,end='')
+          if delivery.stderr:print(delivery.stderr,file=sys.stderr,end='')
+          assert delivery.returncode==0,'Actual delivery-before-payment normal author chain failed'
+          assert delivery.stdout.startswith('knowledge_story_smoke: passed (30 actual normal CLI calls; delivery=v1; '), 'Exact delivery call inventory differs'
           PYCODE
 
       - name: Record exact evidence boundaries
@@ -227,11 +148,11 @@ jobs:
         run: |
           python3 -B - <<'PYCODE'
           import os
-          text=("Current public CLI and changed knowledge-author/Core source passed the exact method inventory and both normal author chains. "
+          text=("Current public CLI and changed knowledge-author source passed the exact Python inventory and three normal author chains. "
                 "The v1 actor-plan case retains its wire and 28 real calls. The explicit v2 cost case obtains both complete traces from Core, changes only one existing action cost, binds visual quantities to actual deductions and transfers, rejects forged traces without a revision, and independently restores its complete backup. "
-                "These are internal author-contract checks with ordinary layers; no media, voice, rights or human review is granted. "
-                "Unchanged layout, ReadAloud, paper media and advanced painters reuse earlier evidence; they were not rerun or counted as new passes. "
+                "The delivery case records two real sources, binds one good and a later reverse payment, rejects payment without completed delivery and independently restores all histories. These are internal author-contract checks with ordinary layers; no media, voice, rights or human review is granted. "
+                "Core, Native rules, layout, ReadAloud, paper media and advanced painters are unchanged and reuse earlier evidence; they were not rerun or counted as new passes. "
                 "No private art, advanced implementation, original business audio or credentials were published.\n")
           with open(os.environ['GITHUB_STEP_SUMMARY'],'a') as stream:stream.write(text)
-          print('current_native_build=passed current_affected_swift_rules=passed current_author_v1_and_cost_v2=passed media_executed=false review=false')
+          print('current_native_build=passed native_rules_executed=0 current_author_v1_cost_v2_delivery=passed media_executed=false review=false')
           PYCODE
