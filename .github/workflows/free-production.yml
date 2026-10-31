@@ -13,7 +13,7 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  scene-layout-stage:
+  knowledge-production-stage:
     if: github.repository == 'ayqy/video-core' && github.event.repository.private == false
     runs-on: macos-15-intel
     timeout-minutes: 10
@@ -38,7 +38,7 @@ jobs:
           assert head==os.environ['VIDEO_SOURCE_COMMIT']
           entries=re.findall(r'(?m)^\| ([a-f0-9]{64}) \| ([0-9]+) \| ([^|\n]+) \|$',(root/'SOURCE-MANIFEST.md').read_text())
           rows={name:(digest,int(size)) for digest,size,name in entries}
-          assert len(entries)==len(rows)==296
+          assert len(entries)==len(rows)==302
           for name,(digest,size) in rows.items():
               relative=Path(name)
               assert not relative.is_absolute() and '..' not in relative.parts
@@ -50,47 +50,77 @@ jobs:
           tracked=set(subprocess.check_output(['git','ls-files'],cwd=root,text=True).splitlines())
           assert tracked==set(rows)|metadata|{'SOURCE-MANIFEST.md'}
           assert not any((root/name).exists() for name in ['App','MacApp','MacUITests','Examples','Premium','Sources/VideoGame','Sources/VideoCartoon','Sources/VideoAdvanced'])
-          BASE_PUBLIC_COMMIT='85f818d2ed56ec430d792b051d185d2d99bceaab'
-          ADDITIONS=set()
-          REVIEWED_CHANGED={'.github/workflows/free-production.yml', 'README.md', 'Integrations/scene_layout.py', 'Integrations/test_scene_layout.py'}
-          PROTECTED_COUNT=292
-          PROTECTED_SHA256='3f1f9e8130d1a6ab3126e7ace96cb37aa56e2c98f492b7c3fde4a7b9eaad4c04'
-          assert not ADDITIONS and len(REVIEWED_CHANGED)==4 and REVIEWED_CHANGED<=set(rows)
-          protected={name:value for name,value in rows.items() if name not in REVIEWED_CHANGED}
+          BASE_PUBLIC_COMMIT='26e6785fe244d1de051fa427720d4e82203a47f9'
+          ADDITIONS={
+              'Integrations/production_workflow.py', 'Integrations/test_production_workflow.py',
+              'Integrations/production_document.py', 'Integrations/test_production_document.py',
+              'Integrations/frozen_speech.py', 'Integrations/produce_knowledge.py',
+          }
+          REVIEWED_CHANGED={'.github/workflows/free-production.yml', 'README.md'}
+          PROTECTED_COUNT=294
+          PROTECTED_SHA256='fc205e3438e937f5498aa85879b0c3c76762f7400d8dc84cdc66f3b663165d27'
+          assert len(ADDITIONS)==6 and len(REVIEWED_CHANGED)==2 and not ADDITIONS&REVIEWED_CHANGED
+          assert ADDITIONS|REVIEWED_CHANGED<=set(rows)
+          protected={name:value for name,value in rows.items() if name not in ADDITIONS|REVIEWED_CHANGED}
           digest_input=''.join(f'{name}\0{protected[name][0]}\0{protected[name][1]}\n' for name in sorted(protected))
           assert len(protected)==PROTECTED_COUNT and hashlib.sha256(digest_input.encode()).hexdigest()==PROTECTED_SHA256
-          print('manifest_payloads=296 unchanged_protected_inputs=292 source_commit='+head)
-          print('protected_baseline_commit='+BASE_PUBLIC_COMMIT+' historical_native_actor_release_run=41203531757 current_scene_layout_checks=pending')
+          print('manifest_payloads=302 added_public_inputs=6 changed_metadata=2 unchanged_protected_inputs=294 source_commit='+head)
+          print('protected_baseline_commit='+BASE_PUBLIC_COMMIT+' historical_scene_layout_run=41209745910 current_knowledge_production_checks=pending')
           PYCODE
 
-      - name: Execute the seven affected scene layout rules
+      - name: Execute only the affected knowledge production rules
         shell: bash
         run: |
           python3 -B - <<'PYCODE'
           import sys, unittest
           sys.path.insert(0, 'Integrations')
-          suite=unittest.defaultTestLoader.discover('Integrations', pattern='test_scene_layout.py')
+          modules=('test_production_workflow', 'test_production_document')
+          suite=unittest.TestSuite(unittest.defaultTestLoader.loadTestsFromName(name) for name in modules)
           def cases(suite):
               for item in suite:
                   if isinstance(item, unittest.TestSuite):yield from cases(item)
                   else:yield item
           expected={
-              'test_network_builder_accepts_different_cast_size_and_connects_every_declared_need',
-              'test_arbitrary_place_names_have_real_connected_routes_and_a_shared_cut',
-              'test_motion_is_arc_length_continuous_exact_at_ends_and_still_transfers_remain_still',
-              'test_profile_maps_layer_action_waypoints_and_road_width_without_touching_sources_or_causes',
-              'test_transparent_logical_subject_keeps_legal_size_and_projects_position_reversibly',
-              'test_visible_small_layer_rejects_before_native_with_its_actual_identity',
-              'test_visible_enlargement_cannot_exceed_native_maximum_size',
+              'test_production_document.DocumentTests.test_changed_material_unknown_symbol_and_wrong_narration_reject',
+              'test_production_document.DocumentTests.test_conflicting_executor_catalog_rejects_without_a_production_home',
+              'test_production_document.DocumentTests.test_foreign_business_claims_captions_and_unknown_fields_reject_before_import',
+              'test_production_document.DocumentTests.test_material_voice_cannot_replace_the_reserved_actual_audio_binding',
+              'test_production_document.DocumentTests.test_named_exchange_and_cost_intervention_use_one_interface_without_delivery_ids',
+              'test_production_document.DocumentTests.test_quantity_and_actor_names_are_model_values_not_a_three_coin_guard',
+              'test_production_document.DocumentTests.test_real_material_binding_keeps_declared_source_and_receipt_ids',
+              'test_production_document.DocumentTests.test_stage_does_not_stretch_a_voice_axis_or_migrate_review',
+              'test_production_document.FrozenSpeechTests.test_changed_original_receipt_is_not_accepted_through_ordinary_axis_proof',
+              'test_production_document.FrozenSpeechTests.test_incomplete_observations_reject_even_when_both_saved_copies_match',
+              'test_production_document.FrozenSpeechTests.test_mismatched_spoken_shot_axis_rejects_even_when_caption_and_backup_agree',
+              'test_production_document.FrozenSpeechTests.test_mixed_job_artifact_revision_or_workspace_reject',
+              'test_production_document.FrozenSpeechTests.test_revision_lineage_and_ordinary_production_each_bind_the_same_frozen_axis',
+              'test_production_workflow.FrozenInputContracts.test_changed_pinned_bytes_fail_before_even_a_cached_operation',
+              'test_production_workflow.FrozenInputContracts.test_extra_helper_or_asset_changes_are_not_controller_upgrades',
+              'test_production_workflow.FrozenInputContracts.test_freeze_includes_engine_actual_caller_author_inputs_assets_and_original_speech',
+              'test_production_workflow.FrozenInputContracts.test_old_home_missing_the_new_engine_pin_is_never_silently_migrated',
+              'test_production_workflow.FrozenInputContracts.test_only_explicit_retained_controller_change_may_upgrade',
+              'test_production_workflow.FrozenInputContracts.test_speech_provenance_binds_the_actual_axis_original_inputs_and_same_request_receipt',
+              'test_production_workflow.OriginalJobContracts.test_expired_lease_reclaims_and_resumes_only_the_original_job',
+              'test_production_workflow.OriginalJobContracts.test_failed_or_interrupted_jobs_resume_before_running_the_same_identity',
+              'test_production_workflow.OriginalJobContracts.test_live_original_lease_performs_no_execution_or_replacement',
+              'test_production_workflow.OriginalJobContracts.test_missing_lease_is_rejected',
+              'test_production_workflow.OriginalJobContracts.test_real_invocation_cache_deduplicates_writes_but_refreshes_status',
+              'test_production_workflow.OriginalJobContracts.test_recovery_hook_stops_at_queued_for_an_independently_selected_host_executor',
+              'test_production_workflow.OriginalJobContracts.test_render_rejects_a_replacement_job_or_incomplete_deliverable_set',
+              'test_production_workflow.OriginalJobContracts.test_repeated_render_preserves_the_original_frozen_quote_and_job',
+              'test_production_workflow.SourceObservationContracts.test_a_persisted_partial_reordered_or_wrong_axis_trace_still_fails',
+              'test_production_workflow.SourceObservationContracts.test_caller_trace_model_seed_window_or_row_set_cannot_replace_persistent_observations',
+              'test_production_workflow.SourceObservationContracts.test_frozen_source_revision_or_workspace_cannot_silently_advance',
+              'test_production_workflow.SourceObservationContracts.test_one_or_three_sources_use_their_own_native_time_axis_and_observed_values',
+              'test_production_workflow.SpeechAxisHookContracts.test_explicit_presentation_hook_owns_content_and_declared_frame_rate',
           }
-          expected={'test_scene_layout.SceneLayoutTests.'+name for name in expected}
           identities=[case.id() for case in cases(suite)]
-          assert len(identities)==len(set(identities))==suite.countTestCases()==7
-          assert set(identities)==expected, 'Exact scene layout rule inventory changed'
+          assert len(identities)==len(set(identities))==suite.countTestCases()==len(expected)
+          assert set(identities)==expected, 'Exact knowledge production rule inventory changed'
           result=unittest.TextTestRunner(verbosity=2).run(suite)
-          assert result.wasSuccessful() and result.testsRun==7 and not result.skipped and not result.expectedFailures
-          for identity in sorted(identities):print('scene_layout_passed='+identity)
-          print('current_scene_layout_rules=7 current_native_rules=0 current_actor_motion_rules=0 current_release_builds=0 media_executed=false human_review=false')
+          assert result.wasSuccessful() and result.testsRun==len(expected) and not result.skipped and not result.expectedFailures
+          for identity in sorted(identities):print('knowledge_production_passed='+identity)
+          print('current_knowledge_production_rules='+str(len(expected))+' current_native_rules=0 current_scene_layout_rules=0 current_release_builds=0 media_executed=false human_review=false')
           PYCODE
 
       - name: Record exact evidence boundaries
@@ -98,11 +128,13 @@ jobs:
         run: |
           python3 -B - <<'PYCODE'
           import os
-          text=("Current scope actually executes exactly seven scene_layout rules using literal layer, route and projection metadata, with exact identities and no skips or expected failures. "
-                "They cover permanent zero-opacity logical layers retaining legal dimensions during reversible projection, visible undersized or oversized layers failing before a native edit, and the existing layout geometry contract. "
-                "The other 292 payloads remain byte-identical to public baseline 85f818d2ed56ec430d792b051d185d2d99bceaab. Its 13 actor metadata rules, 12 native image-flip/RPC methods and ordinary Release CLI build are historical run 41203531757 only: they are not rerun or counted as current passes. "
-                "Story speech 15 and normal delivery 32 remain historical run 41196437622; causal Core 30 and v1/cost-v2 author evidence remain historical run 41191732445; the older Python 50 remain historical run 41190009527. "
-                "This workflow does not build native products, execute media, call TTS, read private business assets or credentials, or grant whole-film, sound, rights or human-review approval.\n")
+          text=("Current scope executes only the declared pure production-workflow and production-document rule inventory, with exact identities and no skips or expected failures. "
+                "CLI responses, source traces and material bytes in these tests are explicit synthetic observations; they do not establish real Core, rendering, speech, rights or whole-film approval. "
+                "The six added public inputs provide declarative, content-first production orchestration: callers still supply a complete evaluated StoryPlan, native stage, finite v3 sources, actual materials and complete original audio with its provenance. "
+                "The other 294 payloads remain byte-identical to public baseline 26e6785fe244d1de051fa427720d4e82203a47f9; only README and workflow metadata change. Its seven layout rules are historical run 41209745910 only. "
+                "The 13 actor metadata rules, 12 native image-flip/RPC methods and ordinary Release CLI build remain historical run 41203531757; they are not rerun or counted as current passes. "
+                "Story speech and normal delivery remain historical run 41196437622, causal Core and author evidence remain historical run 41191732445, and older Python evidence remains historical run 41190009527. "
+                "This workflow does not build native products, execute business media, call TTS, read private assets or credentials, export closed painters, or grant listening, captions, commercial rights, upload consent or human-review approval.\n")
           with open(os.environ['GITHUB_STEP_SUMMARY'],'a') as stream:stream.write(text)
-          print('current_scene_layout_rules=7 current_native_rules=0 current_actor_motion_rules=0 current_release_builds=0 historical_native_actor_release_run=41203531757 real_business_media_executed=false review=false')
+          print('current_native_rules=0 current_scene_layout_rules=0 current_actor_motion_rules=0 current_release_builds=0 historical_scene_layout_run=41209745910 real_business_media_executed=false review=false')
           PYCODE
