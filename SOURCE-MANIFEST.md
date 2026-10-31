@@ -2,10 +2,10 @@
 
 VideoFree source export · package_free.py · version 1
 
-生成时间：2026-10-31 12:40:41 北京时间
+生成时间：2026-10-31 14:38:06 北京时间
 
-- 源码与必要元数据：287个文件；4482815字节（不含本清单）。
-- 整体内容指纹：`3bd4d18aa4be316fe07e8f9363569331790f807438b6029f3d5ae61b8e3e14d3`。
+- 源码与必要元数据：288个文件；4490164字节（不含本清单）。
+- 整体内容指纹：`22c88a9c69e7f2efca27dc82008df6d243eabbf20361c3f5d41b70c9189a8e7d`。
 - 来源：受控原始工程中的逐文件白名单；Package.swift与唯一免费制作workflow来自Distribution/Free精确模板，README由发行脚本生成。
 - 本包不含.git，不可作为新业务checkout；本清单生成过程不执行构建、设备验收、签名安装或公共上传，各阶段以独立证据为准。
 - 排除：App、VideoGame、VideoCartoon、Premium、高级实现运行时测试、私有仓库地址、凭据、客户数据、缓存、日志及媒体过程产物。
@@ -14,7 +14,7 @@ VideoFree source export · package_free.py · version 1
 
 | SHA-256 | 字节数 | 包内路径 / 原工程来源 |
 |---|---:|---|
-| 1828a5fb8b078deca854f2011918d035e80faeefbc3907f90421a3d39c8e0bcd | 37693 | .github/workflows/free-production.yml |
+| 01ce5b2934f65f1bd3d0d364177282b982d596327a02d21ec5fd5ec5f9288af3 | 37753 | .github/workflows/free-production.yml |
 | f0d7d098a6dfd1672e259cb618166677f0a1351aa84b649b356e8576522185d3 | 41031 | Integrations/README.md |
 | 39dd8274ff1e6b0649acb63281087a1144e1f4a4e0eed3dc2b92e10df2cbd121 | 28488 | Integrations/asset_reuse.py |
 | b855d428b3b24845239bb209cacc4f23767ab7b25097546d372f00fb724a7a30 | 29749 | Integrations/causal_story.py |
@@ -47,6 +47,7 @@ VideoFree source export · package_free.py · version 1
 | 5153da60f78fe869c5b02cafe9b7474f191d7c064efadd2c33425955d94fd489 | 64507 | Integrations/readaloud-cpu-lock.txt |
 | 0048c5e7f171ccf60c5d40ba889c7380ed19ffa49ac5eefd640b2326cd9ad7f5 | 9204 | Integrations/readaloud_tts.md |
 | 84f759722ba66ed0623217d06be190be9772c1f71bfc6973ca65dbbe496f772f | 30203 | Integrations/readaloud_tts.py |
+| b29007a4a0d39707d58a85f2775570d03b48badb21f5e610413100a2130ca956 | 7289 | Integrations/result_label_layout.py |
 | 87f13ed922134fd1eb271b8220354d39069601f2f03503fbb37267e0d9e5219e | 9073 | Integrations/scene_layout.py |
 | 3a68886794331a87603a955eeb41b48754c01d65051bea7ff03b3b4d717bc6c1 | 2828 | Integrations/skill_contract.py |
 | cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30 | 11358 | Integrations/skills/video/LICENSE |
