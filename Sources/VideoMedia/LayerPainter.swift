@@ -109,7 +109,9 @@ enum LayerPainter {
                 let width=CGFloat(path.paths[index].width*Double(aspect.width))
                 c.saveGState()
                 let centerline=CGMutablePath();centerline.addLines(between:visible)
-                c.beginPath();c.addPath(centerline.copy(strokingWithWidth:width,lineCap:.round,lineJoin:.round,miterLimit:2));c.clip()
+                // Authored endpoints and a partially built front delimit the
+                // laid surface; rounded joins keep bends continuous inside it.
+                c.beginPath();c.addPath(centerline.copy(strokingWithWidth:width,lineCap:.butt,lineJoin:.round,miterLimit:2));c.clip()
                 let tileWidth=width*CGFloat(image.width)/CGFloat(image.height)
                 var distance=sourceDistance
                 for segment in 0..<(visible.count-1) {

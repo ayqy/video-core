@@ -2,10 +2,11 @@
 
 VideoFree source export · package_free.py · version 1
 
-生成时间：2026-10-31 08:29:03 北京时间
+生成时间：2026-10-31 08:49:12 北京时间
 
-- 源码与必要元数据：283个文件；4360185字节（不含本清单）。
-- 整体内容指纹：`0bbaac4e4cb42ac791154bf85112fdd119dda7dee27dc90a5e5baeaf4bd281d0`。
+- 源码与必要元数据：283个文件；4360342字节（不含本清单）。
+- 整体内容指纹：`821780a51422187e8c750b4f0fd453245bc636d1be7ea5b2423ab88bf085aa7d`。
+- 冻结来源提交：`934d8125717c608e278d6d23ca8473022d2a8dc9`；来源为本任务已登记私有工作树；构建、推送及发行状态以独立证据为准。
 - 来源：受控原始工程中的逐文件白名单；Package.swift与唯一免费制作workflow来自Distribution/Free精确模板，README由发行脚本生成。
 - 本包不含.git，不可作为新业务checkout；本清单生成过程不执行构建、设备验收、签名安装或公共上传，各阶段以独立证据为准。
 - 排除：App、VideoGame、VideoCartoon、Premium、高级实现运行时测试、私有仓库地址、凭据、客户数据、缓存、日志及媒体过程产物。
@@ -176,7 +177,7 @@ VideoFree source export · package_free.py · version 1
 | 2eafa759e4f2e1a94a5ecb866f39784b13363f7a5cfcacb60b125cf5e2fa12bd | 13316 | Sources/VideoMedia/FamiliarBuiltinAssets.swift |
 | 45ab9c52b4d657c501039e336c28681ce8adef7d42b97bc299d41d4b55e323d6 | 18862 | Sources/VideoMedia/Importer.swift |
 | a60210d33c6fc2b9462dd8574277cb156f55bf5a8e0b48767faadec25e406a1e | 11538 | Sources/VideoMedia/IndependentLicenseRevocation.swift |
-| 1fff777797e31a93a63821300d3e2c06eaa2334f413a7b529bd5e6f9edeacec5 | 8533 | Sources/VideoMedia/LayerPainter.swift |
+| 018e4688664650067ec19329abaeaf456255a75befe78c705e0686c8f4e8beca | 8690 | Sources/VideoMedia/LayerPainter.swift |
 | 8fb3c17142049afe4b1ec265649d63e0c079db6a26063f21514f406a9c478a2f | 8298 | Sources/VideoMedia/LocalJobExecutor.swift |
 | 1708f587453edbc4b12552b7b10b1c0fa570a37a7191b0eb1e3ca27588008207 | 1037 | Sources/VideoMedia/MediaFramingRenderer.swift |
 | e2ef0b7692a5b757747e8a30bb441c1cdfa7efc7367dbf2243c54480650d9e43 | 21050 | Sources/VideoMedia/MotaBuiltinAssets.swift |
