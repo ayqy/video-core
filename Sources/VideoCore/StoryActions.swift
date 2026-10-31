@@ -13,6 +13,8 @@ public struct StoryAction: Codable, Equatable, Identifiable, Sendable {
     public var id: String; public var kind: StoryActionKind; public var subjectID: String; public var targetID: String?
     public var startFrame: Int; public var endFrame: Int; public var from: StoryPoint?; public var to: StoryPoint?
     public var quantity: Int?; public var text: String?
+    /// Optional authored route interior points; nil preserves legacy straight moves.
+    public var waypoints: [StoryPoint]?
     public init(id:String=Codec.id(),kind:StoryActionKind,subjectID:String,targetID:String?=nil,startFrame:Int,endFrame:Int,from:StoryPoint?=nil,to:StoryPoint?=nil,quantity:Int?=nil,text:String?=nil) {
         self.id=id;self.kind=kind;self.subjectID=subjectID;self.targetID=targetID;self.startFrame=startFrame;self.endFrame=endFrame;self.from=from;self.to=to;self.quantity=quantity;self.text=text
     }
@@ -33,6 +35,12 @@ public enum StoryActionRules {
                   action.startFrame>=0,action.endFrame>action.startFrame,action.endFrame<=durationFrames,
                   action.quantity.map({(1...9999).contains($0)}) ?? true else { throw VideoError.invalid("故事动作须绑定实际对象、有效源帧和有界数量") }
             try action.from?.validate();try action.to?.validate()
+            if let points=action.waypoints {
+                guard [.move,.transfer].contains(action.kind),(1...32).contains(points.count),let a=action.from,let b=action.to else {throw VideoError.invalid("路线中间点只接受有界完整移动或交付")}
+                for point in points {try point.validate()}
+                let route=[a]+points+[b]
+                guard zip(route,route.dropFirst()).allSatisfy({hypot($0.x-$1.x,$0.y-$1.y)>0.0000001}) else {throw VideoError.invalid("路线不能含重复的相邻点")}
+            }
             if [.move,.transfer].contains(action.kind) {
                 guard action.from != nil,action.to != nil,action.text==nil else { throw VideoError.invalid("移动或交付须给出完整起止位置，不能隐藏气泡文字") }
                 guard action.kind != .transfer || action.targetID != nil else {throw VideoError.invalid("交付过程须明确另一个实际接收对象")}
@@ -57,7 +65,9 @@ public enum StoryActionRules {
             let p=min(1,max(0,Double(frame-action.startFrame)/Double(max(1,action.endFrame-action.startFrame-1))))
             switch action.kind {
             case .move,.transfer:
-                if let a=action.from,let b=action.to { state.position=p>=1 ? b:StoryPoint(x:a.x+(b.x-a.x)*p,y:a.y+(b.y-a.y)*p) }
+                if let a=action.from,let b=action.to {
+                    state.position=routePoint(from:a,to:b,waypoints:action.waypoints,progress:p)
+                }
                 state.quantity=action.quantity
             case .build:state.progress=p;state.opacity=p>0 ? 1:0
             case .show:state.opacity=p;state.progress=1
@@ -67,20 +77,40 @@ public enum StoryActionRules {
         }
         return state
     }
+    /// Source-time interpolation only. Layout planning owns topology and routes.
+    public static func routePoint(from a:StoryPoint,to b:StoryPoint,waypoints:[StoryPoint]?,progress:Double)->StoryPoint {
+        guard let waypoints,!waypoints.isEmpty else {return progress>=1 ? b:StoryPoint(x:a.x+(b.x-a.x)*progress,y:a.y+(b.y-a.y)*progress)}
+        let points=[a]+waypoints+[b]
+        let lengths=zip(points,points.dropFirst()).map{hypot($0.x-$1.x,$0.y-$1.y)}
+        var remaining=lengths.reduce(0,+)*min(1,max(0,progress))
+        for index in lengths.indices {
+            let length=lengths[index]
+            if remaining<=length && length>0 {
+                let t=remaining/length,u=points[index],v=points[index+1]
+                return StoryPoint(x:u.x+(v.x-u.x)*t,y:u.y+(v.y-u.y)*t)
+            }
+            remaining-=length
+        }
+        return b
+    }
 }
 
+/// A surface is painted beneath world objects regardless of its map row.
+/// Nil preserves legacy world-entity ordering and its unchanged wire shape.
+public enum GameWorldRenderPlane:String,Codable,CaseIterable,Sendable {case ground,world}
 public struct GameWorldEntity: Codable, Equatable, Identifiable, Sendable {
     public var id:String;public var name:String;public var role:String;public var x:Double;public var y:Double
-    public var scale:Double;public var value:Int?;public var visible:Bool
-    public init(id:String,name:String,role:String,x:Double,y:Double,scale:Double=1,value:Int?=nil,visible:Bool=true) {self.id=id;self.name=name;self.role=role;self.x=x;self.y=y;self.scale=scale;self.value=value;self.visible=visible}
+    public var scale:Double;public var value:Int?;public var visible:Bool;public var renderPlane:GameWorldRenderPlane?
+    public init(id:String,name:String,role:String,x:Double,y:Double,scale:Double=1,value:Int?=nil,visible:Bool=true,renderPlane:GameWorldRenderPlane?=nil) {self.id=id;self.name=name;self.role=role;self.x=x;self.y=y;self.scale=scale;self.value=value;self.visible=visible;self.renderPlane=renderPlane}
 }
 public struct GameWorldUpdate: Codable, Equatable, Sendable {
-    public var frame:Int;public var entityID:String;public var x:Double?;public var y:Double?;public var role:String?;public var value:Int?;public var visible:Bool?
-    public init(frame:Int,entityID:String,x:Double?=nil,y:Double?=nil,role:String?=nil,value:Int?=nil,visible:Bool?=nil) {self.frame=frame;self.entityID=entityID;self.x=x;self.y=y;self.role=role;self.value=value;self.visible=visible}
+    public var frame:Int;public var entityID:String;public var x:Double?;public var y:Double?;public var role:String?;public var value:Int?;public var visible:Bool?;public var renderPlane:GameWorldRenderPlane?
+    public init(frame:Int,entityID:String,x:Double?=nil,y:Double?=nil,role:String?=nil,value:Int?=nil,visible:Bool?=nil,renderPlane:GameWorldRenderPlane?=nil) {self.frame=frame;self.entityID=entityID;self.x=x;self.y=y;self.role=role;self.value=value;self.visible=visible;self.renderPlane=renderPlane}
 }
 public struct GameWorld: Codable, Equatable, Sendable {
     public var version=1;public var width:Int;public var height:Int;public var tiles:[String];public var entities:[GameWorldEntity];public var updates:[GameWorldUpdate]
     public init(width:Int,height:Int,tiles:[String],entities:[GameWorldEntity],updates:[GameWorldUpdate]=[]) {self.width=width;self.height=height;self.tiles=tiles;self.entities=entities;self.updates=updates}
+    public var usesRenderPlanes:Bool {entities.contains{$0.renderPlane != nil} || updates.contains{$0.renderPlane != nil}}
     public func validate(durationFrames:Int,availableRoles:Set<String>?=nil) throws {
         guard version==1,(1...64).contains(width),(1...64).contains(height),tiles.count==width*height,
               (1...64).contains(entities.count),updates.count<=2048,(1...54000).contains(durationFrames),Set(entities.map(\.id)).count==entities.count else {throw VideoError.invalid("动态游戏地图版本、完整网格、实体或更新数量无效")}
@@ -96,7 +126,7 @@ public struct GameWorld: Codable, Equatable, Sendable {
             guard ids.contains(update.entityID),(0..<durationFrames).contains(update.frame),keys.insert(update.entityID+"/"+String(update.frame)).inserted,
                   (update.x==nil)==(update.y==nil),update.x.map({point($0,update.y!)}) ?? true,update.role.map(role) ?? true,
                   update.value.map({(0...999999).contains($0)}) ?? true,
-                  update.x != nil || update.role != nil || update.value != nil || update.visible != nil else {throw VideoError.invalid("游戏状态更新须绑定实际实体、唯一源帧与合法变更")}
+                  update.x != nil || update.role != nil || update.value != nil || update.visible != nil || update.renderPlane != nil else {throw VideoError.invalid("游戏状态更新须绑定实际实体、唯一源帧与合法变更")}
         }
     }
     public func frameState(frame:Int,durationFrames:Int) throws -> [GameWorldEntity] {
@@ -109,6 +139,7 @@ public struct GameWorld: Codable, Equatable, Sendable {
             if let role=update.role {result[index].role=role}
             if let value=update.value {result[index].value=value}
             if let visible=update.visible {result[index].visible=visible}
+            if let plane=update.renderPlane {result[index].renderPlane=plane}
         }
         return result
     }
@@ -213,10 +244,10 @@ public enum StorySceneRules {
 public enum StoryActionSchema {
     public static let records:[String:String]=[
         "StoryPoint":"x:n y:n",
-        "StoryAction":"id:s kind:StoryActionKind subjectID:s targetID?:s startFrame:i endFrame:i from?:StoryPoint to?:StoryPoint quantity?:i text?:s",
+        "StoryAction":"id:s kind:StoryActionKind subjectID:s targetID?:s startFrame:i endFrame:i from?:StoryPoint to?:StoryPoint quantity?:i text?:s waypoints?:[StoryPoint]",
         "GameWorld":"version:i width:i height:i tiles:[s] entities:[GameWorldEntity] updates:[GameWorldUpdate]",
-        "GameWorldEntity":"id:s name:s role:s x:n y:n scale:n value?:i visible:b",
-        "GameWorldUpdate":"frame:i entityID:s x?:n y?:n role?:s value?:i visible?:b",
+        "GameWorldEntity":"id:s name:s role:s x:n y:n scale:n value?:i visible:b renderPlane?:GameWorldRenderPlane",
+        "GameWorldUpdate":"frame:i entityID:s x?:n y?:n role?:s value?:i visible?:b renderPlane?:GameWorldRenderPlane",
         "CartoonRigActor":"id:s name:s color:s x:n y:n scale:n mirrored:b",
         "CartoonRigCue":"actorID:s startFrame:i endFrame:i expression:CartoonRigExpression gesture:CartoonRigGesture",
         "SpeechEnergyCue":"startFrame:i endFrame:i rms:n",
@@ -224,5 +255,5 @@ public enum StoryActionSchema {
         "CartoonSpeechTrack":"actorID:s voiceAssetID:s sourceSHA256:s textDigest:s durationFrames:i energy:[SpeechEnergyCue]",
         "CartoonRig":"version:i actors:[CartoonRigActor] cues:[CartoonRigCue] speech?:CartoonSpeechTrack"
     ]
-    public static let enums:[String:[String]]=["StoryActionKind":StoryActionKind.allCases.map(\.rawValue),"CartoonRigExpression":CartoonRigExpression.allCases.map(\.rawValue),"CartoonRigGesture":CartoonRigGesture.allCases.map(\.rawValue)]
+    public static let enums:[String:[String]]=["StoryActionKind":StoryActionKind.allCases.map(\.rawValue),"GameWorldRenderPlane":GameWorldRenderPlane.allCases.map(\.rawValue),"CartoonRigExpression":CartoonRigExpression.allCases.map(\.rawValue),"CartoonRigGesture":CartoonRigGesture.allCases.map(\.rawValue)]
 }

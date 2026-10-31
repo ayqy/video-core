@@ -2,7 +2,7 @@ import Foundation
 
 public enum PluginInputCompatibility {
     public static func supports(pluginID: String, version: Int) -> Bool {
-        version == 1 || (pluginID == "video.game" && [2,3,5,6,7].contains(version)) || (pluginID == "video.cartoon" && [4,5,6,7].contains(version))
+        version == 1 || (pluginID == "video.game" && [2,3,5,6,7,8].contains(version)) || (pluginID == "video.cartoon" && [4,5,6,7,8].contains(version))
     }
     /// Publisher defaults match the current endpoints. Prior schemas remain
     /// explicitly selectable, before any signing identity or output transaction.
@@ -10,7 +10,7 @@ public enum PluginInputCompatibility {
         guard ["video.game", "video.cartoon"].contains(pluginID) else {
             throw VideoError.invalid("发行协议选择需要明确的游戏或卡通模块；未访问发行身份")
         }
-        guard let requested else { return 7 }
+        guard let requested else { return 8 }
         guard requested.range(of: "^[1-9][0-9]{0,2}$", options: .regularExpression) != nil,
               let version = Int(requested), supports(pluginID: pluginID, version: version) else {
             throw VideoError.invalid("发行输入协议版本不受此模块支持；未访问发行身份")
@@ -32,17 +32,26 @@ public enum PluginInputCompatibility {
         }
     }
     public static func requireCartoonSupport(_ performance: CartoonPerformance?, pluginID: String, inputSchema: Int) throws {
-        guard performance == nil || (pluginID == "video.cartoon" && [4,5,6,7].contains(inputSchema)) else {
+        guard performance == nil || (pluginID == "video.cartoon" && [4,5,6,7,8].contains(inputSchema)) else {
             throw VideoError.unavailable("此模块不支持多角色表演输入；请安装相容且受信的卡通模块，未退回单角色摆动")
         }
     }
     public static func requirePresenterSupport(_ presenter:CartoonPresenter?,pluginID:String,inputSchema:Int) throws {
-        guard presenter==nil || (pluginID=="video.cartoon" && inputSchema==7) else {throw VideoError.unavailable("图片序列解说员需要显式cartoon7模块；旧包不回退或忽略新帧")}
+        guard presenter==nil || (pluginID=="video.cartoon" && [7,8].contains(inputSchema)) else {throw VideoError.unavailable("图片序列解说员需要显式cartoon7模块；旧包不回退或忽略新帧")}
+        guard presenter?.anchor == nil || inputSchema>=8 else {throw VideoError.unavailable("显式解说员锚定需要cartoon8；旧模块不能忽略锚定字段")}
+    }
+    public static func requireLayoutSupport(layers:[SceneLayer]?,actions:[StoryAction]?,presenter:CartoonPresenter?,pluginID:String,inputSchema:Int) throws {
+        guard layers?.contains(where:{$0.texturedPath != nil}) == true || actions?.contains(where:{$0.waypoints != nil}) == true || presenter?.anchor != nil else {return}
+        guard ["video.game","video.cartoon"].contains(pluginID),inputSchema>=8 else {throw VideoError.unavailable("纹理路网、路线中间点或解说员锚定需要schema8；旧模块不能忽略新布局字段")}
     }
     public static func requireStorySupport(storyActions:[StoryAction]?,gameWorld:GameWorld?,cartoonRig:CartoonRig?,pluginID:String,inputSchema:Int) throws {
         guard storyActions != nil || gameWorld != nil || cartoonRig != nil else {return}
+        try requireLayoutSupport(layers:nil,actions:storyActions,presenter:nil,pluginID:pluginID,inputSchema:inputSchema)
+        if gameWorld?.usesRenderPlanes == true {
+            guard pluginID == "video.game",inputSchema>=8 else {throw VideoError.unavailable("显式游戏地面层需要game8相容受信模块；旧模块不能忽略分层字段")}
+        }
         if let rig=cartoonRig {
-            guard [1,2].contains(rig.version),rig.version != 2 || (pluginID=="video.cartoon" && [6,7].contains(inputSchema)) else {throw VideoError.unavailable("显式卡通rig v2须使用cartoon6或7；未知rig版本不回退旧画法")}
+            guard [1,2].contains(rig.version),rig.version != 2 || (pluginID=="video.cartoon" && [6,7,8].contains(inputSchema)) else {throw VideoError.unavailable("显式卡通rig v2须使用cartoon6或7；未知rig版本不回退旧画法")}
         }
         guard supports(pluginID:pluginID,version:inputSchema),
               (pluginID == "video.game" && inputSchema>=7 && cartoonRig==nil) ||
@@ -257,14 +266,26 @@ public enum PluginRPCSchemas {
         ]
         var result=declarations.mapValues(record)
         if story {
-            for (key,declaration) in StoryActionSchema.records {result[key]=record(declaration)}
-            for (key,values) in StoryActionSchema.enums {result[key] = .object(["type":.string("string"),"enum":.array(values.map(AgentValue.string))])}
+            let renderPlanes=pluginID == "video.game" && inputSchemaVersion>=8
+            for (key,declaration) in StoryActionSchema.records {
+                // Keep prior endpoint descriptions exact: only game8 may
+                // receive the new optional plane, even though Host IR knows it.
+                var current=renderPlanes ? declaration:declaration.replacingOccurrences(of:" renderPlane?:GameWorldRenderPlane",with:"")
+                if inputSchemaVersion<8 {current=current.replacingOccurrences(of:" waypoints?:[StoryPoint]",with:"")}
+                result[key]=record(current)
+            }
+            for (key,values) in StoryActionSchema.enums where renderPlanes || key != "GameWorldRenderPlane" {result[key] = .object(["type":.string("string"),"enum":.array(values.map(AgentValue.string))])}
             result["SceneLayer"]=record("id:s kind:LayerKind text:s assetID?:s x:n y:n width:n height:n color:s opacity:n startFrame:i endFrame:i locked:b keyframes:[Keyframe] dataPresentation?:DataPresentation entrance?:LayerEntrance")
             result["Keyframe"]=record("id:s frame:i x:n y:n scale:n")
             // The layer pixels are Host-rendered; only IDs and visual metadata cross.
             // Full source-layer schemas are reused from the normal agent contract.
             let host=AgentSchemas.definitions()
             for name in ["SceneLayer","Keyframe","LayerKind","DataPresentation","DataChart","DataSeries","DataValueKeyframe","CodePresentation","CodeHighlight","LayerEntrance","LayerEntranceKind"] {if let value=host[name] {result[name]=value}}
+            if inputSchemaVersion>=8 {
+                for name in ["LayerTexturedPath","LayerTextureStroke"] {if let value=host[name] {result[name]=value}}
+            } else if var layer=result["SceneLayer"]?.object,var properties=layer["properties"]?.object {
+                properties.removeValue(forKey:"texturedPath");layer["properties"] = .object(properties);result["SceneLayer"] = .object(layer)
+            }
             if pluginID=="video.cartoon" && inputSchemaVersion>=6 {
                 var rig=result["CartoonRig"]!.object!,properties=rig["properties"]!.object!
                 properties["version"] = .object(["type":.string("integer"),"enum":.array([.number(1),.number(2)])])
@@ -275,7 +296,7 @@ public enum PluginRPCSchemas {
                 result["CartoonRig"] = .object(rig)
             }
         }
-        if pluginID=="video.cartoon" && inputSchemaVersion>=7 {for (key,declaration) in CartoonPresenterSchema.records {result[key]=record(declaration)}}
+        if pluginID=="video.cartoon" && inputSchemaVersion>=7 {for (key,declaration) in CartoonPresenterSchema.records {result[key]=record(inputSchemaVersion>=8 ? declaration:declaration.replacingOccurrences(of:" anchor?:s",with:""))}}
         if inputSchemaVersion >= 6 {
             result["KnowledgeParticipantAppearance"]=record("participantID:s poseRoles:{s}")
         }

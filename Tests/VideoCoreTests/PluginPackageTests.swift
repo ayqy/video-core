@@ -146,7 +146,7 @@ final class PluginPackageTests:XCTestCase {
         data.append(Data("{\"__video_transport\":{\"event\":\"peer_exited\",\"peer_pid\":12345}}\n".utf8));return data
     }
     func testCurrentServiceSchemasUseMatchingPublicationDefaultsAndKeepExplicitLegacySelection()throws {
-        for (id,schema,legacy) in [("video.game",7,2),("video.cartoon",7,1)] {
+        for (id,schema,legacy) in [("video.game",8,2),("video.cartoon",8,1)] {
             let (manifest,requests,description)=try currentProbe(id,schema)
             let transcript=try probeTranscript(requests,description)
             var defaultManifest=manifest

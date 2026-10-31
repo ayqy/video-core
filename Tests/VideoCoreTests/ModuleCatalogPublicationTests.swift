@@ -104,7 +104,7 @@ final class ModuleCatalogPublicationTests: XCTestCase {
         XCTAssertThrowsError(try plan(upgraded, previous: original), "默认新协议不能覆盖原模块版本")
         for index in upgraded.indices { upgraded[index].manifest.version = "1.3.0" }
         let result = try plan(upgraded, previous: original)
-        XCTAssertEqual(result.map { $0.manifest.inputSchema }, [6, 4])
+        XCTAssertEqual(result.map { $0.manifest.inputSchema }, [8, 8])
         for index in result.indices {
             XCTAssertEqual(try Codec.data(result[index].policy), try Codec.data(original[index].policy))
             XCTAssertEqual(result[index].manifest.id, original[index].manifest.id)

@@ -14,8 +14,16 @@ public struct SceneLayer: Codable, Equatable, Identifiable, Sendable {
     public var imageSequence: LayerImageSequence?
     /// Static source-space crop; this is not an animation and excludes a sequence.
     public var sourceRect: MediaFraming?
+    /// Optional stage-space texture routes; nil preserves the original image IR.
+    public var texturedPath: LayerTexturedPath?
     public init(kind:Kind,text:String="",assetID:String?=nil,endFrame:Int) { self.kind=kind;self.text=text;self.assetID=assetID;self.endFrame=endFrame }
     public func validateImagePresentation() throws {
+        if let texturedPath {
+            guard kind == .image,imageSequence == nil,keyframes.isEmpty else {
+                throw VideoError.invalid("舞台纹理路线只接受静态图片源，不能使用图片序列或位置关键帧")
+            }
+            try texturedPath.validate()
+        }
         if let sourceRect {
             guard kind == .image,imageSequence == nil else {throw VideoError.invalid("静态源裁区仅适用于图片，不能与图片序列同时使用")}
             try sourceRect.validate()
@@ -39,6 +47,9 @@ public enum LayerRules {
             guard Set(l.keyframes.map(\.frame)).count==l.keyframes.count,l.keyframes.allSatisfy({$0.frame>=l.startFrame && $0.frame<l.endFrame && (0...1).contains($0.x) && (0...1).contains($0.y) && (0.1...4).contains($0.scale)}) else { throw VideoError.invalid("元素关键帧越界或重复") }
             try l.entrance?.validate(endFrame:l.endFrame)
             try l.validateImagePresentation()
+            if l.texturedPath != nil,(scene.storyActions ?? []).contains(where:{$0.subjectID==l.id && [.move,.transfer].contains($0.kind)}) {
+                throw VideoError.invalid("纹理路线已使用全舞台坐标，不能再叠加移动或交付位置动作")
+            }
             if l.kind == .text { guard !l.text.isEmpty,l.text.count<=180 else { throw VideoError.invalid("文字元素内容为空或过密") } }
             if l.kind == .image { guard let id=l.assetID,assets.contains(where:{$0.id==id && $0.mediaType.hasPrefix("image")}) else { throw VideoError.invalid("图片元素缺少实际图片") } }
             if l.kind == .chart || l.kind == .code {

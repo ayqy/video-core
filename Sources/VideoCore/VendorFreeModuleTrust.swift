@@ -34,7 +34,7 @@ public enum VendorFreeModuleTrust {
 
     public static func validateScope(manifest:PluginPackageManifest,policy:CommercialPolicy) throws {
         let module=manifest.module
-        let schemas:[String:Set<Int>]=["video.game":[6,7],"video.cartoon":[4,5,6,7]]
+        let schemas:[String:Set<Int>]=["video.game":[6,7,8],"video.cartoon":[4,5,6,7,8]]
         guard let schemas=schemas[module.id],let capability=PluginPackageRules.capabilities[module.id],
               schemas.contains(module.inputSchema),module.capabilities==[capability],
               module.abi==1,module.minimumCore==1,module.outputSchema==1,module.permissions.isEmpty,
@@ -42,7 +42,7 @@ public enum VendorFreeModuleTrust {
               policy.access=="free",policy.sourceVisibility=="closed",
               manifest.format==1,manifest.policyRef==PluginPackageRules.policyName,
               manifest.execution == (try PluginExecutionDescriptor(pluginID:module.id,architecture:manifest.execution.architecture)) else {
-            throw VideoError.permission("受限发行根仅允许game/schema6/7或cartoon/schema4/5/6/7的free/closed独立模块，不授付费、源码开放或其它能力")
+            throw VideoError.permission("受限发行根仅允许game/schema6/7/8或cartoon/schema4/5/6/7/8的free/closed独立模块，不授付费、源码开放或其它能力")
         }
     }
     public static func pairDigest(manifest:PluginPackageManifest,policy:CommercialPolicy) throws -> String {

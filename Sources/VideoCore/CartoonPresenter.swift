@@ -21,17 +21,21 @@ public struct CartoonPresenterCue:Codable,Equatable,Sendable {
 /// A single fixed image character. Every visible pose is an actual registered
 /// sprite, not a code-drawn face. The master role identifies its neutral source
 /// frame; source provenance/rights remain on the Host's ClassicArtwork.
+public enum CartoonPresenterAnchor:String,Codable,Sendable {case center,bottom}
 public struct CartoonPresenter:Codable,Equatable,Sendable {
     public var version=1;public var id:String;public var masterRole:String
     public var x:Double;public var y:Double;public var width:Double;public var height:Double
+    /// Actual fitted sprite alignment inside the authored box; nil keeps center fit.
+    public var anchor:CartoonPresenterAnchor?
     public var clips:[CartoonPresenterClip];public var cues:[CartoonPresenterCue];public var speech:CartoonSpeechTrack?
-    public init(id:String,masterRole:String,x:Double,y:Double,width:Double,height:Double,clips:[CartoonPresenterClip],cues:[CartoonPresenterCue],speech:CartoonSpeechTrack?=nil){self.id=id;self.masterRole=masterRole;self.x=x;self.y=y;self.width=width;self.height=height;self.clips=clips;self.cues=cues;self.speech=speech}
-    private enum CodingKeys:String,CodingKey {case version,id,masterRole,x,y,width,height,clips,cues,speech}
+    public init(id:String,masterRole:String,x:Double,y:Double,width:Double,height:Double,clips:[CartoonPresenterClip],cues:[CartoonPresenterCue],speech:CartoonSpeechTrack?=nil,anchor:CartoonPresenterAnchor?=nil){self.id=id;self.masterRole=masterRole;self.x=x;self.y=y;self.width=width;self.height=height;self.clips=clips;self.cues=cues;self.speech=speech;self.anchor=anchor}
+    private enum CodingKeys:String,CodingKey {case version,id,masterRole,x,y,width,height,clips,cues,speech,anchor}
     public init(from decoder:Decoder)throws {
-        try PresenterDecoding.keys(decoder,["version","id","masterRole","x","y","width","height","clips","cues"],optional:["speech"])
+        try PresenterDecoding.keys(decoder,["version","id","masterRole","x","y","width","height","clips","cues"],optional:["speech","anchor"])
         let c=try decoder.container(keyedBy:CodingKeys.self);version=try c.decode(Int.self,forKey:.version);id=try c.decode(String.self,forKey:.id);masterRole=try c.decode(String.self,forKey:.masterRole)
         x=try c.decode(Double.self,forKey:.x);y=try c.decode(Double.self,forKey:.y);width=try c.decode(Double.self,forKey:.width);height=try c.decode(Double.self,forKey:.height)
         clips=try c.decode([CartoonPresenterClip].self,forKey:.clips);cues=try c.decode([CartoonPresenterCue].self,forKey:.cues);speech=try c.decodeIfPresent(CartoonSpeechTrack.self,forKey:.speech)
+        anchor=try c.decodeIfPresent(CartoonPresenterAnchor.self,forKey:.anchor)
     }
     public var roles:Set<String>{Set([masterRole]+clips.flatMap{$0.frames.map(\.role)})}
     /// The presenter is an image overlay, not a business resource or a second
@@ -39,7 +43,7 @@ public struct CartoonPresenter:Codable,Equatable,Sendable {
     public func validateActions(_ actions:[StoryAction]) throws {
         for action in actions where action.subjectID==id {
             guard [.move,.show,.hide].contains(action.kind),action.quantity==nil,action.targetID==nil else {throw VideoError.invalid("图片解说员仅接受位置和显隐动作；表情手势请引用真实序列，不能忽略气泡或资源交付")}
-            for point in [action.from,action.to].compactMap({$0}) {
+            for point in [action.from,action.to].compactMap({$0})+(action.waypoints ?? []) {
                 guard point.x-width/2>=0,point.x+width/2<=1,point.y-height/2>=0,point.y+height/2<=1 else {throw VideoError.invalid("图片解说员移动后仍须完整位于画面内")}
             }
         }
@@ -105,6 +109,6 @@ public enum CartoonPresenterSchema {
         "CartoonPresenterFrame":"role:s mouthOpen:n",
         "CartoonPresenterClip":"id:s frameDurationFrames:i frames:[CartoonPresenterFrame]",
         "CartoonPresenterCue":"startFrame:i endFrame:i clipID:s animationOffsetFrames:i",
-        "CartoonPresenter":"version:i id:s masterRole:s x:n y:n width:n height:n clips:[CartoonPresenterClip] cues:[CartoonPresenterCue] speech?:CartoonSpeechTrack"
+        "CartoonPresenter":"version:i id:s masterRole:s x:n y:n width:n height:n clips:[CartoonPresenterClip] cues:[CartoonPresenterCue] speech?:CartoonSpeechTrack anchor?:s"
     ]
 }

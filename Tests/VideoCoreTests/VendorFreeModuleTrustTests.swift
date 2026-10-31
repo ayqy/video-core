@@ -38,7 +38,7 @@ final class VendorFreeModuleTrustTests: XCTestCase {
     }
     func testCompleteFreeClosedPairPassesForOnlyCurrentModuleSchemasAndBothArchitectures()throws {
         let key=Curve25519.Signing.PrivateKey()
-        for id in ["video.game","video.cartoon"] {for architecture in ["arm64","x86_64"] {for schema in (id == "video.game" ? [6,7]:[4,5,6,7]) {
+        for id in ["video.game","video.cartoon"] {for architecture in ["arm64","x86_64"] {for schema in (id == "video.game" ? [6,7,8]:[4,5,6,7,8]) {
             var (manifest,policy)=try values(id:id,architecture:architecture);manifest.module.inputSchema=schema
             let documents=try pair(manifest,policy,key:key)
             let verified=try verify(documents,key:key)
@@ -203,7 +203,7 @@ final class VendorFreeModuleTrustTests: XCTestCase {
             for index in 0..<6 {
                 var changed=manifest,terms=policy
                 switch index {
-                case 0:changed.module.inputSchema=8
+                case 0:changed.module.inputSchema=9
                 case 1:terms.access="paid"
                 case 2:terms.sourceVisibility="open";changed.module.sourceVisibility="open"
                 case 3:changed.module.permissions=["network"]

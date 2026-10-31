@@ -37,7 +37,7 @@ def actions_for_scene(actions, subjects, duration):
     ids, windows = set(), {}
     for action in actions:
         object_fields(action, ('id', 'kind', 'subjectID', 'startFrame', 'endFrame'),
-                      ('targetID', 'from', 'to', 'quantity', 'text'))
+                      ('targetID', 'from', 'to', 'quantity', 'text', 'waypoints'))
         need(isinstance(action['id'], str) and 1 <= len(action['id']) <= 128
              and action['id'] not in ids and action['subjectID'] in subjects,
              'duplicate action or undeclared object')
@@ -59,6 +59,17 @@ def actions_for_scene(actions, subjects, duration):
                          for n in point.values()), 'action position is outside the full stage')
         else:
             need('from' not in action and 'to' not in action, 'non-movement has hidden positions')
+        if 'waypoints' in action:
+            points=action['waypoints']
+            need(kind in ('move','transfer') and isinstance(points,list) and 1<=len(points)<=32,
+                 'only complete bounded movement accepts route points')
+            for point in points:
+                object_fields(point,('x','y'))
+                need(all(type(n) in (int,float) and math.isfinite(n) and 0<=n<=1 for n in point.values()),
+                     'route point is outside the full stage')
+            route=[action['from']]+points+[action['to']]
+            need(all(math.hypot(a['x']-b['x'],a['y']-b['y'])>1e-7 for a,b in zip(route,route[1:])),
+                 'route has duplicate adjacent points')
         if kind == 'speak':
             need(isinstance(action.get('text'), str) and 1 <= len(action['text']) <= 48
                  and 'quantity' not in action, 'bubble must have short real dialogue')

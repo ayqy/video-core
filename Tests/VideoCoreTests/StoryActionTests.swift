@@ -46,6 +46,61 @@ final class StoryActionTests:XCTestCase {
         bad=world;bad.updates=[.init(frame:4,entityID:"a",value:1),.init(frame:4,entityID:"a",value:2)];XCTAssertThrowsError(try bad.validate(durationFrames:30))
         XCTAssertThrowsError(try world.validate(durationFrames:30,availableRoles:["floor"]))
     }
+    func testOptionalWorldPlanesPreserveLegacyWireAndRoundTripExplicitSurfaces()throws {
+        let actor=GameWorldEntity(id:"hero",name:"勇士",role:"hero",x:1,y:1,value:3)
+        let original=try Codec.data(actor)
+        let legacy=try XCTUnwrap(JSONSerialization.jsonObject(with:original) as? [String:Any])
+        XCTAssertNil(legacy["renderPlane"])
+        XCTAssertEqual(try Codec.decoder().decode(GameWorldEntity.self,from:original),actor)
+        let update=GameWorldUpdate(frame:2,entityID:"hero",visible:true)
+        let oldUpdate=try XCTUnwrap(JSONSerialization.jsonObject(with:Codec.data(update)) as? [String:Any])
+        XCTAssertNil(oldUpdate["renderPlane"])
+        var surface=actor;surface.renderPlane = .ground
+        let current=try Codec.data(surface)
+        XCTAssertEqual(try Codec.decoder().decode(GameWorldEntity.self,from:current),surface)
+        XCTAssertNotEqual(original,current)
+        var unknown=legacy;unknown["renderPlane"]="guessed-from-artwork"
+        XCTAssertThrowsError(try Codec.decoder().decode(GameWorldEntity.self,from:JSONSerialization.data(withJSONObject:unknown)))
+    }
+    func testPlaneOnlyUpdatesChangeAtTheirFrameWithoutChangingCoordinatesOrBalances()throws {
+        let actor=GameWorldEntity(id:"stone",name:"石料",role:"same-image",x:1,y:1,value:3)
+        let world=GameWorld(width:3,height:3,tiles:Array(repeating:"floor",count:9),entities:[actor],updates:[
+            .init(frame:4,entityID:"stone",renderPlane:.world),.init(frame:8,entityID:"stone",renderPlane:.ground)
+        ])
+        try world.validate(durationFrames:12)
+        XCTAssertTrue(world.usesRenderPlanes)
+        XCTAssertNil(try world.frameState(frame:3,durationFrames:12)[0].renderPlane)
+        XCTAssertEqual(try world.frameState(frame:4,durationFrames:12)[0].renderPlane,.world)
+        let landed=try world.frameState(frame:8,durationFrames:12)[0]
+        XCTAssertEqual(landed.renderPlane,.ground);XCTAssertEqual(landed.x,actor.x);XCTAssertEqual(landed.y,actor.y)
+        XCTAssertEqual(landed.role,actor.role);XCTAssertEqual(landed.value,actor.value)
+        XCTAssertEqual(world.entities[0],actor,"presentation updates cannot rewrite the input world")
+        var invalid=world;invalid.updates=[.init(frame:8,entityID:"stone")]
+        XCTAssertThrowsError(try invalid.validate(durationFrames:12))
+    }
+    func testExplicitGroundOrWorldPlanesRequireGameEightIncludingUpdateOnlyUse()throws {
+        var world=GameWorld(width:2,height:2,tiles:Array(repeating:"floor",count:4),entities:[.init(id:"a",name:"甲",role:"hero",x:0,y:0)])
+        func check(_ schema:Int)throws {try PluginInputCompatibility.requireStorySupport(storyActions:[],gameWorld:world,cartoonRig:nil,pluginID:"video.game",inputSchema:schema)}
+        XCTAssertFalse(world.usesRenderPlanes);XCTAssertNoThrow(try check(7));XCTAssertNoThrow(try check(8))
+        for plane in GameWorldRenderPlane.allCases {
+            world.entities[0].renderPlane=plane
+            XCTAssertThrowsError(try check(7));XCTAssertNoThrow(try check(8))
+        }
+        world.entities[0].renderPlane=nil;world.updates=[.init(frame:1,entityID:"a",renderPlane:.ground)]
+        XCTAssertThrowsError(try check(7));XCTAssertNoThrow(try check(8))
+    }
+    func testGameEightSchemasExposePlanesWithoutChangingPreviousGameDescriptions()throws {
+        let previous=PluginRPCSchemas.definitions(inputSchemaVersion:7,pluginID:"video.game")
+        let current=PluginRPCSchemas.definitions(inputSchemaVersion:8,pluginID:"video.game")
+        let host=AgentSchemas.definitions()
+        XCTAssertNil(previous["GameWorldRenderPlane"])
+        XCTAssertNotNil(current["GameWorldRenderPlane"])
+        for name in ["GameWorldEntity","GameWorldUpdate"] {
+            XCTAssertNil(previous[name]?.object?["properties"]?.object?["renderPlane"])
+            XCTAssertNotNil(current[name]?.object?["properties"]?.object?["renderPlane"])
+            XCTAssertNotNil(host[name]?.object?["properties"]?.object?["renderPlane"])
+        }
+    }
     func testDeliveryConstructionAndSpeechKeepCorrectProcessAndTerminalStates() throws {
         let actions=[StoryAction(kind:.transfer,subjectID:"coin",targetID:"road",startFrame:3,endFrame:13,from:.init(x:0.1,y:0.8),to:.init(x:0.7,y:0.3),quantity:1),StoryAction(kind:.build,subjectID:"road",startFrame:13,endFrame:23),StoryAction(kind:.speak,subjectID:"hero",startFrame:4,endFrame:12,text:"我补一枚")]
         try StoryActionRules.validate(actions,durationFrames:30,subjectIDs:["coin","road","hero"])

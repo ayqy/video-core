@@ -13,7 +13,7 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  paper-explanation-stage:
+  scene-layout-stage:
     if: github.repository == 'ayqy/video-core' && github.event.repository.private == false
     runs-on: macos-15-intel
     timeout-minutes: 40
@@ -38,7 +38,7 @@ jobs:
           assert head==os.environ['VIDEO_SOURCE_COMMIT']
           entries=re.findall(r'(?m)^\| ([a-f0-9]{64}) \| ([0-9]+) \| ([^|\n]+) \|$',(root/'SOURCE-MANIFEST.md').read_text())
           rows={name:(digest,int(size)) for digest,size,name in entries}
-          assert len(entries)==len(rows)==277
+          assert len(entries)==len(rows)==283
           for name,(digest,size) in rows.items():
               relative=Path(name)
               assert not relative.is_absolute() and '..' not in relative.parts
@@ -50,18 +50,64 @@ jobs:
           tracked=set(subprocess.check_output(['git','ls-files'],cwd=root,text=True).splitlines())
           assert tracked==set(rows)|metadata|{'SOURCE-MANIFEST.md'}
           assert not any((root/name).exists() for name in ['App','MacApp','MacUITests','Examples','Premium','Sources/VideoGame','Sources/VideoCartoon','Sources/VideoAdvanced'])
-          BASE_PUBLIC_COMMIT='06f5fa88b6e52efaf6f496607915b0b5a1a2f2f4'
-          BASE_NATIVE_RUN='40997495249'
-          ADDITIONS={'Tests/VideoCoreTests/PaperExplanationQualityTests.swift'}
-          REVIEWED_CHANGED=ADDITIONS|{'.github/workflows/free-production.yml', 'Sources/VideoCore/Editing.swift'}
-          PROTECTED_COUNT=274
-          PROTECTED_SHA256='2253eae4cc104f8e41921132a5afca022187fc3be4dde763be4de4996ffacb7d'
+          BASE_PUBLIC_COMMIT='1ff83e02623e2f202a8bcbdb19637e22285f0b05'
+          ADDITIONS={'Integrations/narrated_opening.py','Integrations/scene_layout.py','Integrations/test_scene_layout.py',
+                     'Sources/VideoCore/TexturedPath.swift','Tests/VideoCoreTests/LayerTexturedPathTests.swift','Tests/VideoCoreTests/RouteLayoutTests.swift'}
+          REVIEWED_CHANGED=ADDITIONS|{'.github/workflows/free-production.yml','Integrations/story_action.py',
+              'Sources/VideoCore/AgentSchemas.swift','Sources/VideoCore/CartoonPresenter.swift','Sources/VideoCore/Layers.swift',
+              'Sources/VideoCore/PluginProtocol.swift','Sources/VideoCore/StoryActions.swift','Sources/VideoCore/VendorFreeModuleTrust.swift',
+              'Sources/VideoMedia/LayerPainter.swift','Sources/VideoMedia/PluginRPCServer.swift','Sources/VideoMedia/RemoteSceneModule.swift',
+              'Tests/VideoCoreTests/ModuleCatalogPublicationTests.swift','Tests/VideoCoreTests/PluginPackageTests.swift',
+              'Tests/VideoCoreTests/PluginProtocolTests.swift','Tests/VideoCoreTests/StoryActionTests.swift','Tests/VideoCoreTests/VendorFreeModuleTrustTests.swift'}
+          PROTECTED_COUNT=261
+          PROTECTED_SHA256='bd06e1ab41041459dd1cd3b6fa2f520c9a97f94cdaef21f0507d941cc1d67d41'
           assert ADDITIONS<=set(rows) and REVIEWED_CHANGED<=set(rows)
           protected={name:value for name,value in rows.items() if name not in REVIEWED_CHANGED}
           digest_input=''.join(f'{name}\0{protected[name][0]}\0{protected[name][1]}\n' for name in sorted(protected))
           assert len(protected)==PROTECTED_COUNT and hashlib.sha256(digest_input.encode()).hexdigest()==PROTECTED_SHA256
-          print('manifest_payloads=277 unchanged_protected_inputs=274 source_commit='+head)
-          print('prior_unchanged_scope_run='+BASE_NATIVE_RUN+' blanket_native_reuse=false')
+          print('manifest_payloads=283 unchanged_protected_inputs=261 source_commit='+head)
+          print('protected_baseline_commit='+BASE_PUBLIC_COMMIT+' blanket_native_reuse=false')
+          PYCODE
+
+      - name: Run current semantic layout and narrated-opening author rules
+        shell: bash
+        run: |
+          python3 -B - <<'PYCODE'
+          from copy import deepcopy
+          import ast, hashlib, sys, unittest
+          from pathlib import Path
+          root=Path.cwd()
+          sys.path.insert(0,str(root/'Integrations'))
+          import test_scene_layout
+          from narrated_opening import with_narrated_cover, opening_sources
+          suite=unittest.defaultTestLoader.loadTestsFromTestCase(test_scene_layout.SceneLayoutTests)
+          ids=[case.id() for case in suite]
+          tree=ast.parse((root/'Integrations/test_scene_layout.py').read_text())
+          definition=next(node for node in tree.body if isinstance(node,ast.ClassDef) and node.name=='SceneLayoutTests')
+          methods=[node.name for node in definition.body if isinstance(node,ast.FunctionDef) and node.name.startswith('test_')]
+          layout_ids={'test_scene_layout.SceneLayoutTests.'+name for name in methods}
+          assert methods and len(methods)==len(set(methods)) and len(ids)==len(set(ids))==len(layout_ids) and set(ids)==layout_ids
+          result=unittest.TextTestRunner(verbosity=2).run(suite)
+          assert result.wasSuccessful() and result.testsRun==len(layout_ids) and not result.skipped
+          source=[dict(id='cover',durationFrames=48,narration='',captions=[],sourceGain=0,musicGain=0),
+                  dict(id='spoken',durationFrames=30,narration='Complete synthetic sentence.',voiceGain=1,muted=False,pauseFrames=0,
+                       voice=dict(assetID='synthetic-original',durationFrames=30,listened=False),captions=[dict(text='Complete synthetic sentence.',confirmed=False)])]
+          retained=deepcopy(source)
+          made=with_narrated_cover(source,'Synthetic opening title')
+          expected=deepcopy(source[1:]);expected[0]['title']='Synthetic opening title'
+          assert made==expected and source==retained and made[0]['voice']['listened']==False
+          for mutation in ('narration','voice','musicGain'):
+              invalid=deepcopy(source);invalid[0][mutation]='spoken' if mutation=='narration' else ({'assetID':'original'} if mutation=='voice' else 1)
+              try:with_narrated_cover(invalid,'Title')
+              except ValueError:pass
+              else:raise AssertionError('Spoken or audible cover was discarded')
+          try:with_narrated_cover(made,'Title')
+          except ValueError:pass
+          else:raise AssertionError('The first complete sentence was discarded twice')
+          pins=opening_sources(root/'Integrations/scene_layout.py')
+          assert pins==dict(recipe=hashlib.sha256((root/'Integrations/scene_layout.py').read_bytes()).hexdigest(),
+                            narrated_opening=hashlib.sha256((root/'Integrations/narrated_opening.py').read_bytes()).hexdigest())
+          print('semantic_layout_rules=passed distinct_test_ids='+str(len(layout_ids))+' narrated_opening_synthetic_contract=passed private_recipe_audio_fixture=excluded')
           PYCODE
 
       - name: Build the current standalone free CLI
@@ -88,13 +134,28 @@ jobs:
           finally:log.unlink(missing_ok=True)
           PYCODE
 
-      - name: Run the complete paper explanation quality class with exact identities
+      - name: Run affected whole Core classes and exact compatibility methods
         shell: bash
         run: |
           python3 -B - <<'PYCODE'
           from pathlib import Path
           import hashlib, json, os, re, subprocess
-          SWIFT_SUITES={('VideoCoreTests', 'PaperExplanationQualityTests'): 'PaperExplanationQualityTests.swift'}
+          SWIFT_SUITES={('VideoCoreTests',suite):suite+'.swift' for suite in
+                        ('PaperExplanationQualityTests','StoryActionTests','RouteLayoutTests','CartoonPresenterTests','LayerTexturedPathTests')}
+          SELECTED={
+              ('VideoCoreTests','PluginProtocolTests'):(
+                  'testPublicationSchemaSelectionUsesCurrentDefaultsAndRetainsExplicitLegacyRequests',
+                  'testRigVersionTwoRequiresCartoonSixEvenForOneActorAndKeepsLegacyFive',
+                  'testCartoonSixDiscoveryBoundsRigTwoWithoutChangingFiveOrExposingHostCausality'),
+              ('VideoCoreTests','PluginPackageTests'):(
+                  'testCurrentServiceSchemasUseMatchingPublicationDefaultsAndKeepExplicitLegacySelection',
+                  'testCurrentReadOnlyProbeRejectsRealDescriptorContractDrift'),
+              ('VideoCoreTests','ModuleCatalogPublicationTests'):(
+                  'testCurrentPublicationDefaultsStillRequireModuleUpgradeAndRetainPolicy',),
+              ('VideoCoreTests','VendorFreeModuleTrustTests'):(
+                  'testCompleteFreeClosedPairPassesForOnlyCurrentModuleSchemasAndBothArchitectures',
+                  'testRestrictedCartoonSixAddsNoPaidOpenFutureOrPermissionAuthority'),
+          }
 
           def affected_methods(root):
               expected=set()
@@ -107,6 +168,11 @@ jobs:
                   if following:source=source[:following.start()]
                   methods=re.findall(r'(?m)^[ \t]*(?:@\w+(?:\([^\n)]*\))?[ \t]+)*func[ \t]+(test\w+)[ \t]*\(',source)
                   if not methods or len(methods)!=len(set(methods)):raise ValueError('Incomplete or duplicate affected methods: '+suite)
+                  expected.update((target,suite,method) for method in methods)
+              for (target,suite),methods in SELECTED.items():
+                  source=(Path(root)/'Tests'/target/(suite+'.swift')).read_text()
+                  declared=re.findall(r'(?m)^[ \t]*func[ \t]+(test\w+)[ \t]*\(',source)
+                  if not methods or len(set(methods))!=len(methods) or not set(methods)<=set(declared):raise ValueError('Selected compatibility method missing or duplicated')
                   expected.update((target,suite,method) for method in methods)
               return expected
 
@@ -147,7 +213,7 @@ jobs:
               text=log.read_text(errors='replace')
               for line in text.splitlines():
                   if re.search(r'error:|fatal error:|Executed \d+ tests?|Test Suite .* (passed|failed)',line,re.I):print(line[:700])
-              assert result.returncode==0,'Affected whole PaperExplanationQuality class failed'
+              assert result.returncode==0,'Affected Core classes or selected compatibility methods failed'
               count=verify_swift_stream(text,expected)
               print('current_affected_swift_rules=passed distinct_test_ids='+str(count))
               print('actual_method_inventory_sha256='+hashlib.sha256(json.dumps(sorted(expected),separators=(',',':')).encode()).hexdigest())
@@ -379,7 +445,7 @@ jobs:
           python3 -B - <<'PYCODE'
           from pathlib import Path
           import os
-          text='Current standalone public Free CLI and the complete PaperExplanationQuality class passed with exact XCTest identities. The actual ordinary CLI imported a synthetic image and complete PCM tone original, retained narrated paper with no title/body/CTA, rejected a non-paper empty title through normal submission preview, rendered one zero-fee native job, decoded every video frame and the complete audio tail, and restored the source-containing backup.\n\nThe 274 protected payloads retain exact public 06f5fa88b6e52efaf6f496607915b0b5a1a2f2f4 bytes; successful production run 40997495249 remains evidence only for unchanged inputs. Old layer, presenter, checkpoint resume and other unchanged suites were not rerun. No private Examples, art, original business audio, advanced implementation or credentials were published. Synthetic infrastructure validation does not approve business films, spoken narration, source rights or manual review.\n'
+          text='Current standalone public Free CLI, complete affected Core route/layer/story/presenter classes, retained paper quality gate and exact schema/signature compatibility methods passed with distinct XCTest identities. Semantic scene-layout rules and the shared narrated-opening helper passed with public synthetic inputs. The actual ordinary CLI imported a synthetic image and complete PCM tone original, retained narrated paper with no title/body/CTA, rejected a non-paper empty title through normal submission preview, rendered one zero-fee native job, decoded every video frame and the complete audio tail, and restored the source-containing backup.\n\nThe 261 protected payloads retain exact public 1ff83e02623e2f202a8bcbdb19637e22285f0b05 bytes; no blanket Native reuse is claimed. Unaffected suites were not rerun. The real-stone media path rules and ordinary-recipe/audio rules remain private and were not replaced by synthetic acceptance. No private Examples, art, original business audio, advanced implementation or credentials were published. Synthetic infrastructure validation does not approve business films, spoken narration, source rights or manual review.\n'
           with Path(os.environ['GITHUB_STEP_SUMMARY']).open('a') as stream:stream.write(text)
           print('current_native_build=passed current_affected_swift_rules=passed current_narrated_paper_chain=passed synthetic_fixture_only=true review=false')
           PYCODE
