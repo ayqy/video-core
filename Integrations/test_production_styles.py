@@ -31,6 +31,7 @@ def source_history():
     recorded['scenes'][0]['simulationRecording'] = dict(
         recordedFPS=30, recordedDurationFrames=510,
         knowledgeTrace=dict(label='synthetic-history-only'))
+    recorded['scenes'][0]['simulationRecordingConfirmed'] = False
     again = deepcopy(recorded)
     again.update(id='source-verified', parentID=recorded['id'])
     project = dict(id='source-project', workspaceID='source-workspace',
@@ -78,7 +79,9 @@ class SourceRevisionRules(unittest.TestCase):
                    lambda s: s.update(id='other-scene'),
                    lambda s: s.update(sourceStartFrame=1),
                    lambda s: s.update(speed=2),
-                   lambda s: s.update(pauseFrames=1)]
+                   lambda s: s.update(pauseFrames=1),
+                   lambda s: s.update(simulationRecordingConfirmed=True),
+                   lambda s: s.update(simulationRecordingConfirmed=0)]
         for change in changes:
             receipt, project = source_history()
             change(project['revisions'][1]['scenes'][0])

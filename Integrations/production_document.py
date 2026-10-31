@@ -65,7 +65,11 @@ def validate_source_revision(receipt, project, reused):
         value=deepcopy(revision)
         for key in ('id','parentID','number','createdAt','change','invalidated'):value.pop(key,None)
         if isinstance(value.get('dependencies'),dict):value['dependencies'].pop('capturedAt',None)
-        for scene in value['scenes']:scene.pop('simulationRecording',None)
+        for scene in value['scenes']:
+            confirmation=scene.pop('simulationRecordingConfirmed',None)
+            need(confirmation is None or (type(confirmation) is bool and not confirmation),
+                 'normal recording recovery cannot grant or inherit a confirmation')
+            scene.pop('simulationRecording',None)
         return value
     original=design(revisions[index])
     for previous,current in zip(revisions[index:],revisions[index+1:]):

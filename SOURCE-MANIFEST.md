@@ -2,10 +2,10 @@
 
 VideoFree source export · package_free.py · version 1
 
-生成时间：2026-10-31 23:48:55 北京时间
+生成时间：2026-11-01 00:16:16 北京时间
 
-- 源码与必要元数据：309个文件；4855776字节（不含本清单）。
-- 整体内容指纹：`b5c77257c6ee3f8ab863c066fd3df6597b9575f6f15fd09f267a251861259152`。
+- 源码与必要元数据：309个文件；4856249字节（不含本清单）。
+- 整体内容指纹：`9c556d55fc0b911f7aba71e36ab4670997432ff18274b5fc9651a831026f4830`。
 - 来源：受控原始工程中的逐文件白名单；Package.swift、唯一免费制作workflow与README均来自Distribution/Free精确模板。
 - 本包不含.git，不可作为新业务checkout；本清单生成过程不执行构建、设备验收、签名安装或公共上传，各阶段以独立证据为准。
 - 排除：App、VideoGame、VideoCartoon、Premium、高级实现运行时测试、私有仓库地址、凭据、客户数据、缓存、日志及媒体过程产物。
@@ -49,7 +49,7 @@ VideoFree source export · package_free.py · version 1
 | 7d9357479f6d31d21c7a251a215b4e9c5fe59e90dae4b09f03ac7e400ea16a88 | 26192 | Integrations/prepare_voice_design.py |
 | 598fcc4e51a9c589b66c6735c466645764994a7744c2d40c854d52a4efd6f27c | 14228 | Integrations/presenter_composition.py |
 | 3832619b21c10619bc42f86d44e77adec0daafd91a8e53da86d93b7b8a46f02a | 1087 | Integrations/produce_knowledge.py |
-| f0459256ad8d2aadc27be87a52e1505795316ef941cfb7d83d878de2ba12c59e | 25850 | Integrations/production_document.py |
+| 17b9fa6ce21790400bac3de2ad6002ae341aa26caa97f092b7708ed2f811f20a | 26112 | Integrations/production_document.py |
 | e52450d73342e5a84f4a3c51051886c69df0ebb9dce685cc31e26791353c9211 | 19716 | Integrations/production_motion.py |
 | ced29f3c146eb979f11b706d3d1c1555d2c06352698bacd9b75e6ac989c8a980 | 4902 | Integrations/production_runtime.py |
 | 637687b1b38c1470fe45cdb6d0018e3cef19898a0a77111726fb046c4df9a09c | 33499 | Integrations/production_workflow.py |
@@ -87,7 +87,7 @@ VideoFree source export · package_free.py · version 1
 | 2e1cdc6cdc6393fe341a48a378d1437e5ae3da0b1b3a5f920e2c6f50bc65342a | 21362 | Integrations/test_presenter_composition.py |
 | 1fd94ccb28b13d3c1d272bb8838d1a90e29d7a64c5f12211d9214037ea01ab92 | 12728 | Integrations/test_production_document.py |
 | 5e371767fdd7f3828665ceec23bd573c81e885fa565e8e77d25e1acfa02d5910 | 10373 | Integrations/test_production_motion.py |
-| 9d8269a38c3c5d7584a127de306a4e7c7653eabaf55f70811d4f84631e3be2de | 15891 | Integrations/test_production_styles.py |
+| fe170455025acda74f7c673fe524305d88ed4d9b7bd82366e9f50ef34066835c | 16102 | Integrations/test_production_styles.py |
 | 20e105ed87ccb1a070bd0e85ec2c66619b7a83f7acdb8335baeb3373049101f8 | 21260 | Integrations/test_production_workflow.py |
 | f82ae813561cfb2e11d718349d474eae4fb21ddd0da5b8056c0b11be3f372f18 | 53105 | Integrations/test_qwen_stream.py |
 | 9e30dc726836d13877440152b4edafc83daa5fc219213f4e21312b4c03194962 | 6588 | Integrations/test_scene_layout.py |
