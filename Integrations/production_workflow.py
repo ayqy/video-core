@@ -41,6 +41,67 @@ def save(path,value):
 def read(path):return plistlib.loads(path.read_bytes())
 
 
+def preserve_artifacts(artifacts,output,*,revision_id,source_root):
+    """Preserve four native originals, changing only copied receipt paths.
+
+    All source identities, bytes and existing destination conflicts are checked
+    before creating the output directory or writing a file. Equal existing
+    files are reused; different bytes are never overwritten. This is not a
+    filesystem transaction across I/O failures and does not inspect media.
+    """
+    identity=lambda value:isinstance(value,str) and re.fullmatch(r'[A-Za-z0-9._-]{1,128}',value) is not None
+    def canonical(value,label):
+        need(isinstance(value,(str,Path)) and '\x00' not in str(value),label+' must be an ordinary absolute path')
+        path=Path(value)
+        need(path.is_absolute() and not path.is_symlink() and path.resolve()==path,
+             label+' must be canonical and contain no symlink')
+        return path
+    need(identity(revision_id),'the exact native revision identity is required')
+    root=canonical(source_root,'artifact source root');out=canonical(output,'artifact output')
+    need(root.is_dir(),'the actual artifact source root must be an existing ordinary directory')
+    need(not out.exists() or out.is_dir(),'artifact output must be an ordinary directory')
+    required={'id','path','mime','bytes','sha256','revision'}
+    mimes={'video/mp4','image/png','application/x-subrip','text/plain'}
+    need(isinstance(artifacts,list) and len(artifacts)==4
+         and all(isinstance(a,dict) and required<=set(a) and identity(a['id'])
+                 and isinstance(a['mime'],str) and type(a['bytes']) is int and a['bytes']>0
+                 and isinstance(a['sha256'],str) and re.fullmatch(r'[0-9a-f]{64}',a['sha256'])
+                 and a['revision']==revision_id for a in artifacts),
+         'four complete native artifact identities must bind the same revision')
+    need({a['mime'] for a in artifacts}==mimes and len({a['id'] for a in artifacts})==4,
+         'the four native artifact MIME types and identities must be unique')
+    prepared=[];sources=set();targets=set()
+    for artifact in artifacts:
+        source=canonical(artifact['path'],'artifact original')
+        need(source.is_relative_to(root) and source.is_file() and source not in sources,
+             'every artifact must be a unique ordinary original inside the actual source root')
+        sources.add(source)
+        raw=source.read_bytes()
+        need(len(raw)==artifact['bytes'] and sha(raw)==artifact['sha256'],'real artifact original bytes differ')
+        target=out/source.name
+        need(target not in targets and not target.is_symlink(),
+             'artifact output names must be unique ordinary files')
+        targets.add(target)
+        if target.exists():
+            need(target.is_file() and target.read_bytes()==raw,'preserve existing artifact output; different bytes cannot be overwritten')
+        prepared.append((target,raw))
+    # Validation is complete for all four originals and all existing targets.
+    out.mkdir(parents=True,exist_ok=True)
+    for target,raw in prepared:
+        if target.exists():
+            need(not target.is_symlink() and target.is_file() and target.read_bytes()==raw,
+                 'preserve existing artifact output; different bytes cannot be overwritten')
+            continue
+        try:
+            with target.open('xb') as handle:handle.write(raw)
+        except FileExistsError:
+            need(not target.is_symlink() and target.is_file() and target.read_bytes()==raw,
+                 'preserve concurrently created artifact output; different bytes cannot be overwritten')
+    result=deepcopy(artifacts)
+    for artifact,(target,_) in zip(result,prepared):artifact['path']=str(target)
+    return result
+
+
 class ProductionWorkflow:
     """Ordinary CLI orchestration; authors supply content, never observed results.
 
@@ -419,12 +480,9 @@ class ProductionWorkflow:
             and all(a['revision']==state['revision_id'] for a in status['artifacts']),
             'the original quote, job and four artifacts must bind the same current revision')
         self.verify_recorded_sources(state)
-        for a in status['artifacts']:
-            raw=Path(a['path']).read_bytes();need(sha(raw)==a['sha256'] and len(raw)==a['bytes'],'real deliverable bytes differ')
-            path=self.out/Path(a['path']).name
-            if path.exists():need(path.read_bytes()==raw,'preserve current original deliverables')
-            else:path.write_bytes(raw)
-        video=next(Path(a['path']) for a in status['artifacts'] if a['path'].endswith('.mp4'))
+        preserved=preserve_artifacts(status['artifacts'],self.out,
+            revision_id=state['revision_id'],source_root=self.workspace)
+        video=next(Path(a['path']) for a in preserved if a['mime']=='video/mp4')
         r=subprocess.run(['rtk','proxy',str(self.ffmpeg),'-nostdin','-v','error','-i',str(video),'-f','null','-'],capture_output=True,timeout=180)
         need(r.returncode==0 and not r.stderr,'complete audiovisual decode failed')
         media=self.probe(video);v=next(s for s in media['streams'] if s['codec_type']=='video')

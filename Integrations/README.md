@@ -209,6 +209,24 @@ adapter调用承诺并发只生成一次，不把外部现场宣称为同一原�
 本地输入。它们没有扩大Codex宿主工具的既有命令、路径、权益或信任范围。完整影片仍
 通过正常`render estimate/submit`、有限`worker run`、产物检查和含源备份恢复交付。
 
+### 普通制作的持久四件
+
+`production_workflow.preserve_artifacts(artifacts, output, *, revision_id, source_root)`
+把正常原生作业的成片、字幕、封面和文字四件复制到调用方指定的持久目录。源路径须在
+显式`source_root`内；函数先核全部四件的唯一ID、MIME、同一revision、字节数、SHA256
+及目标冲突，再写文件。路径须为无符号链接的规范绝对路径，四件不能同名；已有目标
+只有字节完全一致才复用，不覆盖不同内容。返回回执的副本仅更新`path`，原回执、
+作业、报价、版本和审核状态保持。`ProductionWorkflow.verify`使用这些持久副本继续
+验证；复制成功不等于媒体解码、完整工程恢复或人工审核通过。
+
+普通配方把`--output`作为持久四件、报告与含源备份目录，工作区、渲染中间件及独立恢复
+目录放在登记树的`--cache`内。新增的共享保全实现也进入配方输入冻结；执行中原件或
+实现改变时保留现场，不续接旧输入。picturebook56、data58与mixed61当前入口均为
+六个有声场景、617帧：只移除旧版48帧无声封面，将标题合入首个原有旁白镜头，六完整
+原句、原WAV及每镜局部动作时钟不变。字幕仍严格标为
+`estimated_sentence_no_word_timestamps`，`voice.listened=false`、`captions.confirmed=false`
+及整片未审状态保持；没有可靠词级时戳，不声称词级对齐或新片已听审。
+
 ## 分层剧情与固定图片解说员
 
 `story_planning.py`在素材解析之前执行四个有限阶段：人物与动机、剧情框架、动作细节、

@@ -18,7 +18,7 @@ from unittest.mock import patch
 
 import production_workflow as workflow
 from knowledge_story import PHASES
-from production_workflow import ProductionWorkflow, data, read, save, sha
+from production_workflow import ProductionWorkflow, data, read, save, sha, preserve_artifacts
 
 
 class FakeCLI:
@@ -83,6 +83,135 @@ def literal_sources(*, count=1, fps=24, rounds=3, start_tick=4, round_ticks=9):
         plan=dict(version=2,target=dict(fps=fps),sources=declared),
         recorded=dict(version=2,project_id=project['id'],revision='UNIT-recorded-revision',sources=recorded))
     return project,state
+
+
+class ArtifactPreservationContracts(unittest.TestCase):
+    """Synthetic file bytes only; MIME labels do not make a fixture real media."""
+    def setUp(self):
+        self.folder=tempfile.TemporaryDirectory();self.addCleanup(self.folder.cleanup)
+        self.base=Path(self.folder.name).resolve()
+
+    def originals(self,label='case'):
+        root=self.base/label/'workspace';root.mkdir(parents=True)
+        names=('publication.fixture','cover.fixture','picture-with-audio.fixture','captions.fixture')
+        mimes=('text/plain','image/png','video/mp4','application/x-subrip')
+        rows=[]
+        for index,(name,mime) in enumerate(zip(names,mimes)):
+            path=root/name;raw=('SYNTHETIC NON-MEDIA BYTES '+str(index)).encode()
+            path.write_bytes(raw)
+            rows.append(dict(id='UNIT-original-'+str(index),path=str(path),mime=mime,
+                bytes=len(raw),sha256=sha(raw),revision='UNIT-revision'))
+        return root,self.base/label/'persistent',rows
+
+    def test_all_four_identities_are_deeply_preserved_and_existing_equal_bytes_are_idempotent(self):
+        root,out,rows=self.originals();before=deepcopy(rows)
+        original_bytes={p:p.read_bytes() for p in root.iterdir()}
+        result=preserve_artifacts(rows,out,revision_id='UNIT-revision',source_root=root)
+        self.assertEqual(rows,before)
+        self.assertEqual({p:p.read_bytes() for p in root.iterdir()},original_bytes)
+        for original,saved in zip(rows,result):
+            self.assertEqual({k:v for k,v in original.items() if k!='path'},
+                             {k:v for k,v in saved.items() if k!='path'})
+            self.assertEqual(Path(saved['path']),out/Path(original['path']).name)
+            self.assertEqual(Path(saved['path']).read_bytes(),Path(original['path']).read_bytes())
+        times={p:p.stat().st_mtime_ns for p in out.iterdir()}
+        self.assertEqual(preserve_artifacts(rows,out,revision_id='UNIT-revision',source_root=root),result)
+        self.assertEqual({p:p.stat().st_mtime_ns for p in out.iterdir()},times)
+        result[0]['id']='changed-return-only';result.reverse()
+        self.assertEqual(rows,before)
+
+    def test_invalid_late_original_metadata_or_bytes_reject_before_any_output_write(self):
+        mutations=[lambda r,root:r[-1].update(revision='UNIT-foreign'),
+            lambda r,root:r[-1].update(sha256='0'*64),
+            lambda r,root:r[-1].update(sha256='not-a-hash'),
+            lambda r,root:r[-1].update(bytes=r[-1]['bytes']+1),
+            lambda r,root:r[-1].update(bytes=True),
+            lambda r,root:r[-1].update(bytes=0),
+            lambda r,root:r[-1].update(mime=r[0]['mime']),
+            lambda r,root:r[-1].update(mime='application/octet-stream'),
+            lambda r,root:r[-1].update(id=r[0]['id']),
+            lambda r,root:r[-1].update(id='bad identity'),
+            lambda r,root:r[-1].pop('revision'),
+            lambda r,root:r[-1].update(path=Path(r[-1]['path']).name),
+            lambda r,root:Path(r[-1]['path']).write_bytes(b'CHANGED SYNTHETIC ORIGINAL'),
+            lambda r,root:Path(r[-1]['path']).unlink(),
+            lambda r,root:r.pop(),
+            lambda r,root:r.append(deepcopy(r[-1]))]
+        for index,mutate in enumerate(mutations):
+            root,out,rows=self.originals('invalid-'+str(index));mutate(rows,root)
+            before=deepcopy(rows);files={p:p.read_bytes() for p in root.iterdir()}
+            with self.subTest(index=index),self.assertRaises(ValueError):
+                preserve_artifacts(rows,out,revision_id='UNIT-revision',source_root=root)
+            self.assertFalse(out.exists());self.assertEqual(rows,before)
+            self.assertEqual({p:p.read_bytes() for p in root.iterdir()},files)
+
+    def test_foreign_root_escape_leaf_and_parent_symlinks_reject_before_output_creation(self):
+        for mode in ('outside','dotdot','leaf-link','parent-link','root-link','relative-root'):
+            root,out,rows=self.originals(mode);original=Path(rows[-1]['path'])
+            foreign=root.parent/'foreign.fixture';foreign.write_bytes(original.read_bytes())
+            actual_root=root
+            if mode=='outside':rows[-1]['path']=str(foreign)
+            elif mode=='dotdot':rows[-1]['path']=str(root/'..'/foreign.name)
+            elif mode=='leaf-link':
+                link=root/'linked.fixture';link.symlink_to(original);rows[-1]['path']=str(link)
+            elif mode=='parent-link':
+                link=root/'linked-directory';link.symlink_to(root,target_is_directory=True)
+                rows[-1]['path']=str(link/original.name)
+            elif mode=='root-link':
+                actual_root=root.parent/'workspace-link';actual_root.symlink_to(root,target_is_directory=True)
+            else:actual_root=Path('relative-workspace')
+            before=deepcopy(rows)
+            with self.subTest(mode=mode),self.assertRaises(ValueError):
+                preserve_artifacts(rows,out,revision_id='UNIT-revision',source_root=actual_root)
+            self.assertFalse(out.exists());self.assertEqual(rows,before)
+            self.assertEqual(original.read_bytes(),foreign.read_bytes())
+
+    def test_last_existing_target_conflicts_and_symlinks_leave_all_other_targets_unwritten(self):
+        for mode in ('different','directory','target-link','output-link'):
+            root,out,rows=self.originals(mode);out.mkdir()
+            target=out/Path(rows[-1]['path']).name
+            if mode=='different':target.write_bytes(b'EXISTING DIFFERENT BYTES')
+            elif mode=='directory':target.mkdir()
+            elif mode=='target-link':target.symlink_to(Path(rows[-1]['path']))
+            else:
+                link=out.parent/'output-link';link.symlink_to(out,target_is_directory=True);out=link
+            before=deepcopy(rows);names={p.name for p in out.iterdir()}
+            source={p:p.read_bytes() for p in root.iterdir()}
+            with self.subTest(mode=mode),self.assertRaises(ValueError):
+                preserve_artifacts(rows,out,revision_id='UNIT-revision',source_root=root)
+            self.assertEqual({p.name for p in out.iterdir()},names)
+            self.assertEqual(rows,before);self.assertEqual({p:p.read_bytes() for p in root.iterdir()},source)
+            if mode=='different':self.assertEqual(target.read_bytes(),b'EXISTING DIFFERENT BYTES')
+
+    def test_distinct_native_paths_cannot_collide_on_a_persistent_basename(self):
+        root,out,rows=self.originals();nested=root/'nested';nested.mkdir()
+        collision=nested/Path(rows[0]['path']).name
+        collision.write_bytes(Path(rows[1]['path']).read_bytes());rows[1]['path']=str(collision)
+        with self.assertRaisesRegex(ValueError,'output names'):
+            preserve_artifacts(rows,out,revision_id='UNIT-revision',source_root=root)
+        self.assertFalse(out.exists())
+
+    def test_workflow_decode_boundary_uses_persisted_mp4_by_mime_without_starting_a_decoder(self):
+        root,out,rows=self.originals();home=root.parent/'home';home.mkdir()
+        quote=dict(id='UNIT-quote');state=dict(workspace_id='UNIT-workspace',project_id='UNIT-project',revision_id='UNIT-revision')
+        status=dict(job_id='UNIT-job',state='needs_review',artifacts=deepcopy(rows))
+        for name,value in (('prepared.plist',state),('produced.plist',status),('quote.plist',quote)):
+            save(home/name,value)
+        host=ProductionWorkflow.__new__(ProductionWorkflow)
+        host.home,host.out,host.workspace,host.ffmpeg=home,out,root,self.base/'decoder-never-started'
+        host.project=lambda identity:dict(id='UNIT-project',revisions=[dict(id='UNIT-revision')])
+        host.invoke=lambda command,body:dict(state='needs_review',artifacts=deepcopy(rows),
+            result=json.dumps(dict(projectID='UNIT-project',revisionID='UNIT-revision',quote=quote)))
+        host.verify_recorded_sources=lambda unused:None
+        with patch.object(workflow.subprocess,'run',side_effect=RuntimeError('synthetic decoder boundary')) as decoder:
+            with self.assertRaisesRegex(RuntimeError,'synthetic decoder boundary'):host.verify()
+        self.assertEqual(decoder.call_count,1)
+        argv=decoder.call_args.args[0];selected=argv[argv.index('-i')+1]
+        original=next(a for a in rows if a['mime']=='video/mp4')
+        self.assertEqual(selected,str(out/Path(original['path']).name))
+        self.assertNotEqual(selected,original['path'])
+        self.assertEqual(read(home/'produced.plist'),status)
+        self.assertTrue(all(Path(a['path']).is_file() for a in rows))
 
 
 class SourceObservationContracts(unittest.TestCase):

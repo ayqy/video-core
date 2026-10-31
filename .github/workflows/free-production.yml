@@ -50,23 +50,20 @@ jobs:
           tracked=set(subprocess.check_output(['git','ls-files'],cwd=root,text=True).splitlines())
           assert tracked==set(rows)|metadata|{'SOURCE-MANIFEST.md'}
           assert not any((root/name).exists() for name in ['App','MacApp','MacUITests','Examples','Premium','Sources/VideoGame','Sources/VideoCartoon','Sources/VideoAdvanced'])
-          BASE_PUBLIC_COMMIT='79d62a878b4ff0b534318ab6aebb075f45b7a77c'
+          BASE_PUBLIC_COMMIT='a10f360fa996bb1fe01601af233e4807fee7b183'
           ADDITIONS=set()
           REVIEWED_CHANGED={
               '.github/workflows/free-production.yml', 'Integrations/README.md',
-              'Integrations/production_document.py', 'Integrations/test_production_document.py',
-              'Integrations/presenter_composition.py', 'Integrations/test_presenter_composition.py',
-              'Integrations/scene_layout.py', 'Integrations/test_scene_layout.py',
-              'Integrations/test_production_styles.py',
+              'Integrations/production_workflow.py', 'Integrations/test_production_workflow.py',
           }
-          PROTECTED_COUNT=300
-          PROTECTED_SHA256='2d0de24f73e4af3cc2960c748d256366b3d62dbba615374d65bf746834c4808e'
-          assert len(ADDITIONS)==0 and len(REVIEWED_CHANGED)==9 and not ADDITIONS&REVIEWED_CHANGED
+          PROTECTED_COUNT=305
+          PROTECTED_SHA256='ca4ddfe64973f945d852385f30ce65027c62151defa0d74757d1c13370d33e1c'
+          assert len(ADDITIONS)==0 and len(REVIEWED_CHANGED)==4 and not ADDITIONS&REVIEWED_CHANGED
           assert ADDITIONS|REVIEWED_CHANGED<=set(rows)
           protected={name:value for name,value in rows.items() if name not in ADDITIONS|REVIEWED_CHANGED}
           digest_input=''.join(f'{name}\0{protected[name][0]}\0{protected[name][1]}\n' for name in sorted(protected))
           assert len(protected)==PROTECTED_COUNT and hashlib.sha256(digest_input.encode()).hexdigest()==PROTECTED_SHA256
-          print('manifest_payloads=309 added_public_inputs=0 changed_reviewed_inputs=9 unchanged_protected_inputs=300 source_commit='+head)
+          print('manifest_payloads=309 added_public_inputs=0 changed_reviewed_inputs=4 unchanged_protected_inputs=305 source_commit='+head)
           print('protected_baseline_commit='+BASE_PUBLIC_COMMIT+' current_knowledge_production_checks=pending')
           PYCODE
 
@@ -85,6 +82,12 @@ jobs:
                   if isinstance(item, unittest.TestSuite):yield from cases(item)
                   else:yield item
           expected={
+              'test_production_workflow.ArtifactPreservationContracts.test_all_four_identities_are_deeply_preserved_and_existing_equal_bytes_are_idempotent',
+              'test_production_workflow.ArtifactPreservationContracts.test_distinct_native_paths_cannot_collide_on_a_persistent_basename',
+              'test_production_workflow.ArtifactPreservationContracts.test_foreign_root_escape_leaf_and_parent_symlinks_reject_before_output_creation',
+              'test_production_workflow.ArtifactPreservationContracts.test_invalid_late_original_metadata_or_bytes_reject_before_any_output_write',
+              'test_production_workflow.ArtifactPreservationContracts.test_last_existing_target_conflicts_and_symlinks_leave_all_other_targets_unwritten',
+              'test_production_workflow.ArtifactPreservationContracts.test_workflow_decode_boundary_uses_persisted_mp4_by_mime_without_starting_a_decoder',
               'test_presenter_composition.PresenterCompositionRules.test_actual_frame_table_is_stable_for_the_same_original_across_takes',
               'test_presenter_composition.PresenterCompositionRules.test_arbitrary_actor_material_duration_quantity_and_business_ids_compose',
               'test_presenter_composition.PresenterCompositionRules.test_changed_missing_empty_or_symlink_original_is_rejected',
@@ -192,7 +195,7 @@ jobs:
           result=unittest.TextTestRunner(verbosity=2).run(suite)
           assert result.wasSuccessful() and result.testsRun==len(expected) and not result.skipped and not result.expectedFailures
           for identity in sorted(identities):print('knowledge_production_passed='+identity)
-          print('current_knowledge_production_rules='+str(len(expected))+' current_native_rules=0 current_scene_layout_rules=12 current_release_builds=0 media_executed=false human_review=false')
+          print('current_knowledge_production_rules='+str(len(expected))+' current_artifact_preservation_rules=6 current_native_rules=0 current_scene_layout_rules=12 current_release_builds=0 media_executed=false human_review=false')
           PYCODE
 
       - name: Record exact evidence boundaries
@@ -200,13 +203,13 @@ jobs:
         run: |
           python3 -B - <<'PYCODE'
           import os
-          text=("Current scope executes exactly 100 declared pure production-workflow, production-document, viewport-layout, presentation-style, image-presenter and SDK-receipt rules, with exact identities and no skips or expected failures. "
+          text=("Current scope executes exactly 106 declared pure production-workflow, production-document, viewport-layout, presentation-style, image-presenter and SDK-receipt rules, with exact identities and no skips or expected failures. "
                 "CLI responses, source traces, runtime receipts, material bytes and RMS in these tests are explicit synthetic observations; they do not establish real Core import, rendering, acoustic measurement, installed publication, rights or whole-film approval. "
-                "The reviewed changes pass the actual renderer viewport through shared layout and presenter composition, with optional explicit story bounds and an ordinary plain-layout entry. They preserve the existing default landscape composition; normalized geometry reprojection does not promise pixel-isotropic shapes across different aspects. Callers still supply a complete evaluated StoryPlan, native stage, finite v3 sources, actual materials, current normal runtime and complete original audio with its provenance. RMS is volume only, never phoneme alignment. The fifteen SDK source files remain passive; upstream JS is never executed. "
-                "The other 300 payloads remain byte-identical to public baseline 79d62a878b4ff0b534318ab6aebb075f45b7a77c; nine reviewed existing inputs change and no inputs are added. Existing production rules and all seven existing layout rules are rerun here by exact identity; the current layout inventory is 12 pure rules. "
+                "The reviewed changes share exact native artifact preservation between the production verifier and ordinary callers: all four source receipts and existing destination conflicts are validated before writing persistent copies, equal existing copies are reused, and only copied receipt paths change. This does not inspect media or change a native job, quote, revision, original artifact or review state. Callers retain their own complete source, audio, timing, rights and normal production gates. "
+                "The other 305 payloads remain byte-identical to public baseline a10f360fa996bb1fe01601af233e4807fee7b183; four reviewed existing inputs change and no inputs are added. All 100 existing pure rules are retained and rerun by exact identity, including 12 layout rules. Six new artifact-preservation rules use explicit non-media bytes and a mocked decoder boundary; no native product or decoder is started. The private ordinary recipes and their real media are outside this public payload and this CI execution. "
                 "The 13 actor metadata rules, 12 native image-flip/RPC methods and ordinary Release CLI build remain historical run 41203531757; they are not rerun or counted as current passes. "
                 "Story speech and normal delivery remain historical run 41196437622, causal Core and author evidence remain historical run 41191732445, and older Python evidence remains historical run 41190009527. "
                 "This workflow does not build native products, execute business media, call TTS, read private assets or credentials, export closed painters, or grant listening, captions, commercial rights, upload consent or human-review approval.\n")
           with open(os.environ['GITHUB_STEP_SUMMARY'],'a') as stream:stream.write(text)
-          print('current_native_rules=0 current_scene_layout_rules=12 current_actor_motion_rules=0 current_release_builds=0 real_business_media_executed=false review=false')
+          print('current_artifact_preservation_rules=6 current_native_rules=0 current_scene_layout_rules=12 current_actor_motion_rules=0 current_release_builds=0 real_business_media_executed=false review=false')
           PYCODE

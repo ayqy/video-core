@@ -2,10 +2,10 @@
 
 VideoFree source export · package_free.py · version 1
 
-生成时间：2026-11-01 00:49:45 北京时间
+生成时间：2026-11-01 01:31:42 北京时间
 
-- 源码与必要元数据：309个文件；4877350字节（不含本清单）。
-- 整体内容指纹：`6af1bcf9df226ed6e0f6206ce528db0ea39622b8405decf7cf66f69d8f596566`。
+- 源码与必要元数据：309个文件；4891721字节（不含本清单）。
+- 整体内容指纹：`e0eea4f72729b930d1a029e239eccf984b965afc96aaca2dfc09313cdebfbf4b`。
 - 来源：受控原始工程中的逐文件白名单；Package.swift、唯一免费制作workflow与README均来自Distribution/Free精确模板。
 - 本包不含.git，不可作为新业务checkout；本清单生成过程不执行构建、设备验收、签名安装或公共上传，各阶段以独立证据为准。
 - 排除：App、VideoGame、VideoCartoon、Premium、高级实现运行时测试、私有仓库地址、凭据、客户数据、缓存、日志及媒体过程产物。
@@ -14,8 +14,8 @@ VideoFree source export · package_free.py · version 1
 
 | SHA-256 | 字节数 | 包内路径 / 原工程来源 |
 |---|---:|---|
-| fa479c4de6f164a43b685a020497269576ed2f2e968c91f060f6206032a29649 | 20883 | .github/workflows/free-production.yml |
-| 26f60270530e4a0f02b969c6d2b098183d1277e92b8fca769bceb8b67b255812 | 47924 | Integrations/README.md |
+| 5b7b49baa632ebd4bef08e39bd6c26541619578cd5ec04fc249817c12ea38f63 | 21686 | .github/workflows/free-production.yml |
+| 56de2c4116391b7d7e45e97e8ce8dfc9a98a746ab306d22887b45adc52d1c497 | 49419 | Integrations/README.md |
 | 28833193551aa06befb3bc0fc30b69ef87f74cccae39895f4242af4321d717dd | 15308 | Integrations/actor_motion.py |
 | 39dd8274ff1e6b0649acb63281087a1144e1f4a4e0eed3dc2b92e10df2cbd121 | 28488 | Integrations/asset_reuse.py |
 | b855d428b3b24845239bb209cacc4f23767ab7b25097546d372f00fb724a7a30 | 29749 | Integrations/causal_story.py |
@@ -52,7 +52,7 @@ VideoFree source export · package_free.py · version 1
 | 326931fc7ec22853242534bebac16587d8e558d7aa58ed2c1b942a197051ae51 | 27469 | Integrations/production_document.py |
 | e52450d73342e5a84f4a3c51051886c69df0ebb9dce685cc31e26791353c9211 | 19716 | Integrations/production_motion.py |
 | ced29f3c146eb979f11b706d3d1c1555d2c06352698bacd9b75e6ac989c8a980 | 4902 | Integrations/production_runtime.py |
-| 637687b1b38c1470fe45cdb6d0018e3cef19898a0a77111726fb046c4df9a09c | 33499 | Integrations/production_workflow.py |
+| 5963633d3e2675b1ec33673b35657d9d77a051f93d1a5f5c152ce81c13a30719 | 37032 | Integrations/production_workflow.py |
 | ebd4a31e6f3c7a6c73bb384798969e652e376bcd80d1d172e6c38ec697177cdd | 31843 | Integrations/qwen_stream.py |
 | 5153da60f78fe869c5b02cafe9b7474f191d7c064efadd2c33425955d94fd489 | 64507 | Integrations/readaloud-cpu-lock.txt |
 | 0048c5e7f171ccf60c5d40ba889c7380ed19ffa49ac5eefd640b2326cd9ad7f5 | 9204 | Integrations/readaloud_tts.md |
@@ -88,7 +88,7 @@ VideoFree source export · package_free.py · version 1
 | 9b2aa9ef8062e1e1979655dda4011a6515e0e44cae6a87cc0884698ae29ff953 | 16042 | Integrations/test_production_document.py |
 | 5e371767fdd7f3828665ceec23bd573c81e885fa565e8e77d25e1acfa02d5910 | 10373 | Integrations/test_production_motion.py |
 | 0ee57c988de3f59716ed0ed74b1f972cb149dc4bcb3ec425299796c0b359ce5c | 16122 | Integrations/test_production_styles.py |
-| 20e105ed87ccb1a070bd0e85ec2c66619b7a83f7acdb8335baeb3373049101f8 | 21260 | Integrations/test_production_workflow.py |
+| 1bd9f2faf53e17aeeda3937fe67980c15fe33f0e222c81040d56b3a1810602e9 | 29800 | Integrations/test_production_workflow.py |
 | f82ae813561cfb2e11d718349d474eae4fb21ddd0da5b8056c0b11be3f372f18 | 53105 | Integrations/test_qwen_stream.py |
 | 96327a008b3f4d4fe78cd6011c4a8694e95f0419227fa849809b46c6dac45a53 | 13108 | Integrations/test_scene_layout.py |
 | 6f03b833c4a6f5faed1fd339eff0cda201bba90653de8aab1797f39483215329 | 10656 | Integrations/test_sdk_material_import.py |
