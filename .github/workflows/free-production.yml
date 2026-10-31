@@ -50,25 +50,22 @@ jobs:
           tracked=set(subprocess.check_output(['git','ls-files'],cwd=root,text=True).splitlines())
           assert tracked==set(rows)|metadata|{'SOURCE-MANIFEST.md'}
           assert not any((root/name).exists() for name in ['App','MacApp','MacUITests','Examples','Premium','Sources/VideoGame','Sources/VideoCartoon','Sources/VideoAdvanced'])
-          BASE_PUBLIC_COMMIT='0ff5b847dd7da665e656685e590baaaf81a8c253'
+          BASE_PUBLIC_COMMIT='637410ac7d6f990dc0c5c0ac7af9064cb963b05c'
           ADDITIONS=set()
           REVIEWED_CHANGED={
               '.github/workflows/free-production.yml',
-              'Integrations/examples/README.md',
               'Integrations/production_document.py',
               'Integrations/production_workflow.py',
-              'Integrations/story_speech.py',
               'Integrations/test_production_document.py',
-              'Integrations/test_story_speech.py',
           }
-          PROTECTED_COUNT=302
-          PROTECTED_SHA256='367ea800ba871e4e6a7b46445b023565cea032668318b33fbee89176b4042a68'
-          assert len(ADDITIONS)==0 and len(REVIEWED_CHANGED)==7 and not ADDITIONS&REVIEWED_CHANGED
+          PROTECTED_COUNT=305
+          PROTECTED_SHA256='5a0d9081830770a77075b4f6be30dff6da29dc0b72f60e98abf4b7d60bed7423'
+          assert len(ADDITIONS)==0 and len(REVIEWED_CHANGED)==4 and not ADDITIONS&REVIEWED_CHANGED
           assert ADDITIONS|REVIEWED_CHANGED<=set(rows)
           protected={name:value for name,value in rows.items() if name not in ADDITIONS|REVIEWED_CHANGED}
           digest_input=''.join(f'{name}\0{protected[name][0]}\0{protected[name][1]}\n' for name in sorted(protected))
           assert len(protected)==PROTECTED_COUNT and hashlib.sha256(digest_input.encode()).hexdigest()==PROTECTED_SHA256
-          print('manifest_payloads=309 added_public_inputs=0 changed_reviewed_inputs=7 unchanged_protected_inputs=302 source_commit='+head)
+          print('manifest_payloads=309 added_public_inputs=0 changed_reviewed_inputs=4 unchanged_protected_inputs=305 source_commit='+head)
           print('protected_baseline_commit='+BASE_PUBLIC_COMMIT+' current_knowledge_production_checks=pending')
           PYCODE
 
@@ -158,6 +155,7 @@ jobs:
               'test_presenter_composition.PresenterCompositionRules.test_supplied_clips_cues_box_and_rms_are_not_synthesized_or_retimed',
               'test_presenter_composition.PresenterCompositionRules.test_title_is_metadata_body_empty_and_paper_presentation_removed',
               'test_presenter_composition.PresenterCompositionRules.test_unknown_master_missing_clip_role_and_duplicate_role_or_crop_reject',
+              'test_production_document.AuthorEstimateDocumentTests.test_caption_edit_description_does_not_claim_observed_words_for_estimates',
               'test_production_document.AuthorEstimateDocumentTests.test_changed_original_receipt_or_sample_observation_cannot_reuse_the_saved_estimate',
               'test_production_document.AuthorEstimateDocumentTests.test_estimate_cannot_claim_sdk_words_or_inherit_a_different_voice_text_or_generation_receipt',
               'test_production_document.AuthorEstimateDocumentTests.test_estimate_schema_rejects_unknown_modes_versions_approvals_and_retained_mix',
@@ -288,11 +286,11 @@ jobs:
           assert len(identities)==len(set(identities))==suite.countTestCases()==len(expected)
           assert set(identities)==expected, 'Exact knowledge production rule inventory changed'
           inventory_sha256=hashlib.sha256(('\n'.join(sorted(identities))+'\n').encode()).hexdigest()
-          assert len(expected)==198 and inventory_sha256=='220473b899dbe0092bad8ba71816753ee82a0493f7172aea9dfea0d0c8954d67'
+          assert len(expected)==199 and inventory_sha256=='0135d891c9b6ab6cae817c62e541379a34113e22deaf0f6cd0ef5d1ca2105606'
           result=unittest.TextTestRunner(verbosity=2).run(suite)
           assert result.wasSuccessful() and result.testsRun==len(expected) and not result.skipped and not result.expectedFailures
           for identity in sorted(identities):print('knowledge_production_passed='+identity)
-          print('current_knowledge_production_rules='+str(len(expected))+' current_artifact_preservation_rules=6 current_knowledge_story_rules=46 current_story_action_rules=16 current_workflow_rules=31 current_document_rules=21 current_story_speech_rules=19 current_scene_layout_rules=12 inventory_sha256='+inventory_sha256+' native_executed_in_this_step=false media_executed=false human_review=false')
+          print('current_knowledge_production_rules='+str(len(expected))+' current_artifact_preservation_rules=6 current_knowledge_story_rules=46 current_story_action_rules=16 current_workflow_rules=31 current_document_rules=22 current_story_speech_rules=19 current_scene_layout_rules=12 inventory_sha256='+inventory_sha256+' native_executed_in_this_step=false media_executed=false human_review=false')
           PYCODE
 
 
@@ -410,15 +408,15 @@ jobs:
         run: |
           python3 -B - <<'PYCODE'
           import os
-          text=("Current scope executes exactly 198 declared pure Python rules across nine modules, with exact identities, no skips and no expected failures. All 174 previously declared rule identities are retained; five document rules and the complete 19-rule story-speech module are added. "
+          text=("Current scope executes exactly 199 declared pure Python rules across nine modules, with exact identities, no skips and no expected failures. All 198 previously declared rule identities are retained; one document rule checks that explicit estimated captions never claim observed SDK word timing. "
                 "Python CLI responses, source traces, runtime receipts, material bytes and RMS are explicit synthetic observations; those fixtures establish adapter contracts, not native execution or media quality. "
                 "This job separately executes exactly 48 current Core XCTest methods, including all 40 StoryCausalSourcesTests and eight related schema, counterfactual, action and CAS methods. Every selected method must start and pass exactly once; unparsed identities, missing tests, duplicates, failures, skips and a missing 48-test summary are rejected. It then builds one normal Release video CLI with the same SwiftPM scratch directory. Native rule execution and compilation do not establish a real CLI business transaction, rendering or listening. "
                 "Host-only story causality version 3 explicitly replaces one existing complete same-ID rule per selected child source and independently recomputes complete native traces. Other model fields, seeds and source clocks stay fixed. Each child has exactly one actor-plan, action-cost or rule-change intervention; version 3 requires at least one rule change and an actual semantic behavior difference. Amount changes, unmet constraints, inactive rules and source-binding failures remain distinct. Legacy version 1/2 wire values are preserved and no plugin ABI changes. "
                 "Shared motion checks preserve original business actions, reject unbound transfers or quantities, and require successive movement endpoints to connect; visual taking, holding or putting down does not create another payment. Source-observation readback also retains the exact ruleChange witness. "
-                "The explicit author-estimate mode retains the complete original voice receipt and integer sample clock, maps existing causal windows without inventing SDK words, and keeps estimated captions and listening unconfirmed. The ordinary WordBoundary path and frozen observed-speech contract remain strict; synthetic fixtures do not establish a new VoiceDesign inference or any spoken-video approval. "
-                "The other 302 payloads remain byte-identical to public baseline 0ff5b847dd7da665e656685e590baaaf81a8c253; seven reviewed existing inputs change and no inputs are added. The private recipes, assets, actual CAS business production and real media are outside this public CI payload. "
+                "The explicit author-estimate mode retains the complete original voice receipt and integer sample clock, maps existing causal windows without inventing SDK words, and keeps estimated captions and listening unconfirmed. Its revision description now explicitly says authored estimates have no word timestamps. The ordinary WordBoundary description and frozen observed-speech contract remain unchanged and strict; synthetic fixtures do not establish a new VoiceDesign inference or any spoken-video approval. "
+                "The other 305 payloads remain byte-identical to public baseline 637410ac7d6f990dc0c5c0ac7af9064cb963b05c; four reviewed existing inputs change and no inputs are added. The private recipes, assets, actual CAS business production and real media are outside this public CI payload. "
                 "The 13 actor metadata rules and 12 native image-flip/RPC methods remain historical run 41203531757; they are not rerun or counted as current passes. All 19 story-speech rules execute in this job; normal real delivery remains historical run 41196437622, and other historical causal evidence is not relabeled as current execution. "
                 "This workflow does not execute business media, call TTS, read private assets or credentials, export closed painters, install advanced modules, or grant listening, captions, commercial rights, upload consent or human-review approval.\n")
           with open(os.environ['GITHUB_STEP_SUMMARY'],'a') as stream:stream.write(text)
-          print('current_python_rules=198 current_native_rules=48 current_release_cli_builds=1 current_story_speech_rules=19 current_actor_motion_rules=0 real_business_media_executed=false review=false')
+          print('current_python_rules=199 current_native_rules=48 current_release_cli_builds=1 current_story_speech_rules=19 current_actor_motion_rules=0 real_business_media_executed=false review=false')
           PYCODE

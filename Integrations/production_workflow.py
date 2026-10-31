@@ -213,6 +213,7 @@ class ProductionWorkflow:
     def target_project_name(self):return self.production_name()
     def voice_material_name(self):return self.production_name()+'·完整原音'
     def motion_edit_description(self):return '为真实来源动作添加独立人物表现；保原音与原因果'
+    def caption_edit_description(self):return '按完整新原音同流逐词边界绑定字幕；保持未听审'
 
     def import_materials(self,source_project):
         """Ordinary originals; specialized SDK batches override only this step.
@@ -396,7 +397,7 @@ class ProductionWorkflow:
         if scene['captions'] != self.timed['captions']:
             scene['captions']=deepcopy(self.timed['captions'])
             self.write('edit apply',dict(workspace_id=self.ws,project_id=pid,base_revision=current['revisions'][-1]['id'],
-                edits=[dict(replaceScene={'_0':scene['id'],'_1':scene})],text='按完整新原音同流逐词边界绑定字幕；保持未听审'))
+                edits=[dict(replaceScene={'_0':scene['id'],'_1':scene})],text=self.caption_edit_description()))
             current=self.project(pid)
         plan=deepcopy(self.timed['presentation']);plan['target'].update(workspace_id=self.ws,project_id=pid,
             base_revision=current['revisions'][-1]['id'],scene_id=self.uid('presentation'))

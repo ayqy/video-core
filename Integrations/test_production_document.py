@@ -233,6 +233,48 @@ class AuthorEstimateDocumentTests(unittest.TestCase):
             with self.subTest(index=index),self.assertRaises(ValueError):ProductionDocument(args.document)
             self.assertFalse(args.home.exists())
 
+    def test_caption_edit_description_does_not_claim_observed_words_for_estimates(self):
+        host,_=self.construct(self.args())
+        # Exercise the real prepare caption replacement, stopping before native
+        # source recording. All assets, projects and speech replies are synthetic.
+        projects={};edits=[]
+        class StopBeforeRecording(Exception):pass
+        def write(command,body):
+            if command=='workspaces create':return dict(result=dict(id='fixture-workspace'))
+            if command=='projects create':
+                identity='fixture-project-'+str(len(projects))
+                projects[identity]=dict(id=identity,workspaceID=host.ws,revisions=[
+                    dict(id='fixture-revision',fps=host.FPS,scenes=deepcopy(body['scenes']))])
+                return dict(project_id=identity)
+            if command=='speech attach':
+                projects[body['project_id']]['revisions'][-1]['scenes'][0]['captions']=[]
+                return dict(attached=True)
+            self.assertEqual(command,'edit apply')
+            edits.append(deepcopy(body));return dict(applied=True)
+        bindings={key:dict(asset_id='fixture-'+key,evidence_id='fixture-evidence-'+key)
+                  for key in host.author.requirements()}
+        with patch.object(host,'write',side_effect=write), \
+             patch.object(host,'project',side_effect=lambda identity:deepcopy(projects[identity])), \
+             patch.object(host,'import_materials',return_value=bindings), \
+             patch.object(host,'imported',return_value=(dict(asset_id='fixture-voice',evidence_id='fixture-voice-proof'),
+                                                      dict(durationFrames=host.timed['frames']))), \
+             patch.object(host,'invoke',return_value=dict(result=dict(text=host.narration()))), \
+             patch.object(workflow_module,'record_sources',side_effect=StopBeforeRecording), \
+             self.assertRaises(StopBeforeRecording):
+            host.prepare()
+        self.assertEqual(len(edits),1)
+        self.assertEqual(edits[0]['text'],'按完整原音的作者句段估计轴绑定未确认字幕；待独立校时与听审')
+        for claim in ('逐词','WordBoundary'):self.assertNotIn(claim,edits[0]['text'])
+        captions=edits[0]['edits'][0]['replaceScene']['_1']['captions']
+        self.assertEqual(captions,host.timed['captions'])
+        self.assertTrue(all(row['confirmed'] is False for row in captions))
+        self.assertFalse(host.timed['axis']['captions_confirmed'])
+        self.assertFalse(host.timed['axis']['voice_listened'])
+        host.estimated=False
+        self.assertEqual(host.caption_edit_description(),'按完整新原音同流逐词边界绑定字幕；保持未听审')
+        self.assertEqual(workflow_module.ProductionWorkflow.caption_edit_description(host),
+                         host.caption_edit_description())
+
     def test_estimate_cannot_claim_sdk_words_or_inherit_a_different_voice_text_or_generation_receipt(self):
         args=self.args(label='with-words',boundaries=self.base/'unused-boundaries')
         with self.assertRaisesRegex(ValueError,'cannot carry SDK'):DocumentProduction(args)

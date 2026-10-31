@@ -501,6 +501,10 @@ class DocumentProduction(ProductionWorkflow):
     def production_name(self):
         return self.document.value['name']
 
+    def caption_edit_description(self):
+        if self.estimated:return '按完整原音的作者句段估计轴绑定未确认字幕；待独立校时与听审'
+        return super().caption_edit_description()
+
     def production_description(self):
         timing = ('作者句段估计轴按实测完整原音和原镜头比例重排，无词时间戳，字幕须另行校时听审。' if self.estimated else
                   '复用原工程已冻结完整声轴；历史词界身份与计数保留，本次未重验SDK词界文件。' if self.retained else
