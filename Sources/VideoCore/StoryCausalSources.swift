@@ -11,17 +11,33 @@ public struct StoryCausalIntervention: Codable, Equatable, Sendable {
     public init(actorID:String,plan:KnowledgeRuleActorPlan) {self.actorID=actorID;self.plan=plan}
     public init(from decoder:Decoder)throws {try StoryCausalDecoding.keys(decoder,required:["actorID","plan"]);let c=try decoder.container(keyedBy:CodingKeys.self);actorID=try c.decode(String.self,forKey:.actorID);plan=try c.decode(KnowledgeRuleActorPlan.self,forKey:.plan)}
 }
+/// A v2 source may change one existing action's actual cost, never an arbitrary model field.
+public struct StoryCausalActionCost: Codable, Equatable, Sendable {
+    public var actionID:String; public var newCost:Int
+    public init(actionID:String,newCost:Int) {self.actionID=actionID;self.newCost=newCost}
+    public init(from decoder:Decoder)throws {
+        try StoryCausalDecoding.keys(decoder,required:["actionID","newCost"])
+        let c=try decoder.container(keyedBy:CodingKeys.self)
+        actionID=try c.decode(String.self,forKey:.actionID);newCost=try c.decode(Int.self,forKey:.newCost)
+        guard actionID.range(of:"^[A-Za-z0-9_-]{1,40}$",options:.regularExpression) != nil,(0...100_000).contains(newCost) else {throw VideoError.invalid("成本反事实须声明现有动作标识及0—100000的整数成本")}
+    }
+}
 public struct StoryCausalSource: Codable, Equatable, Sendable {
     public var id:String; public var parentID:String?; public var intervention:StoryCausalIntervention?
+    public var actionCost:StoryCausalActionCost?
     public var model:KnowledgeSimulation; public var seed:UInt64; public var trace:KnowledgeTrace
     public var startFrame:Int; public var endFrame:Int
-    public init(id:String,parentID:String?=nil,intervention:StoryCausalIntervention?=nil,model:KnowledgeSimulation,seed:UInt64,trace:KnowledgeTrace,startFrame:Int,endFrame:Int) {
-        self.id=id;self.parentID=parentID;self.intervention=intervention;self.model=model;self.seed=seed;self.trace=trace;self.startFrame=startFrame;self.endFrame=endFrame
+    public init(id:String,parentID:String?=nil,intervention:StoryCausalIntervention?=nil,actionCost:StoryCausalActionCost?=nil,model:KnowledgeSimulation,seed:UInt64,trace:KnowledgeTrace,startFrame:Int,endFrame:Int) {
+        self.id=id;self.parentID=parentID;self.intervention=intervention;self.actionCost=actionCost;self.model=model;self.seed=seed;self.trace=trace;self.startFrame=startFrame;self.endFrame=endFrame
     }
     public init(from decoder:Decoder)throws {
-        try StoryCausalDecoding.keys(decoder,required:["id","model","seed","trace","startFrame","endFrame"],optional:["parentID","intervention"])
+        try StoryCausalDecoding.keys(decoder,required:["id","model","seed","trace","startFrame","endFrame"],optional:["parentID","intervention","actionCost"])
         let c=try decoder.container(keyedBy:CodingKeys.self)
         id=try c.decode(String.self,forKey:.id);parentID=try c.decodeIfPresent(String.self,forKey:.parentID);intervention=try c.decodeIfPresent(StoryCausalIntervention.self,forKey:.intervention)
+        if c.contains(.actionCost) {
+            guard !c.contains(.intervention),!(try c.decodeNil(forKey:.actionCost)) else {throw VideoError.invalid("成本声明不可为null，也不可同时声明参与者计划干预")}
+            actionCost=try c.decode(StoryCausalActionCost.self,forKey:.actionCost)
+        } else {actionCost=nil}
         // Existing knowledge DTOs keep their legacy Codable behavior. This new contract
         // additionally refuses fields that would otherwise disappear before verification.
         try StoryCausalDecoding.knowledge(AgentValue(from:c.superDecoder(forKey:.model)),trace:false)
@@ -47,11 +63,11 @@ public struct StoryCausalBinding: Codable, Equatable, Sendable {
 }
 public struct StoryCausality: Codable, Equatable, Sendable {
     public var version=1;public var poolSubjectID:String;public var actors:[StoryCausalActor];public var sources:[StoryCausalSource];public var bindings:[StoryCausalBinding]
-    public init(poolSubjectID:String,actors:[StoryCausalActor],sources:[StoryCausalSource],bindings:[StoryCausalBinding]) {self.poolSubjectID=poolSubjectID;self.actors=actors;self.sources=sources;self.bindings=bindings}
+    public init(version:Int=1,poolSubjectID:String,actors:[StoryCausalActor],sources:[StoryCausalSource],bindings:[StoryCausalBinding]) {self.version=version;self.poolSubjectID=poolSubjectID;self.actors=actors;self.sources=sources;self.bindings=bindings}
     public init(from decoder:Decoder)throws {
         try StoryCausalDecoding.keys(decoder,required:["version","poolSubjectID","actors","sources","bindings"]);let c=try decoder.container(keyedBy:CodingKeys.self)
         version=try c.decode(Int.self,forKey:.version);poolSubjectID=try c.decode(String.self,forKey:.poolSubjectID);actors=try c.decode([StoryCausalActor].self,forKey:.actors);sources=try c.decode([StoryCausalSource].self,forKey:.sources);bindings=try c.decode([StoryCausalBinding].self,forKey:.bindings)
-        guard version==1 else {throw VideoError.invalid("不支持的故事因果来源版本")}
+        guard (version==1 && sources.allSatisfy({$0.actionCost==nil})) || (version==2 && sources.contains(where:{$0.actionCost != nil})) else {throw VideoError.invalid("故事因果v1不接受成本声明；v2须至少声明一个成本反事实")}
     }
 }
 
@@ -60,7 +76,8 @@ public enum StoryCausalRules {
         guard let value=scene.storyCausality else {return}
         let actions=scene.storyActions ?? []
         var subjects=Set((scene.layers ?? []).map(\.id));subjects.formUnion(scene.gameWorld?.entities.map(\.id) ?? []);subjects.formUnion(scene.cartoonRig?.actors.map(\.id) ?? []);if let presenter=scene.cartoonPresenter {subjects.insert(presenter.id)}
-        guard value.version==1,(1...3).contains(value.sources.count),(1...64).contains(value.actors.count),(1...256).contains(value.bindings.count),subjects.contains(value.poolSubjectID),
+        let hasActionCost=value.sources.contains{$0.actionCost != nil}
+        guard ((value.version==1 && !hasActionCost) || (value.version==2 && hasActionCost)),(1...3).contains(value.sources.count),(1...64).contains(value.actors.count),(1...256).contains(value.bindings.count),subjects.contains(value.poolSubjectID),
               Set(value.sources.map(\.id)).count==value.sources.count,Set(value.actors.map(\.subjectID)).count==value.actors.count,
               Set(value.bindings.map(\.actionID)).count==value.bindings.count,try Codec.data(value).count<=4*1024*1024 else {throw VideoError.invalid("故事因果来源数量、舞台对象、重复标识或数据大小无效")}
         let participants=Set(value.sources[0].model.participants.map(\.id))
@@ -74,11 +91,21 @@ public enum StoryCausalRules {
             guard source.trace.throughTick == (try source.model.lastSettlementTick()),source.trace.rounds.count==source.model.rounds,source.trace.events.count==source.model.rounds*KnowledgePhase.allCases.count else {throw VideoError.review("故事因果必须保留正常规则引擎生成的完整实迹，不能用部分录制或摘要代替")}
             guard sources.values.allSatisfy({source.endFrame<=$0.startFrame || source.startFrame>=$0.endFrame}) else {throw VideoError.invalid("独立因果分支的展示帧窗不能重叠")}
             if let parentID=source.parentID {
-                guard let parent=sources[parentID],let intervention=source.intervention,parent.seed==source.seed,parent.endFrame<=source.startFrame,intervention.actorID==intervention.plan.actorID,
-                      var table=parent.model.ruleTable,let index=table.plans.firstIndex(where:{$0.actorID==intervention.actorID}),table.plans[index] != intervention.plan else {throw VideoError.invalid("反事实须引用更早的唯一父分支并明确一个实际改变的参与者计划")}
-                table.plans[index]=intervention.plan;var expected=parent.model;expected.ruleTable=table
-                guard expected==source.model else {throw VideoError.invalid("反事实只能改变声明的单一参与者计划；种子、规则和其余模型必须沿用父分支")}
-            } else {guard sources.isEmpty,source.intervention==nil else {throw VideoError.invalid("故事因果只能有一个无干预根来源")}}
+                guard let parent=sources[parentID],parent.seed==source.seed,parent.endFrame<=source.startFrame,
+                      (source.intervention != nil) != (source.actionCost != nil),var table=parent.model.ruleTable else {throw VideoError.invalid("反事实须引用更早的同种子父分支，并且只声明一种干预")}
+                var expected=parent.model
+                if let intervention=source.intervention {
+                    guard intervention.actorID==intervention.plan.actorID,let index=table.plans.firstIndex(where:{$0.actorID==intervention.actorID}),table.plans[index] != intervention.plan else {throw VideoError.invalid("反事实须明确一个实际改变的参与者计划")}
+                    table.plans[index]=intervention.plan;expected.ruleTable=table
+                    guard expected==source.model else {throw VideoError.invalid("反事实只能改变声明的单一参与者计划；种子、规则和其余模型必须沿用父分支")}
+                } else if let cost=source.actionCost {
+                    guard value.version==2,(0...100_000).contains(cost.newCost),table.actions.filter({$0.id==cost.actionID}).count==1,
+                          let index=table.actions.firstIndex(where:{$0.id==cost.actionID}),table.actions[index].cost != cost.newCost else {throw VideoError.invalid("成本反事实须改变父模型中唯一现有动作的有效整数成本")}
+                    table.actions[index].cost=cost.newCost;expected.ruleTable=table
+                    guard expected==source.model else {throw VideoError.invalid("成本反事实只能改变声明动作的cost；规则、计划和其余完整模型必须沿用父分支")}
+                    guard source.trace.events != parent.trace.events || source.trace.rounds != parent.trace.rounds || source.trace.finalResources != parent.trace.finalResources else {throw VideoError.review("成本反事实须有真实事件、轮次或最终资源差异，不能仅改变输入摘要")}
+                }
+            } else {guard sources.isEmpty,source.intervention==nil,source.actionCost==nil else {throw VideoError.invalid("故事因果只能有一个无干预根来源")}}
             sources[source.id]=source
         }
         guard Set(actions.map(\.id)).count==actions.count else {throw VideoError.invalid("故事动作标识不能重复")}
@@ -173,7 +200,8 @@ public enum StoryCausalSchema {
         "StoryCausality":"version:i poolSubjectID:s actors:[StoryCausalActor] sources:[StoryCausalSource] bindings:[StoryCausalBinding]",
         "StoryCausalActor":"actorID:s subjectID:s",
         "StoryCausalIntervention":"actorID:s plan:KnowledgeRuleActorPlan",
-        "StoryCausalSource":"id:s parentID?:s intervention?:StoryCausalIntervention model:KnowledgeSimulation seed:i trace:KnowledgeTrace startFrame:i endFrame:i",
+        "StoryCausalActionCost":"actionID:s newCost:i",
+        "StoryCausalSource":"id:s parentID?:s intervention?:StoryCausalIntervention actionCost?:StoryCausalActionCost model:KnowledgeSimulation seed:i trace:KnowledgeTrace startFrame:i endFrame:i",
         "StoryCausalBinding":"actionID:s sourceID:s eventID:s kind:StoryCausalBindingKind requires:[s] actorID?:s actionKey?:s ruleID?:s fromActorID?:s toActorID?:s amount?:i fromStateID?:s toStateID?:s outcome?:b"
     ]
     public static let enums:[String:[String]]=["StoryCausalBindingKind":StoryCausalBindingKind.allCases.map(\.rawValue)]

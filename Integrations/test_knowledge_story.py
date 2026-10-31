@@ -8,7 +8,7 @@ real recordings, native validation, or human review.
 from copy import deepcopy
 import unittest
 
-from knowledge_story import KnowledgeStoryError, PHASES, record_sources, compile_presentation, apply_presentation, _behavior_changed
+from knowledge_story import KnowledgeStoryError, PHASES, record_sources, compile_presentation, apply_presentation, _behavior_changed, _digest, _plan
 from story_planning import StoryPlan
 
 
@@ -111,11 +111,46 @@ def fixture(mode='game'):
     return project,plan,recorded,source_project
 
 
+def cost_fixture(mode='game'):
+    """Two literal expected cost cases; no generic model evaluation lives here."""
+    project,plan,recorded,source_project=fixture(mode)
+    plan['version']=recorded['version']=2
+    child=plan['sources'][1];child.pop('intervention')
+    child['model']=deepcopy(plan['sources'][0]['model']);child['model']['ruleTable']['actions'][0]['cost']=2
+    child['action_cost']=dict(actionID='offer',newCost=2)
+    wire=recorded['sources'][1];wire.pop('intervention');wire.update(model=deepcopy(child['model']),actionCost=deepcopy(child['action_cost']))
+    old=StoryPlan.from_dict(plan['story']);details=old.stage('details')
+    details['actions'][-1]['event_refs'][0]['rule_id']='offer'
+    story=StoryPlan(old.to_dict()['brief'])
+    for stage,value in [('cast',old.stage('cast')),('outline',old.stage('outline')),('details',details),('shots',old.stage('shots'))]:
+        story=story.accept(stage,value,story.fingerprint)
+    plan['story']=story.to_dict();plan['beats'][-1]['effect']['action_key']='offer'
+    for index,cost,after_cost,settled,pool in [(0,1,(11,7),(9,9),4),(1,2,(10,6),(8,8),6)]:
+        trace=recorded['sources'][index]['trace']
+        for event in trace['events']:
+            r=event['round'];phase=PHASES.index(event['phase'])
+            amounts=(12,8) if r==1 and phase<2 else after_cost if r==1 and phase<5 else settled
+            for actor,amount in zip(event['actors'],amounts):
+                actor.update(resources=amount,cost=cost if r==1 and phase>=2 else 0,
+                             ruleStateID='agreed' if r==2 or phase==5 else 'open')
+                actor.pop('executedActionID',None)
+                if phase>=2:actor['executedActionID']='offer' if r==1 else 'wait'
+            flows=[dict(ruleID='swap',sourceActorID='weaver',destinationActorID='grower',amount=3),
+                   dict(ruleID='swap',sourceActorID='grower',destinationActorID='weaver',amount=1)] if r==1 and phase==5 else []
+            event['ruleExecution'].update(poolBefore=2 if r==1 else pool,poolAfter=pool if r==2 or phase>=2 else 2,
+                deposits=2*cost if r==1 and phase>=2 else 0,transfers=flows,
+                stateChanges=[dict(ruleID='swap',actorID=actor,beforeStateID='open',afterStateID='agreed') for actor in ('weaver','grower')] if flows else [])
+        trace['inputDigest']=('f' if index==0 else 'e')*64
+        trace['finalResources']=[dict(id=a['id'],resources=a['resources']) for a in trace['events'][-1]['actors']]
+    source_project['revisions'][0]['scenes'][1]['simulation']['knowledge']=deepcopy(child['model'])
+    return project,plan,recorded,source_project
+
+
 class NativeBoundary:
     """Synthetic protocol spy; never a native validation substitute."""
-    def __init__(self,project,recorded):
+    def __init__(self,project,recorded,source_project=None):
         self.project=deepcopy(project);self.recorded=deepcopy(recorded);self.calls=[];self.reject=False
-        self.source=fixture()[3]
+        self.source=deepcopy(source_project) if source_project is not None else fixture()[3]
         self.source['revisions'][0]['id']=recorded['revision']
         for scene,row in zip(self.source['revisions'][0]['scenes'],recorded['sources']):
             scene['simulationRecording']=dict(recordedFPS=30,recordedSpeed=1,recordedPauseFrames=0,recordedDurationFrames=510,
@@ -147,6 +182,134 @@ class NativeBoundary:
 
 
 class KnowledgeStoryTests(unittest.TestCase):
+    def test_v1_canonical_edits_story_specs_and_plan_digests_are_unchanged(self):
+        expected={
+            'game':('f62f5f65b53bd20c1c99e83f6e66cd0977f35e9b884956b0b3d9dee67e55869c','a0ea19bd3726b2716a36d1876c89b8871d1c21749b0a11880c6b0c606f3790e3','b86e1b0fc3ceee7eeb844b810986334d51a683581ddeaf83b4e5761321e1111d'),
+            'pencil':('32cfd42756b1f69d4fd4fccf47fe69727e89b34938611b83eae568f73391caf7','a0db5c713579617183ed4b77b8a89deeb613e8731545a01954bee3bf31f0bef9','48f33c39e6a9434d40783d2a1e91e9b1ec6c9dba5859cc589c18670f17105fdb')}
+        for mode,digests in expected.items():
+            project,plan,recorded,_=fixture(mode);output=compile_presentation(project,plan,recorded)
+            self.assertEqual((_digest(output['edit_body']),_digest(output['story_spec']),output['plan_digest']),digests)
+            self.assertNotIn('actionCost',output['story_spec']['scenes'][0]['causality']['sources'][1])
+
+    def test_v2_cost_record_compile_and_apply_reuse_normal_calls_and_real_observations(self):
+        project,plan,recorded,source=cost_fixture();before=deepcopy(plan)
+        spy=NativeBoundary(source,recorded,source)
+        self.assertEqual(record_sources(source,plan,spy),recorded)
+        self.assertEqual([c[0] for c in spy.calls],['edit apply','edit apply','projects list','knowledge compare'])
+        self.assertEqual([c[2] for c in spy.calls[:2]],[True,False])
+        latest=deepcopy(spy.project);spy.calls=[]
+        self.assertEqual(record_sources(latest,plan,spy),recorded)
+        self.assertEqual([c[0] for c in spy.calls],['edit apply','projects list','knowledge compare'])
+        self.assertEqual(plan,before);self.assertEqual(spy.project,latest)
+        plan['balances']=[dict(source_id='exchange',event=dict(round=1,phase=PHASES[5]),actor_id='weaver',entity_id='person-weaver',frame=315),
+                          dict(source_id='retain',event=dict(round=1,phase=PHASES[5]),actor_id='grower',entity_id='person-grower',frame=450)]
+        compiled=compile_presentation(project,plan,recorded)
+        self.assertEqual(compiled['story_spec']['version'],1)
+        causal=compiled['story_spec']['scenes'][0]['causality']
+        self.assertEqual(causal['version'],2);self.assertEqual(causal['sources'][1]['actionCost'],dict(actionID='offer',newCost=2))
+        self.assertNotIn('intervention',causal['sources'][1])
+        values=[u['value'] for u in compiled['story_spec']['scenes'][0]['world']['updates'] if 'value' in u]
+        self.assertEqual(values,[9,8])
+        spy=NativeBoundary(project,recorded,source)
+        self.assertTrue(apply_presentation(project,plan,recorded,spy)['changed'])
+        self.assertEqual([c[0] for c in spy.calls],['projects list','edit apply','edit apply'])
+        self.assertEqual([c[2] for c in spy.calls[1:]],[True,False])
+        plan['target']['base_revision']='target-v2';latest=deepcopy(spy.project);spy.calls=[]
+        self.assertFalse(apply_presentation(latest,plan,recorded,spy)['changed'])
+        self.assertEqual([c[0] for c in spy.calls],['projects list']);self.assertEqual(spy.project,latest)
+        pencil,pencil_plan,pencil_recorded,_=cost_fixture('pencil')
+        self.assertEqual(compile_presentation(pencil,pencil_plan,pencil_recorded)['story_spec']['scenes'][0]['causality']['version'],2)
+
+    def test_cost_is_explicit_v2_only_mutually_exclusive_and_not_a_noop(self):
+        for issue in ('v1','no-cost','both','root','same','unknown','duplicate-action','mixed-cost-fields'):
+            with self.subTest(issue=issue):
+                project,plan,recorded,source=cost_fixture()
+                if issue=='v1':plan['version']=1
+                if issue=='no-cost':plan=fixture()[1];plan['version']=2
+                if issue=='both':plan['sources'][1]['intervention']=fixture()[1]['sources'][1]['intervention']
+                if issue=='root':plan['sources'][0]['action_cost']=dict(actionID='offer',newCost=2)
+                if issue=='same':plan['sources'][1]['action_cost']['newCost']=1
+                if issue=='unknown':plan['sources'][1]['action_cost']['actionID']='missing'
+                if issue=='duplicate-action':plan['sources'][0]['model']['ruleTable']['actions'].append(deepcopy(plan['sources'][0]['model']['ruleTable']['actions'][0]))
+                if issue=='mixed-cost-fields':plan['sources'][1]['action_cost']['kind']='actionCost'
+                spy=NativeBoundary(source,recorded,source)
+                with self.assertRaises(KnowledgeStoryError):record_sources(source,plan,spy)
+                self.assertEqual(spy.calls,[])
+        for cost in (-1,100001,True,1.0,None):
+            with self.subTest(cost=cost):
+                _,plan,_,_=cost_fixture();plan['sources'][1]['action_cost']['newCost']=cost
+                with self.assertRaises(KnowledgeStoryError):_plan(plan)
+        for cost in (0,100000):
+            _,plan,_,_=cost_fixture();plan['sources'][1]['action_cost']['newCost']=cost;plan['sources'][1]['model']['ruleTable']['actions'][0]['cost']=cost
+            self.assertTrue(_plan(plan)[0].complete)
+
+    def test_cost_source_cannot_smuggle_any_other_model_or_wire_change(self):
+        changes=[lambda m:m.update(threshold=2),lambda m:m.update(startTick=3),lambda m:m.update(knowledgeLabel='new label'),
+                 lambda m:m['participants'][0].update(initialResources=13),lambda m:m['ruleTable']['plans'][0].update(defaultActionID='wait'),
+                 lambda m:m['ruleTable']['actions'][1].update(cost=1),lambda m:m['ruleTable']['rules'][0]['effects'][0].update(amount=4),
+                 lambda m:m.update(benefit=0.0),lambda m:m['ruleTable']['actions'].reverse()]
+        for change in changes:
+            _,plan,_,_=cost_fixture();change(plan['sources'][1]['model'])
+            with self.assertRaisesRegex(KnowledgeStoryError,'single action cost'):_plan(plan)
+        for field,value in [('actionCost',dict(actionID='offer',newCost=3)),('intervention',dict(actorID='grower',plan={}))]:
+            project,plan,recorded,_=cost_fixture();recorded['sources'][1][field]=value
+            with self.assertRaises(KnowledgeStoryError):compile_presentation(project,plan,recorded)
+        project,plan,recorded,_=cost_fixture();recorded['version']=1
+        with self.assertRaises(KnowledgeStoryError):compile_presentation(project,plan,recorded)
+
+    def test_v2_can_declare_a_later_legacy_actor_plan_without_rewriting_its_dto(self):
+        _,plan,_,_=cost_fixture();third=deepcopy(plan['sources'][1])
+        third.update(id='later-plan',scene_id='source-later-plan',parent_id='retain',start_frame=480,end_frame=600)
+        third.pop('action_cost');third['model']['ruleTable']['plans'][1]['defaultActionID']='wait'
+        third['intervention']=dict(actorID='grower',plan=deepcopy(third['model']['ruleTable']['plans'][1]))
+        plan['sources'].append(third)
+        old=StoryPlan.from_dict(plan['story']);brief=deepcopy(old.to_dict()['brief']);brief['source_ids'].append('later-plan');story=StoryPlan(brief)
+        for stage in ('cast','outline','details','shots'):story=story.accept(stage,old.stage(stage),story.fingerprint)
+        plan['story']=story.to_dict();_,sources,_=_plan(plan)
+        self.assertEqual(set(sources['later-plan']['intervention']),{'actorID','plan'})
+        self.assertNotIn('action_cost',sources['later-plan'])
+
+    def test_v2_old_recording_rejected_by_core_is_never_replaced_or_confirmed(self):
+        _,plan,recorded,source=cost_fixture()
+        for scene,row in zip(source['revisions'][0]['scenes'],recorded['sources']):
+            scene['simulationRecording']=dict(recordedFPS=30,recordedSpeed=1,recordedPauseFrames=0,recordedDurationFrames=510,knowledgeTrace=deepcopy(row['trace']))
+        source['revisions'][0]['scenes'][1]['simulationRecording']['knowledgeTrace']=deepcopy(recorded['sources'][0]['trace'])
+        before=deepcopy(source);spy=NativeBoundary(source,recorded,source);spy.reject=True
+        with self.assertRaises(KnowledgeStoryError):record_sources(source,plan,spy)
+        self.assertEqual(len(spy.calls),1);self.assertTrue(spy.calls[0][2])
+        self.assertTrue(all('confirmSimulationRecording' in e for e in spy.calls[0][1]['edits']))
+        self.assertEqual(source,before);self.assertEqual(spy.project,before)
+
+    def test_v2_rejects_digest_only_and_requested_only_observations_in_record_and_compile(self):
+        for issue in ('digest','request','round-diagnostic'):
+            with self.subTest(issue=issue):
+                project,plan,recorded,source=cost_fixture()
+                recorded['sources'][1]['trace']=deepcopy(recorded['sources'][0]['trace'])
+                recorded['sources'][1]['trace']['inputDigest']='e'*64
+                if issue=='request':recorded['sources'][1]['trace']['events'][1]['actors'][0]['requestedActionID']='another-request'
+                if issue=='round-diagnostic':recorded['sources'][1]['trace']['rounds'][0]['diagnostic']='new diagnostic'
+                with self.assertRaises(KnowledgeStoryError):compile_presentation(project,plan,recorded)
+                spy=NativeBoundary(source,recorded,source)
+                with self.assertRaises(KnowledgeStoryError):record_sources(source,plan,spy)
+                self.assertEqual(spy.calls[-1][0],'knowledge compare')
+                self.assertFalse(any('replaceScene' in edit for _,body,_ in spy.calls for edit in body.get('edits',[])))
+
+    def test_v2_requires_exact_persisted_cost_model_and_core_dry_verification(self):
+        for issue in ('old-model','old-digest','old-events'):
+            project,plan,recorded,source=cost_fixture();spy=NativeBoundary(project,recorded,source)
+            scene=spy.source['revisions'][0]['scenes'][1]
+            if issue=='old-model':scene['simulation']['knowledge']=deepcopy(plan['sources'][0]['model'])
+            if issue=='old-digest':scene['simulationRecording']['knowledgeTrace']['inputDigest']='f'*64
+            if issue=='old-events':scene['simulationRecording']['knowledgeTrace']=deepcopy(recorded['sources'][0]['trace'])
+            with self.assertRaises(KnowledgeStoryError):apply_presentation(project,plan,recorded,spy)
+            self.assertEqual([c[0] for c in spy.calls],['projects list']);self.assertEqual(spy.project,project)
+        project,plan,recorded,source=cost_fixture();spy=NativeBoundary(project,recorded,source)
+        def reject_core(command,body,dry):
+            if command=='edit apply':spy.calls.append((command,deepcopy(body),dry));return dict(ok=False,state='error')
+            return spy(command,body,dry)
+        with self.assertRaises(ValueError):apply_presentation(project,plan,recorded,reject_core)
+        self.assertEqual([c[0] for c in spy.calls],['projects list','edit apply']);self.assertTrue(spy.calls[-1][2]);self.assertEqual(spy.project,project)
+
     def test_speak_uses_only_actual_executed_action_and_resulting_state_labels(self):
         project,plan,recorded,_=fixture()
         plan['beats'][0]['visual']['kind']='speak';plan['beats'][3]['visual']['kind']='speak'

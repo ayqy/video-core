@@ -13,7 +13,7 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  scene-layout-stage:
+  knowledge-parameter-stage:
     if: github.repository == 'ayqy/video-core' && github.event.repository.private == false
     runs-on: macos-15-intel
     timeout-minutes: 40
@@ -38,7 +38,7 @@ jobs:
           assert head==os.environ['VIDEO_SOURCE_COMMIT']
           entries=re.findall(r'(?m)^\| ([a-f0-9]{64}) \| ([0-9]+) \| ([^|\n]+) \|$',(root/'SOURCE-MANIFEST.md').read_text())
           rows={name:(digest,int(size)) for digest,size,name in entries}
-          assert len(entries)==len(rows)==288
+          assert len(entries)==len(rows)==289
           for name,(digest,size) in rows.items():
               relative=Path(name)
               assert not relative.is_absolute() and '..' not in relative.parts
@@ -50,64 +50,17 @@ jobs:
           tracked=set(subprocess.check_output(['git','ls-files'],cwd=root,text=True).splitlines())
           assert tracked==set(rows)|metadata|{'SOURCE-MANIFEST.md'}
           assert not any((root/name).exists() for name in ['App','MacApp','MacUITests','Examples','Premium','Sources/VideoGame','Sources/VideoCartoon','Sources/VideoAdvanced'])
-          BASE_PUBLIC_COMMIT='9d32be9db4de82582cbff497d7db1815a764af0f'
-          ADDITIONS={'Integrations/knowledge_story.py','Integrations/test_knowledge_story.py',
-                     'Integrations/examples/knowledge_exchange.py','Integrations/knowledge_story_smoke.py',
-                     'Integrations/result_label_layout.py'}
-          REVIEWED_CHANGED=ADDITIONS|{'.github/workflows/free-production.yml','README.md',
-              'Integrations/README.md','Integrations/examples/README.md',
-              'Integrations/story_action.py','Integrations/test_story_action.py',
-              'Integrations/readaloud_tts.py','Integrations/readaloud_tts.md',
-              'Integrations/tests/test_readaloud_tts.py'}
-          PROTECTED_COUNT=274
-          PROTECTED_SHA256='66a74b79e23731a2c1f338a6b1104a66daa632ffb58d72f29db5fac9f630439c'
+          BASE_PUBLIC_COMMIT='68289291833a41225a6422932a6edd1bbae03d4e'
+          ADDITIONS={'Integrations/examples/knowledge_action_cost.py'}
+          REVIEWED_CHANGED=ADDITIONS|{'Integrations/examples/README.md', 'Sources/VideoCore/StoryCausalSources.swift', 'Integrations/test_story_action.py', 'Integrations/knowledge_story.py', 'Integrations/README.md', 'Integrations/test_knowledge_story.py', 'Integrations/knowledge_story_smoke.py', '.github/workflows/free-production.yml', 'Integrations/story_action.py', 'README.md', 'Tests/VideoCoreTests/StoryCausalSourcesTests.swift', 'Sources/VideoCore/AgentSchemas.swift'}
+          PROTECTED_COUNT=276
+          PROTECTED_SHA256='5cbd3ac1771a108e2933b067de9d4aac03cf41bc83dc1754b2477ab1f95ba779'
           assert ADDITIONS<=set(rows) and REVIEWED_CHANGED<=set(rows)
           protected={name:value for name,value in rows.items() if name not in REVIEWED_CHANGED}
           digest_input=''.join(f'{name}\0{protected[name][0]}\0{protected[name][1]}\n' for name in sorted(protected))
           assert len(protected)==PROTECTED_COUNT and hashlib.sha256(digest_input.encode()).hexdigest()==PROTECTED_SHA256
-          print('manifest_payloads=288 unchanged_protected_inputs=274 source_commit='+head)
+          print('manifest_payloads=289 unchanged_protected_inputs=276 source_commit='+head)
           print('protected_baseline_commit='+BASE_PUBLIC_COMMIT+' blanket_native_reuse=false')
-          PYCODE
-
-      - name: Run current semantic layout and narrated-opening author rules
-        shell: bash
-        run: |
-          python3 -B - <<'PYCODE'
-          from copy import deepcopy
-          import ast, hashlib, sys, unittest
-          from pathlib import Path
-          root=Path.cwd()
-          sys.path.insert(0,str(root/'Integrations'))
-          import test_scene_layout
-          from narrated_opening import with_narrated_cover, opening_sources
-          suite=unittest.defaultTestLoader.loadTestsFromTestCase(test_scene_layout.SceneLayoutTests)
-          ids=[case.id() for case in suite]
-          tree=ast.parse((root/'Integrations/test_scene_layout.py').read_text())
-          definition=next(node for node in tree.body if isinstance(node,ast.ClassDef) and node.name=='SceneLayoutTests')
-          methods=[node.name for node in definition.body if isinstance(node,ast.FunctionDef) and node.name.startswith('test_')]
-          layout_ids={'test_scene_layout.SceneLayoutTests.'+name for name in methods}
-          assert methods and len(methods)==len(set(methods)) and len(ids)==len(set(ids))==len(layout_ids) and set(ids)==layout_ids
-          result=unittest.TextTestRunner(verbosity=2).run(suite)
-          assert result.wasSuccessful() and result.testsRun==len(layout_ids) and not result.skipped
-          source=[dict(id='cover',durationFrames=48,narration='',captions=[],sourceGain=0,musicGain=0),
-                  dict(id='spoken',durationFrames=30,narration='Complete synthetic sentence.',voiceGain=1,muted=False,pauseFrames=0,
-                       voice=dict(assetID='synthetic-original',durationFrames=30,listened=False),captions=[dict(text='Complete synthetic sentence.',confirmed=False)])]
-          retained=deepcopy(source)
-          made=with_narrated_cover(source,'Synthetic opening title')
-          expected=deepcopy(source[1:]);expected[0]['title']='Synthetic opening title'
-          assert made==expected and source==retained and made[0]['voice']['listened']==False
-          for mutation in ('narration','voice','musicGain'):
-              invalid=deepcopy(source);invalid[0][mutation]='spoken' if mutation=='narration' else ({'assetID':'original'} if mutation=='voice' else 1)
-              try:with_narrated_cover(invalid,'Title')
-              except ValueError:pass
-              else:raise AssertionError('Spoken or audible cover was discarded')
-          try:with_narrated_cover(made,'Title')
-          except ValueError:pass
-          else:raise AssertionError('The first complete sentence was discarded twice')
-          pins=opening_sources(root/'Integrations/scene_layout.py')
-          assert pins==dict(recipe=hashlib.sha256((root/'Integrations/scene_layout.py').read_bytes()).hexdigest(),
-                            narrated_opening=hashlib.sha256((root/'Integrations/narrated_opening.py').read_bytes()).hexdigest())
-          print('semantic_layout_rules=passed distinct_test_ids='+str(len(layout_ids))+' narrated_opening_synthetic_contract=passed private_recipe_audio_fixture=excluded')
           PYCODE
 
       - name: Run complete affected knowledge-author rules
@@ -126,43 +79,14 @@ jobs:
                   if isinstance(case,unittest.TestSuite):yield from flatten(case)
                   else:yield case
           ids=[case.id() for case in flatten(suite)]
-          assert len(ids)==len(set(ids))==44
+          assert len(ids)==len(set(ids))==53
           result=unittest.TextTestRunner(verbosity=2).run(suite)
           assert result.wasSuccessful() and result.testsRun==len(ids) and not result.skipped
           from examples.knowledge_exchange import protocol_models, story_plan
           assert story_plan().complete and set(protocol_models())=={'consent','decline'}
+          from examples.knowledge_action_cost import cost_models, story_plan as cost_plan
+          assert cost_plan().complete and set(cost_models())=={'low','high'}
           print('current_knowledge_author_rules=passed distinct_test_ids='+str(len(ids))+' native_fixture_only=true review=false')
-          PYCODE
-
-      - name: Prepare real local codec tools for offline ReadAloud rules
-        shell: bash
-        run: |
-          if ! command -v ffmpeg >/dev/null || ! command -v ffprobe >/dev/null; then
-            brew install ffmpeg
-          fi
-          command -v ffmpeg
-          command -v ffprobe
-
-      - name: Run complete affected ReadAloud audio and boundary rules without network
-        shell: bash
-        run: |
-          python3 -B - <<'PYCODE'
-          import shutil, sys, unittest
-          from pathlib import Path
-          root=Path.cwd()
-          assert shutil.which('ffmpeg') and shutil.which('ffprobe'),'real local codec tools are required'
-          sys.path.insert(0,str(root/'Integrations/tests'))
-          import test_readaloud_tts
-          suite=unittest.defaultTestLoader.loadTestsFromModule(test_readaloud_tts)
-          def flatten(suite):
-              for case in suite:
-                  if isinstance(case,unittest.TestSuite):yield from flatten(case)
-                  else:yield case
-          ids=[case.id() for case in flatten(suite)]
-          assert len(ids)==len(set(ids))==31
-          result=unittest.TextTestRunner(verbosity=2).run(suite)
-          assert result.wasSuccessful() and result.testsRun==31 and not result.skipped
-          print('current_readaloud_rules=passed distinct_test_ids=31 network=false actual_voice_quality_review=false')
           PYCODE
 
       - name: Build the current standalone free CLI
@@ -203,6 +127,13 @@ jobs:
           assert result.returncode==0,'Actual standalone author chain failed'
           assert result.stdout.startswith('knowledge_story_smoke: passed (28 actual normal CLI calls; '),\
               'Actual author, comparison, no-op and independent recovery call inventory changed'
+          cost=subprocess.run([sys.executable,'-B','Integrations/knowledge_story_smoke.py',
+              '--binary',os.environ['VIDEO_FREE_BINARY'],'--output',str(Path(os.environ['RUNNER_TEMP'])/'knowledge-cost-normal-cli'),'--action-cost'],
+              text=True,capture_output=True,timeout=120)
+          print(cost.stdout,end='')
+          if cost.stderr:print(cost.stderr,file=sys.stderr,end='')
+          assert cost.returncode==0,'Actual single-cost normal author chain failed'
+          assert cost.stdout.startswith('knowledge_story_smoke: passed (30 actual normal CLI calls; action_cost=v2; '), 'Exact v2 normal call inventory differs'
           PYCODE
 
       - name: Run affected whole Core classes and exact compatibility methods
@@ -212,20 +143,20 @@ jobs:
           from pathlib import Path
           import hashlib, json, os, re, subprocess
           SWIFT_SUITES={('VideoCoreTests',suite):suite+'.swift' for suite in
-                        ('PaperExplanationQualityTests','StoryActionTests','RouteLayoutTests','CartoonPresenterTests','LayerTexturedPathTests')}
+                        ('StoryCausalSourcesTests',)}
           SELECTED={
-              ('VideoCoreTests','PluginProtocolTests'):(
-                  'testPublicationSchemaSelectionUsesCurrentDefaultsAndRetainsExplicitLegacyRequests',
-                  'testRigVersionTwoRequiresCartoonSixEvenForOneActorAndKeepsLegacyFive',
-                  'testCartoonSixDiscoveryBoundsRigTwoWithoutChangingFiveOrExposingHostCausality'),
-              ('VideoCoreTests','PluginPackageTests'):(
-                  'testCurrentServiceSchemasUseMatchingPublicationDefaultsAndKeepExplicitLegacySelection',
-                  'testCurrentReadOnlyProbeRejectsRealDescriptorContractDrift'),
-              ('VideoCoreTests','ModuleCatalogPublicationTests'):(
-                  'testCurrentPublicationDefaultsStillRequireModuleUpgradeAndRetainPolicy',),
-              ('VideoCoreTests','VendorFreeModuleTrustTests'):(
-                  'testCompleteFreeClosedPairPassesForOnlyCurrentModuleSchemasAndBothArchitectures',
-                  'testRestrictedCartoonSixAddsNoPaidOpenFutureOrPermissionAuthority'),
+              ('VideoCoreTests','AgentSchemasTests'):(
+                  'testDiscoveryShowsActualNestedRequiredFieldsAndEnumPayloads',
+                  'testEncodedRepresentativeEntitiesHaveEveryRequiredNestedFieldAndResolvableRefs'),
+              ('VideoCoreTests','AgentMutationTests'):(
+                  'testEditReplayReturnsOriginalRevisionAndRevokedGrantIsRejected',),
+              ('VideoCoreTests','KnowledgeCounterfactualExplanationTests'):(
+                  'testConstrainedRequestIsVisibleWithoutAClaimThatItWasExecuted',
+                  'testExplanationIsDeterministicReadOnlyAndDoesNotChangeTheOldWireValue'),
+              ('VideoCoreTests','StoryActionTests'):(
+                  'testDeliveryConstructionAndSpeechKeepCorrectProcessAndTerminalStates',
+                  'testActionValidationRejectsUnknownObjectsOverlapAndNonfiniteCoordinates',
+                  'testNewWorldPreservesRecordedKnowledgeWindowAndOriginalTakeUntilExplicitTimingChange'),
           }
 
           def affected_methods(root):
@@ -291,232 +222,16 @@ jobs:
           finally:log.unlink(missing_ok=True)
           PYCODE
 
-      - name: Exercise actual narrated paper CLI media and recovery
-        shell: bash
-        run: |
-          python3 -B - <<'PYCODE'
-          from __future__ import annotations
-          import argparse
-          from copy import deepcopy
-          from datetime import datetime, timezone
-          import hashlib
-          import json
-          import math
-          import os
-          from pathlib import Path
-          import plistlib
-          import shutil
-          import struct
-          import subprocess
-          import tempfile
-          import uuid
-          import wave
-          import zlib
-
-          DECODER=r"""
-          import Foundation
-          import AVFoundation
-          import CoreVideo
-          import AudioToolbox
-          let asset=AVURLAsset(url:URL(fileURLWithPath:CommandLine.arguments.last!))
-          let tracks=asset.tracks(withMediaType:.video)
-          guard tracks.count==1 else {fatalError("one actual video stream required")}
-          let reader=try AVAssetReader(asset:asset)
-          let output=AVAssetReaderTrackOutput(track:tracks[0],outputSettings:[kCVPixelBufferPixelFormatTypeKey as String:kCVPixelFormatType_32BGRA])
-          reader.add(output)
-          guard reader.startReading() else {fatalError("full video decoder did not start")}
-          var frames=0
-          while let sample=output.copyNextSampleBuffer() {
-              guard let pixel=CMSampleBufferGetImageBuffer(sample) else {fatalError("video buffer missing")}
-              CVPixelBufferLockBaseAddress(pixel,.readOnly)
-              let width=CVPixelBufferGetWidth(pixel),height=CVPixelBufferGetHeight(pixel),stride=CVPixelBufferGetBytesPerRow(pixel)
-              guard width==1280,height==720,let base=CVPixelBufferGetBaseAddress(pixel) else {fatalError("actual landscape geometry changed")}
-              var captionWhite=0
-              for y in 0..<height {
-                  let row=base.assumingMemoryBound(to:UInt8.self).advanced(by:y*stride)
-                  for x in 0..<width {
-                      let p=row.advanced(by:x*4),r=Int(p[2]),g=Int(p[1]),b=Int(p[0])
-                      let caption=x>=72 && x<1208 && y>=602 && y<702
-                      if caption {
-                          if r>180 && g>180 && b>180 {captionWhite+=1}
-                      } else {
-                          guard abs(r-209)<30,abs(g-37)<25,abs(b-37)<25 else {fatalError("unexpected title/footer/CTA outside the declared caption band")}
-                      }
-                  }
-              }
-              guard captionWhite>20 else {fatalError("actual white cinema subtitle missing")}
-              CVPixelBufferUnlockBaseAddress(pixel,.readOnly)
-              frames+=1
-          }
-          guard reader.status == .completed,frames==30 else {fatalError("complete thirty-frame video stream required")}
-          let audioTracks=asset.tracks(withMediaType:.audio)
-          guard audioTracks.count==1 else {fatalError("complete source audio track missing")}
-          let audioReader=try AVAssetReader(asset:asset)
-          let audio=AVAssetReaderTrackOutput(track:audioTracks[0],outputSettings:[AVFormatIDKey:kAudioFormatLinearPCM,AVLinearPCMBitDepthKey:16,AVLinearPCMIsFloatKey:false,AVLinearPCMIsNonInterleaved:false,AVSampleRateKey:48000,AVNumberOfChannelsKey:1])
-          audioReader.add(audio)
-          guard audioReader.startReading() else {fatalError("full audio decoder did not start")}
-          var count=0,crossings=0,tailCount=0
-          var square=0.0,tailSquare=0.0
-          var previous:Int16=0
-          while let sample=audio.copyNextSampleBuffer() {
-              guard let block=CMSampleBufferGetDataBuffer(sample) else {fatalError("decoded PCM missing")}
-              var length=0,total=0
-              var bytes:UnsafeMutablePointer<Int8>?
-              guard CMBlockBufferGetDataPointer(block,atOffset:0,lengthAtOffsetOut:&length,totalLengthOut:&total,dataPointerOut:&bytes)==kCMBlockBufferNoErr,let bytes else {fatalError("decoded PCM buffer inaccessible")}
-              for i in 0..<(total/2) {
-                  let value=UnsafeRawPointer(bytes).load(fromByteOffset:i*2,as:Int16.self)
-                  if count>0 && ((previous<0 && value>=0) || (previous>=0 && value<0)) {crossings+=1}
-                  let amplitude=Double(value)/32768
-                  square+=amplitude*amplitude
-                  if count>=36000 {tailSquare+=amplitude*amplitude;tailCount+=1}
-                  previous=value;count+=1
-              }
-          }
-          guard audioReader.status == .completed,count>=47000,count<=51072,tailCount>8000 else {fatalError("original full-duration audio was shortened")}
-          let rms=sqrt(square/Double(count)),tailRMS=sqrt(tailSquare/Double(tailCount))
-          let frequency=Double(crossings)*48000/Double(count)/2
-          guard rms>0.01,tailRMS>0.005,frequency>400,frequency<480 else {fatalError("source tone or its final quarter was lost")}
-          print("native_decoded_frames=30 subtitles=present title_footer_cta=absent complete_audio=present tail_audio=present")
-          """
-
-          def png():
-              def chunk(kind,raw):
-                  return struct.pack('>I',len(raw))+kind+raw+struct.pack('>I',zlib.crc32(kind+raw)&0xffffffff)
-              scan=(b'\0'+bytes((209,37,37,255))*1280)*720
-              return b'\x89PNG\r\n\x1a\n'+chunk(b'IHDR',struct.pack('>IIBBBBB',1280,720,8,6,0,0,0))+chunk(b'IDAT',zlib.compress(scan))+chunk(b'IEND',b'')
-
-          def checked_bytes(path,workspace,size,digest):
-              path=Path(path)
-              assert path.is_file() and not path.is_symlink(),'restored file must be a regular file'
-              assert workspace.resolve(strict=True) in path.resolve(strict=True).parents,'file must belong to the independent workspace'
-              raw=path.read_bytes()
-              assert len(raw)==size and hashlib.sha256(raw).hexdigest()==digest,'actual file bytes or SHA differ from the receipt'
-              return raw
-
-          def artifact_inventory(artifacts,workspace):
-              assert len(artifacts)==4,'all four production artifacts are required'
-              identities=[item['id'] for item in artifacts];names=[Path(item['path']).name for item in artifacts]
-              assert all(identities) and all(names) and len(set(identities))==4 and len(set(names))==4,'artifact identities and filenames must be unique'
-              return {(item['id'],Path(item['path']).name):
-                      ({key:value for key,value in item.items() if key!='path'},
-                       checked_bytes(item['path'],workspace,item['bytes'],item['sha256'])) for item in artifacts}
-
-          def restored_original(asset,original,workspace):
-              originals=list(workspace.rglob(asset['hash']+'.'+asset['ext']))
-              assert len(originals)==1,'exactly one independent CAS original is required'
-              assert checked_bytes(originals[0],workspace,asset['bytes'],asset['hash'])==original.read_bytes(),'restored original differs from the imported input'
-
-          def main():
-              parser=argparse.ArgumentParser(description='Synthetic original-image/original-PCM paper CLI chain; not spoken-audio or business-film acceptance')
-              parser.add_argument('--binary',type=Path,default=Path(os.environ['VIDEO_FREE_BINARY']))
-              parser.add_argument('--scratch',type=Path,default=Path(os.environ['RUNNER_TEMP']))
-              args=parser.parse_args()
-              binary=args.binary.resolve(strict=True)
-              root=Path(tempfile.mkdtemp(prefix='paper-explanation-',dir=args.scratch.resolve(strict=True)))
-              work=root/'workspace';restored=root/'restored';calls=0
-              def call(label,command,body=None,*,dry=False,target=work,ok=True,timeout=40):
-                  nonlocal calls
-                  data=deepcopy(body or {})
-                  data.setdefault('request_id',str(uuid.uuid5(uuid.NAMESPACE_URL,str(root)+'/'+label)))
-                  argv=[str(binary),*command.split(),'--workspace',str(target),'--input','-']
-                  if dry:argv.append('--dry-run')
-                  response=subprocess.run(argv,input=json.dumps(data),text=True,capture_output=True,timeout=timeout)
-                  value=json.loads(response.stdout)
-                  assert not response.stderr,(label,'unexpected CLI diagnostics')
-                  assert value.get('ok') is ok and value.get('request_id')==data['request_id'],(label,value.get('state'),value.get('error'))
-                  assert (response.returncode==0) is ok,(label,response.returncode)
-                  calls+=1
-                  return value
-              def result(value):
-                  raw=value['result'];return json.loads(raw) if isinstance(raw,str) else raw
-              def project(wid,pid,*,target=work):
-                  return next(p for p in result(call('query-'+str(calls),'projects list',dict(workspace_id=wid),target=target)) if p['id']==pid)
-              try:
-                  image=root/'synthetic-original.png';image.write_bytes(png())
-                  tone=root/'synthetic-original.wav'
-                  pcm=b''.join(struct.pack('<h',round(6000*math.sin(2*math.pi*440*n/48000))) for n in range(48000))
-                  with wave.open(str(tone),'wb') as stream:
-                      stream.setnchannels(1);stream.setsampwidth(2);stream.setframerate(48000);stream.writeframes(pcm)
-                  wid=result(call('create-workspace','workspaces create',dict(name='公开合成有声纸面链')))['id'];scope=dict(workspace_id=wid)
-                  imported=[];proofs=[]
-                  for path in (image,tone):
-                      asset=result(call('import-'+path.suffix,'assets import',dict(scope,path=str(path))))
-                      assert asset['hash']==hashlib.sha256(path.read_bytes()).hexdigest()
-                      proof=dict(id=str(uuid.uuid4()),workspaceID=wid,assetID=asset['id'],title='公开CI确定性合成原件',owner='Public CI synthetic fixture',
-                                 source='Fixed literal RGBA pixels and mathematical 440Hz PCM; generated only in this runner scratch',
-                                 claim='Synthetic test originals only; no private art, spoken narration, rights review or business film is represented',
-                                 commercialAllowed=False,uploadConsent=False,verified=True,checkedAt=datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'))
-                      call('proof-'+path.suffix,'evidence add',dict(scope,evidence=proof));imported.append(asset);proofs.append(proof)
-                  image_asset,audio_asset=imported
-                  assert image_asset['mediaType'].startswith('image') and audio_asset['mediaType'].startswith('audio') and audio_asset['durationFrames']==30
-                  created=call('create-project','script create',dict(scope,aspect='16:9',knowledge='公开合成原音纸面夹具。',demonstration='保留完整原音。',hook='如何保持原件？'))
-                  pid=created['project_id'];current=project(wid,pid);revision=current['revisions'][-1]
-                  scene=deepcopy(revision['scenes'][0]);sid=scene['id'];narration='公开合成原音用于纸面链检查。'
-                  scene.update(kind='图文讲解',title='',body='',narration=narration,durationFrames=30,sourceStartFrame=0,speed=1,preservePitch=True,
-                               pauseFrames=0,captions=[dict(id=str(uuid.uuid4()),text='公开合成纸面字幕',startFrame=0,endFrame=30,alignment='manual',confirmed=False)],
-                               classicArtworkRequired=False,evidenceIDs=[p['id'] for p in proofs],showPrice=False,keyframes=[],x=.5,y=.5,scale=1,
-                               voiceGain=.6,sourceGain=0,musicGain=0,muted=False)
-                  for key in ('speechPlan','cartoonRig','cartoonPresenter','cartoonPerformance','classicArtwork','gameWorld','simulationRecording',
-                              'simulationPresentation','paperPresentation','assetID','sourceEndFrame'):
-                      scene.pop(key,None)
-                  scene['voice']=dict(assetID=audio_asset['id'],textDigest=hashlib.sha256(json.dumps(narration,ensure_ascii=False,separators=(',',':')).encode()).hexdigest(),
-                                      durationFrames=30,method='public-synthetic-original-pcm',listened=False)
-                  scene['layers']=[dict(id='original-image',kind='图片',text='',assetID=image_asset['id'],x=.5,y=.5,width=1,height=1,color='FFFFFF',
-                                        opacity=1,startFrame=0,endFrame=30,locked=False,keyframes=[])]
-                  edits=[dict(replaceScene={'_0':sid,'_1':scene}),dict(cta={'_0':''})]+[dict(removeScene={'_0':s['id']}) for s in revision['scenes'][1:]]
-                  body=dict(scope,project_id=pid,base_revision=revision['id'],edits=edits)
-                  call('dry-source-edit','edit apply',body,dry=True)
-                  assert project(wid,pid)['revisions'][-1]['id']==revision['id']
-                  call('apply-non-paper-negative','edit apply',body)
-                  bad=project(wid,pid);bad_revision=bad['revisions'][-1]
-                  quote=result(call('estimate-negative-draft','render estimate',dict(scope,project_id=pid)));quote['confirmed']=True
-                  rejected=call('reject-non-paper-title','render submit',dict(scope,project_id=pid,quote=quote),dry=True,ok=False)
-                  assert rejected.get('job_id') is None and project(wid,pid)['revisions'][-1]['id']==bad_revision['id']
-                  assert rejected.get('error',{}).get('code')=='needs_review' and '标题' in rejected['error']['message']
-                  scene['paperPresentation']=dict(version=1,layout='explanation',paperColor='FFF9EF',inkColor='243638')
-                  call('apply-real-paper','edit apply',dict(scope,project_id=pid,base_revision=bad_revision['id'],edits=[dict(replaceScene={'_0':sid,'_1':scene})]))
-                  current=project(wid,pid);revision=current['revisions'][-1];saved=revision['scenes'][0]
-                  assert len(revision['scenes'])==1 and revision['cta']=='' and saved['title']=='' and saved['body']==''
-                  assert saved['voice']==scene['voice'] and saved['layers']==scene['layers'] and saved['captions']==scene['captions']
-                  quote=result(call('estimate-real-paper','render estimate',dict(scope,project_id=pid)))
-                  assert quote['provider']=='native' and quote['upper']['amount']==0 and not quote['confirmed'];quote['confirmed']=True
-                  call('preview-normal-submission','render submit',dict(scope,project_id=pid,quote=quote),dry=True)
-                  submitted=call('submit-one-real-paper-job','render submit',dict(scope,project_id=pid,quote=quote));jid=submitted['job_id']
-                  made=call('run-original-native-job','jobs run',dict(scope,job_id=jid),timeout=180)
-                  assert made['state']=='needs_review' and len(made['artifacts'])==4
-                  movie=next(Path(a['path']) for a in made['artifacts'] if Path(a['path']).suffix=='.mp4')
-                  original_artifacts=artifact_inventory(made['artifacts'],work)
-                  decoder=root/'decode.swift';decoder.write_text(DECODER)
-                  decoded=subprocess.run(['swift',str(decoder),str(movie)],text=True,capture_output=True,timeout=90)
-                  assert decoded.returncode==0,decoded.stderr[-1500:]
-                  assert 'native_decoded_frames=30 subtitles=present title_footer_cta=absent complete_audio=present tail_audio=present' in decoded.stdout
-                  backup=call('normal-source-backup','backup create');assert len(backup['artifacts'])==1
-                  archive_path=Path(backup['artifacts'][0]['path']);archive=plistlib.loads(archive_path.read_bytes())
-                  assert hashlib.sha256(archive['snapshot']).hexdigest()==archive['digest']
-                  call('independent-normal-restore','backup restore',dict(path=str(archive_path)),target=restored)
-                  assert project(wid,pid,target=restored)['revisions']==current['revisions']
-                  for asset,original in ((image_asset,image),(audio_asset,tone)):
-                      restored_original(asset,original,restored)
-                  assert image.read_bytes()==png() and hashlib.sha256(tone.read_bytes()).hexdigest()==audio_asset['hash']
-                  status=call('restored-same-job','jobs status',dict(scope,job_id=jid),target=restored)
-                  assert status['state']=='needs_review'
-                  assert artifact_inventory(status['artifacts'],restored)==original_artifacts,'restored artifact identity, filename, metadata or actual bytes differ'
-                  assert result(call('restored-doctor','doctor',target=restored))['database']['validated']
-                  print('paper_explanation_smoke=passed actual_cli_calls='+str(calls)+' native_decoded_frames=30 original_audio_frames=30'
-                        +' image_and_audio_originals_restored=true four_artifacts_restored_identically=true empty_title_body_cta=true subtitles=present footer=absent synthetic_fixture_only=true review=false')
-              finally:shutil.rmtree(root)
-
-          if __name__=='__main__':main()
-
-          PYCODE
-
       - name: Record exact evidence boundaries
         shell: bash
         run: |
           python3 -B - <<'PYCODE'
-          from pathlib import Path
           import os
-          text='Current standalone public Free CLI, complete affected Core route/layer/story/presenter classes, retained paper quality gate and exact schema/signature compatibility methods passed with distinct XCTest identities. Semantic scene-layout rules and the shared narrated-opening helper passed with public synthetic inputs. The actual ordinary CLI imported a synthetic image and complete PCM tone original, retained narrated paper with no title/body/CTA, rejected a non-paper empty title through normal submission preview, rendered one zero-fee native job, decoded every video frame and the complete audio tail, and restored the source-containing backup.\n\nThe 274 protected payloads retain exact public 9d32be9db4de82582cbff497d7db1815a764af0f bytes; the current manifest has 288 payloads with nine reviewed existing changes and five reviewed additions. Complete knowledge-author Python rules passed 44 distinct tests, offline ReadAloud audio/cache/word-boundary rules passed 31 distinct tests with real local codec tools, and the newly built public CLI passed 28 actual normal author/comparison/idempotence/independent-recovery calls. The ReadAloud rules use finite transport fixtures and do not submit or approve a real voice. No blanket Native reuse is claimed. Unaffected suites were not rerun. The real-stone media path rules and ordinary-recipe/audio rules remain private and were not replaced by synthetic acceptance. No private Examples, art, original business audio, advanced implementation or credentials were published. Synthetic infrastructure validation does not approve business films, spoken narration, source rights or manual review.\n'
-          with Path(os.environ['GITHUB_STEP_SUMMARY']).open('a') as stream:stream.write(text)
-          print('current_native_build=passed current_affected_swift_rules=passed current_narrated_paper_chain=passed synthetic_fixture_only=true review=false')
+          text=("Current public CLI and changed knowledge-author/Core source passed the exact method inventory and both normal author chains. "
+                "The v1 actor-plan case retains its wire and 28 real calls. The explicit v2 cost case obtains both complete traces from Core, changes only one existing action cost, binds visual quantities to actual deductions and transfers, rejects forged traces without a revision, and independently restores its complete backup. "
+                "These are internal author-contract checks with ordinary layers; no media, voice, rights or human review is granted. "
+                "Unchanged layout, ReadAloud, paper media and advanced painters reuse earlier evidence; they were not rerun or counted as new passes. "
+                "No private art, advanced implementation, original business audio or credentials were published.\n")
+          with open(os.environ['GITHUB_STEP_SUMMARY'],'a') as stream:stream.write(text)
+          print('current_native_build=passed current_affected_swift_rules=passed current_author_v1_and_cost_v2=passed media_executed=false review=false')
           PYCODE

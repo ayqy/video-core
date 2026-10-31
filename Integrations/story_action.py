@@ -124,7 +124,7 @@ def compile_story(project: dict, spec: dict) -> dict:
         scene.pop('storyCausality', None)
         if 'causality' in entry:
             object_fields(entry['causality'], ('version','poolSubjectID','actors','sources','bindings'))
-            need(entry['causality']['version'] == 1, 'unsupported typed story causality')
+            need(type(entry['causality']['version']) is int and entry['causality']['version'] in (1, 2), 'unsupported typed story causality')
             scene['storyCausality'] = copy.deepcopy(entry['causality'])
         # The author makes a complete explicit presentation replacement. All
         # original audio, content, rule recording and previous revisions stay.

@@ -81,6 +81,15 @@ class StoryActionTests(unittest.TestCase):
         value['scenes'][0]['causality']['untyped']=True
         with self.assertRaises(StoryError):compile_story(project(),value)
 
+    def test_causality_two_is_host_evidence_without_upgrading_the_story_envelope(self):
+        value=plan();causal=dict(version=2,poolSubjectID='coin',actors=[],sources=[dict(id='cost',actionCost=dict(actionID='work',newCost=2))],bindings=[])
+        value['scenes'][0]['causality']=causal;snapshot=copy.deepcopy(value)
+        scene=compile_story(project(),value)['edits'][0]['replaceScene']['_1']
+        self.assertEqual(scene['storyCausality'],causal);self.assertEqual(value,snapshot);self.assertEqual(value['version'],1)
+        for version in (0,3,True,2.0):
+            value=copy.deepcopy(snapshot);value['scenes'][0]['causality']['version']=version
+            with self.subTest(version=version),self.assertRaises(StoryError):compile_story(project(),value)
+
     def test_explicit_rig_two_supports_eight_independent_actors_without_widening_rig_one(self):
         value=plan();entry=value['scenes'][0];entry['mode']='cartoon'
         entry['rig']=dict(version=2,actors=[dict(id='actor-'+str(i)) for i in range(8)],cues=[])

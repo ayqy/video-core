@@ -35,6 +35,38 @@ final class StoryCausalSourcesTests:XCTestCase {
     }
     private func project(_ scene:Scene)->Project {Project(workspaceID:"w",name:"因果故事",revision:Revision(contentContext:ContentContext(workspaceID:"w",name:"交货"),aspect:.landscape,scenes:[scene]))}
 
+    private func costScene(oldCost:Int=1,newCost:Int=2,unused:Bool=false)throws->Scene {
+        var baseline=model();let actionID=unused ? "unused":"deliver"
+        if unused {baseline.ruleTable!.actions.append(.init(id:actionID,label:"未选择的行动",cost:oldCost))}
+        else {baseline.ruleTable!.actions[0].cost=oldCost}
+        var alternative=baseline;let index=try XCTUnwrap(alternative.ruleTable!.actions.firstIndex{$0.id==actionID})
+        alternative.ruleTable!.actions[index].cost=newCost
+        var result=Scene(title:"同一行动的成本变化",body:"",narration:"成本变化后，按实际执行结果比较。",durationFrames:120)
+        result.classicArtworkRequired=false
+        result.layers=["person-a","person-b","buyer","fund"].map {id in var layer=SceneLayer(kind:.rectangle,endFrame:120);layer.id=id;return layer}
+        result.storyActions=[.init(id:"base-action",kind:.show,subjectID:"person-a",startFrame:5,endFrame:15),.init(id:"cost-action",kind:.show,subjectID:"person-a",startFrame:65,endFrame:75)]
+        result.storyCausality = .init(version:2,poolSubjectID:"fund",actors:[.init(actorID:"a",subjectID:"person-a"),.init(actorID:"b",subjectID:"person-b"),.init(actorID:"buyer",subjectID:"buyer")],sources:[
+            try source(baseline,id:"base",start:0,end:60),
+            .init(id:"cost",parentID:"base",actionCost:.init(actionID:actionID,newCost:newCost),model:alternative,seed:24,trace:try KnowledgeSimulationEngine.record(model:alternative,seed:24,throughTick:alternative.lastSettlementTick()),startFrame:60,endFrame:120)
+        ],bindings:[
+            .init(actionID:"base-action",sourceID:"base",eventID:"1-实际出力与扣费",kind:.performedAction,actorID:"a",actionKey:"deliver"),
+            .init(actionID:"cost-action",sourceID:"cost",eventID:"1-实际出力与扣费",kind:.performedAction,actorID:"a",actionKey:"deliver")
+        ])
+        // Cost 100000 constrains the action, so its display must bind an actual
+        // outcome rather than claim that the requested action was performed.
+        if newCost>4 {result.storyCausality!.bindings[1] = .init(actionID:"cost-action",sourceID:"cost",eventID:"1-清障判定",kind:.outcome,outcome:result.storyCausality!.sources[1].trace.events.first{$0.id=="1-清障判定"}!.obstacleCleared)}
+        return result
+    }
+    private struct LegacySource:Encodable {
+        var id:String;var parentID:String?;var intervention:StoryCausalIntervention?
+        var model:KnowledgeSimulation;var seed:UInt64;var trace:KnowledgeTrace;var startFrame:Int;var endFrame:Int
+        init(_ value:StoryCausalSource) {id=value.id;parentID=value.parentID;intervention=value.intervention;model=value.model;seed=value.seed;trace=value.trace;startFrame=value.startFrame;endFrame=value.endFrame}
+    }
+    private struct LegacyCausality:Encodable {
+        var version:Int;var poolSubjectID:String;var actors:[StoryCausalActor];var sources:[LegacySource];var bindings:[StoryCausalBinding]
+        init(_ value:StoryCausality) {version=value.version;poolSubjectID=value.poolSubjectID;actors=value.actors;sources=value.sources.map(LegacySource.init);bindings=value.bindings}
+    }
+
     func testThreeBranchesVerifyCompleteTracesAndConserveTwentyCoins()throws {
         let scene=try scene();try scene.validate(assets:[])
         let value=try XCTUnwrap(scene.storyCausality)
@@ -219,5 +251,123 @@ final class StoryCausalSourcesTests:XCTestCase {
             XCTAssertTrue(issues.contains{$0.id==candidate.id+"simulation_recording"},"原门分支 \(kind)")
             XCTAssertNil(candidate.simulationRecording);XCTAssertFalse(candidate.simulationRecordingConfirmed ?? false)
         }
+    }
+
+    func testV2ActionCostVerifiesTheCompleteModelAndActualCostConsequences()throws {
+        let scene=try costScene();try scene.validate(assets:[])
+        let value=try XCTUnwrap(scene.storyCausality),parent=value.sources[0],child=value.sources[1]
+        var expected=parent.model;expected.ruleTable!.actions[0].cost=2
+        XCTAssertEqual(child.model,expected);XCTAssertEqual(child.actionCost,StoryCausalActionCost(actionID:"deliver",newCost:2));XCTAssertNil(child.intervention)
+        XCTAssertEqual(parent.model.ruleTable!.actions[0].cost,1);XCTAssertEqual(parent.seed,child.seed)
+        XCTAssertEqual(child.trace.events.count,18);XCTAssertEqual(child.trace.rounds.count,3)
+        XCTAssertNotEqual(child.trace.events,parent.trace.events);XCTAssertNotEqual(child.trace.finalResources,parent.trace.finalResources)
+        let explanation=try KnowledgeCounterfactualExplanation.build(baseline:parent.model,alternative:child.model,seed:parent.seed)
+        XCTAssertEqual(explanation.comparison.baseline,parent.trace);XCTAssertEqual(explanation.comparison.alternative,child.trace)
+        XCTAssertEqual(try Codec.decoder().decode(Scene.self,from:Codec.data(scene)),scene)
+    }
+    func testV2MayRetainLegacyPlanChildrenButV1CannotCarryCosts()throws {
+        var result=try costScene(),value=try XCTUnwrap(result.storyCausality)
+        var changed=value.sources[1].model;changed.ruleTable!.plans[0].defaultActionID="wait"
+        value.sources.append(try source(changed,id:"plan",start:120,end:180,parent:"cost",plan:changed.ruleTable!.plans[0]))
+        value.bindings.append(.init(actionID:"plan-action",sourceID:"plan",eventID:"1-实际出力与扣费",kind:.performedAction,actorID:"a",actionKey:"wait"))
+        result.durationFrames=180;for index in result.layers!.indices {result.layers![index].endFrame=180}
+        result.storyActions!.append(.init(id:"plan-action",kind:.show,subjectID:"person-a",startFrame:125,endFrame:135));result.storyCausality=value
+        try result.validate(assets:[])
+        value.version=1;result.storyCausality=value
+        XCTAssertThrowsError(try result.validate(assets:[]));XCTAssertThrowsError(try Codec.decoder().decode(StoryCausality.self,from:Codec.data(value)))
+        var noCost=try scene();noCost.storyCausality!.version=2
+        XCTAssertThrowsError(try noCost.validate(assets:[]));XCTAssertThrowsError(try Codec.decoder().decode(StoryCausality.self,from:Codec.data(noCost.storyCausality!)))
+    }
+    func testActionCostBoundsIdentityNoOpAndMixedDeclarationsAreRejected()throws {
+        for cost in [-1,100_001,1] {
+            var result=try costScene();result.storyCausality!.sources[1].actionCost!.newCost=cost
+            XCTAssertThrowsError(try result.validate(assets:[]),"invalid or unchanged cost \(cost)")
+        }
+        var unknown=try costScene();unknown.storyCausality!.sources[1].actionCost!.actionID="missing"
+        XCTAssertThrowsError(try unknown.validate(assets:[]))
+        var mixed=try costScene();mixed.storyCausality!.sources[1].intervention = .init(actorID:"a",plan:mixed.storyCausality!.sources[0].model.ruleTable!.plans[0])
+        XCTAssertThrowsError(try mixed.validate(assets:[]));XCTAssertThrowsError(try Codec.decoder().decode(Scene.self,from:Codec.data(mixed)))
+        try costScene(oldCost:1,newCost:0).validate(assets:[]);try costScene(oldCost:0,newCost:100_000).validate(assets:[])
+    }
+    func testCostBranchCannotChangeAnotherInputOrReuseTheOldTrace()throws {
+        for kind in 0..<6 {
+            var result=try costScene()
+            if kind==0 {result.storyCausality!.sources[1].model.knowledgeLabel="隐藏修改"}
+            if kind==1 {result.storyCausality!.sources[1].model.ruleTable!.plans[1].defaultActionID="deliver"}
+            if kind==2 {result.storyCausality!.sources[1].trace=result.storyCausality!.sources[0].trace}
+            if kind==3 {result.storyCausality!.sources[1].seed=25}
+            if kind==4 {result.storyCausality!.sources[1].parentID="cost"}
+            if kind==5 {result.storyCausality!.sources[1].model.ruleTable!.actions[1].cost=1}
+            if [0,1,3,5].contains(kind) {
+                let changed=result.storyCausality!.sources[1]
+                result.storyCausality!.sources[1].trace=try KnowledgeSimulationEngine.record(model:changed.model,seed:changed.seed,throughTick:changed.model.lastSettlementTick())
+            }
+            XCTAssertThrowsError(try result.validate(assets:[]),"hidden input, forged trace or parent \(kind)")
+        }
+        var root=try costScene();root.storyCausality!.sources[0].actionCost = .init(actionID:"deliver",newCost:2)
+        XCTAssertThrowsError(try root.validate(assets:[]))
+    }
+    func testCostBranchRejectsDigestOnlyChangesWithoutObservedConsequences()throws {
+        let scene=try costScene(oldCost:0,newCost:1,unused:true),value=try XCTUnwrap(scene.storyCausality)
+        XCTAssertNotEqual(value.sources[0].trace.inputDigest,value.sources[1].trace.inputDigest)
+        XCTAssertEqual(value.sources[0].trace.events,value.sources[1].trace.events)
+        XCTAssertEqual(value.sources[0].trace.rounds,value.sources[1].trace.rounds)
+        XCTAssertEqual(value.sources[0].trace.finalResources,value.sources[1].trace.finalResources)
+        XCTAssertThrowsError(try scene.validate(assets:[])) {error in XCTAssertEqual((error as? VideoError)?.code,"needs_review")}
+    }
+    func testCostDecodingRejectsNullHiddenFieldsAndNonIntegerValues()throws {
+        let encoded=try Codec.data(try costScene().storyCausality!),base=try XCTUnwrap(JSONSerialization.jsonObject(with:encoded) as? [String:Any])
+        func rejected(_ modify:(inout [String:Any])->Void)throws {var object=base;modify(&object);XCTAssertThrowsError(try Codec.decoder().decode(StoryCausality.self,from:JSONSerialization.data(withJSONObject:object)))}
+        try rejected{$0["version"]=3}
+        try rejected{var sources=$0["sources"] as! [[String:Any]];sources[1]["actionCost"]=NSNull();$0["sources"]=sources}
+        try rejected{var sources=$0["sources"] as! [[String:Any]];sources[1]["intervention"]=NSNull();$0["sources"]=sources}
+        let invalidCosts:[Any]=[1.5,true,"2",NSNull(),-1,100_001]
+        for value in invalidCosts {
+            try rejected{var sources=$0["sources"] as! [[String:Any]],cost=sources[1]["actionCost"] as! [String:Any];cost["newCost"]=value;sources[1]["actionCost"]=cost;$0["sources"]=sources}
+        }
+        try rejected{var sources=$0["sources"] as! [[String:Any]],cost=sources[1]["actionCost"] as! [String:Any];cost["otherCost"]=2;sources[1]["actionCost"]=cost;$0["sources"]=sources}
+        try rejected{var sources=$0["sources"] as! [[String:Any]],cost=sources[1]["actionCost"] as! [String:Any];cost.removeValue(forKey:"newCost");sources[1]["actionCost"]=cost;$0["sources"]=sources}
+        try rejected{var sources=$0["sources"] as! [[String:Any]];sources[1]["parameter"]=["actionID":"deliver","newCost":2];$0["sources"]=sources}
+    }
+    func testLegacyV1WireDigestReplayAndRestoreStayUnchanged()throws {
+        let originalScene=try scene(),causality=try XCTUnwrap(originalScene.storyCausality),legacy=LegacyCausality(causality)
+        XCTAssertEqual(try Codec.data(causality),try Codec.data(legacy));XCTAssertEqual(try Codec.digest(causality),try Codec.digest(legacy))
+        XCTAssertFalse(String(decoding:try Codec.data(causality),as:UTF8.self).contains("actionCost"))
+        var legacyScene=try XCTUnwrap(Codec.decoder().decode(AgentValue.self,from:Codec.data(originalScene)).object)
+        legacyScene["storyCausality"]=try Codec.decoder().decode(AgentValue.self,from:Codec.data(legacy))
+        let sceneBytes=try Codec.data(AgentValue.object(legacyScene));XCTAssertEqual(try Codec.data(originalScene),sceneBytes)
+        XCTAssertEqual(try Codec.digest(originalScene),Codec.hash(sceneBytes))
+        let original=project(originalScene);var workspace=Workspace(name:"旧v1因果",owner:"owner");workspace.id="w"
+        let repository=try Repository(root:FileManager.default.temporaryDirectory.appendingPathComponent("causal-v1-replay-"+UUID().uuidString));defer{try? FileManager.default.removeItem(at:repository.root)}
+        try repository.transaction{$0.workspaces=[workspace];$0.projects=[original]}
+        let edits=try Codec.decoder().decode(AgentValue.self,from:Codec.data([Edit.replaceScene(originalScene.id,originalScene)]))
+        let input=try Codec.data(AgentValue.object(["workspace_id":.string("w"),"project_id":.string(original.id),"base_revision":.string(original.current.id),"edits":edits]))
+        let response=try repository.performAgentMutation(command:"edit apply",data:input,principal:"owner",requestID:"legacy-causal-v1")
+        let reopened=try Repository(root:repository.root)
+        XCTAssertEqual(response,try reopened.performAgentMutation(command:"edit apply",data:input,principal:"owner",requestID:"legacy-causal-v1",origin:.nativeIntent))
+        let current=try XCTUnwrap(reopened.read().projects.first)
+        XCTAssertEqual(current.revisions.count,2);XCTAssertEqual(try Codec.data(current.revisions[0]),try Codec.data(original.current))
+        XCTAssertEqual(try current.revisions[0].contentDigest(),try original.current.contentDigest())
+        var without=current.current.scenes[0];without.storyCausality=nil
+        let removed=try Editor.apply([.replaceScene(without.id,without)],to:current,baseRevision:current.current.id,assets:[],message:"移除后恢复")
+        let restored=try Editor.apply([.restore(original.current.id)],to:removed,baseRevision:removed.current.id,assets:[],message:"恢复完整v1来源")
+        XCTAssertEqual(try Codec.data(restored.current.scenes[0]),sceneBytes);XCTAssertEqual(try reopened.read().agentReplayRecords?.count,1);XCTAssertTrue(try reopened.read().jobs.isEmpty)
+    }
+    func testDiscoveryKeepsBoundedStrictCostAndVersionSpecificPresence()throws {
+        let definitions=AgentSchemas.definitions(),source=try XCTUnwrap(definitions["StoryCausalSource"]?.object),cost=try XCTUnwrap(definitions["StoryCausalActionCost"]?.object)
+        XCTAssertEqual(source["properties"]?.object?["actionCost"],AgentSchemas.shape("StoryCausalActionCost"))
+        XCTAssertNotNil(source["not"]);XCTAssertNotNil(source["allOf"])
+        XCTAssertEqual(cost["additionalProperties"],.boolean(false))
+        XCTAssertEqual(cost["properties"]?.object?["newCost"]?.object?["minimum"],.number(0));XCTAssertEqual(cost["properties"]?.object?["newCost"]?.object?["maximum"],.number(100_000))
+        XCTAssertEqual(definitions["StoryCausality"]?.object?["properties"]?.object?["version"]?.object?["enum"],.array([.number(1),.number(2)]))
+        XCTAssertNotNil(definitions["StoryCausality"]?.object?["allOf"])
+    }
+    func testCostMetadataNeverReachesPluginProps()throws {
+        let scene=try costScene(),props=PluginVisualProps(scene:scene)
+        var visual=scene;visual.storyCausality=nil
+        let bytes=try Codec.data(props);XCTAssertEqual(bytes,try Codec.data(PluginVisualProps(scene:visual)))
+        let text=String(decoding:bytes,as:UTF8.self)
+        for field in ["actionCost","newCost","storyCausality","inputDigest","finalResources"] {XCTAssertFalse(text.contains(field),field)}
+        XCTAssertNil(try Codec.decoder().decode(PluginVisualProps.self,from:bytes).drawingScene().storyCausality)
     }
 }

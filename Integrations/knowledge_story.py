@@ -7,9 +7,10 @@ the author supplies stage objects, timing and routes. Native edit validation
 recomputes every source independently before any presentation is persisted.
 
 Public entry points use invoke(command, body, dry_run). The supported source
-contract is v3 finite rule tables, at most three sources, and the existing
-single-actor-plan intervention. Matrix/public-good models and payment/delivery
-semantics are explicitly unsupported here, rather than silently converted.
+contract is v3 finite rule tables and at most three sources. Version 1 retains
+the original single-actor-plan intervention. Version 2 additionally declares
+one explicit action-cost change per selected source. Matrix/public-good models
+and payment/delivery semantics are explicitly unsupported here.
 """
 from __future__ import annotations
 
@@ -84,7 +85,7 @@ def _last_tick(model):
 
 def _plan(value):
     _object(value, ('version', 'story', 'target', 'sources', 'actors', 'pool_subject_id', 'anchors', 'beats'), ('balances',))
-    _need(type(value['version']) is int and value['version'] == 1, 'unsupported knowledge-story version')
+    _need(type(value['version']) is int and value['version'] in (1, 2), 'unsupported knowledge-story version')
     _canonical(value)
     story = StoryPlan.from_dict(value['story'])
     _need(story.complete, 'evaluate the complete StoryPlan before compiling presentation')
@@ -96,9 +97,10 @@ def _plan(value):
     _need(1 <= len(sources) <= 3 and len({s.get('scene_id') for s in sources.values()}) == len(sources),
           'one to three distinct real source scenes required')
     _need(set(sources) <= set(story.to_dict()['brief']['source_ids']), 'sources must be declared before material design')
-    previous, windows, participant_ids = {}, [], None
+    previous, windows, participant_ids, has_cost = {}, [], None, False
     for source in value['sources']:
-        _object(source, ('id', 'scene_id', 'model', 'seed', 'start_frame', 'end_frame'), ('parent_id', 'intervention'))
+        _object(source, ('id', 'scene_id', 'model', 'seed', 'start_frame', 'end_frame'), ('parent_id', 'intervention', 'action_cost'))
+        _need('action_cost' not in source or value['version'] == 2, 'action cost sources require explicit version 2')
         _need(isinstance(source['scene_id'], str) and source['scene_id'] and _integer(source['seed'], 0, 2**64 - 1),
               'real scene identity and native UInt64 seed required')
         _last_tick(source['model'])
@@ -111,19 +113,37 @@ def _plan(value):
         windows.append((a, b))
         if 'parent_id' in source:
             parent = previous.get(source['parent_id'])
-            intervention = source.get('intervention')
-            _object(intervention, ('actorID', 'plan'))
-            _need(isinstance(intervention['plan'], dict) and parent is not None and parent['seed'] == source['seed'] and parent['end_frame'] <= a
-                  and intervention['actorID'] == intervention['plan'].get('actorID'), 'invalid earlier same-seed parent intervention')
+            _need(parent is not None and parent['seed'] == source['seed'] and parent['end_frame'] <= a,
+                  'invalid earlier same-seed parent intervention')
+            _need(('intervention' in source) != ('action_cost' in source), 'each child source must declare exactly one actor plan or action cost')
             expected = deepcopy(parent['model'])
-            plans = expected['ruleTable'].get('plans', [])
-            indices = [i for i, plan in enumerate(plans) if plan.get('actorID') == intervention['actorID']]
-            _need(len(indices) == 1 and plans[indices[0]] != intervention['plan'], 'intervention must change one real actor plan')
-            plans[indices[0]] = deepcopy(intervention['plan'])
-            _need(expected == source['model'], 'this source contract only permits one actor-plan change; rule/matrix conversion is unsupported')
+            if 'action_cost' in source:
+                cost = source['action_cost']
+                _object(cost, ('actionID', 'newCost'))
+                _need(isinstance(cost['actionID'], str) and re.fullmatch('[A-Za-z0-9_-]{1,40}', cost['actionID']) is not None
+                      and _integer(cost['newCost'], 0, 100_000), 'action cost needs an existing stable action ID and integer cost from 0 to 100000')
+                actions = _unique(expected['ruleTable'].get('actions'), 'id', 'model action')
+                action = actions.get(cost['actionID'])
+                _need(action is not None and _integer(action.get('cost'), 0, 100_000) and action['cost'] != cost['newCost'],
+                      'action cost must change one uniquely existing valid cost')
+                action['cost'] = cost['newCost']
+                _need(_canonical(expected) == _canonical(source['model']), 'only the declared single action cost may change; all other model fields must stay exact')
+                has_cost = True
+            else:
+                intervention = source['intervention']
+                _object(intervention, ('actorID', 'plan'))
+                _need(isinstance(intervention['plan'], dict) and intervention['actorID'] == intervention['plan'].get('actorID'),
+                      'invalid earlier same-seed parent intervention')
+                plans = expected['ruleTable'].get('plans', [])
+                indices = [i for i, plan in enumerate(plans) if plan.get('actorID') == intervention['actorID']]
+                _need(len(indices) == 1 and plans[indices[0]] != intervention['plan'], 'intervention must change one real actor plan')
+                plans[indices[0]] = deepcopy(intervention['plan'])
+                _need(expected == source['model'] if value['version'] == 1 else _canonical(expected) == _canonical(source['model']),
+                      'this source contract only permits one actor-plan change; rule/matrix conversion is unsupported')
         else:
-            _need(not previous and 'intervention' not in source, 'exactly one root source is allowed')
+            _need(not previous and 'intervention' not in source and 'action_cost' not in source, 'exactly one root source is allowed')
         previous[source['id']] = source
+    _need(value['version'] == 1 or has_cost, 'version 2 requires at least one explicit action cost source')
     actors = value['actors']
     _need(isinstance(actors, list) and 1 <= len(actors) <= 64, 'explicit bounded actor ownership required')
     ownership = {}
@@ -253,7 +273,11 @@ def record_sources(source_project, plan, invoke):
         row = dict(id=source['id'], model=deepcopy(source['model']), seed=source['seed'], trace=trace,
                    startFrame=source['start_frame'], endFrame=source['end_frame'])
         if 'parent_id' in source:
-            row.update(parentID=source['parent_id'], intervention=deepcopy(source['intervention']))
+            row['parentID'] = source['parent_id']
+            if 'intervention' in source:
+                row['intervention'] = deepcopy(source['intervention'])
+            else:
+                row['actionCost'] = deepcopy(source['action_cost'])
             parent = by_source[source['parent_id']]
             response = invoke('knowledge compare', dict(workspace_id=current['workspaceID'], project_id=current['id'],
                 base_revision=revision['id'], scene_id=parent['scene_id'], comparison_scene_id=source['scene_id']), False)
@@ -265,9 +289,17 @@ def record_sources(source_project, plan, invoke):
             parent_trace = next(item['trace'] for item in typed if item['id'] == source['parent_id'])
             _need(observed.get('baseline') == parent_trace and observed.get('alternative') == trace,
                   'comparison is not bound to the actual recorded source pair')
-            _need(_behavior_changed(parent_trace, trace), 'labels, clock or inactive rules alone cannot authorize a changed-behavior story')
+            _require_behavior_change(parent_trace, trace, plan['version'])
         typed.append(row)
-    return dict(version=1, project_id=current['id'], revision=revision['id'], sources=typed)
+    return dict(version=plan['version'], project_id=current['id'], revision=revision['id'], sources=typed)
+
+
+def _require_behavior_change(left, right, version):
+    if version == 2:
+        fields = ('events', 'rounds', 'finalResources')
+        _need(_canonical({key: left[key] for key in fields}) != _canonical({key: right[key] for key in fields}),
+              'version 2 needs actual event, round or final-resource differences; a new input digest is not behavior')
+    _need(_behavior_changed(left, right), 'labels, clock or inactive rules alone cannot authorize a changed-behavior story')
 
 
 def _behavior_changed(left, right):
@@ -359,15 +391,16 @@ def compile_presentation(target_project, plan, recorded):
     _need(target_project.get('id') == target['project_id'] and target_project.get('workspaceID') == target['workspace_id']
           and revision.get('id') == target['base_revision'] and revision.get('fps') == target['fps'], 'target identity, revision or frame rate is stale')
     _object(recorded, ('version', 'project_id', 'revision', 'sources'))
-    _need(type(recorded['version']) is int and recorded['version'] == 1 and _identity(recorded['project_id'])
+    _need(type(recorded['version']) is int and recorded['version'] == plan['version'] and _identity(recorded['project_id'])
           and _identity(recorded['revision']) and recorded['project_id'] != target_project['id'], 'separate explicitly identified recorded sources required')
     sources = _unique(recorded['sources'], 'id', 'recorded source')
     _need(set(sources) == set(declarations), 'recorded source identities differ from the plan')
     for key, source in sources.items():
         declared = declarations[key]
-        _object(source, ('id', 'model', 'seed', 'trace', 'startFrame', 'endFrame'), ('parentID', 'intervention'))
+        _object(source, ('id', 'model', 'seed', 'trace', 'startFrame', 'endFrame'), ('parentID', 'intervention', 'actionCost'))
         _need(all(source[a] == declared[b] for a, b in [('model', 'model'), ('seed', 'seed'), ('startFrame', 'start_frame'), ('endFrame', 'end_frame')])
-              and source.get('parentID') == declared.get('parent_id') and source.get('intervention') == declared.get('intervention'),
+              and source.get('parentID') == declared.get('parent_id') and source.get('intervention') == declared.get('intervention')
+              and ('actionCost' in source) == ('action_cost' in declared) and source.get('actionCost') == declared.get('action_cost'),
               'source model/seed/window/intervention changed since the explicit plan')
         # Same shape checks as actual extraction; this does not grant a native
         # proof. apply_presentation always obtains Core's independent dry-run.
@@ -376,6 +409,10 @@ def compile_presentation(target_project, plan, recorded):
                      simulationRecording=dict(recordedFPS=target['fps'], recordedSpeed=1, recordedPauseFrames=0,
                         recordedDurationFrames=(_last_tick(source['model']) + 1) * target['fps'], knowledgeTrace=source['trace']))
         _trace(declared, probe, target['fps'])
+    if plan['version'] == 2:
+        for source in plan['sources']:
+            if 'parent_id' in source:
+                _require_behavior_change(sources[source['parent_id']]['trace'], sources[source['id']]['trace'], 2)
     scenes = {row['id']: row for row in revision['scenes']}
     _need(target['scene_id'] in scenes, 'target scene is absent')
     scene = scenes[target['scene_id']]
@@ -535,7 +572,7 @@ def compile_presentation(target_project, plan, recorded):
                   'source events cannot run backwards, overlap different ticks, or place old balances after later outcomes; author a separate source window for a flashback')
             group_end = max(group_end, end) if tick == last_tick else end
             last_tick, last_start = tick, start
-    causality = dict(version=1, poolSubjectID=pool, actors=[dict(actorID=a['actor_id'], subjectID=a['subject_id']) for a in plan['actors']],
+    causality = dict(version=plan['version'], poolSubjectID=pool, actors=[dict(actorID=a['actor_id'], subjectID=a['subject_id']) for a in plan['actors']],
                      sources=[deepcopy(sources[row['id']]) for row in plan['sources']], bindings=bindings)
     entry = dict(scene_id=target['scene_id'], mode=target['mode'], actions=actions, causality=causality)
     if world is not None:

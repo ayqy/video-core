@@ -152,11 +152,30 @@ public enum AgentSchemas {
         for (key,declaration) in StoryActionSchema.records { var record=entity(declaration).object!;record["additionalProperties"] = .boolean(false);result[key] = .object(record) }
         for (key,declaration) in StoryCausalSchema.records {var record=entity(declaration).object!;record["additionalProperties"] = .boolean(false);result[key] = .object(record)}
         for (key,values) in StoryCausalSchema.enums {result[key] = .object(["type":.string("string"),"enum":.array(values.map(AgentValue.string))])}
-        constraint("StoryCausality","version",["const":.number(1)])
+        constraint("StoryCausality","version",["enum":.array([.number(1),.number(2)])])
         constraint("StoryCausality","sources",["minItems":.number(1),"maxItems":.number(3)])
         constraint("StoryCausality","actors",["minItems":.number(1),"maxItems":.number(64)])
         constraint("StoryCausality","bindings",["minItems":.number(1),"maxItems":.number(256)])
         constraint("StoryCausalBinding","requires",["maxItems":.number(32)])
+        constraint("StoryCausalActionCost","actionID",["pattern":.string("^[A-Za-z0-9_-]{1,40}$"),"minLength":.number(1),"maxLength":.number(40)])
+        constraint("StoryCausalActionCost","newCost",["minimum":.number(0),"maximum":.number(100_000)])
+        // The new optional field is absent in v1, never an explicit null. Old
+        // actor-plan DTOs and their nullable legacy fields keep their wire form.
+        var causalSource=result["StoryCausalSource"]!.object!,sourceProperties=causalSource["properties"]!.object!
+        sourceProperties["actionCost"]=shape("StoryCausalActionCost");causalSource["properties"] = .object(sourceProperties)
+        causalSource["not"] = .object(["required":.array([.string("intervention"),.string("actionCost")])])
+        causalSource["allOf"] = .array([.object([
+            "if":.object(["required":.array([.string("actionCost")])]),
+            "then":.object(["required":.array([.string("parentID")]),"properties":.object(["parentID":shape("s")])])
+        ])])
+        result["StoryCausalSource"] = .object(causalSource)
+        var causality=result["StoryCausality"]!.object!
+        causality["allOf"] = .array([.object([
+            "if":.object(["properties":.object(["version":.object(["const":.number(1)])])]),
+            "then":.object(["properties":.object(["sources":.object(["items":.object(["not":.object(["required":.array([.string("actionCost")])])])])])]),
+            "else":.object(["properties":.object(["sources":.object(["contains":.object(["required":.array([.string("actionCost")])])])])])
+        ])])
+        result["StoryCausality"] = .object(causality)
         for (key,values) in StoryActionSchema.enums { result[key] = .object(["type":.string("string"),"enum":.array(values.map(AgentValue.string))]) }
         for (key,declaration) in CartoonPresenterSchema.records {var record=entity(declaration).object!;record["additionalProperties"] = .boolean(false);result[key] = .object(record)}
         for (key,declaration) in CartoonPerformanceSchema.records { result[key]=entity(declaration) }

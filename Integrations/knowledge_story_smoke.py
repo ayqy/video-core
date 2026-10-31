@@ -66,6 +66,33 @@ def scene(identity, *, model=None):
     return value
 
 
+def _action_cost_scene(identity, subjects, story):
+    """Plain editable props for independent debit events; no model evaluation."""
+    value = scene(identity)
+    value["durationFrames"] = 600
+    value["narration"] = "".join(row["narration"] for row in story.stage("shots")["shots"])
+    # Match the example's declared 13-by-7, cover-fit stage anchors. This only
+    # locates real layer props; monetary quantities still come from Core.
+    side = max(1280 / 13, 720 / 7)
+    hands = {actor: dict(x=((1280 - 13 * side) / 2 + (column + .5) * side) / 1280,
+                         y=((720 - 7 * side) / 2 + 4 * side) / 720)
+             for actor, column in (("qing", 3), ("lan", 9))}
+    for layer in value["layers"]:
+        layer["endFrame"] = 600
+        for actor in ("qing", "lan"):
+            if layer["id"] == subjects[actor + "_coin"]:
+                layer.update(hands[actor], startFrame=90, endFrame=300)
+    for key, actor, end in (("low_qing_fee", "qing", 80), ("low_lan_fee", "lan", 80),
+                            ("high_qing_fee", "qing", 600), ("high_lan_fee", "lan", 600),
+                            ("high_second_fee", "qing", 600)):
+        # Layer opacity multiplies StoryAction opacity: future show actions
+        # provide pre-action hiding; zero base opacity would remain invisible.
+        value["layers"].append(dict(id=subjects[key], kind="色块", text="", **hands[actor],
+            width=.08, height=.08, color="E0AA28", opacity=1, startFrame=0,
+            endFrame=end, locked=False, keyframes=[]))
+    return value
+
+
 def snapshot(path):
     raw = path.read_bytes()
     need(len(raw) <= 16 * 1024 * 1024, "unexpectedly large author-only backup")
@@ -74,7 +101,7 @@ def snapshot(path):
     return json.loads(envelope["snapshot"]), envelope
 
 
-def run(binary, output):
+def run(binary, output, *, action_cost=False):
     deadline = time.monotonic() + 90
     binary = binary.resolve(strict=True)
     need(binary.is_file(), "the actual built normal CLI is required")
@@ -88,11 +115,15 @@ def run(binary, output):
     pins = {path: sha(path.read_bytes()) for path in [binary, Path(__file__).resolve(),
         ROOT / "Integrations/knowledge_story.py", ROOT / "Integrations/story_action.py",
         ROOT / "Integrations/story_planning.py", ROOT / "Integrations/examples/knowledge_exchange.py"]}
+    if action_cost:
+        from examples.knowledge_action_cost import (SUBJECTS as cost_subjects, cost_models,
+            presentation as cost_presentation, story_plan as cost_story_plan)
+        pins[ROOT / "Integrations/examples/knowledge_action_cost.py"] = sha((ROOT / "Integrations/examples/knowledge_action_cost.py").read_bytes())
     calls = []
     allowed = {"workspaces create", "projects create", "projects list", "edit apply",
                "knowledge compare", "backup create", "backup restore", "doctor"}
 
-    def call(command, body=None, dry=False, *, directory=workspace):
+    def call(command, body=None, dry=False, *, directory=workspace, expected=True):
         need(command in allowed, "unexpected command outside this author-contract test")
         need(all(sha(path.read_bytes()) == expected for path, expected in pins.items()),
              "author or binary changed during the actual CLI chain")
@@ -111,9 +142,14 @@ def run(binary, output):
         need(len(lines) == 1, command + " must return one normal envelope")
         response = json.loads(lines[0])
         need(response.get("request_id") == data["request_id"], command + " response is not correlated")
-        need(process.returncode == 0 and response.get("ok") is True,
-             command + " failed: " + str(response.get("error"))[:400])
-        if dry:
+        need((process.returncode == 0) is expected and response.get("ok") is expected,
+             command + " returned an unexpected outcome: " + str(response.get("error"))[:400])
+        if not expected:
+            need(isinstance(response.get("error"), dict) and response["error"].get("code") == "needs_review"
+                 and response.get("state") == "needs_review"
+                 and "旧轨迹仅保留作历史，请重新运行复核" in response["error"].get("message", ""),
+                 command + " must reject the forged trace through the normal Core recording verifier")
+        if dry and expected:
             need(response.get("state") == "dry_run", command + " did not honor dry-run")
         calls.append((command, dry))
         return response
@@ -146,17 +182,20 @@ def run(binary, output):
     created = write("workspaces create", {"name": "公开通用知识作者合同验证"})
     workspace_id = created["result"]["id"]
     scope = dict(workspace_id=workspace_id, aspect="16:9")
-    models = protocol_models()
+    models = cost_models() if action_cost else protocol_models()
     source_scenes = {key: scene("source-" + key, model=model) for key, model in models.items()}
     source_created = write("projects create", dict(scope, name="真实有限协议来源",
         scenes=list(source_scenes.values())))
+    target_scene = (_action_cost_scene("presentation", cost_subjects, cost_story_plan())
+                    if action_cost else scene("presentation"))
     target_created = write("projects create", dict(scope, name="普通图层作者内部验证",
-        scenes=[scene("presentation")]))
+        scenes=[target_scene]))
     source_project = project(source_created["project_id"])
     target_project = project(target_created["project_id"])
     source_history = deepcopy(source_project["revisions"])
     target_history = deepcopy(target_project["revisions"])
-    plan = presentation(target_project, {key: row["id"] for key, row in source_scenes.items()})
+    make_plan = cost_presentation if action_cost else presentation
+    plan = make_plan(target_project, {key: row["id"] for key, row in source_scenes.items()})
     plan["target"]["mode"] = "pencil"
     plan["balances"] = []
     recorded = record_sources(source_project, plan, call)
@@ -165,27 +204,60 @@ def run(binary, output):
          and latest_source["revisions"][-1]["id"] == recorded["revision"],
          "normal source recording changed earlier history")
     source_rows = {row["id"]: row for row in recorded["sources"]}
+    baseline, alternative = ("low", "high") if action_cost else ("consent", "decline")
     flows = [(row.get("sourceActorID"), row.get("destinationActorID"), row["amount"])
-        for event in source_rows["consent"]["trace"]["events"]
+        for event in source_rows[baseline]["trace"]["events"]
         for row in (event.get("ruleExecution") or {}).get("transfers", [])]
     need(sorted(flows) == [("lan", "qing", 1), ("qing", "lan", 3)], "actual two-way native flows differ")
-    rejected_flows = [row for event in source_rows["decline"]["trace"]["events"]
+    rejected_flows = [row for event in source_rows[alternative]["trace"]["events"]
         for row in (event.get("ruleExecution") or {}).get("transfers", [])]
     balances = {key: {row["id"]: row["resources"] for row in value["trace"]["finalResources"]}
                 for key, value in source_rows.items()}
-    need(not rejected_flows and balances == {"consent": {"qing": 3, "lan": 4},
-         "decline": {"qing": 5, "lan": 2}}, "real source counterfactual balances or no-transfer result differ")
+    expected_balances = ({"low": {"qing": 2, "lan": 3}, "high": {"qing": 1, "lan": 0}} if action_cost
+                         else {"consent": {"qing": 3, "lan": 4}, "decline": {"qing": 5, "lan": 2}})
+    need(not rejected_flows and balances == expected_balances,
+         "real source counterfactual balances or no-transfer result differ")
+    if action_cost:
+        need(recorded["version"] == 2 and source_rows["high"]["actionCost"] == dict(actionID="consent", newCost=2),
+             "actual recorded source lost its explicit v2 single-cost declaration")
+        pools = {key: row["trace"]["events"][-1]["ruleExecution"]["poolAfter"] for key, row in source_rows.items()}
+        need(pools == {"low": 2, "high": 6}, "native final rule pools differ")
+        first_costs = {key: {a["id"]: a["cost"] for a in row["trace"]["events"][2]["actors"]}
+                       for key, row in source_rows.items()}
+        need(first_costs == {"low": {"qing": 1, "lan": 1}, "high": {"qing": 2, "lan": 2}},
+             "native first-round actual debits differ from the one-cost intervention")
     applied = apply_presentation(target_project, plan, recorded, call)
     need(applied["changed"] is True, "first normal author application did not create a revision")
     current = project(target_project["id"])
     need(current["revisions"][:-1] == target_history
          and current["revisions"][-1]["id"] == applied["revision"], "author edit changed earlier target history")
     current_scene = current["revisions"][-1]["scenes"][0]
-    need(current_scene["kind"] == "图文讲解" and len(current_scene["storyActions"]) == 9
+    need(current_scene["kind"] == "图文讲解" and len(current_scene["storyActions"]) == (len(plan["beats"]) if action_cost else 9)
          and len(current_scene["storyCausality"]["sources"]) == 2
          and current_scene.get("voice") is None and current_scene.get("gameWorld") is None,
          "ordinary author must retain typed sources without private modules or unrelated speech")
     need(not any(current["revisions"][-1]["review"].values()), "author test must not grant human review")
+    if action_cost:
+        need(current_scene["storyCausality"]["version"] == 2,
+             "normal target scene must retain the actual v2 causal contract")
+        bindings = current_scene["storyCausality"]["bindings"]
+        action_by_id = {row["id"]: row for row in current_scene["storyActions"]}
+        deposits = [(row["sourceID"], row["fromActorID"], row["amount"])
+                    for row in bindings if row["kind"] == "deposit"]
+        need(sorted(deposits) == [("high", "lan", 2), ("high", "qing", 2), ("high", "qing", 2),
+                                  ("low", "lan", 1), ("low", "qing", 1)],
+             "typed deposit bindings differ from the actual per-event native debits")
+        need(all(action_by_id[row["actionID"]]["quantity"] == row["amount"] for row in bindings
+                 if row["kind"] in ("deposit", "transfer")),
+             "editable money quantities must match the native typed bindings")
+        forged = deepcopy(current_scene)
+        forged["storyCausality"]["sources"][0]["trace"]["finalResources"][0]["resources"] += 1
+        call("edit apply", dict(workspace_id=workspace_id, project_id=current["id"],
+             base_revision=current["revisions"][-1]["id"],
+             edits=[{"replaceScene": {"_0": forged["id"], "_1": forged}}],
+             text="内部正常Core拒绝伪造实迹；不得写入任何旧历史"), True, expected=False)
+        need(project(current["id"])["revisions"] == current["revisions"],
+             "normal Core forged-trace rejection must leave the complete target history unchanged")
     before_second = sum(command == "edit apply" and not dry for command, dry in calls)
     refreshed = deepcopy(plan)
     refreshed["target"]["base_revision"] = current["revisions"][-1]["id"]
@@ -214,18 +286,26 @@ def run(binary, output):
          "normal re-export changed actual source records, target revisions, assets or jobs")
     need(all(sha(path.read_bytes()) == expected for path, expected in pins.items()), "frozen inputs changed before completion")
     need(time.monotonic() <= deadline, "author-contract chain exceeded its 90-second deadline")
-    print("knowledge_story_smoke: passed (" + str(len(calls))
-          + " actual normal CLI calls; real sources=2; transfers=3/1; balances=3/4 vs 5/2;"
-          + " idempotent=true; independent_restore=true; media=false; speech=false; review=false)")
+    if action_cost:
+        print("knowledge_story_smoke: passed (" + str(len(calls))
+              + " actual normal CLI calls; action_cost=v2; real sources=2; transfers=3/1 vs none;"
+              + " balances=2/3 vs 1/0; pools=2/6; deposits=1/2; native_forged_trace_rejected=true;"
+              + " idempotent=true; independent_restore=true; media=false; speech=false; review=false)")
+    else:
+        print("knowledge_story_smoke: passed (" + str(len(calls))
+              + " actual normal CLI calls; real sources=2; transfers=3/1; balances=3/4 vs 5/2;"
+              + " idempotent=true; independent_restore=true; media=false; speech=false; review=false)")
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--binary", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--action-cost", action="store_true",
+                        help="exercise the explicit v2 one-action-cost counterfactual through the normal CLI")
     args = parser.parse_args()
     try:
-        run(args.binary, args.output)
+        run(args.binary, args.output, action_cost=args.action_cost)
         return 0
     except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as error:
         print("knowledge_story_smoke: failed; dedicated workspace retained at "
