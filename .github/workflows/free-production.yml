@@ -16,7 +16,7 @@ jobs:
   knowledge-production-stage:
     if: github.repository == 'ayqy/video-core' && github.event.repository.private == false
     runs-on: macos-15-intel
-    timeout-minutes: 25
+    timeout-minutes: 50
     env:
       VIDEO_SOURCE_COMMIT: ${{ github.sha }}
       PYTHONDONTWRITEBYTECODE: '1'
@@ -118,12 +118,62 @@ jobs:
           print('current_python_rules=86 reused_python_rules=25 real_business_media_executed=false review=false')
           PYCODE
 
+      - name: Compile the ordinary VideoCore dependency for testability
+        shell: bash
+        run: |
+          python3 -B - <<'PYCODE'
+          from pathlib import Path
+          import os, subprocess, sys, time
+          root=Path(os.environ['GITHUB_WORKSPACE'])
+          scratch=Path(os.environ['RUNNER_TEMP'])/'video-production-swiftpm'
+          argv=['swift','build','-c','release','--target','VideoCore','--scratch-path',str(scratch),'-j','2','-Xswiftc','-enable-testing']
+          started_at=time.monotonic()
+          try:
+              result=subprocess.run(argv,cwd=root,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,timeout=650)
+          except subprocess.TimeoutExpired as error:
+              captured=error.stdout or b''
+              if isinstance(captured,str):captured=captured.encode('utf-8',errors='replace')
+              print('native_core_precompile_timeout_seconds=650 captured_stdout_bytes='+str(len(captured)),file=sys.stderr)
+              print(captured[-9000:].decode('utf-8',errors='replace') if captured else 'captured_stdout_unavailable',file=sys.stderr)
+              raise
+          assert len(result.stdout.encode())<=16*1024*1024,'Bounded compiler diagnostics required'
+          if result.returncode:
+              print(result.stdout.encode('utf-8',errors='replace')[-9000:].decode('utf-8',errors='replace'),file=sys.stderr)
+              raise RuntimeError('Ordinary VideoCore dependency precompile failed')
+          print('current_native_core_precompile=1 elapsed_seconds='+format(time.monotonic()-started_at,'.3f')+' native_tests_in_precompile=0 source_changed=false review=false')
+          PYCODE
+
+      - name: Compile the ordinary test products with the same explicit testability inputs
+        shell: bash
+        run: |
+          python3 -B - <<'PYCODE'
+          from pathlib import Path
+          import os, subprocess, sys, time
+          root=Path(os.environ['GITHUB_WORKSPACE'])
+          scratch=Path(os.environ['RUNNER_TEMP'])/'video-production-swiftpm'
+          argv=['swift','build','-c','release','--build-tests','--scratch-path',str(scratch),'-j','2','-Xswiftc','-enable-testing']
+          started_at=time.monotonic()
+          try:
+              result=subprocess.run(argv,cwd=root,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,timeout=650)
+          except subprocess.TimeoutExpired as error:
+              captured=error.stdout or b''
+              if isinstance(captured,str):captured=captured.encode('utf-8',errors='replace')
+              print('native_test_build_timeout_seconds=650 captured_stdout_bytes='+str(len(captured)),file=sys.stderr)
+              print(captured[-9000:].decode('utf-8',errors='replace') if captured else 'captured_stdout_unavailable',file=sys.stderr)
+              raise
+          assert len(result.stdout.encode())<=16*1024*1024,'Bounded compiler diagnostics required'
+          if result.returncode:
+              print(result.stdout.encode('utf-8',errors='replace')[-9000:].decode('utf-8',errors='replace'),file=sys.stderr)
+              raise RuntimeError('Ordinary test products build failed')
+          print('current_native_test_product_builds=1 elapsed_seconds='+format(time.monotonic()-started_at,'.3f')+' native_rules_executed_in_compile=0 cache_reuse_claimed=false review=false')
+          PYCODE
+
       - name: Execute exactly the affected ordinary Native rules
         shell: bash
         run: |
           python3 -B - <<'PYCODE'
           from pathlib import Path
-          import hashlib, os, re, subprocess, sys
+          import hashlib, os, re, subprocess, sys, time
           root=Path(os.environ['GITHUB_WORKSPACE'])
           scratch=Path(os.environ['RUNNER_TEMP'])/'video-production-swiftpm'
           groups=[('VideoCoreTests','MediaPresentationTests',7),
@@ -141,34 +191,51 @@ jobs:
               print('current_native_test_source_sha256='+name+':'+hashlib.sha256(source.read_bytes()).hexdigest())
           assert len(expected)==29
           selection='('+'|'.join(name for _,name,_ in groups)+')'
-          argv=['swift','test','-c','release','--scratch-path',str(scratch),'-j','2','--filter',selection]
-          result=subprocess.run(argv,cwd=root,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,timeout=650)
+          argv=['swift','test','--skip-build','-c','release','--scratch-path',str(scratch),'-j','2','-Xswiftc','-enable-testing','--filter',selection]
+          started_at=time.monotonic()
+          try:
+              result=subprocess.run(argv,cwd=root,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,timeout=650)
+          except subprocess.TimeoutExpired as error:
+              captured=error.stdout or b''
+              if isinstance(captured,str):captured=captured.encode('utf-8',errors='replace')
+              print('native_rules_timeout_seconds=650 captured_stdout_bytes='+str(len(captured)),file=sys.stderr)
+              print(captured[-9000:].decode('utf-8',errors='replace') if captured else 'captured_stdout_unavailable',file=sys.stderr)
+              raise
           assert len(result.stdout.encode())<=16*1024*1024,'Bounded compiler/test diagnostics required'
           if result.returncode:
-              print(result.stdout[-9000:],file=sys.stderr)
-              raise RuntimeError('Affected Native build/test failed')
+              print(result.stdout.encode('utf-8',errors='replace')[-9000:].decode('utf-8',errors='replace'),file=sys.stderr)
+              raise RuntimeError('Affected Native test execution failed')
           started=['.'.join(row) for row in re.findall(r"Test Case '-\[([^ ]+) ([^]]+)\]' started",result.stdout)]
           passed=['.'.join(row) for row in re.findall(r"Test Case '-\[([^ ]+) ([^]]+)\]' passed",result.stdout)]
           assert len(started)==len(set(started))==len(passed)==len(set(passed))==len(expected)
           assert set(started)==set(passed)==expected
           assert 'failed' not in result.stdout.lower() and 'skipped' not in result.stdout.lower()
           for identity in sorted(expected):print('current_native_passed='+identity)
-          print('current_native_rules=29 current_python_rules=86 reused_python_rules=25 synthetic_fixture_media=true real_business_media_executed=false review=false')
+          print('current_native_rules=29 elapsed_seconds='+format(time.monotonic()-started_at,'.3f')+' current_python_rules=86 reused_python_rules=25 synthetic_fixture_media=true real_business_media_executed=false review=false')
           PYCODE
 
       - name: Build the ordinary Release CLI
         shell: bash
         run: |
           python3 -B - <<'PYCODE'
-          import os, subprocess, sys
+          import os, subprocess, sys, time
           from pathlib import Path
           root=Path(os.environ['GITHUB_WORKSPACE'])
           def execute(argv,seconds):
-              result=subprocess.run(argv,cwd=root,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,timeout=seconds)
+              started_at=time.monotonic()
+              try:
+                  result=subprocess.run(argv,cwd=root,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,timeout=seconds)
+              except subprocess.TimeoutExpired as error:
+                  captured=error.stdout or b''
+                  if isinstance(captured,str):captured=captured.encode('utf-8',errors='replace')
+                  print('ordinary_release_build_timeout_seconds='+str(seconds)+' captured_stdout_bytes='+str(len(captured)),file=sys.stderr)
+                  print(captured[-9000:].decode('utf-8',errors='replace') if captured else 'captured_stdout_unavailable',file=sys.stderr)
+                  raise
               if result.returncode:
-                  print(result.stdout[-6000:],file=sys.stderr)
+                  print(result.stdout.encode('utf-8',errors='replace')[-9000:].decode('utf-8',errors='replace'),file=sys.stderr)
                   raise RuntimeError('Ordinary CLI build failed')
               assert len(result.stdout.encode())<=16*1024*1024,'Bounded build diagnostics required'
+              print('ordinary_release_command_elapsed_seconds='+format(time.monotonic()-started_at,'.3f')+' budget_seconds='+str(seconds))
               return result.stdout
           scratch=Path(os.environ['RUNNER_TEMP'])/'video-production-swiftpm'
           execute(['swift','build','-c','release','--product','video','--scratch-path',str(scratch),'-j','2'],650)
@@ -184,7 +251,8 @@ jobs:
           python3 -B - <<'PYCODE'
           import os
           text=("本次实际执行三个完整受影响 Python 模块：test_story_speech 29 项、test_production_document 24 项、test_production_workflow 33 项，共 86 个唯一测试身份；未变的 test_speech_plan_alignment 12 项和 test_production_styles 13 项按各自源码与调用条件复用，共 25 项，不重复计数。遗漏、重复、失败、skip、预期失败或不完整汇总均拒绝。\n\n"
-                "保留现有四个 Native 类和普通 Release 构建门禁：MediaPresentationTests 7 项、MediaPresentationMediaTests 6 项、MediaFramingMediaTests 2 项、MediaConfirmationTests 14 项，共 29 个唯一实际身份，每项 started、passed 各一次；随后显式 -j2 构建普通 Release video CLI。Native 源码及调用条件未变，当前工作流自然执行不作为本轮 Native 新修复。\n\n"
+                "在同一 scratch、release 配置和 -j2 下，先以显式 -Xswiftc -enable-testing 编译 VideoCore，再以同一显式参数执行 swift build --build-tests；两段都成功后才执行原 29 条 Native 规则，swift test --skip-build 不再编译。最后保留原普通 Release CLI 构建。四段各保留 650 秒预算，外层 job 50 分钟有限上限；各段成功打印实际 elapsed，不预称缓存已复用。所有 build/test 超时打印捕获原 stdout 的最多 9000 字节原尾后仍失败；缺失明确报告，不忽略超时。编译不执行规则、不说明性能根因，也不授效果通过。\n\n"
+                "保留现有四个 Native 类和普通 Release 构建门禁：MediaPresentationTests 7 项、MediaPresentationMediaTests 6 项、MediaFramingMediaTests 2 项、MediaConfirmationTests 14 项，共 29 个唯一实际身份，每项 started、passed 各一次；随后显式 -j2 构建普通 Release video CLI。Native 源码、测试选择及通过条件未变，新增仅是显式测试编译阶段划分、实际耗时和超时诊断，不作为本轮 Native 效果新修复。\n\n"
                 "新增字幕分段是显式可选的 observed-natural-cues 策略，使用真实整词与精确 TN 映射，保持原文、原音、完整动作和旧缺省一镜一条字幕行为。纯规则测试使用合成观察或临时假消费者；不冒真实 SDK、影片制作、正常观看、声音试听、字幕确认或整片审核。真实用户链有独立托管证据。\n\n"
                 "317 项公开载荷逐件核同，整体指纹从当次 manifest 动态计算。无新增载荷；六份既有 Python 生产及测试文件、README 与唯一 workflow 为精确八项差额，其余 309 项保持公开基线 c5b4c171c0776392e730eec85855f35487395eb7 原字节。\n\n"
                 "本 workflow 不读取私有源码、业务素材或凭据，不含闭源 Painter，不调用 TTS、外部服务、Mac App 或高级模块；不授声音听审、字幕确认、商业权利、上传同意或整片批准。\n")
