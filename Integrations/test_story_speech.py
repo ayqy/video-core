@@ -16,7 +16,7 @@ from story_planning import StoryPlan
 from story_speech import StorySpeechError, retime_presentation, retime_presentation_author_estimate
 
 
-def literal_plan():
+def literal_plan(texts=None):
     """Five unequal authored shots; two presentation sources, no Core trace."""
     brief = dict(version=1, title='纯规则夹具', knowledge_goal='验证五镜语音轴',
         viewer_question='呈现时间是否跟随完整原声？', context='甲乙在桌前演示',
@@ -26,7 +26,7 @@ def literal_plan():
         objects=[dict(id='box', name='箱子', description='独立道具', purpose='观察拿放过程')])
     names = ['setup', 'choice', 'process', 'result', 'conclusion']
     purposes = ['setup', 'choice', 'process', 'consequence', 'conclusion']
-    texts = ['甲来。', '乙等。', '箱到了。', '钱仍在。', '再比较。']
+    texts = ['甲来。', '乙等。', '箱到了。', '钱仍在。', '再比较。'] if texts is None else texts
     lengths = [60, 90, 150, 120, 180]
     outline = dict(beats=[dict(id=name, purpose=purpose, question='如何看清？', change='展示'+name,
         actor_ids=['a'], depends_on=[] if i == 0 else [names[i-1]],
@@ -206,6 +206,81 @@ class StorySpeechRulesTests(unittest.TestCase):
         self.assertEqual(result['frames'],147)
         self.assertEqual(result['captions'][-1]['endFrame'],147)
         self.assertEqual(result['axis']['fps'],24)
+
+
+class SpeechPlanIntegrationRulesTests(unittest.TestCase):
+    """Literal TN plans/word rows only, never claims of recorded SDK events."""
+
+    def case(self, *, contracted=False):
+        original = ['3枚。','API到。','箱到了。','钱仍在。','再比较。']
+        spoken = ['三枚。','人工智能到。',*original[2:]]
+        term, pronunciation = 'API','人工智能'
+        if contracted:
+            original[1], spoken[1] = '应用程序接口到。','API到。'
+            term, pronunciation = '应用程序接口','API'
+        presentation = literal_plan(original)
+        pieces = [('3','三','number'),('枚。','枚。','unchanged'),
+                  (term,pronunciation,'dictionary'),
+                  (''.join(original)[len('3枚。'+term):],''.join(spoken)[len('三枚。'+pronunciation):],'unchanged')]
+        source = normalized = ''
+        mappings = []
+        for left,right,kind in pieces:
+            mappings.append(dict(sourceStart=len(source.encode('utf-16-le'))//2,
+                sourceLength=len(left.encode('utf-16-le'))//2,
+                normalizedStart=len(normalized.encode('utf-16-le'))//2,
+                normalizedLength=len(right.encode('utf-16-le'))//2,kind=kind))
+            source += left; normalized += right
+        speech = dict(source=source,normalized=normalized,dictionary=[dict(term=term,pronunciation=pronunciation)],
+            mappings=mappings,rate=.5,confirmed=True,notes=['纯规则夹具，未生成声音'])
+        words = [dict(type='WordBoundary',text=text,offset=offset,duration=3_000_000)
+            for text,offset in zip(spoken,(2_000_000,10_000_000,25_000_000,40_000_000,55_000_000))]
+        return presentation,speech,words
+
+    def test_normalized_words_keep_original_caption_text_and_exact_observed_word_values(self):
+        for contracted in (False,True):
+            with self.subTest(contracted=contracted):
+                presentation,speech,words = self.case(contracted=contracted)
+                original, before_speech, before_words = deepcopy(presentation),deepcopy(speech),deepcopy(words)
+                result = retime_presentation(presentation,words,6.1,speech_plan=speech)
+                texts = [s['narration'] for s in StoryPlan.from_dict(original['story']).stage('shots')['shots']]
+                self.assertEqual([cue['text'] for cue in result['captions']],texts)
+                self.assertEqual(result['axis']['narration'],speech['source'])
+                self.assertEqual(result['axis']['normalized_narration'],speech['normalized'])
+                self.assertEqual(result['axis']['speech_plan_binding']['kind'],'speech-plan-utf16-whole-segment-v1')
+                self.assertEqual([(c['startFrame'],c['endFrame']) for c in result['captions']],
+                    [(0,30),(30,75),(75,120),(120,165),(165,183)])
+                self.assertEqual(result['axis']['word_boundary_count'],5)
+                self.assertEqual([s['narration'] for s in StoryPlan.from_dict(result['presentation']['story']).stage('shots')['shots']],texts)
+                self.assertFalse(result['axis']['voice_listened']);self.assertFalse(result['axis']['captions_confirmed'])
+                self.assertTrue(all(cue['confirmed'] is False for cue in result['captions']))
+                self.assertEqual((presentation,speech,words),(original,before_speech,before_words))
+
+    def test_tn_shot_cut_inside_an_actual_whole_word_is_still_rejected(self):
+        presentation,speech,words = self.case()
+        # Exact complete normalized text still matches, but the first observed
+        # word crosses the shot cut. The adapter must never subdivide its time.
+        words[0]['text'],words[1]['text'] = '三枚人工','智能到。'
+        original = deepcopy(words)
+        with self.assertRaisesRegex(StorySpeechError,'inside an SDK word'):
+            retime_presentation(presentation,words,6.1,speech_plan=speech)
+        self.assertEqual(words,original)
+
+    def test_tn_cannot_relabel_original_word_text_as_corrected_observations(self):
+        presentation,speech,words = self.case()
+        words[0]['text'],words[1]['text'] = '3枚。','API到。'
+        with self.assertRaisesRegex(StorySpeechError,'cover every authored shot'):
+            retime_presentation(presentation,words,6.1,speech_plan=speech)
+
+    def test_explicit_none_keeps_the_preexisting_frozen_legacy_output(self):
+        presentation = literal_plan();words = literal_boundaries(presentation)
+        implicit = retime_presentation(presentation,words,6.1)
+        explicit = retime_presentation(presentation,words,6.1,speech_plan=None)
+        self.assertEqual(implicit,explicit)
+        encoded = json.dumps(explicit,ensure_ascii=False,sort_keys=True,separators=(',',':'),allow_nan=False).encode()
+        self.assertEqual(hashlib.sha256(encoded).hexdigest(),
+                         '68fc1c91efcb4fe663ac6a96457fbaf2116de31d08e936afeaaf951cded98fd4')
+        self.assertNotIn('normalized_narration',explicit['axis'])
+        self.assertNotIn('speech_plan_binding',explicit['axis'])
 
 
 class AuthorEstimateSpeechRulesTests(unittest.TestCase):

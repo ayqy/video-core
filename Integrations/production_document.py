@@ -325,6 +325,8 @@ class DocumentProduction(ProductionWorkflow):
                  'the estimated original WAV cannot use a symlink')
             self.validate_speech_receipt(self.speech_receipt_fields())
         witness = value.get('retained_speech')
+        need(getattr(args,'speech_plan',None) is None or (not self.estimated and witness is None),
+             'an external TN SpeechPlan requires the actual same-request SDK word path, not retained or estimated timing')
         if witness is not None:
             need(args.boundaries is None, 'choose retained exact speech or actual SDK words, never both')
             self.retained = FrozenSpeech(witness, self.voice, self.speech_receipt_fields(), value['presentation'])

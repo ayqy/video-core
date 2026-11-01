@@ -12,6 +12,7 @@ def main():
         parser.add_argument('--' + name, type=Path, required=True)
     parser.add_argument('--binary-sha256', required=True)
     parser.add_argument('--boundaries', type=Path)
+    parser.add_argument('--speech-plan', type=Path, help='complete confirmed Core TN plan; requires same-request SDK word boundaries')
     parser.add_argument('--executor', type=Path)
     parser.add_argument('--catalog', type=Path)
     parser.add_argument('--runtime',type=Path)

@@ -39,7 +39,7 @@ jobs:
           manifest_text=(root/'SOURCE-MANIFEST.md').read_text()
           entries=re.findall(r'(?m)^\| ([a-f0-9]{64}) \| ([0-9]+) \| ([^|\n]+) \|$',manifest_text)
           rows={name:(digest,int(size)) for digest,size,name in entries}
-          assert len(entries)==len(rows)==311
+          assert len(entries)==len(rows)==313
           for name,(digest,size) in rows.items():
               relative=Path(name)
               assert not relative.is_absolute() and '..' not in relative.parts
@@ -51,22 +51,25 @@ jobs:
           tracked=set(subprocess.check_output(['git','ls-files'],cwd=root,text=True).splitlines())
           assert tracked==set(rows)|metadata|{'SOURCE-MANIFEST.md'}
           assert not any((root/name).exists() for name in ['App','MacApp','MacUITests','Examples','Premium','Sources/VideoGame','Sources/VideoCartoon','Sources/VideoAdvanced'])
-          BASE_PUBLIC_COMMIT='ada320aebb8012e16482011ac8c0ae5cd5b77b2d'
+          BASE_PUBLIC_COMMIT='fef95484c24bf4e1e3b90e463b16198c42c58ee8'
           ADDITIONS={
-              'Sources/VideoCore/MediaConfirmation.swift',
-              'Tests/VideoCoreTests/MediaConfirmationTests.swift',
+              'Integrations/speech_plan_alignment.py',
+              'Integrations/test_speech_plan_alignment.py',
           }
           REVIEWED_CHANGED={
               '.github/workflows/free-production.yml',
-              'Sources/VideoCore/AgentContract.swift',
-              'Sources/VideoCore/AgentMutation.swift',
-              'Sources/VideoCore/AgentSchemas.swift',
-              'Sources/VideoCore/Editing.swift',
-              'Sources/VideoCore/Storage.swift',
+              'README.md',
+              'Integrations/README.md',
+              'Integrations/produce_knowledge.py',
+              'Integrations/production_document.py',
+              'Integrations/production_workflow.py',
+              'Integrations/story_speech.py',
+              'Integrations/test_production_workflow.py',
+              'Integrations/test_story_speech.py',
           }
-          PROTECTED_COUNT=303
-          PROTECTED_SHA256='c01aaac0bf9ada7b8022206c4a3348e5f299ba53d07a9ba1bc64600ff7f7d425'
-          assert len(ADDITIONS)==2 and len(REVIEWED_CHANGED)==6 and not ADDITIONS&REVIEWED_CHANGED
+          PROTECTED_COUNT=302
+          PROTECTED_SHA256='9f9e2085c77b90caa0baa4840ab22fbbff535c452de2a5afc9f2ba3902005651'
+          assert len(ADDITIONS)==2 and len(REVIEWED_CHANGED)==9 and not ADDITIONS&REVIEWED_CHANGED
           assert ADDITIONS|REVIEWED_CHANGED<=set(rows)
           protected={name:value for name,value in rows.items() if name not in ADDITIONS|REVIEWED_CHANGED}
           digest_input=''.join(f'{name}\0{protected[name][0]}\0{protected[name][1]}\n' for name in sorted(protected))
@@ -75,98 +78,83 @@ jobs:
           inventory_sha256=hashlib.sha256(inventory_input.encode()).hexdigest()
           assert f'整体内容指纹：`{inventory_sha256}`' in manifest_text
           print('current_payload_fingerprint='+inventory_sha256)
-          print('manifest_payloads=311 added_public_inputs=2 changed_reviewed_inputs=6 unchanged_protected_inputs=303 source_commit='+head)
-          print('protected_baseline_commit='+BASE_PUBLIC_COMMIT+' current_media_confirmation_checks=pending')
+          print('manifest_payloads=313 added_public_inputs=2 changed_reviewed_inputs=9 unchanged_protected_inputs=302 source_commit='+head)
+          print('protected_baseline_commit='+BASE_PUBLIC_COMMIT+' current_python_checks=pending reused_media_confirmation_rules=14')
           PYCODE
 
-      - name: Execute all media-confirmation rules and build the ordinary Release CLI
+      - name: Execute the complete affected Python rules
         shell: bash
         run: |
           python3 -B - <<'PYCODE'
-          import hashlib, os, re, subprocess, sys
+          import hashlib, io, os, sys, unittest
           from pathlib import Path
-          expected={
-              ('VideoCoreTests', 'MediaConfirmationTests', 'testSourceApprovalKeepsContentJobsAndFiveReviewsUnchanged'),
-              ('VideoCoreTests', 'MediaConfirmationTests', 'testCaptionConfirmationIsIndependentFromVoiceAndWholeFilmReview'),
-              ('VideoCoreTests', 'MediaConfirmationTests', 'testBothLocalConfirmationsStillRequireAnActualCompletePreviewAndFiveReviews'),
-              ('VideoCoreTests', 'MediaConfirmationTests', 'testChangedExpectedDigestVoiceSourceTextDurationOrCaptionTimingRejectsAtomically'),
-              ('VideoCoreTests', 'MediaConfirmationTests', 'testWrongWorkspacePrincipalAndStaleRevisionCannotRecordConfirmation'),
-              ('VideoCoreTests', 'MediaConfirmationTests', 'testPhysicalSourceBytesMustStillMatchBeforeTheAtomicWrite'),
-              ('VideoCoreTests', 'MediaConfirmationTests', 'testPhysicalSourceFileSymlinkParentSymlinkAndHardlinkAreRejected'),
-              ('VideoCoreTests', 'MediaConfirmationTests', 'testOriginalApprovalCannotConfirmCaptionsAndEstimatedTimingCannotClaimReliableTimestamps'),
-              ('VideoCoreTests', 'MediaConfirmationTests', 'testRequestReplayIsIdempotentAndChangedClaimCannotReuseTheRequestID'),
-              ('VideoCoreTests', 'MediaConfirmationTests', 'testNewRevisionNeverInheritsTheOldConfirmationEvenWithTheSameVoice'),
-              ('VideoCoreTests', 'MediaConfirmationTests', 'testChangedSourceMetadataAndMissingHistoricalReferencesOnlyInvalidateLookup'),
-              ('VideoCoreTests', 'MediaConfirmationTests', 'testBackupColdRestorePreservesTheIndependentRecordAndOriginalHistory'),
-              ('VideoCoreTests', 'MediaConfirmationTests', 'testLegacySnapshotWithoutTheOptionalLedgerKeepsItsExactRevisionDigest'),
-              ('VideoCoreTests', 'MediaConfirmationTests', 'testDryRunAndStrictCommandSchemaNeverWriteOrAcceptNestedApprovals'),
-          }
-          assert len(expected)==14
           root=Path(os.environ['GITHUB_WORKSPACE'])
-          source=root/'Tests/VideoCoreTests/MediaConfirmationTests.swift'
-          text=source.read_text()
-          classes=re.findall(r'(?m)^\s*(?:final\s+)?class\s+(\w+)\s*:\s*XCTestCase\s*\{',text)
-          assert classes==['MediaConfirmationTests'] and not re.search(r'(?m)^\s*extension\s+',text)
-          available=re.findall(r'(?m)^\s*func\s+(test\w+)\s*\(',text)
-          assert len(available)==len(set(available))==14
-          assert {row[2] for row in expected}==set(available)
-          assert not re.search(r'\b(?:XCTSkip|XCTSkipIf|XCTSkipUnless|XCTExpectFailure)\b',text)
-          print('current_media_confirmation_test_source_sha256='+hashlib.sha256(source.read_bytes()).hexdigest())
-          def verify_swift_stream(text, expected):
-              pattern=re.compile(r"^Test Case '(?:-\[(?:(?P<ot>\w+)\.)?(?P<os>\w+) (?P<om>test\w+)\]|(?:(?P<st>\w+)\.)?(?P<ss>\w+)\.(?P<sm>test\w+))' (?P<event>started|passed|failed|skipped)\b")
-              started=[];passed=[]
-              for line in text.splitlines():
-                  match=pattern.match(line)
-                  if match is None:
-                      if line.startswith("Test Case '") and re.search(r"' (started|passed|failed|skipped)\b",line):raise ValueError('Unparsed actual XCTest identity')
-                      continue
-                  suite=match['os'] or match['ss'];method=match['om'] or match['sm'];target=match['ot'] or match['st']
-                  if target is None:
-                      candidates={row[0] for row in expected if row[1:]==(suite,method)}
-                      if len(candidates)!=1:raise ValueError('Ambiguous actual XCTest target')
-                      target=candidates.pop()
-                  identity=(target,suite,method)
-                  if identity not in expected:raise ValueError('Unexpected actual XCTest method')
-                  if match['event']=='started':
-                      if identity in started:raise ValueError('Duplicate actual XCTest start')
-                      started.append(identity)
-                  elif match['event']=='passed':
-                      if identity not in started or identity in passed:raise ValueError('Unstarted or duplicate actual XCTest pass')
-                      passed.append(identity)
-                  else:raise ValueError('Actual affected XCTest failed or skipped')
-              if len(started)!=len(expected) or set(started)!=expected:raise ValueError('Missing actual XCTest starts')
-              if len(passed)!=len(expected) or set(passed)!=expected:raise ValueError('Missing actual XCTest passes')
-              if len(expected) not in [int(v) for v in re.findall(r'Executed (\d+) tests?',text)]:raise ValueError('Actual XCTest summary incomplete')
-              return len(expected)
+          sys.path.insert(0,str(root/'Integrations'))
+          modules=['test_speech_plan_alignment','test_story_speech','test_production_workflow',
+                   'test_production_document','test_production_styles']
+          counts=[12,23,32,22,13]
+          def tests(suite):
+              for item in suite:
+                  if isinstance(item,unittest.TestSuite):yield from tests(item)
+                  else:yield item
+          suites=[unittest.defaultTestLoader.loadTestsFromName(name) for name in modules]
+          identities=[[case.id() for case in tests(suite)] for suite in suites]
+          assert [len(items) for items in identities]==counts
+          expected={identity for items in identities for identity in items}
+          assert len(expected)==sum(counts)==102
+          assert all(identity.startswith(name+'.') for name,items in zip(modules,identities) for identity in items)
+          for name in modules:
+              source=root/'Integrations'/(name+'.py')
+              print('current_python_test_source_sha256='+name+':'+hashlib.sha256(source.read_bytes()).hexdigest())
+          class ExactResult(unittest.TextTestResult):
+              def __init__(self,*args,**kwargs):
+                  super().__init__(*args,**kwargs);self.started_ids=[];self.passed_ids=[]
+              def startTest(self,test):
+                  self.started_ids.append(test.id());super().startTest(test)
+              def addSuccess(self,test):
+                  self.passed_ids.append(test.id());super().addSuccess(test)
+          output=io.StringIO()
+          result=unittest.TextTestRunner(stream=output,verbosity=2,resultclass=ExactResult).run(unittest.TestSuite(suites))
+          print(output.getvalue())
+          assert result.wasSuccessful() and result.testsRun==len(expected)
+          assert not result.skipped and not result.expectedFailures and not result.unexpectedSuccesses
+          assert len(result.started_ids)==len(result.passed_ids)==len(expected)
+          assert set(result.started_ids)==set(result.passed_ids)==expected
+          for identity in sorted(expected):print('current_python_passed='+identity)
+          print('current_python_rules=102 synthetic_fixture_only=true media_executed=false review=false')
+          PYCODE
+
+      - name: Build the ordinary Release CLI
+        shell: bash
+        run: |
+          python3 -B - <<'PYCODE'
+          import os, subprocess, sys
+          from pathlib import Path
+          root=Path(os.environ['GITHUB_WORKSPACE'])
           def execute(argv,seconds):
               result=subprocess.run(argv,cwd=root,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,timeout=seconds)
               if result.returncode!=0:
                   print(result.stdout[-6000:],file=sys.stderr)
-                  raise RuntimeError('Affected native command failed')
-              assert len(result.stdout.encode())<=16*1024*1024, 'Bounded native diagnostics required'
+                  raise RuntimeError('Ordinary CLI build failed')
+              assert len(result.stdout.encode())<=16*1024*1024, 'Bounded build diagnostics required'
               return result.stdout
           scratch=Path(os.environ['RUNNER_TEMP'])/'video-production-swiftpm'
-          scope='|'.join('^'+re.escape(target)+r'\.'+re.escape(suite)+'/'+re.escape(method)+'$'
-                         for target,suite,method in sorted(expected))
-          stream=execute(['swift','test','-c','release','--scratch-path',str(scratch),'-j','2','--filter',scope],900)
-          assert verify_swift_stream(stream,expected)==14
-          for identity in sorted(expected):print('current_native_passed='+'.'.join(identity))
           execute(['swift','build','-c','release','--product','video','--scratch-path',str(scratch),'-j','2'],600)
           bins=execute(['swift','build','-c','release','--scratch-path',str(scratch),'-j','2','--show-bin-path'],30).strip()
           product=Path(bins)/'video'
           assert product.is_file() and not product.is_symlink() and os.access(product,os.X_OK)
-          print('current_native_rules=14 current_media_confirmation_rules=14 current_release_cli_builds=1 current_python_rules=0 media_executed=false review=false')
+          print('current_release_cli_builds=1 current_native_rules=0 reused_media_confirmation_rules=14 media_executed=false review=false')
           PYCODE
 
-      - name: Record exact independent-confirmation evidence boundaries
+      - name: Record exact current Python and reused native evidence boundaries
         shell: bash
         run: |
           python3 -B - <<'PYCODE'
           import os
-          text=("本次执行独立声音/字幕确认的精准回归：MediaConfirmationTests 全部十四个方法。每个方法必须实际 started、passed 各一次；未知身份、遗漏、重复、失败、skip 和不完整汇总均拒绝。随后以同一 SwiftPM scratch 和显式 -j2 构建普通 Release video CLI。\n\n"
-                "正常确认入口按明确目标、当前版本/内容摘要、完整原音及字幕时轴保存独立记录，不修改渲染内容或旧任务。分别核声音/字幕隔离、估计时轴不得冒可靠时间戳、实际源字节/链接拒绝、权限和旧版本拒绝、幂等/预检及完整备份冷恢复；独立确认不自动满足整片五审或完整预览。规则中的人工声明是测试输入，不代表任何真实媒体已听审。\n\n"
-                "311 项公开清单逐件核同，并动态核当前导出整体指纹。仅新增 MediaConfirmation.swift 和 MediaConfirmationTests.swift 两项；workflow 与五个现有 Core 成员是精确审查差额，其余 303 项保持公开基线 ada320aebb8012e16482011ac8c0ae5cd5b77b2d 原字节。旧九条 LayerTests 及其它未变规则按原证据范围复用，不改称本轮执行。\n\n"
-                "本 workflow 不读取私有源码、素材或凭据，不包含闭源 Painter，不调用 TTS、媒体生产或高级模块，不授声音听审、字幕确认、商业权利、上传同意或真实人工审核。\n")
+          text=("本次执行五个完整受影响 Python 模块：test_speech_plan_alignment 12 项、test_story_speech 23 项、test_production_workflow 32 项、test_production_document 22 项、test_production_styles 13 项，共 102 个唯一实际测试身份。每项必须实际 started、passed 各一次；遗漏、重复、失败、skip、预期失败与不完整汇总均拒绝。随后以显式 -j2 构建一次普通 Release video CLI。\n\n"
+                "规范稿 TN 按 Core 原文及规范稿双轴范围映射镜头，原字幕保留原文，字幕与镜头继续只使用同请求 SDK 整词边界；不能把规范化结果伪作原始观测。规则使用明确合成输入，不表示真实配音、媒体制作或人工听审。\n\n"
+                "313 项公开载荷逐件核同，并动态核当前导出整体指纹。仅新增 speech_plan_alignment.py 及其测试；两份 README、workflow 与六个现有 Integrations 文件为精确九项审查差额，其余 302 项保持公开基线 fef95484c24bf4e1e3b90e463b16198c42c58ee8 原字节。未变 MediaConfirmation 十四项及其它 Native 规则仅按既验来源复用，不在本轮重跑，也不计入当前规则执行。\n\n"
+                "本 workflow 不读取私有源码、素材或凭据，不含闭源 Painter，不调用 TTS、媒体生产或高级模块，不授声音听审、字幕确认、商业权利、上传同意或真实人工审核。\n")
           with open(os.environ['GITHUB_STEP_SUMMARY'],'a') as stream:stream.write(text)
-          print('current_native_rules=14 current_media_confirmation_rules=14 current_release_cli_builds=1 current_python_rules=0 real_business_media_executed=false review=false')
+          print('current_python_rules=102 current_native_rules=0 reused_media_confirmation_rules=14 current_release_cli_builds=1 real_business_media_executed=false review=false')
           PYCODE

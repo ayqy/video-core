@@ -25,6 +25,7 @@ import uuid
 from knowledge_story import record_sources,apply_presentation,_last_tick,_trace
 from readaloud_tts import inspect_mp3,read_word_boundaries
 from story_speech import retime_presentation
+from speech_plan_alignment import map_shot_texts
 
 ROOT=Path(__file__).resolve().parents[1]
 
@@ -121,7 +122,30 @@ class ProductionWorkflow:
 
     def speech_inputs(self,args):
         self.boundaries=args.boundaries.resolve(strict=True)
-        return [self.boundaries]
+        paths=[self.boundaries]
+        supplied=getattr(args,'speech_plan',None)
+        self.speech_plan_path=None
+        if supplied is not None:
+            self.speech_plan_path=Path(supplied).resolve(strict=True)
+            need(not Path(supplied).is_symlink() and self.speech_plan_path.is_file()
+                 and self.speech_plan_path.stat().st_size<=262144,'a bounded ordinary complete SpeechPlan is required')
+            paths.append(self.speech_plan_path)
+        return paths
+
+    def speech_plan(self):
+        path=getattr(self,'speech_plan_path',None)
+        if path is None:return None
+        plan=read(path)
+        # Validate the complete Core shape and both text axes before accepting
+        # a receipt. This hook does not confirm listening or subtitle timing.
+        map_shot_texts([self.narration()],plan)
+        need(plan['confirmed'] and plan.get('voiceIdentifier')==self.VOICE_IDENTIFIER,
+             'explicitly select and confirm this SpeechPlan voice before attaching its original')
+        return plan
+
+    def speech_text(self):
+        plan=self.speech_plan()
+        return self.narration() if plan is None else plan['normalized']
 
     def source_speech_inputs(self):
         return (self.voice,self.speech_receipt_path(),self.boundaries)
@@ -144,7 +168,7 @@ class ProductionWorkflow:
     def validate_speech_receipt(self,fields):
         need(fields.get('audio_sha256')==sha(self.voice.read_bytes())
             and fields.get('word_boundaries.sha256')==self.word_boundary_sha256()
-            and fields.get('request.text')==self.narration()
+            and fields.get('request.text')==self.speech_text()
             and fields.get('request.voice')==self.VOICE_IDENTIFIER
             and fields.get('request.configuration.boundary')=='WordBoundary',
             'the original receipt must bind this exact full text, voice and same-request word metadata')
@@ -159,7 +183,7 @@ class ProductionWorkflow:
             inspection=inspect_mp3(self.voice,self.ffmpeg,self.ffprobe)
             need(str(inspection['container_duration'])==fields['inspection.container_duration'],'original source duration differs')
         inspection={key:float(fields['inspection.'+key]) for key in ('decoded_duration','container_duration')}
-        boundaries=read_word_boundaries(self.boundaries,self.narration(),inspection)
+        boundaries=read_word_boundaries(self.boundaries,self.speech_text(),inspection)
         dummy=dict(id='target',workspaceID='workspace',revisions=[dict(id='initial',fps=self.FPS,
             aspect=self.ASPECT,scenes=[dict(id='stage')])])
         plan=self.presentation_for(dummy,{k:self.uid('source-'+k) for k in self.model_sources()})
@@ -168,7 +192,9 @@ class ProductionWorkflow:
             observed=read(axis)['axis']['duration_seconds']
             need(Decimal(observed)==Decimal(duration),'retained measured voice duration changed')
             duration=observed
-        return retime_presentation(plan,boundaries,duration,fps=self.FPS)
+        selected=self.speech_plan()
+        options=dict(speech_plan=selected) if selected is not None else {}
+        return retime_presentation(plan,boundaries,duration,fps=self.FPS,**options)
 
     def production_name(self):
         raise NotImplementedError('declare a production name')
@@ -203,7 +229,7 @@ class ProductionWorkflow:
         owner=self.author if inspect.ismodule(self.author) or inspect.isclass(self.author) else type(self.author)
         paths.append(Path(inspect.getfile(owner)).resolve())
         paths += [ROOT/'Integrations'/name for name in
-                  ('knowledge_story.py','story_speech.py','story_action.py','story_planning.py','readaloud_tts.py')]
+                  ('knowledge_story.py','story_speech.py','speech_plan_alignment.py','story_action.py','story_planning.py','readaloud_tts.py')]
         paths += [Path(p).resolve() for p in self.implementation_inputs()]
         paths += [Path(p).resolve() for p in self.EXTRA_INPUTS]
         return paths
@@ -213,7 +239,9 @@ class ProductionWorkflow:
     def target_project_name(self):return self.production_name()
     def voice_material_name(self):return self.production_name()+'·完整原音'
     def motion_edit_description(self):return '为真实来源动作添加独立人物表现；保原音与原因果'
-    def caption_edit_description(self):return '按完整新原音同流逐词边界绑定字幕；保持未听审'
+    def caption_edit_description(self):
+        return ('按规范稿实测词界与原文TN范围绑定字幕镜头窗；保持未听审' if self.speech_plan() is not None else
+                '按完整新原音同流逐词边界绑定字幕；保持未听审')
 
     def import_materials(self,source_project):
         """Ordinary originals; specialized SDK batches override only this step.
@@ -387,7 +415,14 @@ class ProductionWorkflow:
             'the normal CLI must support the explicitly declared source and target frame rate')
         attached=self.home/'voice-attached.plist'
         if not attached.exists():
-            normalized=unpack(self.invoke('speech normalize',dict(text=self.narration(),dictionary=[])))
+            selected=self.speech_plan()
+            normalized=unpack(self.invoke('speech normalize',dict(text=self.narration(),
+                dictionary=selected['dictionary'] if selected is not None else [])))
+            if selected is not None:
+                need(all(normalized[key]==selected[key] for key in
+                    ('source','normalized','dictionary','mappings','rate')),
+                    'this production requires the unchanged normal Core normalization; manual readaloud needs a separate explicit path')
+                normalized=deepcopy(selected)
             normalized.update(voiceIdentifier=self.VOICE_IDENTIFIER,confirmed=True)
             response=self.write('speech attach',dict(workspace_id=self.ws,project_id=pid,scene_id=self.uid('presentation'),
                 base_revision=current['revisions'][-1]['id'],asset_id=voice_binding['asset_id'],speech_plan=normalized,extend_scene=False,timeout_seconds=90))

@@ -347,6 +347,36 @@ class SourceObservationContracts(unittest.TestCase):
 
 
 class SpeechAxisHookContracts(unittest.TestCase):
+    def test_explicit_TN_plan_binds_normalized_receipt_and_keeps_original_narration(self):
+        # Literal text/file fixtures only, no actual speech or media claims.
+        with tempfile.TemporaryDirectory() as folder:
+            host=ProductionWorkflow.__new__(ProductionWorkflow)
+            host.home=Path(folder);host.VOICE_IDENTIFIER='UNIT-voice'
+            host.voice=host.home/'original.mp3';host.voice.write_bytes(b'UNIT-not-audio')
+            host.boundaries=host.home/'words';host.boundaries.write_bytes(b'UNIT-not-observations')
+            host.narration=lambda:'付3枚。'
+            plan=dict(source=host.narration(),normalized='付三枚。',dictionary=[],rate=.45,
+                confirmed=True,notes=[],voiceIdentifier=host.VOICE_IDENTIFIER,mappings=[
+                    dict(sourceStart=0,sourceLength=1,normalizedStart=0,normalizedLength=1,kind='unchanged'),
+                    dict(sourceStart=1,sourceLength=1,normalizedStart=1,normalizedLength=1,kind='number'),
+                    dict(sourceStart=2,sourceLength=2,normalizedStart=2,normalizedLength=2,kind='unchanged')])
+            host.speech_plan_path=host.home/'speech-plan.plist';save(host.speech_plan_path,plan)
+            fields={'audio_sha256':sha(host.voice.read_bytes()),
+                'word_boundaries.sha256':sha(host.boundaries.read_bytes()),
+                'request.text':plan['normalized'],'request.voice':host.VOICE_IDENTIFIER,
+                'request.configuration.boundary':'WordBoundary'}
+            host.validate_speech_receipt(fields)
+            self.assertEqual(host.speech_text(),plan['normalized'])
+            self.assertEqual(host.narration(),'付3枚。')
+            self.assertEqual(host.speech_plan(),plan)
+            for wrong in (host.narration(),'少一枚。'):
+                with self.subTest(wrong=wrong),self.assertRaisesRegex(ValueError,'receipt'):
+                    host.validate_speech_receipt(dict(fields,**{'request.text':wrong}))
+            for key,value in (('confirmed',False),('voiceIdentifier','UNIT-other'),('source','付4枚。')):
+                changed=deepcopy(plan);changed[key]=value
+                host.speech_plan_path.write_bytes(plistlib.dumps(changed))
+                with self.subTest(key=key),self.assertRaises(ValueError):host.speech_plan()
+
     def test_explicit_presentation_hook_owns_content_and_declared_frame_rate(self):
         with tempfile.TemporaryDirectory() as folder:
             host=ProductionWorkflow.__new__(ProductionWorkflow)

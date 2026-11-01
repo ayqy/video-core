@@ -16,6 +16,7 @@ import hashlib
 
 from readaloud_tts import spoken_text
 from story_planning import StoryPlan, StoryPlanningError
+from speech_plan_alignment import map_shot_texts, SpeechPlanAlignmentError
 
 
 TICKS_PER_SECOND = 10_000_000
@@ -34,7 +35,7 @@ def _frame(value, high):
     return type(value) is int and 0 <= value <= high
 
 
-def retime_presentation(presentation, boundaries, duration_seconds, *, fps=30):
+def retime_presentation(presentation, boundaries, duration_seconds, *, fps=30, speech_plan=None):
     """Return ``{presentation, captions, frames, first_word_frame, axis}``.
 
     ``boundaries`` is the actual complete SDK sequence of dictionaries with
@@ -52,7 +53,8 @@ def retime_presentation(presentation, boundaries, duration_seconds, *, fps=30):
     Source *display* windows change; all source models, native ticks, event
     selectors, interventions and other semantics remain byte-for-byte values.
     """
-    return _retime_presentation(presentation, boundaries, duration_seconds, fps=fps, estimated=False)
+    return _retime_presentation(presentation, boundaries, duration_seconds, fps=fps, estimated=False,
+                                speech_plan=speech_plan)
 
 
 def retime_presentation_author_estimate(presentation, duration_seconds, *, fps=30,
@@ -72,7 +74,8 @@ def retime_presentation_author_estimate(presentation, duration_seconds, *, fps=3
     return _retime_presentation(presentation, None, duration_seconds, fps=fps, estimated=True,sample_clock=clock)
 
 
-def _retime_presentation(presentation, boundaries, duration_seconds, *, fps, estimated,sample_clock=None):
+def _retime_presentation(presentation, boundaries, duration_seconds, *, fps, estimated,sample_clock=None,
+                         speech_plan=None):
     _need(isinstance(presentation, dict), 'an explicit knowledge presentation is required')
     _need(type(fps) is int and 1 <= fps <= 120, 'fps must be an integer from 1 to 120')
     _need(isinstance(presentation.get('target'), dict) and presentation['target'].get('fps') == fps,
@@ -86,7 +89,14 @@ def _retime_presentation(presentation, boundaries, duration_seconds, *, fps, est
     shots = shots_content['shots']
     old_frames = shots[-1]['start_frame'] + shots[-1]['duration_frames']
     texts = [row['narration'] for row in shots]
-    clean_texts = [spoken_text(text) for text in texts]
+    mapped = None
+    if speech_plan is not None:
+        _need(not estimated, 'TN binding requires actual complete SDK words')
+        try:
+            mapped = map_shot_texts(texts, speech_plan)
+        except SpeechPlanAlignmentError as error:
+            raise StorySpeechError(str(error)) from error
+    clean_texts = [spoken_text(text) for text in (mapped['normalized_texts'] if mapped else texts)]
     _need(all(clean_texts), 'each shot needs explicit spoken text; a silent shot needs separate authored timing')
     narration = ''.join(texts)
     _need(type(duration_seconds) in (int, float, str) and not isinstance(duration_seconds, bool),
@@ -170,6 +180,8 @@ def _retime_presentation(presentation, boundaries, duration_seconds, *, fps, est
         shot['duration_frames'] = segment['end_frame'] - segment['start_frame']
     note = ('按作者镜头比例估计完整原音的句段轴；并非实测词时间，须另行校时听审' if estimated else
             '绑定完整新原音的实际逐词镜头窗；仅修改呈现时间，保留原生因果来源')
+    if mapped:
+        note = '按完整规范稿实测词界与原文TN范围绑定镜头窗；不推断改写段内原文字或音素时间'
     result['story'] = story.rewrite('shots', shots_content, note).to_dict()
     source_rows = result.get('sources')
     _need(isinstance(source_rows, list) and 1 <= len(source_rows) <= 3,
@@ -225,9 +237,14 @@ def _retime_presentation(presentation, boundaries, duration_seconds, *, fps, est
         alignment=('estimated_sentence_no_word_timestamps' if estimated else
                    'actual_original_readaloud_word_boundaries_unconfirmed'), confirmed=False)
         for segment in segments]
+    if mapped:
+        for caption in captions:
+            caption['alignment'] = 'actual_original_readaloud_TN_mapped_shot_boundaries_unconfirmed'
     axis = dict(fps=fps, duration_seconds=str(duration), duration_frames=frames,
                 original_duration_frames=old_frames, narration=narration,
                 segments=segments, voice_listened=False, captions_confirmed=False)
+    if mapped:
+        axis.update(speech_plan_binding=mapped['binding'], normalized_narration=speech_plan['normalized'])
     output = dict(presentation=result, captions=captions, frames=frames, axis=axis)
     if estimated:
         axis.update(kind='authored-sentence-estimate', timing_basis='authored-shot-proportions',
