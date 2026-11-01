@@ -35,7 +35,8 @@ def _frame(value, high):
     return type(value) is int and 0 <= value <= high
 
 
-def retime_presentation(presentation, boundaries, duration_seconds, *, fps=30, speech_plan=None):
+def retime_presentation(presentation, boundaries, duration_seconds, *, fps=30, speech_plan=None,
+                        caption_policy=None):
     """Return ``{presentation, captions, frames, first_word_frame, axis}``.
 
     ``boundaries`` is the actual complete SDK sequence of dictionaries with
@@ -54,7 +55,115 @@ def retime_presentation(presentation, boundaries, duration_seconds, *, fps=30, s
     selectors, interventions and other semantics remain byte-for-byte values.
     """
     return _retime_presentation(presentation, boundaries, duration_seconds, fps=fps, estimated=False,
-                                speech_plan=speech_plan)
+                                speech_plan=speech_plan, caption_policy=caption_policy)
+
+
+def validate_caption_policy(value):
+    """An explicit author budget, not a renderer size or an approval override."""
+    _need(type(value) is dict and set(value) == {'version', 'kind', 'max_chars'}
+          and type(value['version']) is int and value['version'] == 1
+          and value['kind'] == 'observed-natural-cues'
+          and type(value['max_chars']) is int and 8 <= value['max_chars'] <= 120,
+          'caption policy needs version 1, observed-natural-cues and an integer max_chars from 8 to 120')
+    return deepcopy(value)
+
+
+def _natural_caption_cues(segments, boundaries, speech_plan, policy, fps):
+    """Split display text only at natural, exact TN and complete SDK-word cuts.
+
+    The next observed whole word supplies an interior cue time. No character
+    duration, punctuation duration or rewritten-TN interior time is invented.
+    A declaration with no safe partition fails instead of truncating text or
+    relaxing the independent native subtitle layout checks.
+    """
+    source = ''.join(segment['text'] for segment in segments)
+    word_cuts, count = {0: 0}, 0
+    for index, word in enumerate(boundaries, 1):
+        count += len(spoken_text(word['text']))
+        word_cuts[count] = index
+    strong = frozenset('。！？；!?;')
+    marks = strong | frozenset('，、：,:')
+    closers = frozenset('”’」』）》】)]')
+
+    def mapped_cut(cut):
+        if speech_plan is None:
+            prefix = source[:cut]
+        elif cut == 0:
+            prefix = ''
+        elif cut == len(source):
+            prefix = speech_plan['normalized']
+        else:
+            try:
+                prefix = map_shot_texts([source[:cut], source[cut:]], speech_plan)['normalized_texts'][0]
+            except SpeechPlanAlignmentError:
+                return None
+        index = word_cuts.get(len(spoken_text(prefix)))
+        if index is None:
+            return None
+        return index, len(prefix.encode('utf-16-le')) // 2
+
+    captions, observations, offset = [], [], 0
+    for segment in segments:
+        text = segment['text']; length = len(text)
+        candidates = {0: False, length: False}
+        if length > policy['max_chars']:
+            for position, scalar in enumerate(text, 1):
+                # ASCII periods are sentence candidates only before whitespace
+                # or the end, so a decimal/version cannot be cut at its dot.
+                is_period = scalar == '.' and (position == length or text[position].isspace())
+                if scalar not in marks and not is_period:
+                    continue
+                end = position
+                while end < length and (text[end] in closers or text[end].isspace()):
+                    end += 1
+                candidates[end] = scalar not in strong and not is_period
+        safe = {}
+        for cut, weak in sorted(candidates.items()):
+            mapped = mapped_cut(offset + cut)
+            if mapped is None:
+                continue
+            index, normalized_cut = mapped
+            frame = (segment['start_frame'] if cut == 0 else segment['end_frame'] if cut == length
+                     else boundaries[index]['offset'] * fps // TICKS_PER_SECOND if index < len(boundaries) else None)
+            if frame is not None and segment['start_frame'] <= frame <= segment['end_frame']:
+                safe[cut] = (frame, index, normalized_cut, weak)
+        _need(0 in safe and length in safe, 'caption shot endpoints need exact complete SDK-word boundaries')
+        # Bounded dynamic partition: fewest readable cues, then whole sentences,
+        # then balanced lengths. It avoids an unnecessarily tiny final clause.
+        paths = {0: ((0, 0, 0), [])}
+        for right in sorted(safe):
+            if right == 0:
+                continue
+            choices = []
+            for left, (score, cuts) in paths.items():
+                size = right - left
+                if not (0 < size <= policy['max_chars'] and safe[left][0] < safe[right][0]
+                        and bool(spoken_text(text[left:right]))):
+                    continue
+                cost = (score[0] + 1, score[1] + (int(safe[right][3]) if right < length else 0),
+                        score[2] + size * size)
+                choices.append((cost, cuts + [right]))
+            if choices:
+                paths[right] = min(choices)
+        _need(length in paths, 'no natural caption partition fits max_chars at exact TN/whole SDK-word boundaries; revise the declared budget or narration')
+        cuts = [0] + paths[length][1]
+        for left, right in zip(cuts, cuts[1:]):
+            a, b = safe[left], safe[right]
+            identity = ('speech-shot-' + hashlib.sha256(segment['shot_id'].encode()).hexdigest()[:32]
+                        if len(cuts) == 2 else 'speech-cue-' + hashlib.sha256(
+                            (segment['shot_id'] + '\0' + str(left) + '\0' + str(right)).encode()).hexdigest()[:32])
+            captions.append(dict(id=identity, text=text[left:right], startFrame=a[0], endFrame=b[0],
+                alignment=('actual_original_readaloud_TN_mapped_natural_cue_boundaries_unconfirmed' if speech_plan
+                           else 'actual_original_readaloud_natural_cue_word_boundaries_unconfirmed'), confirmed=False))
+            observations.append(dict(id=identity, shot_id=segment['shot_id'],
+                source_start_utf16=len(source[:offset + left].encode('utf-16-le')) // 2,
+                source_end_utf16=len(source[:offset + right].encode('utf-16-le')) // 2,
+                normalized_start_utf16=a[2], normalized_end_utf16=b[2],
+                sdk_word_start=a[1], sdk_word_end=b[1], start_frame=a[0], end_frame=b[0]))
+        offset += length
+    _need(''.join(cue['text'] for cue in captions) == source,
+          'natural captions must retain every original scalar and punctuation in order')
+    return captions, observations
 
 
 def retime_presentation_author_estimate(presentation, duration_seconds, *, fps=30,
@@ -75,7 +184,7 @@ def retime_presentation_author_estimate(presentation, duration_seconds, *, fps=3
 
 
 def _retime_presentation(presentation, boundaries, duration_seconds, *, fps, estimated,sample_clock=None,
-                         speech_plan=None):
+                          speech_plan=None, caption_policy=None):
     _need(isinstance(presentation, dict), 'an explicit knowledge presentation is required')
     _need(type(fps) is int and 1 <= fps <= 120, 'fps must be an integer from 1 to 120')
     _need(isinstance(presentation.get('target'), dict) and presentation['target'].get('fps') == fps,
@@ -99,6 +208,9 @@ def _retime_presentation(presentation, boundaries, duration_seconds, *, fps, est
     clean_texts = [spoken_text(text) for text in (mapped['normalized_texts'] if mapped else texts)]
     _need(all(clean_texts), 'each shot needs explicit spoken text; a silent shot needs separate authored timing')
     narration = ''.join(texts)
+    if caption_policy is not None:
+        caption_policy = validate_caption_policy(caption_policy)
+        _need(not estimated, 'natural caption cues require actual complete SDK words, not estimated timing')
     _need(type(duration_seconds) in (int, float, str) and not isinstance(duration_seconds, bool),
           'the complete measured original audio duration is required')
     _need(not isinstance(duration_seconds, str) or len(duration_seconds) <= 64,
@@ -245,6 +357,9 @@ def _retime_presentation(presentation, boundaries, duration_seconds, *, fps, est
                 segments=segments, voice_listened=False, captions_confirmed=False)
     if mapped:
         axis.update(speech_plan_binding=mapped['binding'], normalized_narration=speech_plan['normalized'])
+    if caption_policy is not None:
+        captions, caption_segments = _natural_caption_cues(segments, boundaries, speech_plan, caption_policy, fps)
+        axis.update(caption_policy=caption_policy, caption_segments=caption_segments)
     output = dict(presentation=result, captions=captions, frames=frames, axis=axis)
     if estimated:
         axis.update(kind='authored-sentence-estimate', timing_basis='authored-shot-proportions',

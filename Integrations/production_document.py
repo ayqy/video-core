@@ -22,7 +22,7 @@ from presenter_composition import compose as compose_presenter, validate_profile
 from speech_energy import analyze_take
 from sdk_material_import import invoke_import, validate_receipt, validate_spec
 from scene_layout import present
-from story_speech import retime_presentation_author_estimate
+from story_speech import retime_presentation_author_estimate, validate_caption_policy
 import voice_design_tts as voice_design
 
 
@@ -95,7 +95,7 @@ class ProductionDocument:
         object_keys(value, ('version', 'name', 'voice_identifier', 'aspect', 'fps', 'viewport',
                            'presentation', 'scene', 'materials'),
                     ('motion_actions','retained_speech','projection','presenter','sdk_import','supporting_files',
-                     'story_layout','speech_timing'))
+                      'story_layout','speech_timing','caption_policy'))
         need(type(value['version']) is int and value['version'] == 1
              and isinstance(value['name'], str) and 1 <= len(value['name']) <= 200
              and isinstance(value['voice_identifier'], str) and 1 <= len(value['voice_identifier']) <= 200,
@@ -111,6 +111,10 @@ class ProductionDocument:
         story = StoryPlan.from_dict(value['presentation']['story'])
         self.narration = ''.join(s['narration'] for s in story.stage('shots')['shots'])
         self.frames = story.stage('shots')['shots'][-1]['start_frame'] + story.stage('shots')['shots'][-1]['duration_frames']
+        if 'caption_policy' in value:
+            validate_caption_policy(value['caption_policy'])
+            need(value.get('speech_timing') is None and value.get('retained_speech') is None,
+                 'natural caption cues require the actual same-request SDK word path, not retained or estimated timing')
         self.estimate_receipt = None
         timing = value.get('speech_timing')
         if timing is not None:
@@ -502,6 +506,9 @@ class DocumentProduction(ProductionWorkflow):
 
     def production_name(self):
         return self.document.value['name']
+
+    def caption_policy(self):
+        return deepcopy(self.document.value.get('caption_policy'))
 
     def caption_edit_description(self):
         if self.estimated:return '按完整原音的作者句段估计轴绑定未确认字幕；待独立校时与听审'

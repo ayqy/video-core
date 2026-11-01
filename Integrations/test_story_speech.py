@@ -14,6 +14,7 @@ import unittest
 from examples.knowledge_delivery import presentation as delivery_presentation
 from story_planning import StoryPlan
 from story_speech import StorySpeechError, retime_presentation, retime_presentation_author_estimate
+from readaloud_tts import spoken_text
 
 
 def literal_plan(texts=None):
@@ -281,6 +282,101 @@ class SpeechPlanIntegrationRulesTests(unittest.TestCase):
                          '68fc1c91efcb4fe663ac6a96457fbaf2116de31d08e936afeaaf951cded98fd4')
         self.assertNotIn('normalized_narration',explicit['axis'])
         self.assertNotIn('speech_plan_binding',explicit['axis'])
+
+
+class NaturalCaptionCueRulesTests(unittest.TestCase):
+    """Synthetic words and clocks only; not SDK, renderer or listening evidence."""
+    policy = dict(version=1, kind='observed-natural-cues', max_chars=16)
+
+    def case(self, first='阿青有3枚，阿蓝有6枚。货已交出，钱还没到。'):
+        texts = [first, '乙等。', '箱到了。', '钱仍在。', '再比较。']
+        presentation = literal_plan(texts)
+        from test_speech_plan_alignment import plan
+        pieces = []
+        for scalar in ''.join(texts):
+            pieces.append((scalar, {'3': '三', '6': '六'}.get(scalar, scalar),
+                           'number' if scalar in '36' else 'unchanged'))
+        speech = plan(pieces)
+        words = [dict(type='WordBoundary', text=scalar, offset=2_000_000 + index * 2_000_000,
+                      duration=1_000_000) for index, scalar in enumerate(spoken_text(speech['normalized']))]
+        duration = str(Decimal(words[-1]['offset'] + words[-1]['duration'] + 2_000_000) / 10_000_000)
+        return presentation, speech, words, duration
+
+    def test_natural_cues_are_independent_of_shots_and_change_no_visual_or_audio_axis(self):
+        presentation, speech, words, duration = self.case()
+        before = deepcopy((presentation, speech, words, self.policy))
+        old = retime_presentation(presentation, words, duration, speech_plan=speech)
+        result = retime_presentation(presentation, words, duration, speech_plan=speech,
+                                     caption_policy=self.policy)
+        self.assertGreater(len(result['captions']), len(old['captions']))
+        self.assertEqual(result['presentation'], old['presentation'])
+        self.assertEqual({k: v for k, v in result['axis'].items()
+                          if k not in ('caption_policy', 'caption_segments')}, old['axis'])
+        self.assertEqual(''.join(c['text'] for c in result['captions']), speech['source'])
+        self.assertTrue(all(0 < len(c['text']) <= 16 and c['confirmed'] is False
+                            for c in result['captions']))
+        self.assertFalse(result['axis']['voice_listened']); self.assertFalse(result['axis']['captions_confirmed'])
+        self.assertEqual(before, (presentation, speech, words, self.policy))
+        for a, b in zip(result['captions'], result['captions'][1:]):
+            self.assertEqual(a['endFrame'], b['startFrame'])
+        self.assertEqual((result['captions'][0]['startFrame'], result['captions'][-1]['endFrame']),
+                         (0, result['frames']))
+        rows = result['axis']['caption_segments']
+        for row in rows:
+            if row['start_frame'] not in {s['start_frame'] for s in result['axis']['segments']}:
+                self.assertEqual(row['start_frame'], words[row['sdk_word_start']]['offset'] * 30 // 10_000_000)
+        for a, b in zip(rows, rows[1:]):
+            self.assertEqual(a['sdk_word_end'], b['sdk_word_start'])
+            self.assertEqual(a['source_end_utf16'], b['source_start_utf16'])
+            self.assertEqual(a['normalized_end_utf16'], b['normalized_start_utf16'])
+
+    def test_a_natural_cut_must_not_subdivide_an_observed_whole_sdk_word(self):
+        presentation, speech, words, duration = self.case()
+        first = spoken_text(speech['normalized'][:len(StoryPlan.from_dict(presentation['story']).stage('shots')['shots'][0]['narration'])])
+        merged = dict(words[0], text=first, duration=words[len(first)-1]['offset'] + words[len(first)-1]['duration'] - words[0]['offset'])
+        words = [merged] + words[len(first):]
+        with self.assertRaisesRegex(StorySpeechError, 'no natural caption partition'):
+            retime_presentation(presentation, words, duration, speech_plan=speech, caption_policy=self.policy)
+
+    def test_tn_rewritten_sentence_remains_indivisible_even_when_sdk_words_have_a_cut(self):
+        presentation, speech, words, duration = self.case()
+        source = speech['source']; normalized = speech['normalized']
+        first = StoryPlan.from_dict(presentation['story']).stage('shots')['shots'][0]['narration']
+        from test_speech_plan_alignment import plan
+        speech = plan([(first, normalized[:len(first)], 'dictionary'),
+                       (source[len(first):], normalized[len(first):], 'unchanged')])
+        with self.assertRaisesRegex(StorySpeechError, 'no natural caption partition'):
+            retime_presentation(presentation, words, duration, speech_plan=speech, caption_policy=self.policy)
+
+    def test_long_unpunctuated_text_fails_without_truncation_or_arbitrary_character_timing(self):
+        presentation, speech, words, duration = self.case(first='阿青反复检查货箱并且等待买家带着硬币来付款。')
+        before = deepcopy((presentation, speech, words))
+        with self.assertRaisesRegex(StorySpeechError, 'no natural caption partition'):
+            retime_presentation(presentation, words, duration, speech_plan=speech, caption_policy=self.policy)
+        self.assertEqual(before, (presentation, speech, words))
+
+    def test_quotes_astral_scalars_and_original_spacing_keep_exact_utf16_ranges(self):
+        presentation, speech, words, duration = self.case(first='阿青说：“货到😀。” 阿蓝说：“钱还在。”')
+        result = retime_presentation(presentation, words, duration, speech_plan=speech,
+                                     caption_policy=dict(self.policy, max_chars=14))
+        first = [c['text'] for c, row in zip(result['captions'], result['axis']['caption_segments'])
+                 if row['shot_id'] == 'shot-setup']
+        self.assertEqual(first, ['阿青说：“货到😀。” ', '阿蓝说：“钱还在。”'])
+        encoded = speech['source'].encode('utf-16-le')
+        for cue, row in zip(result['captions'], result['axis']['caption_segments']):
+            self.assertEqual(encoded[row['source_start_utf16']*2:row['source_end_utf16']*2].decode('utf-16-le'), cue['text'])
+
+    def test_policy_schema_rejects_ambiguous_limits_unknown_fields_and_versions(self):
+        presentation, speech, words, duration = self.case()
+        values = [None, {}, dict(self.policy, version=True), dict(self.policy, version=2),
+                  dict(self.policy, max_chars=True), dict(self.policy, max_chars=7),
+                  dict(self.policy, max_chars=121), dict(self.policy, kind='estimate'),
+                  dict(self.policy, confirmed=True)]
+        for policy in values[1:]:
+            with self.subTest(policy=policy), self.assertRaises(StorySpeechError):
+                retime_presentation(presentation, words, duration, speech_plan=speech, caption_policy=policy)
+        self.assertEqual(retime_presentation(presentation, words, duration, speech_plan=speech),
+                         retime_presentation(presentation, words, duration, speech_plan=speech, caption_policy=None))
 
 
 class AuthorEstimateSpeechRulesTests(unittest.TestCase):

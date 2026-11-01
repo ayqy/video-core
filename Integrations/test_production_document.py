@@ -69,6 +69,27 @@ class DocumentTests(unittest.TestCase):
         self.assertEqual(scene['evidenceIDs'], ['proof'])
         self.assertNotIn('voice', scene)
 
+    def test_explicit_natural_caption_policy_reaches_the_normal_workflow_hook(self):
+        value = self.declaration()
+        value['caption_policy'] = dict(version=1, kind='observed-natural-cues', max_chars=24)
+        document = self.load(value)
+        host = DocumentProduction.__new__(DocumentProduction); host.document = document
+        self.assertEqual(host.caption_policy(), value['caption_policy'])
+        host.caption_policy()['max_chars'] = 8
+        self.assertEqual(document.value['caption_policy']['max_chars'], 24)
+        value.pop('caption_policy'); host.document = self.load(value)
+        self.assertIsNone(host.caption_policy())
+
+    def test_natural_caption_policy_rejects_injected_approval_estimates_and_retained_timing(self):
+        policy = dict(version=1, kind='observed-natural-cues', max_chars=24)
+        for change in (lambda v: v.update(caption_policy=None),
+                       lambda v: v['caption_policy'].update(confirmed=True),
+                       lambda v: v.update(speech_timing={}),
+                       lambda v: v.update(retained_speech={})):
+            value = self.declaration(); value['caption_policy'] = deepcopy(policy); change(value)
+            with self.subTest(value=value.get('caption_policy')), self.assertRaises(ValueError):
+                self.load(value)
+
     def test_foreign_business_claims_captions_and_unknown_fields_reject_before_import(self):
         for key, value in [('voice', dict(listened=True)), ('storyCausality', dict(version=1)),
                            ('storyActions', [dict(id='fake')]), ('captions', [dict(confirmed=True)])]:

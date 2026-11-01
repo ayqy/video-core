@@ -403,6 +403,24 @@ class SpeechAxisHookContracts(unittest.TestCase):
             self.assertEqual(set(observed[0][1]),{'alpha','beta','gamma'})
             self.assertEqual(observed[0][0]['revisions'][0]['fps'],24)
 
+    def test_explicit_caption_policy_is_forwarded_only_when_the_author_selects_it(self):
+        with tempfile.TemporaryDirectory() as folder:
+            host=ProductionWorkflow.__new__(ProductionWorkflow)
+            host.home=Path(folder);host.SOURCE_NAMESPACE='UNIT-cues';host.FPS=30;host.ASPECT='16:9'
+            host.voice=host.home/'UNIT-unread-voice';host.boundaries=host.home/'UNIT-unread-boundaries'
+            host.ffmpeg=host.home/'UNIT-never-decoded';host.ffprobe=host.home/'UNIT-never-probed'
+            host.narration=lambda:'UNIT original narration';host.model_sources=lambda:dict(alpha={})
+            presentation=dict(UNIT='literal authored presentation');host.presentation_for=lambda p,ids:presentation
+            policy=dict(version=1,kind='observed-natural-cues',max_chars=24)
+            host.caption_policy=lambda:deepcopy(policy)
+            fields={'inspection.container_duration':'4','inspection.decoded_duration':'4'}
+            words=[dict(UNIT='literal boundary observation')]
+            with patch.object(workflow,'inspect_mp3',return_value=dict(container_duration=4)), \
+                 patch.object(workflow,'read_word_boundaries',return_value=words), \
+                 patch.object(workflow,'retime_presentation',return_value=dict(UNIT='literal timing')) as retime:
+                host.load_speech_axis(fields,host.home/'absent-axis.plist')
+            retime.assert_called_once_with(presentation,words,'4',fps=30,caption_policy=policy)
+
 
 class OriginalJobContracts(unittest.TestCase):
     def test_live_original_lease_performs_no_execution_or_replacement(self):

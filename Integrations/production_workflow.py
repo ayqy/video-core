@@ -147,6 +147,10 @@ class ProductionWorkflow:
         plan=self.speech_plan()
         return self.narration() if plan is None else plan['normalized']
 
+    def caption_policy(self):
+        """Optional display-only author policy; legacy callers keep one cue per shot."""
+        return None
+
     def source_speech_inputs(self):
         return (self.voice,self.speech_receipt_path(),self.boundaries)
 
@@ -194,6 +198,8 @@ class ProductionWorkflow:
             duration=observed
         selected=self.speech_plan()
         options=dict(speech_plan=selected) if selected is not None else {}
+        policy=self.caption_policy()
+        if policy is not None:options['caption_policy']=policy
         return retime_presentation(plan,boundaries,duration,fps=self.FPS,**options)
 
     def production_name(self):
