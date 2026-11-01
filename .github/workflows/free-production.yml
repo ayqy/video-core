@@ -39,7 +39,7 @@ jobs:
           manifest_text=(root/'SOURCE-MANIFEST.md').read_text()
           entries=re.findall(r'(?m)^\| ([a-f0-9]{64}) \| ([0-9]+) \| ([^|\n]+) \|$',manifest_text)
           rows={name:(digest,int(size)) for digest,size,name in entries}
-          assert len(entries)==len(rows)==309
+          assert len(entries)==len(rows)==311
           for name,(digest,size) in rows.items():
               relative=Path(name)
               assert not relative.is_absolute() and '..' not in relative.parts
@@ -51,16 +51,22 @@ jobs:
           tracked=set(subprocess.check_output(['git','ls-files'],cwd=root,text=True).splitlines())
           assert tracked==set(rows)|metadata|{'SOURCE-MANIFEST.md'}
           assert not any((root/name).exists() for name in ['App','MacApp','MacUITests','Examples','Premium','Sources/VideoGame','Sources/VideoCartoon','Sources/VideoAdvanced'])
-          BASE_PUBLIC_COMMIT='be4ae44a778ef8bac395a06a5e1e49fad6344b91'
-          ADDITIONS=set()
+          BASE_PUBLIC_COMMIT='ada320aebb8012e16482011ac8c0ae5cd5b77b2d'
+          ADDITIONS={
+              'Sources/VideoCore/MediaConfirmation.swift',
+              'Tests/VideoCoreTests/MediaConfirmationTests.swift',
+          }
           REVIEWED_CHANGED={
               '.github/workflows/free-production.yml',
-              'Sources/VideoCore/Layers.swift',
-              'Tests/VideoCoreTests/LayerTests.swift',
+              'Sources/VideoCore/AgentContract.swift',
+              'Sources/VideoCore/AgentMutation.swift',
+              'Sources/VideoCore/AgentSchemas.swift',
+              'Sources/VideoCore/Editing.swift',
+              'Sources/VideoCore/Storage.swift',
           }
-          PROTECTED_COUNT=306
-          PROTECTED_SHA256='8d049a9d29aa47f5f8d2dcf27fdc09b44a0bdeeefc33b834a6cd2b056131200b'
-          assert len(ADDITIONS)==0 and len(REVIEWED_CHANGED)==3 and not ADDITIONS&REVIEWED_CHANGED
+          PROTECTED_COUNT=303
+          PROTECTED_SHA256='c01aaac0bf9ada7b8022206c4a3348e5f299ba53d07a9ba1bc64600ff7f7d425'
+          assert len(ADDITIONS)==2 and len(REVIEWED_CHANGED)==6 and not ADDITIONS&REVIEWED_CHANGED
           assert ADDITIONS|REVIEWED_CHANGED<=set(rows)
           protected={name:value for name,value in rows.items() if name not in ADDITIONS|REVIEWED_CHANGED}
           digest_input=''.join(f'{name}\0{protected[name][0]}\0{protected[name][1]}\n' for name in sorted(protected))
@@ -69,38 +75,43 @@ jobs:
           inventory_sha256=hashlib.sha256(inventory_input.encode()).hexdigest()
           assert f'整体内容指纹：`{inventory_sha256}`' in manifest_text
           print('current_payload_fingerprint='+inventory_sha256)
-          print('manifest_payloads=309 added_public_inputs=0 changed_reviewed_inputs=3 unchanged_protected_inputs=306 source_commit='+head)
-          print('protected_baseline_commit='+BASE_PUBLIC_COMMIT+' current_layer_lock_checks=pending')
+          print('manifest_payloads=311 added_public_inputs=2 changed_reviewed_inputs=6 unchanged_protected_inputs=303 source_commit='+head)
+          print('protected_baseline_commit='+BASE_PUBLIC_COMMIT+' current_media_confirmation_checks=pending')
           PYCODE
 
-      - name: Execute all LayerTests and build the ordinary Release CLI
+      - name: Execute all media-confirmation rules and build the ordinary Release CLI
         shell: bash
         run: |
           python3 -B - <<'PYCODE'
           import hashlib, os, re, subprocess, sys
           from pathlib import Path
           expected={
-              ('VideoCoreTests', 'LayerTests', 'testCommentCannotReferenceOtherVersionSceneOrTime'),
-              ('VideoCoreTests', 'LayerTests', 'testExplicitLayerUnlockAllowsChangingItsStoryActionAndKeepsLockedHistory'),
-              ('VideoCoreTests', 'LayerTests', 'testLayerLocksAndExplicitUnlock'),
-              ('VideoCoreTests', 'LayerTests', 'testLockedLayerAllowsActionReorderingOtherSubjectsAndRecipientReferences'),
-              ('VideoCoreTests', 'LayerTests', 'testLockedLayerRejectsRemovingAddingAndChangingItsStoryActions'),
-              ('VideoCoreTests', 'LayerTests', 'testPlainLayerPauseAndMotionSurviveAlignedSpeedSplits'),
-              ('VideoCoreTests', 'LayerTests', 'testSplitRetimesLayerAndKeepsHistory'),
-              ('VideoCoreTests', 'LayerTests', 'testUnchangedLockedLayerCannotBeMovedThroughItsStoryAction'),
-              ('VideoCoreTests', 'LayerTests', 'testVisualPauseHoldsTheFinalSourceWithoutExtendingCaptionWindowsOrAuthoredExits'),
+              ('VideoCoreTests', 'MediaConfirmationTests', 'testSourceApprovalKeepsContentJobsAndFiveReviewsUnchanged'),
+              ('VideoCoreTests', 'MediaConfirmationTests', 'testCaptionConfirmationIsIndependentFromVoiceAndWholeFilmReview'),
+              ('VideoCoreTests', 'MediaConfirmationTests', 'testBothLocalConfirmationsStillRequireAnActualCompletePreviewAndFiveReviews'),
+              ('VideoCoreTests', 'MediaConfirmationTests', 'testChangedExpectedDigestVoiceSourceTextDurationOrCaptionTimingRejectsAtomically'),
+              ('VideoCoreTests', 'MediaConfirmationTests', 'testWrongWorkspacePrincipalAndStaleRevisionCannotRecordConfirmation'),
+              ('VideoCoreTests', 'MediaConfirmationTests', 'testPhysicalSourceBytesMustStillMatchBeforeTheAtomicWrite'),
+              ('VideoCoreTests', 'MediaConfirmationTests', 'testPhysicalSourceFileSymlinkParentSymlinkAndHardlinkAreRejected'),
+              ('VideoCoreTests', 'MediaConfirmationTests', 'testOriginalApprovalCannotConfirmCaptionsAndEstimatedTimingCannotClaimReliableTimestamps'),
+              ('VideoCoreTests', 'MediaConfirmationTests', 'testRequestReplayIsIdempotentAndChangedClaimCannotReuseTheRequestID'),
+              ('VideoCoreTests', 'MediaConfirmationTests', 'testNewRevisionNeverInheritsTheOldConfirmationEvenWithTheSameVoice'),
+              ('VideoCoreTests', 'MediaConfirmationTests', 'testChangedSourceMetadataAndMissingHistoricalReferencesOnlyInvalidateLookup'),
+              ('VideoCoreTests', 'MediaConfirmationTests', 'testBackupColdRestorePreservesTheIndependentRecordAndOriginalHistory'),
+              ('VideoCoreTests', 'MediaConfirmationTests', 'testLegacySnapshotWithoutTheOptionalLedgerKeepsItsExactRevisionDigest'),
+              ('VideoCoreTests', 'MediaConfirmationTests', 'testDryRunAndStrictCommandSchemaNeverWriteOrAcceptNestedApprovals'),
           }
-          assert len(expected)==9
+          assert len(expected)==14
           root=Path(os.environ['GITHUB_WORKSPACE'])
-          source=root/'Tests/VideoCoreTests/LayerTests.swift'
+          source=root/'Tests/VideoCoreTests/MediaConfirmationTests.swift'
           text=source.read_text()
           classes=re.findall(r'(?m)^\s*(?:final\s+)?class\s+(\w+)\s*:\s*XCTestCase\s*\{',text)
-          assert classes==['LayerTests'] and not re.search(r'(?m)^\s*extension\s+',text)
+          assert classes==['MediaConfirmationTests'] and not re.search(r'(?m)^\s*extension\s+',text)
           available=re.findall(r'(?m)^\s*func\s+(test\w+)\s*\(',text)
-          assert len(available)==len(set(available))==9
+          assert len(available)==len(set(available))==14
           assert {row[2] for row in expected}==set(available)
           assert not re.search(r'\b(?:XCTSkip|XCTSkipIf|XCTSkipUnless|XCTExpectFailure)\b',text)
-          print('current_layer_test_source_sha256='+hashlib.sha256(source.read_bytes()).hexdigest())
+          print('current_media_confirmation_test_source_sha256='+hashlib.sha256(source.read_bytes()).hexdigest())
           def verify_swift_stream(text, expected):
               pattern=re.compile(r"^Test Case '(?:-\[(?:(?P<ot>\w+)\.)?(?P<os>\w+) (?P<om>test\w+)\]|(?:(?P<st>\w+)\.)?(?P<ss>\w+)\.(?P<sm>test\w+))' (?P<event>started|passed|failed|skipped)\b")
               started=[];passed=[]
@@ -138,24 +149,24 @@ jobs:
           scope='|'.join('^'+re.escape(target)+r'\.'+re.escape(suite)+'/'+re.escape(method)+'$'
                          for target,suite,method in sorted(expected))
           stream=execute(['swift','test','-c','release','--scratch-path',str(scratch),'-j','2','--filter',scope],900)
-          assert verify_swift_stream(stream,expected)==9
+          assert verify_swift_stream(stream,expected)==14
           for identity in sorted(expected):print('current_native_passed='+'.'.join(identity))
           execute(['swift','build','-c','release','--product','video','--scratch-path',str(scratch),'-j','2'],600)
           bins=execute(['swift','build','-c','release','--scratch-path',str(scratch),'-j','2','--show-bin-path'],30).strip()
           product=Path(bins)/'video'
           assert product.is_file() and not product.is_symlink() and os.access(product,os.X_OK)
-          print('current_native_rules=9 current_layer_rules=9 current_release_cli_builds=1 current_python_rules=0 media_executed=false review=false')
+          print('current_native_rules=14 current_media_confirmation_rules=14 current_release_cli_builds=1 current_python_rules=0 media_executed=false review=false')
           PYCODE
 
-      - name: Record exact layer-lock evidence boundaries
+      - name: Record exact independent-confirmation evidence boundaries
         shell: bash
         run: |
           python3 -B - <<'PYCODE'
           import os
-          text=("本次只执行锁层动作保护的精准回归：LayerTests 的全部九个方法，原五个方法保留并新增四个。每个方法必须实际 started、passed 各一次；未知身份、遗漏、重复、失败、skip 和不完整汇总均拒绝。随后以同一 SwiftPM scratch 和显式 -j2 构建普通 Release video CLI。\n\n"
-                "锁定主体自身的 storyActions 不能绕过层锁修改；动作重排、其他主体动作及仅 recipient 引用的边界分别验证，显式解锁允许局改且历史锁定版本保持。测试执行与编译不代表真实编辑事务、完整游戏制作、看听或交付验收。\n\n"
-                "309 项公开清单逐件核同，并动态核当前导出整体指纹；除 workflow、Layers.swift、LayerTests.swift 三个精确审查路径外，其余 306 项保持公开基线 be4ae44a778ef8bac395a06a5e1e49fad6344b91 原字节。无新增公开输入。原 199 Python 与 48 Native 规则不在本次执行范围，不将历史结果改称当前通过。\n\n"
-                "本 workflow 不读取私有源码、素材或凭据，不包含闭源 Painter，不调用 TTS、媒体生产或高级模块，不授声音听审、字幕确认、商业权利、上传同意或人工审核。\n")
+          text=("本次执行独立声音/字幕确认的精准回归：MediaConfirmationTests 全部十四个方法。每个方法必须实际 started、passed 各一次；未知身份、遗漏、重复、失败、skip 和不完整汇总均拒绝。随后以同一 SwiftPM scratch 和显式 -j2 构建普通 Release video CLI。\n\n"
+                "正常确认入口按明确目标、当前版本/内容摘要、完整原音及字幕时轴保存独立记录，不修改渲染内容或旧任务。分别核声音/字幕隔离、估计时轴不得冒可靠时间戳、实际源字节/链接拒绝、权限和旧版本拒绝、幂等/预检及完整备份冷恢复；独立确认不自动满足整片五审或完整预览。规则中的人工声明是测试输入，不代表任何真实媒体已听审。\n\n"
+                "311 项公开清单逐件核同，并动态核当前导出整体指纹。仅新增 MediaConfirmation.swift 和 MediaConfirmationTests.swift 两项；workflow 与五个现有 Core 成员是精确审查差额，其余 303 项保持公开基线 ada320aebb8012e16482011ac8c0ae5cd5b77b2d 原字节。旧九条 LayerTests 及其它未变规则按原证据范围复用，不改称本轮执行。\n\n"
+                "本 workflow 不读取私有源码、素材或凭据，不包含闭源 Painter，不调用 TTS、媒体生产或高级模块，不授声音听审、字幕确认、商业权利、上传同意或真实人工审核。\n")
           with open(os.environ['GITHUB_STEP_SUMMARY'],'a') as stream:stream.write(text)
-          print('current_native_rules=9 current_layer_rules=9 current_release_cli_builds=1 current_python_rules=0 real_business_media_executed=false review=false')
+          print('current_native_rules=14 current_media_confirmation_rules=14 current_release_cli_builds=1 current_python_rules=0 real_business_media_executed=false review=false')
           PYCODE

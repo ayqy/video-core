@@ -343,13 +343,14 @@ public enum Quality {
                 let unsupported=ClaimRules.candidates(claim).filter{!isCurrentPrice($0) && !ClaimRules.hasProof($0,evidence:linked,workspaceID:revision.workspaceID,now:now)}
                 for (index,text) in unsupported.enumerated() {issues.append(QualityIssue(s.id+"claims-\(index)","主张须关联已核实、允许商用且逐句记录该原句的证据："+String(text.prefix(100))+"。自动检查不代替事实审核"))}
             }
+            let mediaConfirmation:MediaConfirmationStatus? = requireReview ? (try? MediaConfirmationRules.status(revision:revision,scene:s,database:database,now:now)):nil
             if !s.narration.isEmpty {
                 if let plan=s.speechPlan,requireReview && !plan.confirmed {issues.append(QualityIssue(s.id+"tn_review","中文规范稿和词典读法尚未核对"))}
-                if let voice = s.voice { if voice.textDigest != (try s.speechDigest()) { issues.append(QualityIssue(s.id+"voice", "旁白已修改，旧声音失效")) }; if voice.durationFrames > s.durationFrames { issues.append(QualityIssue(s.id+"voice_length", "配音超出镜头，请延长时长；禁止自动截断")) }; if requireReview && !voice.listened { issues.append(QualityIssue(s.id+"listened", "请试听真实配音后确认")) } }
+                if let voice = s.voice { if voice.textDigest != (try s.speechDigest()) { issues.append(QualityIssue(s.id+"voice", "旁白已修改，旧声音失效")) }; if voice.durationFrames > s.durationFrames { issues.append(QualityIssue(s.id+"voice_length", "配音超出镜头，请延长时长；禁止自动截断")) }; if requireReview && !voice.listened && mediaConfirmation?.voice != true { issues.append(QualityIssue(s.id+"listened", "请试听真实配音后确认")) } }
                 else { issues.append(QualityIssue(s.id+"voice_missing", "尚无真实配音；请录入/生成声音或明确改为无旁白镜头")) }
             }
             do {_ = try SpeechRules.captionTimelineRanges(for:s)} catch {issues.append(QualityIssue(s.id+"caption_ranges",(error as? VideoError)?.localizedDescription ?? "字幕区间或实际输出时间无效"))}
-            if requireReview && s.captions.contains(where: { !$0.confirmed }) { issues.append(QualityIssue(s.id+"captions", "字幕时间尚未人工或可靠时间戳确认")) }
+            if requireReview && s.captions.contains(where: { !$0.confirmed }) && mediaConfirmation?.captions != true { issues.append(QualityIssue(s.id+"captions", "字幕时间尚未人工或可靠时间戳确认")) }
             if requireReview && !s.narration.isEmpty {
                 if s.captions.isEmpty { issues.append(QualityIssue(s.id+"captions_missing","有旁白但尚无字幕，请按真实音轨校正")) }
                 let pattern=try NSRegularExpression(pattern:"[0-9]+(?:\\.[0-9]+)?")

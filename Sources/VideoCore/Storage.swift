@@ -23,6 +23,7 @@ public struct Database: Codable, Sendable {
     public var supportRecords: [SupportRecord]?
     public var intentReceipts: [IntentReceipt]?
     public var agentReplayRecords: [AgentReplayRecord]?
+    public var mediaConfirmations: [MediaConfirmation]?
     public var topicBatches: [TopicBatch]?
     public var teachingBatches: [TeachingBatch]?
     public var courseCohortStatements: [CourseCohortStatement]?
@@ -43,6 +44,7 @@ public struct Database: Codable, Sendable {
         try CohortFinance.validateStatements(self)
         try TeachingBatchRules.validateDatabase(self)
         try UpstreamLicenseRules.validate(database: self)
+        try MediaConfirmationRules.validate(database:self)
     }
     public mutating func importOrders(_ rows: [Order], batchID: String) throws {
         if imports.contains(where: { $0.id == batchID && !$0.rolledBack }) { return }

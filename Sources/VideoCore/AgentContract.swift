@@ -69,6 +69,7 @@ public enum AgentContract {
         AgentCommand("speech synthesize",required:["workspace_id","project_id","scene_id","base_revision","speech_plan","request_id"],optional:["extend_scene","timeout_seconds"],permission:.projectWrite,writes:true,idempotency:"confirmed_input_atomic_revision_receipt_local_speech"),
         AgentCommand("edit apply", required: ["workspace_id", "project_id", "base_revision", "edits"], optional: ["text"], permission: .projectWrite, writes: true, idempotency: "atomic_database_request_receipt"),
         AgentCommand("review record", required: ["workspace_id", "project_id", "base_revision", "review"], permission: .projectReview, writes: true, idempotency: "atomic_database_request_receipt"),
+        AgentCommand("media confirm",required:["workspace_id","project_id","base_revision","scene_id","confirmation","request_id"],permission:.projectReview,writes:true,idempotency:"atomic_database_request_receipt"),
         AgentCommand("production export", required: ["workspace_id", "project_id", "base_revision", "job_id", "path", "request_id"], writes: true, idempotency: "exclusive_named_directory_no_overwrite_no_request_replay"),
         AgentCommand("render estimate", required: ["workspace_id", "project_id"], optional: ["estimate", "text"], permission: .projectRead),
         AgentCommand("render submit", required: ["workspace_id", "project_id", "quote", "request_id"], optional: ["budget"], permission: .projectWrite, writes: true, idempotency: "frozen_job_request_key"),
@@ -99,7 +100,7 @@ public enum AgentContract {
         AgentCommand("cash record", required: ["workspace_id", "cash"], writes: true, idempotency: "atomic_database_request_receipt")
     ]
     private static let common = ["principal", "request_id"]
-    private static let objectFields: Set<String> = ["speech_plan", "product", "evidence", "review", "quote", "budget", "publication", "sale", "deal", "expense", "cash", "baseline", "estimate", "billing_record", "baidu_input"]
+    private static let objectFields: Set<String> = ["confirmation", "speech_plan", "product", "evidence", "review", "quote", "budget", "publication", "sale", "deal", "expense", "cash", "baseline", "estimate", "billing_record", "baidu_input"]
     private static let arrayFields: Set<String> = ["evidence_ids", "edits", "orders", "metrics", "job_ids", "scenes", "dictionary"]
     public static func describe(_ command: String) throws -> AgentCommand {
         guard let descriptor = commands.first(where: { $0.name == command }) else { throw VideoError.invalid("未知命令，请用schema发现受支持命令") }; return descriptor
@@ -141,6 +142,7 @@ public enum AgentContract {
             }
         }
         var count = 0; try validateTree(value, depth: 0, count: &count)
+        if command==MediaConfirmationRules.command,let confirmation=object["confirmation"] {try MediaConfirmationRules.validateInput(confirmation)}
         if let p = object["purpose"]?.string, !Purpose.allCases.map(\.rawValue).contains(p) { throw VideoError.invalid("purpose不在支持范围") }
         if let p = object["aspect"]?.string, !Aspect.allCases.map(\.rawValue).contains(p) { throw VideoError.invalid("aspect不在支持范围") }
         if let p = object["kind"]?.string, !SceneKind.allCases.map(\.rawValue).contains(p) { throw VideoError.invalid("kind不在支持范围") }

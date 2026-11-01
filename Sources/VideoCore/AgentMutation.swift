@@ -2,7 +2,7 @@ import Foundation
 
 public enum AgentMutationOrigin:Equatable,Sendable {case cli,nativeIntent}
 public enum AgentMutationExecutor {
-    public static let commands:Set<String>=["workspaces create","products import","evidence add","script create","projects create","edit apply","review record","orders import","metrics import","imports rollback","publications record","sales record","brands record","expenses record","cash record"]
+    public static let commands:Set<String>=["workspaces create","products import","evidence add","script create","projects create","edit apply","review record","media confirm","orders import","metrics import","imports rollback","publications record","sales record","brands record","expenses record","cash record"]
     public static func canonicalInput(command:String,data:Data,principal:String,requestID:String)throws->Data {
         var values=try AgentContract.validate(command:command,data:data)
         guard !principal.isEmpty else{throw VideoError.permission("缺少执行身份")}
@@ -86,6 +86,11 @@ public enum AgentMutationExecutor {
             var updated=try Editor.apply(decode("edits",[Edit].self),to:project,baseRevision:text("base_revision"),assets:database.assets.filter{$0.workspaceID==workspaceID},message:values["text"]?.string ?? "Agent编辑")
             updated.revisions[updated.revisions.count-1].dependencies=try DependencyRules.freeze(revision:updated.current,assets:database.assets,evidence:database.evidence)
             database.projects[database.projects.firstIndex{$0.id==id}!]=updated;for i in database.publications.indices where database.publications[i].projectID==id {database.publications[i].stale=true};projectID=id;revisionID=updated.current.id;state="needs_review"
+        case "media confirm":
+            let record=try MediaConfirmationRules.prepare(workspaceID:workspaceID,projectID:text("project_id"),revisionID:text("base_revision"),sceneID:text("scene_id"),confirmation:decode("confirmation",MediaConfirmationRequest.self),database:database,principal:principal)
+            if let repository {try repository.verifyMediaConfirmationSource(record,database:database)}
+            database.mediaConfirmations=(database.mediaConfirmations ?? [])+[record]
+            projectID=record.projectID;revisionID=record.revisionID;result=try encoded(record)
         case "review record":
             let id=text("project_id"),project=try database.project(id);guard project.workspaceID==workspaceID,project.current.id==text("base_revision") else{throw VideoError.conflict("审核目标版本已变化")}
             var review=try decode("review",Review.self);review.digest=try project.current.contentDigest();review.reviewer=principal;review.at=Date();var candidate=project.current;candidate.review=review

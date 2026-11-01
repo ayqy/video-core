@@ -4,7 +4,7 @@ import Foundation
 /// payloads and stored defaults (which JSONDecoder still requires). Domain rules
 /// and current permissions are evaluated separately; a schema never grants access.
 public enum AgentSchemas {
-    public static let fieldTypes:[String:String] = ["speech_plan":"SpeechPlan","dictionary":"[SpeechTerm]","baidu_input":"BaiduVideoInput","product":"Product","evidence":"Evidence","review":"Review","quote":"Quote","budget":"BudgetPolicy","publication":"Publication","sale":"ToolSale","deal":"BrandDeal","expense":"Expense","cash":"CashEntry","baseline":"Baseline","estimate":"EstimateBreakdown","billing_record":"BillingRecord","orders":"[Order]","metrics":"[Metric]","edits":"[Edit]","scenes":"[Scene]","evidence_ids":"[s]","job_ids":"[s]"]
+    public static let fieldTypes:[String:String] = ["confirmation":"MediaConfirmationRequest","speech_plan":"SpeechPlan","dictionary":"[SpeechTerm]","baidu_input":"BaiduVideoInput","product":"Product","evidence":"Evidence","review":"Review","quote":"Quote","budget":"BudgetPolicy","publication":"Publication","sale":"ToolSale","deal":"BrandDeal","expense":"Expense","cash":"CashEntry","baseline":"Baseline","estimate":"EstimateBreakdown","billing_record":"BillingRecord","orders":"[Order]","metrics":"[Metric]","edits":"[Edit]","scenes":"[Scene]","evidence_ids":"[s]","job_ids":"[s]"]
     public static func shape(_ type:String)->AgentValue {
         if type.hasPrefix("["),type.hasSuffix("]") {return .object(["type":.string("array"),"items":shape(String(type.dropFirst().dropLast()))])}
         if type.hasPrefix("{"),type.hasSuffix("}") {return .object(["type":.string("object"),"additionalProperties":shape(String(type.dropFirst().dropLast()))])}
@@ -40,6 +40,9 @@ public enum AgentSchemas {
             "CourseMapping":"id:s title:s knowledge:s audience:s task:s outcome:s prerequisite:s assetID:s rangeKind:RangeKind start:i end:i evidenceIDs:[s] confirmed:b",
             "Evidence":"tags?:[s] id:s workspaceID:s title:s source:s claim:s owner:s commercialAllowed:b uploadConsent:b verified:b checkedAt:d expiresAt?:d assetID?:s",
             "Review":"text:b rights:b fullPreview:b sound:b captions:b digest?:s reviewer?:s at?:d",
+            "MediaConfirmationRequest":"voice:b captions:b method:MediaConfirmationMethod statement:s expected:MediaConfirmationBinding",
+            "MediaConfirmationBinding":"contentDigest:s voice?:MediaVoiceBinding captionsDigest:s",
+            "MediaVoiceBinding":"assetID:s sha256:s textDigest:s durationFrames:i method:s",
             "Quote":"id:s projectID:s revisionID:s digest:s upper:Money unit:s provider:s expiresAt:d attempts:i confirmed:b createdAt:d breakdown?:EstimateBreakdown",
             "BudgetPolicy":"project:Money month:Money",
             "EstimateBreakdown":"version:s specification:s source:s validFrom:d expiresAt:d lines:[RateLine] excluded:[s]",
@@ -84,6 +87,8 @@ public enum AgentSchemas {
             "NarrativeSource":"id:s assetID:s pages:[i] startFrame?:i endFrame?:i excerpt:s confirmed:b"
         ]
         var result=records.mapValues(entity)
+        result["MediaConfirmationMethod"] = .object(["type":.string("string"),"enum":.array(["manual","approved_original","reliable_timestamps"].map(AgentValue.string))])
+        for name in ["MediaConfirmationRequest","MediaConfirmationBinding","MediaVoiceBinding"] {var shape=result[name]!.object!;shape["additionalProperties"] = .boolean(false);result[name] = .object(shape)}
         let dataRecords:[String:String] = [
             "PaperPresentation":"version:i layout:PaperLayout paperColor:s inkColor:s",
             "LayerEntrance":"version:i kind:LayerEntranceKind startFrame:i endFrame:i sourceOffsetFrames?:i",
