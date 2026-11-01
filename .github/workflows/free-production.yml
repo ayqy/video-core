@@ -16,7 +16,7 @@ jobs:
   knowledge-production-stage:
     if: github.repository == 'ayqy/video-core' && github.event.repository.private == false
     runs-on: macos-15-intel
-    timeout-minutes: 20
+    timeout-minutes: 25
     env:
       VIDEO_SOURCE_COMMIT: ${{ github.sha }}
       PYTHONDONTWRITEBYTECODE: '1'
@@ -134,7 +134,7 @@ jobs:
               assert len(result.stdout.encode())<=16*1024*1024,'Bounded build diagnostics required'
               return result.stdout
           scratch=Path(os.environ['RUNNER_TEMP'])/'video-production-swiftpm'
-          execute(['swift','build','-c','release','--product','video','--scratch-path',str(scratch),'-j','2'],180)
+          execute(['swift','build','-c','release','--product','video','--scratch-path',str(scratch),'-j','2'],650)
           bins=execute(['swift','build','-c','release','--scratch-path',str(scratch),'-j','2','--show-bin-path'],30).strip()
           product=Path(bins)/'video'
           assert product.is_file() and not product.is_symlink() and os.access(product,os.X_OK)
