@@ -39,7 +39,7 @@ jobs:
           manifest_text=(root/'SOURCE-MANIFEST.md').read_text()
           entries=re.findall(r'(?m)^\| ([a-f0-9]{64}) \| ([0-9]+) \| ([^|\n]+) \|$',manifest_text)
           rows={name:(digest,int(size)) for digest,size,name in entries}
-          assert len(entries)==len(rows)==313
+          assert len(entries)==len(rows)==317
           for name,(digest,size) in rows.items():
               relative=Path(name)
               assert not relative.is_absolute() and '..' not in relative.parts
@@ -47,29 +47,28 @@ jobs:
               assert path.is_file() and not path.is_symlink() and not any(p.is_symlink() for p in path.parents)
               raw=path.read_bytes()
               assert len(raw)==size and hashlib.sha256(raw).hexdigest()==digest,name
-          metadata={'.gitignore', 'docs/.nojekyll', 'docs/index.html', 'docs/privacy.html', 'docs/site.css', 'docs/support.html', 'docs/terms.html'}
+          metadata={'.gitignore','docs/.nojekyll','docs/index.html','docs/privacy.html','docs/site.css','docs/support.html','docs/terms.html'}
           tracked=set(subprocess.check_output(['git','ls-files'],cwd=root,text=True).splitlines())
           assert tracked==set(rows)|metadata|{'SOURCE-MANIFEST.md'}
           assert not any((root/name).exists() for name in ['App','MacApp','MacUITests','Examples','Premium','Sources/VideoGame','Sources/VideoCartoon','Sources/VideoAdvanced'])
-          BASE_PUBLIC_COMMIT='fef95484c24bf4e1e3b90e463b16198c42c58ee8'
+          BASE_PUBLIC_COMMIT='c26cf761746aa6995891e2afb4d005f306efe0c3'
           ADDITIONS={
-              'Integrations/speech_plan_alignment.py',
-              'Integrations/test_speech_plan_alignment.py',
+              'Sources/VideoCore/MediaPresentation.swift',
+              'Sources/VideoMedia/MediaPresentationPainter.swift',
+              'Tests/VideoCoreTests/MediaPresentationTests.swift',
+              'Tests/VideoMediaTests/MediaPresentationMediaTests.swift',
           }
           REVIEWED_CHANGED={
               '.github/workflows/free-production.yml',
               'README.md',
-              'Integrations/README.md',
-              'Integrations/produce_knowledge.py',
-              'Integrations/production_document.py',
-              'Integrations/production_workflow.py',
-              'Integrations/story_speech.py',
-              'Integrations/test_production_workflow.py',
-              'Integrations/test_story_speech.py',
+              'Sources/VideoCore/AgentSchemas.swift',
+              'Sources/VideoCore/Editing.swift',
+              'Sources/VideoCore/Models.swift',
+              'Sources/VideoMedia/Painter.swift',
           }
-          PROTECTED_COUNT=302
-          PROTECTED_SHA256='9f9e2085c77b90caa0baa4840ab22fbbff535c452de2a5afc9f2ba3902005651'
-          assert len(ADDITIONS)==2 and len(REVIEWED_CHANGED)==9 and not ADDITIONS&REVIEWED_CHANGED
+          PROTECTED_COUNT=307
+          PROTECTED_SHA256='5cf57c553ef49dd231e1519520dabd78fc2466e92cd75c45af942bb05d48bcbc'
+          assert len(ADDITIONS)==4 and len(REVIEWED_CHANGED)==6 and not ADDITIONS&REVIEWED_CHANGED
           assert ADDITIONS|REVIEWED_CHANGED<=set(rows)
           protected={name:value for name,value in rows.items() if name not in ADDITIONS|REVIEWED_CHANGED}
           digest_input=''.join(f'{name}\0{protected[name][0]}\0{protected[name][1]}\n' for name in sorted(protected))
@@ -78,50 +77,46 @@ jobs:
           inventory_sha256=hashlib.sha256(inventory_input.encode()).hexdigest()
           assert f'整体内容指纹：`{inventory_sha256}`' in manifest_text
           print('current_payload_fingerprint='+inventory_sha256)
-          print('manifest_payloads=313 added_public_inputs=2 changed_reviewed_inputs=9 unchanged_protected_inputs=302 source_commit='+head)
-          print('protected_baseline_commit='+BASE_PUBLIC_COMMIT+' current_python_checks=pending reused_media_confirmation_rules=14')
+          print('manifest_payloads=317 added_public_inputs=4 changed_reviewed_inputs=6 unchanged_protected_inputs=307 source_commit='+head)
+          print('protected_baseline_commit='+BASE_PUBLIC_COMMIT+' current_native_checks=pending reused_python_rules=102')
           PYCODE
 
-      - name: Execute the complete affected Python rules
+      - name: Execute exactly the affected ordinary Native rules
         shell: bash
         run: |
           python3 -B - <<'PYCODE'
-          import hashlib, io, os, sys, unittest
           from pathlib import Path
+          import hashlib, os, re, subprocess, sys
           root=Path(os.environ['GITHUB_WORKSPACE'])
-          sys.path.insert(0,str(root/'Integrations'))
-          modules=['test_speech_plan_alignment','test_story_speech','test_production_workflow',
-                   'test_production_document','test_production_styles']
-          counts=[12,23,32,22,13]
-          def tests(suite):
-              for item in suite:
-                  if isinstance(item,unittest.TestSuite):yield from tests(item)
-                  else:yield item
-          suites=[unittest.defaultTestLoader.loadTestsFromName(name) for name in modules]
-          identities=[[case.id() for case in tests(suite)] for suite in suites]
-          assert [len(items) for items in identities]==counts
-          expected={identity for items in identities for identity in items}
-          assert len(expected)==sum(counts)==102
-          assert all(identity.startswith(name+'.') for name,items in zip(modules,identities) for identity in items)
-          for name in modules:
-              source=root/'Integrations'/(name+'.py')
-              print('current_python_test_source_sha256='+name+':'+hashlib.sha256(source.read_bytes()).hexdigest())
-          class ExactResult(unittest.TextTestResult):
-              def __init__(self,*args,**kwargs):
-                  super().__init__(*args,**kwargs);self.started_ids=[];self.passed_ids=[]
-              def startTest(self,test):
-                  self.started_ids.append(test.id());super().startTest(test)
-              def addSuccess(self,test):
-                  self.passed_ids.append(test.id());super().addSuccess(test)
-          output=io.StringIO()
-          result=unittest.TextTestRunner(stream=output,verbosity=2,resultclass=ExactResult).run(unittest.TestSuite(suites))
-          print(output.getvalue())
-          assert result.wasSuccessful() and result.testsRun==len(expected)
-          assert not result.skipped and not result.expectedFailures and not result.unexpectedSuccesses
-          assert len(result.started_ids)==len(result.passed_ids)==len(expected)
-          assert set(result.started_ids)==set(result.passed_ids)==expected
-          for identity in sorted(expected):print('current_python_passed='+identity)
-          print('current_python_rules=102 synthetic_fixture_only=true media_executed=false review=false')
+          scratch=Path(os.environ['RUNNER_TEMP'])/'video-production-swiftpm'
+          groups=[('VideoCoreTests','MediaPresentationTests',7),
+                  ('VideoMediaTests','MediaPresentationMediaTests',6),
+                  ('VideoMediaTests','MediaFramingMediaTests',2),
+                  ('VideoCoreTests','MediaConfirmationTests',14)]
+          expected=set()
+          for module,name,count in groups:
+              source=root/'Tests'/module/(name+'.swift')
+              methods=re.findall(r'func (test[A-Za-z0-9_]+)\(',source.read_text())
+              assert len(methods)==len(set(methods))==count
+              identities={module+'.'+name+'.'+method for method in methods}
+              assert not expected&identities
+              expected.update(identities)
+              print('current_native_test_source_sha256='+name+':'+hashlib.sha256(source.read_bytes()).hexdigest())
+          assert len(expected)==29
+          selection='('+'|'.join(name for _,name,_ in groups)+')'
+          argv=['swift','test','-c','release','--scratch-path',str(scratch),'-j','2','--filter',selection]
+          result=subprocess.run(argv,cwd=root,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,timeout=650)
+          assert len(result.stdout.encode())<=16*1024*1024,'Bounded compiler/test diagnostics required'
+          if result.returncode:
+              print(result.stdout[-9000:],file=sys.stderr)
+              raise RuntimeError('Affected Native build/test failed')
+          started=['.'.join(row) for row in re.findall(r"Test Case '-\[([^ ]+) ([^]]+)\]' started",result.stdout)]
+          passed=['.'.join(row) for row in re.findall(r"Test Case '-\[([^ ]+) ([^]]+)\]' passed",result.stdout)]
+          assert len(started)==len(set(started))==len(passed)==len(set(passed))==len(expected)
+          assert set(started)==set(passed)==expected
+          assert 'failed' not in result.stdout.lower() and 'skipped' not in result.stdout.lower()
+          for identity in sorted(expected):print('current_native_passed='+identity)
+          print('current_native_rules=29 reused_python_rules=102 synthetic_fixture_media=true real_business_media_executed=false review=false')
           PYCODE
 
       - name: Build the ordinary Release CLI
@@ -133,28 +128,28 @@ jobs:
           root=Path(os.environ['GITHUB_WORKSPACE'])
           def execute(argv,seconds):
               result=subprocess.run(argv,cwd=root,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,timeout=seconds)
-              if result.returncode!=0:
+              if result.returncode:
                   print(result.stdout[-6000:],file=sys.stderr)
                   raise RuntimeError('Ordinary CLI build failed')
-              assert len(result.stdout.encode())<=16*1024*1024, 'Bounded build diagnostics required'
+              assert len(result.stdout.encode())<=16*1024*1024,'Bounded build diagnostics required'
               return result.stdout
           scratch=Path(os.environ['RUNNER_TEMP'])/'video-production-swiftpm'
-          execute(['swift','build','-c','release','--product','video','--scratch-path',str(scratch),'-j','2'],600)
+          execute(['swift','build','-c','release','--product','video','--scratch-path',str(scratch),'-j','2'],180)
           bins=execute(['swift','build','-c','release','--scratch-path',str(scratch),'-j','2','--show-bin-path'],30).strip()
           product=Path(bins)/'video'
           assert product.is_file() and not product.is_symlink() and os.access(product,os.X_OK)
-          print('current_release_cli_builds=1 current_native_rules=0 reused_media_confirmation_rules=14 media_executed=false review=false')
+          print('current_release_cli_builds=1 current_native_rules=29 reused_python_rules=102 real_business_media_executed=false review=false')
           PYCODE
 
-      - name: Record exact current Python and reused native evidence boundaries
+      - name: Record exact current Native and reused Python evidence boundaries
         shell: bash
         run: |
           python3 -B - <<'PYCODE'
           import os
-          text=("本次执行五个完整受影响 Python 模块：test_speech_plan_alignment 12 项、test_story_speech 23 项、test_production_workflow 32 项、test_production_document 22 项、test_production_styles 13 项，共 102 个唯一实际测试身份。每项必须实际 started、passed 各一次；遗漏、重复、失败、skip、预期失败与不完整汇总均拒绝。随后以显式 -j2 构建一次普通 Release video CLI。\n\n"
-                "规范稿 TN 按 Core 原文及规范稿双轴范围映射镜头，原字幕保留原文，字幕与镜头继续只使用同请求 SDK 整词边界；不能把规范化结果伪作原始观测。规则使用明确合成输入，不表示真实配音、媒体制作或人工听审。\n\n"
-                "313 项公开载荷逐件核同，并动态核当前导出整体指纹。仅新增 speech_plan_alignment.py 及其测试；两份 README、workflow 与六个现有 Integrations 文件为精确九项审查差额，其余 302 项保持公开基线 fef95484c24bf4e1e3b90e463b16198c42c58ee8 原字节。未变 MediaConfirmation 十四项及其它 Native 规则仅按既验来源复用，不在本轮重跑，也不计入当前规则执行。\n\n"
-                "本 workflow 不读取私有源码、素材或凭据，不含闭源 Painter，不调用 TTS、媒体生产或高级模块，不授声音听审、字幕确认、商业权利、上传同意或真实人工审核。\n")
+          text=("本次只执行四个完整相交 Native 类：MediaPresentationTests 7 项、MediaPresentationMediaTests 6 项、MediaFramingMediaTests 2 项、MediaConfirmationTests 14 项，共 29 个唯一实际测试身份。每项须 started、passed 各一次；遗漏、重复、失败或跳过均拒绝。随后显式 -j2 构建一次普通 Release video CLI。\n\n"
+                "图片来自测试内生成的 fixture，短视频沿用旧局部取景规则 fixture，实际核普通源画面、字幕避让、裁区、源帧/停顿、编辑失效和旧 nil 编码/像素。默认居中等比不额外裁源；显式 x/y/scale 按作者变换并裁在固定内容窗内。它们不冒真实业务影片、声音试听或人工审核；原文 TN 及生产流程五模块 102 项 Python 规则按未变公开基线复用，本轮不重跑、不重复计数。\n\n"
+                "317 项公开载荷逐件核同，整体指纹从当次 manifest 动态计算。仅新增 MediaPresentation Core/Media 源码及两份测试四项；Models、AgentSchemas、Editing、Painter、README、workflow 为精确六项已有差额，其余 307 项保持公开基线 c26cf761746aa6995891e2afb4d005f306efe0c3 的原字节。\n\n"
+                "本 workflow 不读取私有源码、业务素材或凭据，不含闭源 Painter，不调用 TTS、外部服务、Mac App 或高级模块；不授声音听审、字幕确认、商业权利、上传同意或整片批准。\n")
           with open(os.environ['GITHUB_STEP_SUMMARY'],'a') as stream:stream.write(text)
-          print('current_python_rules=102 current_native_rules=0 reused_media_confirmation_rules=14 current_release_cli_builds=1 real_business_media_executed=false review=false')
+          print('current_native_rules=29 reused_python_rules=102 current_release_cli_builds=1 real_business_media_executed=false review=false')
           PYCODE

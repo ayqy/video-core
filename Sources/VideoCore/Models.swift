@@ -93,6 +93,8 @@ public struct Scene: Codable, Equatable, Identifiable, Sendable {
     public var classicArtworkRequired: Bool?
     public var fontName:String?
     public var mediaFraming:MediaFraming?
+    /// Explicit source-only ordinary media canvas; absent in existing encodings.
+    public var mediaPresentation:MediaPresentation?
     /// Absent in old encodings. Ordinary paper/cover shots use the shared layer IR.
     public var paperPresentation:PaperPresentation?
     /// Optional for old projects. The full deterministic trace is kept even when stale,
@@ -119,8 +121,9 @@ public struct Scene: Codable, Equatable, Identifiable, Sendable {
         try ClassicArtworkRules.validate(scene:self,assets:assets)
         try StorySceneRules.validate(scene:self,assets:assets)
         try StoryCausalRules.validate(scene:self)
-        if let framing=mediaFraming {
-            try framing.validate()
+        if mediaFraming != nil || mediaPresentation != nil {
+            try mediaFraming?.validate()
+            try mediaPresentation?.validate()
             guard kind == .image || kind == .video,
                   let aid=assetID, let asset=assets.first(where:{$0.id==aid}),
                   (kind == .image && (asset.mediaType == "image" || asset.mediaType.hasPrefix("image/"))) ||

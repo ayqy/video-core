@@ -74,6 +74,10 @@ public enum ScenePainter {
             try PaperPresentationPainter.draw(revision:revision,scene:s,sourceFrame:mapped,isLast:index==revision.scenes.count-1,layerImages:layerImages,context:c)
             return
         }
+        if s.mediaPresentation != nil {
+            try MediaPresentationPainter.draw(revision:revision,scene:s,sourceFrame:mapped,media:media,layerImages:layerImages,context:c)
+            return
+        }
         if s.kind == .simulation || s.kind == .cartoon {
             guard let modules else { throw VideoError.unavailable("此镜头需要独立高级模块，请核对已安装模块与权益") }
             let stage=FullFrameLayout(width:w,height:h)

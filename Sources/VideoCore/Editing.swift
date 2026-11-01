@@ -48,7 +48,7 @@ public enum Editor {
                     for index in scene.captions.indices {scene.captions[index].confirmed=false}
                     revision.invalidated += ["纸面呈现、图形入场与声音字幕重新复核"]
                 }
-                if old.mediaFraming != scene.mediaFraming {
+                if old.mediaFraming != scene.mediaFraming || old.mediaPresentation != scene.mediaPresentation {
                     scene.voice?.listened=false
                     for index in scene.captions.indices {scene.captions[index].confirmed=false}
                     revision.invalidated += ["录屏/图片取景与声音字幕重新复核"]
