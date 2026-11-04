@@ -214,7 +214,9 @@ jobs:
           passed=['.'.join(row) for row in re.findall(r"Test Case '-\[([^ ]+) ([^]]+)\]' passed",result.stdout)]
           assert len(started)==len(set(started))==len(passed)==len(set(passed))==len(expected)
           assert set(started)==set(passed)==expected
-          assert 'failed' not in result.stdout.lower() and 'skipped' not in result.stdout.lower()
+          # Outcome words belong after the quoted XCTest identity. Test names
+          # such as testFailedDomainWriteRollsBackEntityAndReceipt are valid.
+          assert re.search(r"(?m)^Test (?:Case|Suite) '[^\r\n]*' (?:failed|skipped)\b",result.stdout) is None
           for identity in sorted(expected):print('current_native_passed='+identity)
           print('current_native_rules=75 elapsed_seconds='+format(time.monotonic()-started_at,'.3f')+' current_python_rules=86 reused_python_rules=25 synthetic_fixture_media=true real_business_media_executed=false review=false')
           PYCODE
