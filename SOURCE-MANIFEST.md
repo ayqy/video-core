@@ -2,10 +2,10 @@
 
 VideoFree source export · package_free.py · version 1
 
-生成时间：2026-11-02 06:00:54 北京时间
+生成时间：2026-11-05 01:23:25 北京时间
 
-- 源码与必要元数据：317个文件；5087289字节（不含本清单）。
-- 整体内容指纹：`f5c5d7e3735c9d2bc1edd8db8e91857da47acbf22bf43daa3436577cca8fbd5f`。
+- 源码与必要元数据：320个文件；5117532字节（不含本清单）。
+- 整体内容指纹：`4d3ee22a85e901fec892e4525d46f66a993481de6e982e11b566911ef66942f7`。
 - 来源：受控原始工程中的逐文件白名单；Package.swift、唯一免费制作workflow与README均来自Distribution/Free精确模板。
 - 本包不含.git，不可作为新业务checkout；本清单生成过程不执行构建、设备验收、签名安装或公共上传，各阶段以独立证据为准。
 - 排除：App、VideoGame、VideoCartoon、Premium、高级实现运行时测试、私有仓库地址、凭据、客户数据、缓存、日志及媒体过程产物。
@@ -14,7 +14,7 @@ VideoFree source export · package_free.py · version 1
 
 | SHA-256 | 字节数 | 包内路径 / 原工程来源 |
 |---|---:|---|
-| b7122980a38847595c1e67ce673461ad997f67f35e726ad5d9799911980c6ee8 | 18248 | .github/workflows/free-production.yml |
+| 73dfa9af05c800063f007abe62636afae41a62f17adbb43e59d9c67954241be2 | 18061 | .github/workflows/free-production.yml |
 | ac90de9132befb9227282c230671875edb7fd8dc4297999fc39622ea7efe3644 | 52964 | Integrations/README.md |
 | 28833193551aa06befb3bc0fc30b69ef87f74cccae39895f4242af4321d717dd | 15308 | Integrations/actor_motion.py |
 | 39dd8274ff1e6b0649acb63281087a1144e1f4a4e0eed3dc2b92e10df2cbd121 | 28488 | Integrations/asset_reuse.py |
@@ -164,6 +164,7 @@ VideoFree source export · package_free.py · version 1
 | 0581efbe79585e49720bed1447a2e6cb6b865a725682ce7a8579c27ba0312146 | 15041 | Sources/VideoCore/MediaConfirmation.swift |
 | 2f461e3df93f7459f4aa225b0b63bc7745cd60f66eae93c22e7e73660ba775d7 | 1726 | Sources/VideoCore/MediaFraming.swift |
 | bb260ac090a0ccbeee94ee378af09db835eec91bb69a476d5be437b9b6285ded | 1852 | Sources/VideoCore/MediaPresentation.swift |
+| 6d53a60baea77835e72f130a19698102cc13a9bd160a20a36d8ed0529389c717 | 16421 | Sources/VideoCore/ModelScene3D.swift |
 | c73f9b83698f6ac1f402861cf694c0aa600e19fc14398ff6dc34a601ea5fed2c | 23516 | Sources/VideoCore/Models.swift |
 | 56a47a4d5c48c0b33b6b87cd7288273d21869463b268429fd815d9fdaa8abb59 | 22121 | Sources/VideoCore/ModuleCatalogPublication.swift |
 | b94a05c6d2c9b3a2dca61c529a68210a5c3508e1e727e730ca77aff1f245740d | 7112 | Sources/VideoCore/NarrationWritingRules.swift |
@@ -209,6 +210,7 @@ VideoFree source export · package_free.py · version 1
 | 8fb3c17142049afe4b1ec265649d63e0c079db6a26063f21514f406a9c478a2f | 8298 | Sources/VideoMedia/LocalJobExecutor.swift |
 | 1708f587453edbc4b12552b7b10b1c0fa570a37a7191b0eb1e3ca27588008207 | 1037 | Sources/VideoMedia/MediaFramingRenderer.swift |
 | 858c6ede8930832e89244cdf914a4024a90fa5a1caf674cebeaf5170e4208e43 | 4490 | Sources/VideoMedia/MediaPresentationPainter.swift |
+| 1a963c21ec9d3e52557a82da0e252ce3ac3147a111940343198f72806d068592 | 7517 | Sources/VideoMedia/ModelPackageMedia.swift |
 | e2ef0b7692a5b757747e8a30bb441c1cdfa7efc7367dbf2243c54480650d9e43 | 21050 | Sources/VideoMedia/MotaBuiltinAssets.swift |
 | 947fe33cc101a4452a28fde6e6341ecff93e196bd5e9f791958bbfc4f22d3713 | 36794 | Sources/VideoMedia/MotaWorldAssets.swift |
 | 3c67ed9bfa913b217bc0dbf97ccd67c3a9813bf6ae5fe94eafba81481a5900a4 | 7269 | Sources/VideoMedia/NativeEncoder.swift |
@@ -319,6 +321,7 @@ VideoFree source export · package_free.py · version 1
 | 8bb6f22b67c1aa5565a485b3c59e37281a728e49c9dd3d06935706ea51420efe | 3990 | Tests/VideoMediaTests/MediaFramingMediaTests.swift |
 | 8c140ba98957835fea19c6df877728b52103269a0f4f2c5aed437b7e1adcf0b6 | 15265 | Tests/VideoMediaTests/MediaPresentationMediaTests.swift |
 | 4e735b7700b6c618f736fd983eeab28e1dbe93f7ffe82c3e564ab997036d5642 | 23423 | Tests/VideoMediaTests/MediaTests.swift |
+| bf79ffed2eeaad0a3e4ac71602f9000a48102e08555c9f0b45093c1f8f0dd5f5 | 6492 | Tests/VideoMediaTests/ModelPackageMediaTests.swift |
 | 2f24b48426df45f31fd87fcb62e727426a451cb8cb9c2949e0fc8d4238744d18 | 7697 | Tests/VideoMediaTests/NativeEncoderTests.swift |
 | 4107b55c496e037cb26708cfcfc224301c35ac98dc06598130c0219ac351f934 | 15795 | Tests/VideoMediaTests/PaperPresentationMediaTests.swift |
 | 5f7860dd20481161d38fc3860fb68c122d0381ccd030b52fa231484028ae0cbe | 22555 | Tests/VideoMediaTests/PluginProcessTests.swift |

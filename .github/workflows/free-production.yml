@@ -39,7 +39,7 @@ jobs:
           manifest_text=(root/'SOURCE-MANIFEST.md').read_text()
           entries=re.findall(r'(?m)^\| ([a-f0-9]{64}) \| ([0-9]+) \| ([^|\n]+) \|$',manifest_text)
           rows={name:(digest,int(size)) for digest,size,name in entries}
-          assert len(entries)==len(rows)==317
+          assert len(entries)==len(rows)==320
           for name,(digest,size) in rows.items():
               relative=Path(name)
               assert not relative.is_absolute() and '..' not in relative.parts
@@ -51,30 +51,22 @@ jobs:
           tracked=set(subprocess.check_output(['git','ls-files'],cwd=root,text=True).splitlines())
           assert tracked==set(rows)|metadata|{'SOURCE-MANIFEST.md'}
           assert not any((root/name).exists() for name in ['App','MacApp','MacUITests','Examples','Premium','Sources/VideoGame','Sources/VideoCartoon','Sources/VideoAdvanced'])
-          BASE_PUBLIC_COMMIT='c5b4c171c0776392e730eec85855f35487395eb7'
-          ADDITIONS=set()
-          REVIEWED_CHANGED={
-              'README.md',
-              '.github/workflows/free-production.yml',
-              'Integrations/production_document.py',
-              'Integrations/production_workflow.py',
-              'Integrations/story_speech.py',
-              'Integrations/test_production_document.py',
-              'Integrations/test_production_workflow.py',
-              'Integrations/test_story_speech.py',
-          }
-          PROTECTED_COUNT=309
-          PROTECTED_SHA256='934387fc895c8427336b7a0669f4c0caa128538e15d04a331138d64a93317162'
-          assert not ADDITIONS and len(REVIEWED_CHANGED)==8
+          BASE_PUBLIC_COMMIT='8826b04a2716a2d9d5baf2673fbe1588ace204c4'
+          ADDITIONS={'Sources/VideoCore/ModelScene3D.swift', 'Sources/VideoMedia/ModelPackageMedia.swift', 'Tests/VideoMediaTests/ModelPackageMediaTests.swift'}
+          REVIEWED_CHANGED={'.github/workflows/free-production.yml'}
+          PROTECTED_COUNT=316
+          PROTECTED_SHA256='a74fb62c13485a06b14ce95cc6b41e90b44bb795d4325205e88770ef209f3b20'
+          assert len(ADDITIONS)==3 and len(REVIEWED_CHANGED)==1
+          assert ADDITIONS<=set(rows)
           assert REVIEWED_CHANGED<=set(rows)
-          protected={name:value for name,value in rows.items() if name not in REVIEWED_CHANGED}
+          protected={name:value for name,value in rows.items() if name not in REVIEWED_CHANGED and name not in ADDITIONS}
           digest_input=''.join(f'{name}\0{protected[name][0]}\0{protected[name][1]}\n' for name in sorted(protected))
           assert len(protected)==PROTECTED_COUNT and hashlib.sha256(digest_input.encode()).hexdigest()==PROTECTED_SHA256
           inventory_input=''.join(f'{name}\0{rows[name][0]}\0{rows[name][1]}\n' for name in sorted(rows))
           inventory_sha256=hashlib.sha256(inventory_input.encode()).hexdigest()
           assert f'整体内容指纹：`{inventory_sha256}`' in manifest_text
           print('current_payload_fingerprint='+inventory_sha256)
-          print('manifest_payloads=317 added_public_inputs=0 changed_reviewed_inputs=8 unchanged_protected_inputs=309 source_commit='+head)
+          print('manifest_payloads=320 added_public_inputs=3 changed_reviewed_inputs=1 unchanged_protected_inputs=316 source_commit='+head)
           print('protected_baseline_commit='+BASE_PUBLIC_COMMIT+' current_native_checks=pending current_python_rules=86 reused_python_rules=25')
           PYCODE
 
@@ -179,7 +171,8 @@ jobs:
           groups=[('VideoCoreTests','MediaPresentationTests',7),
                   ('VideoMediaTests','MediaPresentationMediaTests',6),
                   ('VideoMediaTests','MediaFramingMediaTests',2),
-                  ('VideoCoreTests','MediaConfirmationTests',14)]
+                  ('VideoCoreTests','MediaConfirmationTests',14),
+                  ('VideoMediaTests','ModelPackageMediaTests',3)]
           expected=set()
           for module,name,count in groups:
               source=root/'Tests'/module/(name+'.swift')
@@ -189,7 +182,7 @@ jobs:
               assert not expected&identities
               expected.update(identities)
               print('current_native_test_source_sha256='+name+':'+hashlib.sha256(source.read_bytes()).hexdigest())
-          assert len(expected)==29
+          assert len(expected)==32
           selection='('+'|'.join(name for _,name,_ in groups)+')'
           argv=['swift','test','--skip-build','-c','release','--scratch-path',str(scratch),'-j','2','-Xswiftc','-enable-testing','--filter',selection]
           started_at=time.monotonic()
@@ -211,7 +204,7 @@ jobs:
           assert set(started)==set(passed)==expected
           assert 'failed' not in result.stdout.lower() and 'skipped' not in result.stdout.lower()
           for identity in sorted(expected):print('current_native_passed='+identity)
-          print('current_native_rules=29 elapsed_seconds='+format(time.monotonic()-started_at,'.3f')+' current_python_rules=86 reused_python_rules=25 synthetic_fixture_media=true real_business_media_executed=false review=false')
+          print('current_native_rules=32 elapsed_seconds='+format(time.monotonic()-started_at,'.3f')+' current_python_rules=86 reused_python_rules=25 synthetic_fixture_media=true real_business_media_executed=false review=false')
           PYCODE
 
       - name: Build the ordinary Release CLI
@@ -242,7 +235,7 @@ jobs:
           bins=execute(['swift','build','-c','release','--scratch-path',str(scratch),'-j','2','--show-bin-path'],30).strip()
           product=Path(bins)/'video'
           assert product.is_file() and not product.is_symlink() and os.access(product,os.X_OK)
-          print('current_release_cli_builds=1 current_native_rules=29 current_python_rules=86 reused_python_rules=25 real_business_media_executed=false review=false')
+          print('current_release_cli_builds=1 current_native_rules=32 current_python_rules=86 reused_python_rules=25 real_business_media_executed=false review=false')
           PYCODE
 
       - name: Record exact current Native and reused Python evidence boundaries
@@ -251,11 +244,11 @@ jobs:
           python3 -B - <<'PYCODE'
           import os
           text=("本次实际执行三个完整受影响 Python 模块：test_story_speech 29 项、test_production_document 24 项、test_production_workflow 33 项，共 86 个唯一测试身份；未变的 test_speech_plan_alignment 12 项和 test_production_styles 13 项按各自源码与调用条件复用，共 25 项，不重复计数。遗漏、重复、失败、skip、预期失败或不完整汇总均拒绝。\n\n"
-                "在同一 scratch、release 配置和 -j2 下，先以显式 -Xswiftc -enable-testing 编译 VideoCore，再以同一显式参数执行 swift build --build-tests；两段都成功后才执行原 29 条 Native 规则，swift test --skip-build 不再编译。最后保留原普通 Release CLI 构建。四段各保留 650 秒预算，外层 job 50 分钟有限上限；各段成功打印实际 elapsed，不预称缓存已复用。所有 build/test 超时打印捕获原 stdout 的最多 9000 字节原尾后仍失败；缺失明确报告，不忽略超时。编译不执行规则、不说明性能根因，也不授效果通过。\n\n"
-                "保留现有四个 Native 类和普通 Release 构建门禁：MediaPresentationTests 7 项、MediaPresentationMediaTests 6 项、MediaFramingMediaTests 2 项、MediaConfirmationTests 14 项，共 29 个唯一实际身份，每项 started、passed 各一次；随后显式 -j2 构建普通 Release video CLI。Native 源码、测试选择及通过条件未变，新增仅是显式测试编译阶段划分、实际耗时和超时诊断，不作为本轮 Native 效果新修复。\n\n"
+                "在同一 scratch、release 配置和 -j2 下，先以显式 -Xswiftc -enable-testing 编译 VideoCore，再以同一显式参数执行 swift build --build-tests；两段都成功后才执行原29条及新增3条模型Native规则，swift test --skip-build 不再编译。最后保留原普通 Release CLI 构建。四段各保留 650 秒预算，外层 job 50 分钟有限上限；各段成功打印实际 elapsed，不预称缓存已复用。所有 build/test 超时打印捕获原 stdout 的最多 9000 字节原尾后仍失败；缺失明确报告，不忽略超时。编译不执行规则、不说明性能根因，也不授效果通过。\n\n"
+                "保留现有四个 Native 类 29 项，并新增 ModelPackageMediaTests 3 项，共 32 个唯一实际身份，每项 started、passed 各一次；随后显式 -j2 构建普通 Release video CLI。新增模型规则验证原 DAE 纹理依赖、权利与工作区隔离、真实网格加载及拒绝输入；使用合成网格，不冒真实动森素材、角色动作或成片验收。\n\n"
                 "新增字幕分段是显式可选的 observed-natural-cues 策略，使用真实整词与精确 TN 映射，保持原文、原音、完整动作和旧缺省一镜一条字幕行为。纯规则测试使用合成观察或临时假消费者；不冒真实 SDK、影片制作、正常观看、声音试听、字幕确认或整片审核。真实用户链有独立托管证据。\n\n"
-                "317 项公开载荷逐件核同，整体指纹从当次 manifest 动态计算。无新增载荷；六份既有 Python 生产及测试文件、README 与唯一 workflow 为精确八项差额，其余 309 项保持公开基线 c5b4c171c0776392e730eec85855f35487395eb7 原字节。\n\n"
+                "320 项公开载荷逐件核同，整体指纹从当次 manifest 动态计算。新增模型资源定义、原生加载器和测试三项，仅唯一 workflow 发生既有载荷修改；其余 316 项保持公开基线 8826b04a2716a2d9d5baf2673fbe1588ace204c4 原字节。\n\n"
                 "本 workflow 不读取私有源码、业务素材或凭据，不含闭源 Painter，不调用 TTS、外部服务、Mac App 或高级模块；不授声音听审、字幕确认、商业权利、上传同意或整片批准。\n")
           with open(os.environ['GITHUB_STEP_SUMMARY'],'a') as stream:stream.write(text)
-          print('current_native_rules=29 current_python_rules=86 reused_python_rules=25 current_release_cli_builds=1 real_business_media_executed=false review=false')
+          print('current_native_rules=32 current_python_rules=86 reused_python_rules=25 current_release_cli_builds=1 real_business_media_executed=false review=false')
           PYCODE
