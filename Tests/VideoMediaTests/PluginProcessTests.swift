@@ -9,27 +9,81 @@ import VideoCore
 final class PluginProcessTests:XCTestCase {
     final class Scoped:ScopedSceneRenderModule,@unchecked Sendable {
         let manifest:PluginManifest;var draws=0;var closes=0;var failClose=false;var closeAction:(@Sendable ()throws->Void)?
+        var modelInputs:[[String:String]]=[]
         init(_ manifest:PluginManifest){self.manifest=manifest}
         func draw(scene:VideoCore.Scene,localFrame:Int,fps:Int,rect:CGRect,context:CGContext)throws{XCTFail("unscoped method must not execute")}
-        func draw(scene:VideoCore.Scene,localFrame:Int,fps:Int,rect:CGRect,context:CGContext,resources:RenderResources,invocation:RenderInvocation)throws{try invocation.check();draws+=1}
+        func draw(scene:VideoCore.Scene,localFrame:Int,fps:Int,rect:CGRect,context:CGContext,resources:RenderResources,invocation:RenderInvocation)throws{
+            try invocation.check()
+            if let model=scene.modelScene3D {
+                guard let bank=resources.modelBank,bank.manifest == (try PluginModelBankManifest(scene:model,durationFrames:scene.durationFrames)) else{throw VideoError.permission("隔离scoped规则缺少当前模型闭包")}
+                modelInputs.append(bank.assets.mapValues(Codec.hash))
+            }
+            draws+=1
+        }
         func close(invocationID:String)throws{closes+=1;try closeAction?();if failClose{throw VideoError.unavailable("fixture close failure")}}
     }
-    func fixture()throws->(RenderModuleRegistry,Scoped,RenderInvocation){
-        let key=Curve25519.Signing.PrivateKey(),manifest=PluginManifest(id:"video.game",version:"1.0.0",capabilities:["game.simulate"],implementationDigest:try BuiltinExecutableIdentity.current().digest,permissions:[])
-        let module=Scoped(manifest),policy=CommercialPolicy(pluginID:manifest.id,version:1,access:"free")
+    private func registered(_ module:any SceneRenderModule)throws->RenderModuleRegistry {
+        // Isolated rule publisher only; never a product key, signed XPC package
+        // or a claim that a normal installed Host was exercised here.
+        let key=Curve25519.Signing.PrivateKey(),manifest=module.manifest,policy=CommercialPolicy(pluginID:manifest.id,version:1,access:"free")
         func signed<T:Encodable>(_ value:T)throws->SignedDocument{let data=try Codec.data(value);return SignedDocument(payload:data,signature:try key.signature(for:data))}
         let registry=RenderModuleRegistry();try registry.register(module,signedManifest:signed(manifest),signedPolicy:signed(policy),publicKey:key.publicKey.rawRepresentation)
+        return registry
+    }
+    func fixture(inputSchema:Int=1)throws->(RenderModuleRegistry,Scoped,RenderInvocation){
+        let manifest=PluginManifest(id:"video.game",version:"1.0.0",capabilities:["game.simulate"],inputSchema:inputSchema,implementationDigest:try BuiltinExecutableIdentity.current().digest,permissions:[])
+        let module=Scoped(manifest),registry=try registered(module)
         let scope=RenderInvocation(workspaceID:"w",projectID:"p",revisionID:"r",revisionDigest:String(repeating:"a",count:64),jobID:nil,budgetReference:"q",budgetLimit:Money(0),deadline:Date().addingTimeInterval(30),authorization:{})
         return(registry,module,scope)
     }
-    func draw(_ registry:RenderModuleRegistry,_ scope:RenderInvocation?)throws{
+    func draw(_ registry:RenderModuleRegistry,_ scope:RenderInvocation?,scene:VideoCore.Scene?=nil,resources:RenderResources = .empty)throws{
         let context=CGContext(data:nil,width:8,height:8,bitsPerComponent:8,bytesPerRow:32,space:CGColorSpaceCreateDeviceRGB(),bitmapInfo:CGImageAlphaInfo.premultipliedLast.rawValue)!
-        try registry.draw(scene:Scene(kind:.simulation,title:"",body:"",narration:"",durationFrames:1),localFrame:0,fps:30,rect:CGRect(x:0,y:0,width:8,height:8),context:context,invocation:scope)
+        try registry.draw(scene:scene ?? Scene(kind:.simulation,title:"",body:"",narration:"",durationFrames:1),localFrame:0,fps:30,rect:CGRect(x:0,y:0,width:8,height:8),context:context,resources:resources,invocation:scope)
     }
     func test_scoped_module_never_uses_unscoped_draw()throws{
         let(registry,module,scope)=try fixture();XCTAssertThrowsError(try draw(registry,nil));XCTAssertEqual(module.draws,0)
         try draw(registry,scope);XCTAssertEqual(module.draws,1);try registry.close(invocationID:scope.id);XCTAssertEqual(module.closes,1)
         XCTAssertThrowsError(try draw(registry,scope));XCTAssertEqual(module.draws,1)
+        try verifyModelRegistryScope()
+    }
+    private final class Unscoped:SceneRenderModule,@unchecked Sendable {
+        let manifest:PluginManifest;var draws=0
+        init(_ manifest:PluginManifest){self.manifest=manifest}
+        func draw(scene:VideoCore.Scene,localFrame:Int,fps:Int,rect:CGRect,context:CGContext)throws{draws+=1;XCTFail("三维输入不能落到普通非scoped绘制")}
+    }
+    private func verifyModelRegistryScope()throws {
+        let xml="""
+        <COLLADA xmlns="http://www.collada.org/2005/11/COLLADASchema" version="1.4.1">
+        <asset><created>2026-11-05T00:00:00Z</created><modified>2026-11-05T00:00:00Z</modified><unit name="meter" meter="1"/><up_axis>Y_UP</up_axis></asset>
+        <library_geometries><geometry id="triangle"><mesh><source id="positions"><float_array id="position-array" count="9">0 0 0 1 0 0 0 1 0</float_array><technique_common><accessor source="#position-array" count="3" stride="3"><param name="X" type="float"/><param name="Y" type="float"/><param name="Z" type="float"/></accessor></technique_common></source><vertices id="vertices"><input semantic="POSITION" source="#positions"/></vertices><triangles count="1"><input semantic="VERTEX" source="#vertices" offset="0"/><p>0 1 2</p></triangles></mesh></geometry></library_geometries>
+        <library_visual_scenes><visual_scene id="Scene"><node id="Mesh"><instance_geometry url="#triangle"/></node></visual_scene></library_visual_scenes><scene><instance_visual_scene url="#Scene"/></scene></COLLADA>
+        """
+        let bytes=Data(xml.utf8),inspection=try DAEInspector.inspect(bytes)
+        let reference=ModelAssetReference(assetID:"authored-model",sha256:Codec.hash(bytes),bytes:bytes.count,fileExtension:"dae")
+        let model=ModelScene3D(instances:[.init(id:"mesh",name:"隔离协议夹具",resource:.init(model:reference,inspection:inspection,textures:[:]))],camera:.init(position:.init(z:4),target:.init()),lights:[.init(id:"sun",kind:.directional)])
+        var scene=Scene(kind:.simulation,title:"",body:"",durationFrames:90);scene.modelScene3D=model
+        let bank=try RenderModelBank(scene:model,durationFrames:90,assets:[reference.assetID:bytes])
+        let resources=RenderResources.empty.bindingModelBank(bank)
+        func rejected(_ registry:RenderModuleRegistry,_ scope:RenderInvocation?) {
+            XCTAssertThrowsError(try registry.validate(scene:scene)) {error in
+                XCTAssertEqual((error as? VideoError)?.code,VideoError.unavailable("").code)
+                XCTAssertTrue(error.localizedDescription.contains("schema9"))
+            }
+            XCTAssertThrowsError(try draw(registry,scope,scene:scene,resources:resources))
+        }
+        rejected(RenderModuleRegistry(),nil)
+        let (old,legacy,legacyScope)=try fixture(inputSchema:8)
+        rejected(old,legacyScope);XCTAssertEqual(legacy.draws,0,"旧game8不能悄悄接收模型后画二维")
+        let (current,scoped,scope)=try fixture(inputSchema:9)
+        let unscoped=Unscoped(scoped.manifest),ordinary=try registered(unscoped)
+        rejected(ordinary,scope);XCTAssertEqual(unscoped.draws,0)
+        XCTAssertEqual(try current.validate(scene:scene).pluginID,"video.game")
+        XCTAssertThrowsError(try draw(current,nil,scene:scene,resources:resources));XCTAssertEqual(scoped.draws,0)
+        try draw(current,scope,scene:scene,resources:resources)
+        XCTAssertEqual(scoped.draws,1);XCTAssertEqual(scoped.modelInputs,[bank.manifest.dependencyFingerprints])
+        scope.cancellation.cancel()
+        XCTAssertThrowsError(try draw(current,scope,scene:scene,resources:resources));XCTAssertEqual(scoped.draws,1)
+        try current.close(invocationID:scope.id);XCTAssertEqual(scoped.closes,1)
     }
     func test_unregister_keeps_scope_reference_for_physical_cleanup()throws{
         let(registry,module,scope)=try fixture();try draw(registry,scope);registry.unregister(module.manifest.id)

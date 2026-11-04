@@ -89,7 +89,7 @@ public enum ScenePainter {
             if s.cartoonRig != nil || s.cartoonPresenter != nil {try LayerPainter.draw(scene:s,sourceFrame:held,aspect:revision.aspect,images:layerImages,context:c,fontName:s.fontName ?? "PingFangSC-Medium")}
             let moduleFrame:Int
             if s.cartoonPresenter != nil {moduleFrame=mapped}
-            else if s.gameWorld != nil || s.cartoonRig != nil {moduleFrame=held}
+            else if s.gameWorld != nil || s.cartoonRig != nil || s.modelScene3D != nil {moduleFrame=held}
             else {moduleFrame=s.kind == .simulation ? try s.renderSimulationSourceFrame(atTimelineFrame:local):mapped}
             try modules.draw(scene:s,localFrame:moduleFrame,fps:revision.fps,rect:stage.visual,context:c,resources:resources,invocation:invocation)
             if s.cartoonRig == nil && s.cartoonPresenter == nil {try LayerPainter.draw(scene:s,sourceFrame:held,aspect:revision.aspect,images:layerImages,context:c,fontName:s.fontName ?? "PingFangSC-Medium")}

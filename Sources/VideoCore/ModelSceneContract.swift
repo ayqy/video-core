@@ -163,7 +163,7 @@ public struct ModelScene3D: Codable, Equatable, Sendable {
     }
 }
 public enum ModelScene3DRules {
-    public static func validate(scene: Scene, assets: [Asset]) throws {
+    public static func validate(scene: Scene, assets: [Asset]? = nil) throws {
         guard let model=scene.modelScene3D else {return}
         guard scene.kind == .simulation,scene.assetID==nil,scene.gameWorld==nil,scene.classicArtwork==nil,scene.cartoonRig==nil,scene.cartoonPresenter==nil,scene.cartoonPerformance==nil,scene.storyActions==nil,scene.storyCausality==nil,scene.simulationPresentation==nil else { throw VideoError.invalid("三维模型场景须独立绑定仿真镜头，不能混旧二维地图、图集或二维过程动作") }
         guard Set((scene.layers ?? []).map(\.id)).isDisjoint(with:Set(model.instances.map(\.id))) else {throw VideoError.invalid("三维实例与叠加图层标识不能冲突")}

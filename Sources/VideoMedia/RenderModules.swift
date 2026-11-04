@@ -412,13 +412,39 @@ public final class RenderModuleRegistry: @unchecked Sendable {
         let manifest = entry.module.manifest
         return RenderModuleStatus(pluginID: manifest.id, version: manifest.version, capabilities: manifest.capabilities, access: entry.policy.access, sourceVisibility: entry.policy.sourceVisibility, expiresAt: entry.license?.expiresAt ?? entry.storeAccess?.expiresAt, policyVersion: entry.policy.version, implementationDigest: manifest.implementationDigest)
     }
+    /// Preflight the actual scene before quoting or dispatching a job. A game8
+    /// capability alone does not assert that model bytes can cross its protocol.
+    @discardableResult public func validate(scene: VideoCore.Scene, now: Date = Date()) throws -> RenderModuleStatus {
+        if scene.modelScene3D != nil {
+            lock.lock(); let entry = entries["video.game"]; lock.unlock()
+            guard scene.kind == .simulation, let entry, entry.module.manifest.inputSchema == 9,
+                  entry.module is any ScopedSceneRenderModule else {
+                throw VideoError.unavailable("三维模型场景需要支持schema9的受信独立游戏模块；未改用旧二维地图")
+            }
+        }
+        let status = try validate(kind: scene.kind, now: now)
+        if scene.modelScene3D != nil {
+            lock.lock(); let entry = entries[status.pluginID]; lock.unlock()
+            guard let entry, entry.module.manifest.id == "video.game", entry.module.manifest.inputSchema == 9,
+                  entry.module is any ScopedSceneRenderModule else {
+                throw VideoError.unavailable("三维模型场景需要支持schema9的受信独立游戏模块；未改用旧二维地图")
+            }
+        }
+        return status
+    }
     public func draw(scene: VideoCore.Scene, localFrame: Int, fps: Int, rect: CGRect, context: CGContext, resources: RenderResources = .empty, now: Date = Date(), invocation:RenderInvocation?=nil) throws {
-        guard scene.modelScene3D == nil else {throw VideoError.unavailable("当前发行协议尚不支持三维模型场景；未回退二维地图或忽略模型、材质和骨骼动作")}
+        if scene.modelScene3D != nil { _ = try validate(scene: scene, now: now) }
         guard let capability = Self.capability(for: scene.kind) else { throw VideoError.invalid("普通图文/素材镜头不需要高级模块") }
         guard localFrame >= 0, fps > 0, fps <= 120, rect.width.isFinite, rect.height.isFinite, rect.minX.isFinite, rect.minY.isFinite, rect.width > 0, rect.height > 0 else { throw VideoError.invalid("高级模块绘制的时间或画布无效") }
         lock.lock(); let entry = entries.values.first { $0.module.manifest.capabilities.contains(capability) }; lock.unlock()
         guard let entry else { throw VideoError.unavailable("缺少已校验的独立能力：\(capability)。请安装此构建对应的签名模块目录并核对权益，或改用免费图文/真实素材镜头。") }
         try validateEntry(entry, now: now)
+        if scene.modelScene3D != nil {
+            guard entry.module.manifest.id == "video.game", entry.module.manifest.inputSchema == 9,
+                  entry.module is any ScopedSceneRenderModule else {
+                throw VideoError.unavailable("三维模型场景需要支持schema9的受信独立游戏模块；未改用旧二维地图")
+            }
+        }
         context.saveGState(); defer { context.restoreGState() }; context.clip(to: rect)
         if let scoped=entry.module as? any ScopedSceneRenderModule {
             guard let invocation else{throw VideoError.permission("高级子进程缺少Host实时授权的完整调用")}

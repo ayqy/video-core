@@ -37,9 +37,22 @@ final class ModelPackageMediaTests: XCTestCase {
         XCTAssertEqual(imported.resource.model.sha256, Codec.hash(Data(triangle.utf8)))
         var db = Database(); db.assets = imported.assets
         XCTAssertThrowsError(try ModelPackageMedia.load(imported.resource, workspaceID: "local", repository: repo, database: db, commercial: false))
+        XCTAssertThrowsError(try ModelPackageMedia.verifiedByteClosure(imported.resource, workspaceID: "local", repository: repo, database: db, commercial: false), "冻结原件不能跳过正常来源权利")
         var asset = db.assets[0]
         let proof = Evidence(workspaceID: "local", title: "Test mesh authored in this test", source: "test fixture source", claim: "authored triangle", owner: "test", commercialAllowed: true, verified: true, assetID: asset.id)
         asset.evidenceID = proof.id; db.assets = [asset]; db.evidence = [proof]
+        let databaseBefore = try Codec.data(db)
+        let frozen = try ModelPackageMedia.verifiedByteClosure(imported.resource, workspaceID: "local", repository: repo, database: db, commercial: false)
+        XCTAssertEqual(frozen, [asset.id: Data(triangle.utf8)])
+        XCTAssertEqual(try Codec.data(db), databaseBefore, "冻结字节不能新增或改写Asset/Evidence")
+        XCTAssertThrowsError(try ModelPackageMedia.verifiedByteClosure(imported.resource, workspaceID: "other", repository: repo, database: db, commercial: false))
+        XCTAssertThrowsError(try ModelPackageMedia.verifiedByteClosure(imported.resource, workspaceID: "", repository: repo, database: db, commercial: false))
+        var cancellationChecks = 0
+        XCTAssertThrowsError(try ModelPackageMedia.verifiedByteClosure(imported.resource, workspaceID: "local", repository: repo, database: db, commercial: false, cancellation: {
+            cancellationChecks += 1
+            if cancellationChecks == 2 { throw CancellationError() }
+        })) { XCTAssertTrue($0 is CancellationError) }
+        XCTAssertEqual(cancellationChecks, 2, "取消须在读取原件阶段进入显式回调")
         let loaded = try ModelPackageMedia.load(imported.resource, workspaceID: "local", repository: repo, database: db, commercial: false)
         var actualMesh = false
         loaded.scene.rootNode.enumerateChildNodes { node, _ in actualMesh = actualMesh || node.geometry != nil }
@@ -49,11 +62,14 @@ final class ModelPackageMediaTests: XCTestCase {
         let revision=Revision(contentContext:.init(workspaceID:"local",name:"模型草稿"),aspect:.landscape,scenes:[draft])
         XCTAssertThrowsError(try ScenePainter.image(revision:revision,frame:0,modules:RenderModuleRegistry())) { error in
             XCTAssertEqual((error as? VideoError)?.code,"unavailable")
-            XCTAssertTrue(error.localizedDescription.contains("不支持三维模型场景"),"正常绘制入口须显式拒绝当前未支持载荷，不能退回旧二维图集")
+            XCTAssertTrue(error.localizedDescription.contains("三维模型场景") && error.localizedDescription.contains("schema9"),"正常绘制入口缺少受信schema9模块时须精确拒绝，不能退回旧二维图集")
         }
         XCTAssertThrowsError(try ModelPackageMedia.load(imported.resource, workspaceID: "other", repository: repo, database: db, commercial: false))
         try Data("changed".utf8).write(to: repo.assetURL(asset))
         XCTAssertThrowsError(try ModelPackageMedia.load(imported.resource, workspaceID: "local", repository: repo, database: db, commercial: false))
+        XCTAssertThrowsError(try ModelPackageMedia.verifiedByteClosure(imported.resource, workspaceID: "local", repository: repo, database: db, commercial: false))
+        XCTAssertEqual(frozen[asset.id], Data(triangle.utf8), "后续CAS改动不能改变已经冻结的实际字节")
+        XCTAssertEqual(try Codec.data(db), databaseBefore)
     }
 
     func testMalformedAndExternalModelDependenciesAreRejected() throws {
@@ -111,6 +127,40 @@ final class ModelPackageMediaTests: XCTestCase {
         }
         var withoutRights = Database(); withoutRights.assets = imported.assets
         XCTAssertThrowsError(try ModelPackageMedia.load(imported.resource, workspaceID: "local", repository: fixture.repository, database: withoutRights, commercial: false), "显式绑定不自动授予来源确认")
+        XCTAssertThrowsError(try ModelPackageMedia.verifiedByteClosure(imported.resource, workspaceID: "local", repository: fixture.repository, database: withoutRights, commercial: false))
+        let authorizedDatabase = authorized(imported)
+        let authorizedBefore = try Codec.data(authorizedDatabase)
+        let bank = try ModelPackageMedia.verifiedByteClosure(imported.resource, workspaceID: "local", repository: fixture.repository, database: authorizedDatabase, commercial: false)
+        XCTAssertEqual(Set(bank.keys), imported.resource.assetIDs, "Host冻结须包含完整DAE和每个实际PNG")
+        XCTAssertEqual(bank[imported.resource.model.assetID], original)
+        let textureReference = try XCTUnwrap(imported.resource.textures["textures/body.png"])
+        XCTAssertEqual(bank[textureReference.assetID], png)
+        XCTAssertEqual(try Codec.data(authorizedDatabase), authorizedBefore)
+        // A byte-only technical decoder is deliberately not a source-right
+        // authorization API: it receives no DB and creates no synthetic proof.
+        let unapprovedBefore = try Codec.data(withoutRights), inventoryBefore = try Self.inventory(fixture.repository)
+        let byteLoaded = try ModelPackageMedia.loadByteClosure(imported.resource, assets: bank)
+        XCTAssertEqual(byteLoaded.resource, imported.resource)
+        XCTAssertEqual(Set(byteLoaded.materialsBySourceID.keys), ["SkinMaterial"])
+        let byteMaterial = try XCTUnwrap(byteLoaded.materialsBySourceID["SkinMaterial"]?.first)
+        XCTAssertTrue(Self.materials(byteLoaded.scene).contains { $0 === byteMaterial }, "原material.id映射须指向真实字节加载产生的网格材质")
+        XCTAssertEqual(try Self.nativePixels(byteMaterial.diffuse), try Self.pixels(Self.image(png)))
+        XCTAssertEqual(try Codec.data(withoutRights), unapprovedBefore)
+        XCTAssertTrue(withoutRights.evidence.isEmpty, "技术解码不代表来源、商用或媒体效果通过")
+        XCTAssertEqual(try Self.inventory(fixture.repository), inventoryBefore)
+        for id in imported.resource.assetIDs {
+            var missing = bank; missing.removeValue(forKey: id)
+            XCTAssertThrowsError(try ModelPackageMedia.loadByteClosure(imported.resource, assets: missing), "原DAE或任一PNG缺失须拒绝，不能落到磁盘同名素材")
+            var corrupted = bank
+            var changed = try XCTUnwrap(corrupted[id]); changed[changed.startIndex] ^= 1; corrupted[id] = changed
+            XCTAssertThrowsError(try ModelPackageMedia.loadByteClosure(imported.resource, assets: corrupted), "保持长度但改变实际字节也须拒绝")
+        }
+        var forged = imported.resource
+        forged.inspection.geometryIDs.append("fabricated-geometry")
+        XCTAssertThrowsError(try ModelPackageMedia.loadByteClosure(forged, assets: bank), "合法形状的伪造inspection仍须与实际DAE重解析结果逐项一致")
+        XCTAssertThrowsError(try ModelPackageMedia.loadByteClosure(imported.resource, assets: bank, cancellation: { throw CancellationError() })) { XCTAssertTrue($0 is CancellationError) }
+        XCTAssertEqual(try Codec.data(withoutRights), unapprovedBefore)
+        XCTAssertEqual(try Self.inventory(fixture.repository), inventoryBefore)
         let loaded = try ModelPackageMedia.load(imported.resource, workspaceID: "local", repository: fixture.repository, database: authorized(imported), commercial: false)
         XCTAssertEqual(loaded.resource, imported.resource, "临时材质name投影不得回写原资源或inspection")
         XCTAssertEqual(Self.materials(loaded.scene).map(\.name), ["SkinMaterial"], "实际无name源材质须以唯一原material.id映射")
@@ -170,6 +220,14 @@ final class ModelPackageMediaTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: dualModel), dualOriginal)
         XCTAssertEqual(try Data(contentsOf: firstSource), png)
         XCTAssertEqual(try Data(contentsOf: secondSource), secondPNG)
+        let textureAsset = try XCTUnwrap(imported.assets.first { $0.id == textureReference.assetID })
+        let textureCAS = fixture.repository.assetURL(textureAsset)
+        var badCAS = png; badCAS[badCAS.startIndex] ^= 1
+        try badCAS.write(to: textureCAS)
+        defer { try? png.write(to: textureCAS) }
+        XCTAssertThrowsError(try ModelPackageMedia.verifiedByteClosure(imported.resource, workspaceID: "local", repository: fixture.repository, database: authorizedDatabase, commercial: false), "同大小CAS原件被改动仍须在原SHA核验阶段拒绝")
+        XCTAssertEqual(bank[textureReference.assetID], png)
+        XCTAssertEqual(try Codec.data(authorizedDatabase), authorizedBefore)
     }
 
     func testExplicitBindingOverridesSameNameAndNeverFallsBack() throws {

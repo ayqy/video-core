@@ -71,10 +71,24 @@ public enum ModelPackageMedia {
     }
 
     public static func load(_ resource: ModelDAEResource, workspaceID: String, repository: Repository, database: Database, commercial: Bool, now: Date = Date()) throws -> LoadedDAEModel {
+        let bank = try verifiedByteClosure(resource, workspaceID: workspaceID, repository: repository,
+            database: database, commercial: commercial, now: now)
+        return try loadByteClosure(resource, assets: bank)
+    }
+
+    /// Host-side byte freezing, before any plugin invocation exists. Uses the
+    /// same workspace, current source rights and no-follow CAS checks as load.
+    public static func verifiedByteClosure(_ resource: ModelDAEResource, workspaceID: String,
+        repository: Repository, database: Database, commercial: Bool, now: Date = Date(),
+        cancellation: () throws -> Void = { try Task.checkCancellation() }) throws -> [String: Data] {
+        try cancellation()
+        guard !workspaceID.isEmpty else { throw VideoError.permission("三维原件读取需要明确工作区") }
         let assets = database.assets.filter { $0.workspaceID == workspaceID }
         try resource.validate(assets: assets)
         var bank: [String: Data] = [:]
-        for id in resource.assetIDs {
+        var total = 0
+        for id in resource.assetIDs.sorted() {
+            try cancellation()
             guard let asset = assets.first(where: { $0.id == id }), let proofID = asset.evidenceID,
                   let proof = database.evidence.first(where: { $0.id == proofID && $0.workspaceID == workspaceID }),
                   proof.assetID == id, proof.usable(commercial: commercial, now: now) else {
@@ -83,12 +97,45 @@ public enum ModelPackageMedia {
             let maximum = asset.ext == "dae" ? DAEInspector.maximumBytes : 32 * 1024 * 1024
             let data = try bytes(repository.assetURL(asset), within: repository.root, maximum: maximum,
                 sha256: asset.hash, expectedBytes: asset.bytes)
+            total += data.count
+            guard total <= 128 * 1024 * 1024 else { throw VideoError.invalid("单个三维原件闭包超过128MiB") }
             bank[id] = data
         }
-        let modelData = bank.removeValue(forKey: resource.model.assetID)!
-        try resource.verify(modelData: modelData, textureDataByAssetID: bank)
-        for data in bank.values { try validatePNG(data) }
-        return try LoadedDAEModel(resource: resource, modelData: modelData, textureData: bank)
+        try verifyByteClosure(resource, assets: bank, cancellation: cancellation)
+        return bank
+    }
+
+    /// Technical decoding of a previously frozen byte bank. This verifies the
+    /// complete original resource identity but creates no Evidence, database,
+    /// filesystem permission, source-right approval or media-review approval.
+    public static func loadByteClosure(_ resource: ModelDAEResource, assets: [String: Data],
+        cancellation: () throws -> Void = { try Task.checkCancellation() }) throws -> LoadedDAEModel {
+        let (model, textures) = try verifyByteClosure(resource, assets: assets, cancellation: cancellation)
+        let loaded = try LoadedDAEModel(resource: resource, modelData: model, textureData: textures)
+        try cancellation()
+        return loaded
+    }
+
+    @discardableResult private static func verifyByteClosure(_ resource: ModelDAEResource, assets: [String: Data],
+        cancellation: () throws -> Void) throws -> (Data, [String: Data]) {
+        try cancellation(); try resource.validate()
+        var selected: [String: Data] = [:], total = 0
+        for reference in [resource.model] + Array(resource.textures.values) {
+            try cancellation()
+            if selected[reference.assetID] != nil { continue }
+            guard let data = assets[reference.assetID], data.count == reference.bytes,
+                  Codec.hash(data) == reference.sha256 else {
+                throw VideoError.review("三维冻结字节不符合原件摘要或长度")
+            }
+            total += data.count
+            guard total <= 128 * 1024 * 1024 else { throw VideoError.invalid("单个三维原件闭包超过128MiB") }
+            selected[reference.assetID] = data
+        }
+        guard let model = selected.removeValue(forKey: resource.model.assetID) else { throw VideoError.notFound("冻结字节库缺少原DAE") }
+        try resource.verify(modelData: model, textureDataByAssetID: selected)
+        for data in selected.values { try cancellation(); try validatePNG(data) }
+        try cancellation()
+        return (model, selected)
     }
 
     static func bytes(_ url: URL, within root: URL, maximum: Int, sha256: String? = nil, expectedBytes: Int? = nil) throws -> Data {

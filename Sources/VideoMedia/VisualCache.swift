@@ -119,7 +119,7 @@ enum VisualClipCache {
         let table=CTFontCopyTable(font,0x68656164,[]) as Data? ?? Data() // OpenType 'head' includes font revision.
         let fontID=(CTFontCopyPostScriptName(font) as String)+Codec.hash(table)
         var moduleIdentity:String?
-        if RenderModuleRegistry.capability(for:scene.kind) != nil {guard let modules else{throw VideoError.unavailable("需要独立高级模块与有效权益")};let status=try modules.validate(kind:scene.kind);moduleIdentity=status.pluginID+status.version+status.implementationDigest}
+        if RenderModuleRegistry.capability(for:scene.kind) != nil {guard let modules else{throw VideoError.unavailable("需要独立高级模块与有效权益")};let status=try modules.validate(scene:scene);moduleIdentity=status.pluginID+status.version+status.implementationDigest}
         // Only paper data/code changed its visual semantics. Keep the cache
         // identity of ordinary panels and authored drawing-only paper scenes.
         let paperData=scene.paperPresentation != nil && scene.layers?.contains(where:{$0.kind == .chart || $0.kind == .code}) == true

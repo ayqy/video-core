@@ -40,6 +40,7 @@ public final class RemoteSceneModule:ScopedSceneRenderModule,@unchecked Sendable
     private final class Session {
         let client:PluginProcessClient;let mutex=NSLock();let cancellation:RenderCancellation
         var preflight=PluginFramePreflight()
+        var modelTransfer=PluginModelBankTransfer()
         init(_ client:PluginProcessClient,cancellation:RenderCancellation){self.client=client;self.cancellation=cancellation}
     }
     private let mutex=NSLock()
@@ -84,7 +85,9 @@ public final class RemoteSceneModule:ScopedSceneRenderModule,@unchecked Sendable
     public func draw(scene:VideoCore.Scene,localFrame:Int,fps:Int,rect:CGRect,context:CGContext)throws {throw VideoError.permission("独立高级绘制必须携带Host实时核验的完整调用范围")}
     public func draw(scene:VideoCore.Scene,localFrame:Int,fps:Int,rect:CGRect,context:CGContext,resources:RenderResources)throws {throw VideoError.permission("独立高级绘制缺少调用范围")}
     public func draw(scene:VideoCore.Scene,localFrame:Int,fps:Int,rect:CGRect,context:CGContext,resources:RenderResources,invocation:RenderInvocation)throws {
-        guard scene.modelScene3D == nil else {throw VideoError.unavailable("此RPC仅支持已声明的视觉输入，不能静默忽略三维模型载荷")}
+        if scene.modelScene3D != nil {
+            guard manifest.id=="video.game",manifest.inputSchema==9 else {throw VideoError.unavailable("三维模型场景需要明确支持schema9的受信游戏插件，不能降级为旧二维输入")}
+        }
         try invocation.check();try PluginInputCompatibility.requireKnowledgeSupport(scene.simulation,pluginID:manifest.id,inputSchema:manifest.inputSchema,appearances:scene.classicArtwork?.knowledgeParticipants);try PluginInputCompatibility.requireCartoonSupport(scene.cartoonPerformance,pluginID:manifest.id,inputSchema:manifest.inputSchema)
         try PluginInputCompatibility.requirePresenterSupport(scene.cartoonPresenter,pluginID:manifest.id,inputSchema:manifest.inputSchema)
         try PluginInputCompatibility.requireLayoutSupport(layers:scene.layers,actions:scene.storyActions,presenter:scene.cartoonPresenter,pluginID:manifest.id,inputSchema:manifest.inputSchema)
@@ -92,8 +95,15 @@ public final class RemoteSceneModule:ScopedSceneRenderModule,@unchecked Sendable
         let session=try session(invocation)
         session.mutex.lock();defer{session.mutex.unlock()}
         let props=PluginVisualProps(scene:scene,voiceBinding:resources.speechBinding),client=session.client
-        let input=PluginFrameInput(invocation:client.invocation,props:props,sourceFrame:localFrame,fps:fps,canvasWidth:context.width,canvasHeight:context.height,rect:PluginRect(x:rect.minX,y:rect.minY,width:rect.width,height:rect.height),assets:try resources.pluginRasterAssets(props:props))
-        try PluginProtocolRules.validate(input,capabilityID:manifest.capabilities[0]);let digest=try input.contentDigest()
+        let modelReference:PluginModelBankReference?
+        if let model=scene.modelScene3D {
+            guard let bank=resources.modelBank else {throw VideoError.permission("三维高级绘制缺少Host已核工作区、权利与原件摘要的完整字节库")}
+            modelReference=try session.modelTransfer.reference(bank:bank,scene:model,durationFrames:scene.durationFrames,invocation:client.invocation,check:{try invocation.check()}) { operation in
+                try client.exchange(PluginRPCRequest(requestID:Codec.id(),method:.validate,modelBankOperation:operation),scope:invocation)
+            }
+        }else{modelReference=nil}
+        let input=PluginFrameInput(invocation:client.invocation,props:props,sourceFrame:localFrame,fps:fps,canvasWidth:context.width,canvasHeight:context.height,rect:PluginRect(x:rect.minX,y:rect.minY,width:rect.width,height:rect.height),assets:try resources.pluginRasterAssets(props:props),modelBankReference:modelReference)
+        try PluginProtocolRules.validate(input,capabilityID:manifest.capabilities[0],inputSchemaVersion:manifest.inputSchema);let digest=try input.contentDigest()
         try session.preflight.perform(input,digest:digest,check:{try invocation.check()}) { method in
             try client.exchange(PluginRPCRequest(requestID:Codec.id(),method:method,input:input,invocation:client.invocation),scope:invocation)
         }

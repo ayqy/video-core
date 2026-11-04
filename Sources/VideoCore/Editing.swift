@@ -309,8 +309,20 @@ public enum Quality {
             do {try FontRightsRules.validate(fontName:s.fontName ?? "PingFangSC-Medium",workspaceID:revision.workspaceID,evidenceIDs:s.evidenceIDs,evidence:database.evidence,commercial:commercial,now:now)}
             catch{issues.append(QualityIssue(s.id+"font_rights",(error as? VideoError)?.localizedDescription ?? "镜头字体授权尚未核对"))}
             if s.kind == .simulation || s.kind == .cartoon {
-                if s.modelScene3D != nil {issues.append(QualityIssue(s.id+"model_renderer","三维场景已保存；当前发行协议尚未支持模型载荷，须安装相容且受信的高级模块后才能制作，未回退二维图集"))}
-                if s.kind == .simulation && !(s.gameWorld != nil && s.storyCausality != nil && s.simulation.knowledge == nil && s.simulationRecording == nil) {
+                if let model=s.modelScene3D {
+                    // Quality checks content/source rights. The Host separately
+                    // verifies the actually installed schema9 module before a
+                    // quote, preview or job, rather than assuming availability.
+                    for id in model.assetIDs.sorted() {
+                        guard let asset=database.assets.first(where:{$0.id==id && $0.workspaceID==revision.workspaceID}),
+                              let evidenceID=asset.evidenceID,
+                              let proof=database.evidence.first(where:{$0.id==evidenceID && $0.workspaceID==revision.workspaceID}),
+                              proof.assetID==id,proof.usable(commercial:commercial,now:now) else {
+                            issues.append(QualityIssue(s.id+"model_source_"+id,"三维模型或纹理缺少当前工作区的有效来源与用途确认"));continue
+                        }
+                    }
+                }
+                if s.kind == .simulation && s.modelScene3D == nil && !(s.gameWorld != nil && s.storyCausality != nil && s.simulation.knowledge == nil && s.simulationRecording == nil) {
                     do {try SimulationReplay.verify(scene:s,fps:revision.fps)}
                     catch {issues.append(QualityIssue(s.id+"simulation_recording",(error as? VideoError)?.localizedDescription ?? "规则录制尚未核对"))}
                 }

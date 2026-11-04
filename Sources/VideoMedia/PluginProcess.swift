@@ -280,7 +280,11 @@ public enum PluginStdioBridge {
                 guard !line.isEmpty,line.count<=PluginProtocolRules.maximumRequestBytes else{throw VideoError.invalid("桥消息超限")}
                 let value=try Codec.decoder().decode(PluginRPCRequest.self,from:line)
                 try parent.verify(method:value.method)
-                guard let current=value.invocation ?? value.input?.invocation else{throw VideoError.permission("桥请求缺少调用范围")}
+                guard let current=value.invocation ?? value.input?.invocation ?? value.modelBankOperation?.invocation else{throw VideoError.permission("桥请求缺少调用范围")}
+                if let operation=value.modelBankOperation {
+                    guard value.method == .validate,value.input==nil,value.invocation==nil,value.taskID==nil else{throw VideoError.permission("桥三维字节操作不能混入其它调用载荷")}
+                    try operation.validate()
+                }
                 try PluginProtocolRules.validate(current)
                 if let scope {guard scope==current else{throw VideoError.permission("桥拒绝切换完整调用")}}else{scope=current}
                 let answer=try peer.exchange(line,until:Date(timeIntervalSince1970:current.deadlineUnixTime))
@@ -365,7 +369,11 @@ final class PluginProcessClient {
         throw VideoError.unavailable("插件响应或终止超过明确截止")
     }
     func exchange(_ request:PluginRPCRequest,scope:RenderInvocation)throws->PluginRPCResponse {
-        try check(scope);guard request.invocation==invocation || request.input?.invocation==invocation else{throw VideoError.permission("插件请求不属于原完整调用")}
+        try check(scope);guard request.invocation==invocation || request.input?.invocation==invocation || request.modelBankOperation?.invocation==invocation else{throw VideoError.permission("插件请求不属于原完整调用")}
+        if let operation=request.modelBankOperation {
+            guard request.method == .validate,request.input==nil,request.invocation==nil,request.taskID==nil,operation.invocation==invocation else{throw VideoError.permission("三维字节操作必须独立绑定原完整调用")}
+            try operation.validate()
+        }
         var data=try Codec.data(request);guard data.count<=PluginProtocolRules.maximumRequestBytes else{throw VideoError.invalid("插件请求超过有界长度")};data.append(10)
         try PluginPipeOutput.write(data,descriptor:input.fileHandleForWriting.fileDescriptor,until:scope.deadline){try self.check(scope)}
         let answer=try next(until:min(scope.deadline,Date().addingTimeInterval(10))){try self.check(scope)};try check(scope)

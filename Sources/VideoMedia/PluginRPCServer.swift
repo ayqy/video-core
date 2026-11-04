@@ -12,6 +12,7 @@ public final class PluginRPCServer:@unchecked Sendable {
     private let lock=NSLock()
     private let resourceLock=NSLock()
     private var resourceBank:(assets:[PluginRasterAsset],resources:RenderResources)?
+    private let modelBanks=PluginModelBankStore()
     private let drawing=DispatchQueue(label:"video.plugin.actual-drawing",qos:.userInitiated)
     private let terminate:@Sendable ()->Void
     private let taskTimeout:Double
@@ -30,18 +31,24 @@ public final class PluginRPCServer:@unchecked Sendable {
         // This describes the actual linked implementation only, never grants paid access.
         module=try moduleFactory(PluginManifest(id:pluginID,version:version,capabilities:[capabilityID],inputSchema:inputSchemaVersion,implementationDigest:BuiltinExecutableIdentity.current().digest,permissions:[]))
     }
-    deinit{watchdog?.cancel();taskWatchdog?.cancel()}
+    deinit{watchdog?.cancel();taskWatchdog?.cancel();modelBanks.close()}
     public func exchange(_ data:Data,reply:@escaping @Sendable (Data)->Void) {
         var requestID="unparsed"
         do {
             guard !data.isEmpty,data.count<=PluginProtocolRules.maximumRequestBytes else{throw VideoError.invalid("插件RPC消息为空或超出有界长度")}
             let request=try Codec.decoder().decode(PluginRPCRequest.self,from:data);requestID=request.requestID
             guard request.protocolMajor==1,PluginProtocolRules.text(requestID) else{throw VideoError.unavailable("插件协议主版本或请求标识不受支持")}
+            try PluginProtocolRules.validate(request,pluginID:descriptor.pluginID,inputSchemaVersion:descriptor.inputSchemaVersion)
             let response=try handle(request)
             send(response,reply:reply)
             if request.method == .cancel,request.taskID == nil,response.ok {
                 // Reply first; actual process exit is separate evidence from XPC invalidation.
-                DispatchQueue.global(qos:.utility).asyncAfter(deadline:.now()+0.05){[weak self] in self?.requestTermination()}
+                DispatchQueue.global(qos:.utility).asyncAfter(deadline:.now()+0.05){[weak self] in
+                    // Exit cannot wait behind an in-flight commit's parser lock.
+                    // Process teardown reclaims all banks; the explicit close
+                    // also covers finite in-process rule services.
+                    self?.requestTermination();self?.modelBanks.close()
+                }
             }
         }catch{
             let error=error as? VideoError ?? .invalid("插件RPC不能解析或执行；未返回输入或诊断原文")
@@ -80,6 +87,7 @@ public final class PluginRPCServer:@unchecked Sendable {
         if let id=activeTask,var task=tasks[id] {if task.state == .running{task.state = .timedOut};task.frame=nil;task.error=PluginRPCError(code:"unavailable",message:"实际绘制超过调用或单帧截止，服务退出；不发表晚到帧");tasks[id]=task}
         activeTask=nil;lock.unlock()
         requestTermination()
+        modelBanks.close()
     }
     private func scope(_ request:PluginRPCRequest)throws->PluginInvocation {
         guard let value=request.invocation ?? request.input?.invocation else{throw VideoError.permission("插件操作缺少完整冻结调用")}
@@ -88,7 +96,10 @@ public final class PluginRPCServer:@unchecked Sendable {
     }
     private func input(_ request:PluginRPCRequest)throws->PluginFrameInput {
         guard let value=request.input else{throw VideoError.invalid("插件操作缺少实际帧输入")}
-        _=try scope(request);try PluginInputCompatibility.requireKnowledgeSupport(value.props.simulation,pluginID:descriptor.pluginID,inputSchema:descriptor.inputSchemaVersion,appearances:value.props.artwork?.knowledgeParticipants);try PluginInputCompatibility.requireCartoonSupport(value.props.cartoonPerformance,pluginID:descriptor.pluginID,inputSchema:descriptor.inputSchemaVersion);try PluginProtocolRules.validate(value,capabilityID:descriptor.capabilityID)
+        _=try scope(request)
+        lock.lock();let available = !closing;lock.unlock()
+        guard available else{throw VideoError.unavailable("能力服务正在退出，不接受新的视觉输入")}
+        try PluginInputCompatibility.requireKnowledgeSupport(value.props.simulation,pluginID:descriptor.pluginID,inputSchema:descriptor.inputSchemaVersion,appearances:value.props.artwork?.knowledgeParticipants);try PluginInputCompatibility.requireCartoonSupport(value.props.cartoonPerformance,pluginID:descriptor.pluginID,inputSchema:descriptor.inputSchemaVersion);try PluginProtocolRules.validate(value,capabilityID:descriptor.capabilityID,inputSchemaVersion:descriptor.inputSchemaVersion)
         try PluginInputCompatibility.requirePresenterSupport(value.props.cartoonPresenter,pluginID:descriptor.pluginID,inputSchema:descriptor.inputSchemaVersion)
         try PluginInputCompatibility.requireLayoutSupport(layers:value.props.layers,actions:value.props.storyActions,presenter:value.props.cartoonPresenter,pluginID:descriptor.pluginID,inputSchema:descriptor.inputSchemaVersion)
         try PluginInputCompatibility.requireStorySupport(storyActions:value.props.storyActions,gameWorld:value.props.gameWorld,cartoonRig:value.props.cartoonRig,pluginID:descriptor.pluginID,inputSchema:descriptor.inputSchemaVersion)
@@ -103,7 +114,30 @@ public final class PluginRPCServer:@unchecked Sendable {
         resourceBank=(assets,decoded)
         return decoded
     }
+    private func resources(_ input:PluginFrameInput)throws->RenderResources {
+        let raster=try resources(input.assets).bindingSpeech(input.props.voiceBinding)
+        guard let scene=input.props.modelScene3D else{return raster}
+        guard descriptor.pluginID=="video.game",descriptor.inputSchemaVersion==9,let reference=input.modelBankReference else {
+            throw VideoError.permission("只有schema9游戏服务可绑定完整三维字节库")
+        }
+        let snapshot=try modelBanks.snapshot(reference:reference,invocation:input.invocation,scene:scene,durationFrames:input.props.durationFrames)
+        // Keep the exact value-semantic snapshot outside the replaceable store;
+        // release, preflight or another upload cannot mutate an active draw.
+        return raster.bindingModelBank(RenderModelBank(snapshot:snapshot))
+    }
     private func handle(_ request:PluginRPCRequest)throws->PluginRPCResponse {
+        if let operation=request.modelBankOperation {
+            guard descriptor.pluginID=="video.game",descriptor.inputSchemaVersion==9,request.method == .validate,
+                  request.input==nil,request.invocation==nil,request.taskID==nil else {
+                throw VideoError.permission("三维字节操作仅用于schema9游戏服务，且不能夹带其它请求")
+            }
+            try bind(operation.invocation)
+            lock.lock();let available = !closing;lock.unlock()
+            guard available else {throw VideoError.unavailable("能力服务正在退出，拒绝注册模型字节库")}
+            let receipt=try modelBanks.apply(operation)
+            return PluginRPCResponse(requestID:request.requestID,ok:true,state:receipt.state.rawValue,
+                cost:PluginCost(currency:operation.invocation.currency,budgetReference:operation.invocation.budgetReference),modelBankReceipt:receipt)
+        }
         switch request.method {
         case .handshake,.describe:
             if request.input != nil || request.invocation != nil {_=try scope(request)}
@@ -114,11 +148,11 @@ public final class PluginRPCServer:@unchecked Sendable {
             return PluginRPCResponse(requestID:request.requestID,ok:true,state:state,descriptor:descriptor)
         case .validate,.estimate:
             let value=try input(request)
-            _=try resources(value.assets)
+            _=try resources(value)
             return PluginRPCResponse(requestID:request.requestID,ok:true,state:"validated",inputDigest:try value.contentDigest(),cost:PluginCost(currency:value.invocation.currency,budgetReference:value.invocation.budgetReference))
         case .execute:
             let value=try input(request),digest=try value.contentDigest()
-            let resources=try resources(value.assets).bindingSpeech(value.props.voiceBinding)
+            let resources=try resources(value)
             try PluginProtocolRules.validate(value.invocation)
             lock.lock()
             if let previous=executeReceipts[request.requestID] {
@@ -133,12 +167,13 @@ public final class PluginRPCServer:@unchecked Sendable {
             while order.count>=32 {let old=order.removeFirst();tasks.removeValue(forKey:old)}
             tasks[task.taskID]=task;order.append(task.taskID);activeTask=task.taskID;executeReceipts[request.requestID]=(digest,task.taskID)
             let timer=DispatchSource.makeTimerSource(queue:DispatchQueue.global(qos:.utility))
-            timer.schedule(deadline:.now()+min(taskTimeout,value.invocation.deadlineUnixTime-Date().timeIntervalSince1970));timer.setEventHandler{[weak self] in self?.expire(taskID:task.taskID)}
+            let deadline=min(Date().addingTimeInterval(taskTimeout),Date(timeIntervalSince1970:value.invocation.deadlineUnixTime))
+            timer.schedule(deadline:.now()+max(0,deadline.timeIntervalSinceNow));timer.setEventHandler{[weak self] in self?.expire(taskID:task.taskID)}
             taskWatchdog=timer;timer.resume()
             lock.unlock()
             // Bind this task's immutable bank before another preflight can
             // replace the one-entry cache while drawing is queued or blocked.
-            drawing.async{[weak self] in self?.draw(value,resources:resources,taskID:task.taskID,digest:digest)}
+            drawing.async{[weak self] in self?.draw(value,resources:resources,taskID:task.taskID,digest:digest,deadline:deadline)}
             return PluginRPCResponse(requestID:request.requestID,ok:true,state:"running",inputDigest:digest,task:task,cost:PluginCost(currency:value.invocation.currency,budgetReference:value.invocation.budgetReference))
         case .progress,.cancel:
             let expected=try scope(request)
@@ -160,18 +195,36 @@ public final class PluginRPCServer:@unchecked Sendable {
             return PluginRPCResponse(requestID:request.requestID,ok:true,state:task.state.rawValue,inputDigest:task.inputDigest,task:task,cost:PluginCost(currency:expected.currency,budgetReference:expected.budgetReference))
         }
     }
-    private func draw(_ input:PluginFrameInput,resources:RenderResources,taskID:String,digest:String) {
+    private func checkDrawingTask(_ taskID:String,invocation expected:PluginInvocation,digest:String,deadline:Date)throws {
+        lock.lock()
+        let running = !closing && activeTask==taskID && tasks[taskID]?.state == .running && tasks[taskID]?.invocation==expected && tasks[taskID]?.inputDigest==digest
+        lock.unlock()
+        guard running else{throw CancellationError()}
+        guard Date()<deadline else {
+            expire(taskID:taskID)
+            throw VideoError.unavailable("实际高级绘制超过原调用或单帧截止")
+        }
+    }
+    private func draw(_ input:PluginFrameInput,resources:RenderResources,taskID:String,digest:String,deadline:Date) {
         do {
             lock.lock();let canDraw = !closing && tasks[taskID]?.state == .running;lock.unlock()
             guard canDraw else{return finishCancelled(taskID)}
-            try PluginProtocolRules.validate(input,capabilityID:descriptor.capabilityID)
+            let expected=input.invocation
+            let controlled=resources.bindingCancellation{[weak self] in
+                guard let self else{throw CancellationError()}
+                try self.checkDrawingTask(taskID,invocation:expected,digest:digest,deadline:deadline)
+            }
+            try controlled.checkCancellation()
+            try PluginProtocolRules.validate(input,capabilityID:descriptor.capabilityID,inputSchemaVersion:descriptor.inputSchemaVersion)
             let w=input.canvasWidth,h=input.canvasHeight,r=input.rect
             guard let context=CGContext(data:nil,width:w,height:h,bitsPerComponent:8,bytesPerRow:w*4,space:CGColorSpace(name:CGColorSpace.sRGB)!,bitmapInfo:CGImageAlphaInfo.premultipliedLast.rawValue) else{throw VideoError.unavailable("插件无法分配有界透明画布")}
             let rect=CGRect(x:r.x,y:r.y,width:r.width,height:r.height);context.clip(to:rect)
-            try module.draw(scene:input.props.drawingScene(),localFrame:input.sourceFrame,fps:input.fps,rect:rect,context:context,resources:resources)
+            try module.draw(scene:input.props.drawingScene(),localFrame:input.sourceFrame,fps:input.fps,rect:rect,context:context,resources:controlled)
+            try controlled.checkCancellation()
             guard let image=context.makeImage() else{throw VideoError.unavailable("实际高级绘制没有图层")}
             let png=try ScenePainter.png(image)
-            let frame=PluginPNGFrame(data:png,width:w,height:h,sourceFrame:input.sourceFrame,inputDigest:digest,dependencyFingerprints:Dictionary(uniqueKeysWithValues:input.assets.map{($0.assetID,$0.sha256)}))
+            try controlled.checkCancellation()
+            let frame=PluginPNGFrame(data:png,width:w,height:h,sourceFrame:input.sourceFrame,inputDigest:digest,dependencyFingerprints:try input.dependencyFingerprints())
             try PluginProtocolRules.validate(frame,input:input)
             lock.lock();defer{lock.unlock()}
             guard !closing,Date().timeIntervalSince1970<input.invocation.deadlineUnixTime,var task=tasks[taskID],task.state == .running else{if activeTask==taskID{activeTask=nil;taskWatchdog?.cancel();taskWatchdog=nil};return}

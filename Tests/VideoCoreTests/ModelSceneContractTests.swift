@@ -190,7 +190,7 @@ final class ModelSceneContractTests: XCTestCase {
         var sceneLocked=original;sceneLocked.revisions[0].scenes[0].locked=true
         XCTAssertThrowsError(try Editor.apply([.lockModelInstance(s.id,"actor",true)],to:sceneLocked,baseRevision:sceneLocked.current.id,assets:f.assets,message:"镜头锁优先"))
     }
-    func testModelChangesInvalidateReviewAndCannotClaimUnsupportedRenderer() throws {
+    func testModelChangesInvalidateReviewAndSourceRightsGateModelsWithoutLegacyRecording() throws {
         let f=try fixture();defer{try? FileManager.default.removeItem(at:f.root)}
         var s=scene(f);s.captions=[.init(text:"测试",startFrame:0,endFrame:21,confirmed:true)]
         var original=project(s,f);original.revisions[0].review.sound=true;original.revisions[0].review.captions=true
@@ -207,7 +207,36 @@ final class ModelSceneContractTests: XCTestCase {
         XCTAssertFalse(materialResult.current.scenes[0].captions[0].confirmed)
         XCTAssertNotEqual(try original.current.contentDigest(),try materialResult.current.contentDigest())
         var database=try f.repository.read();database.projects=[result]
-        XCTAssertTrue(try Quality.inspect(result.current,database:database,requireReview:false).contains{$0.id==s.id+"model_renderer" && $0.blocking})
+        let checkedAt=Date(),validIssues=try Quality.inspect(result.current,database:database,requireReview:false,now:checkedAt)
+        XCTAssertFalse(validIssues.contains{$0.id.contains("model_renderer")},"内容质量不再假定缺少相容运行时，真实模块仍由Host独立校验")
+        XCTAssertFalse(validIssues.contains{$0.id==s.id+"simulation_recording"},"三维模型不借旧二维规则回放验收")
+        XCTAssertFalse(validIssues.contains{$0.id.hasPrefix(s.id+"model_source_")},"模型和纹理的真实当前工作区来源有效")
+        for asset in f.assets {
+            let assetIndex=try XCTUnwrap(database.assets.firstIndex{$0.id==asset.id})
+            let proofIndex=try XCTUnwrap(database.evidence.firstIndex{$0.id==asset.evidenceID})
+            for mutation in 0..<8 {
+                var denied=database
+                switch mutation {
+                case 0:denied.evidence[proofIndex].verified=false
+                case 1:denied.evidence[proofIndex].expiresAt=checkedAt.addingTimeInterval(-1)
+                case 2:denied.evidence[proofIndex].workspaceID="foreign-workspace"
+                case 3:denied.assets[assetIndex].workspaceID="foreign-workspace"
+                case 4:denied.evidence[proofIndex].assetID="another-source-asset"
+                case 5:denied.assets[assetIndex].evidenceID=nil
+                case 6:denied.evidence[proofIndex].source=""
+                default:denied.evidence[proofIndex].owner=""
+                }
+                if mutation==3 {
+                    XCTAssertThrowsError(try Quality.inspect(result.current,database:denied,requireReview:false,now:checkedAt),"跨工作区资产先在实际场景资源校验拒绝")
+                    continue
+                }
+                let issues=try Quality.inspect(result.current,database:denied,requireReview:false,now:checkedAt)
+                XCTAssertTrue(issues.contains{$0.id==s.id+"model_source_"+asset.id && $0.blocking},"撤回、过期、跨工作区、错绑定或缺来源不能借三维输入越过门禁")
+            }
+        }
+        var ordinary=s;ordinary.modelScene3D=nil;ordinary.simulationRecording=nil
+        var ordinaryRevision=result.current;ordinaryRevision.scenes=[ordinary]
+        XCTAssertTrue(try Quality.inspect(ordinaryRevision,database:database,requireReview:false,now:checkedAt).contains{$0.id==s.id+"simulation_recording" && $0.blocking},"独立普通仿真仍保留原录制门禁")
         let legacy=Scene(title:"旧工程",body:"")
         let object=try XCTUnwrap(JSONSerialization.jsonObject(with:Codec.data(legacy)) as? [String:Any])
         XCTAssertNil(object["modelScene3D"])

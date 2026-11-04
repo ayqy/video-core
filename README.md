@@ -38,13 +38,17 @@ MacApp、旧 App、VideoGame、VideoCartoon、Premium、高级实现运行时测
 
 真实图片或录屏镜头可显式设置`mediaPresentation: {"version":1,"layout":"fullFrame","backgroundColor":"FFFFFF"}`，使用普通媒体纯画面模式。Host不再叠加通用VIDEO标签、重复标题或页码时间，保留电影字幕与明确作者图层；原件先按显式`mediaFraming`取景，默认居中等比容纳于稳定内容窗，不拉伸或额外裁源。作者显式设置`x/y/scale`时仍按原变换绘制，并裁在固定内容窗内，不能进入字幕区域。背景为六位RGB，默认白色。实际源资产、源窗口、速度、停顿及声音映射沿原规则校验；模式增删或背景色变化使声音、字幕及完整预览需要重新复核。旧镜头省略该字段时保留原编码与画面；该Host普通媒体字段不扩展高级RPC或模块权限。
 
-三维资源SDK提供`ModelPackageMedia.importPackage`与`load`。跨组原PNG可用`textureBindings: [String: ModelTextureBinding]`显式指定：键必须是DAE声明的规范相对别名，值为所选来源目录内实际PNG的URL及预定SHA256；指定原件缺失或不符时拒绝，不猜同名文件或回退。原DAE、PNG字节与引用关系保持入库，返回资产仍须正常事务保存并独立记录来源。加载只使用当前工作区已核原件；材质纹理由原sampler、surface、image与UV绑定链确定，直接解码为图像，保留常量和原光照模型。仅缺少材质显示名时，临时原生加载数据补`name=id`；该运行时投影不写回原件。当前适配支持明确的COMMON材质及FCOLLADA法线，歧义、稀疏UV或未支持采样扩展明确拒绝。公开包不含动森素材或三维高级绘制实现；三维合同可编辑、保存和恢复，现有正常绘制入口仍明确报告缺少相容能力。
+三维资源SDK提供`ModelPackageMedia.importPackage`与`load`。跨组原PNG可用`textureBindings: [String: ModelTextureBinding]`显式指定：键必须是DAE声明的规范相对别名，值为所选来源目录内实际PNG的URL及预定SHA256；指定原件缺失或不符时拒绝，不猜同名文件或回退。原DAE、PNG字节与引用关系保持入库，返回资产仍须正常事务保存并独立记录来源。加载只使用当前工作区已核原件；材质纹理由原sampler、surface、image与UV绑定链确定，直接解码为图像，保留常量和原光照模型。仅缺少材质显示名时，临时原生加载数据补`name=id`；该运行时投影不写回原件。当前适配支持明确的COMMON材质及FCOLLADA法线，歧义、稀疏UV或未支持采样扩展明确拒绝。`verifiedByteClosure`沿同工作区、来源权利和安全CAS读取校验冻结完整原件；`loadByteClosure`对已经冻结的字节重新核对SHA、真实DAE元数据与PNG后技术解码，不创建数据库或来源证明，不授媒体审核。
+
+通用模型银行协议仅用于明确的game schema9：同一次完整调用按`begin/append/commit`上传原DAE及PNG，后续帧只携带绑定清单摘要和调用摘要的引用；每帧输入及输出指纹覆盖全部实际资源。银行最多两份、合计64MiB、每份最多512件，每块最多512KiB；单图24M像素和合计48M像素沿既有预算，超限明确拒绝。`release`、截止与关闭清理服务持有字节，正在运行的任务保留自己的不可变快照。原schema8图片预算、八种RPC方法和旧编码保持；旧模块不能接收三维输入或悄悄回到二维。Host在报价、任务、缓存和绘制前要求受信schema9及完整Scoped调用，`RenderResources`的只读模型银行和本进程取消门禁不提供文件或网络权限。公开包不包含高级三维绘制实现、动森原件或任何合法高级包；模块仍须经原固定发行者、真实代码签名、策略与权益门禁安装。缺少相容模块时正常入口明确拒绝。
+
+`Integrations/model_material_import.py`和`native/ImportModelMaterials.swift`用于显式指定的已有工作区、项目及当前版本。调用者提供原DAE和每个PNG的路径、SHA、大小与来源/许可声明；必须先真实编译Swift辅助入口，再由实际SDK解析、导入，经正常事务追加固定本地非商业素材和来源记录，保持原修订与其他数据。JSON声明不能替代真实inspection或主CLI模型入库结果，也不授商业、review或上传权限。Python只调用已编译且由调用者冻结的辅助程序；真实已有工程链另行验证。历史Mota导入工具仅保留作旧工程追溯。公开包不附业务模型、游戏原件或素材清单，通用SDK和相容Host不代表完整动森成片已达标。
 
 `ModelInstance3D.materialInterpretation`是可选的显式呈现设置。省略时保留旧编码与原顶点色、RGB法线行为；作者可分别选择忽略顶点色、将法线解释为`redGreenPositiveZ`（RG映射XY，Z固定正向并由绘制端归一化）。`opaqueDiffuseMaterialIDs`仅为明确选中的原DAE材质ID忽略diffuse alpha，独立transparent、transparency等控制仍保留；未知或重复ID拒绝。设置进入工程摘要、正常编辑、锁定保护和含源备份；不改原模型或PNG，也不依据文件名和像素自动推断。SDK的`materialsBySourceID`映射来自原material/effect与实际原生名称的唯一对应，保留原名称。该设置不表示原游戏缺失的BFRES材质参数、透明度、混合贴图或完整着色器已还原；实际支持须由相容高级绘制端确认。
 
-公共仓库的`free-production`工作流执行三个完整受影响Python模块：字幕打轴29项、生产声明24项、生产流程33项，共86个唯一测试身份；未变的TN映射12项和制作形态13项按原范围复用，共25项。Native为原四类29项、模型媒体11项及三维合同/受影响编辑与安全存储43项，共83个唯一身份；逐项核对started和passed，遗漏、重复、失败或跳过均拒绝。同一scratch、release配置和`-j2`下，先编译VideoCore，再构建测试产物，继而`swift test --skip-build`执行规则，最后构建普通Release `video` CLI；四段各650秒，job上限50分钟。编译与合成夹具规则不代真实业务影片、完整看听、人工审核或高级模块发行。
+公共仓库的`free-production`工作流执行四个完整受影响Python模块：字幕打轴29项、生产声明24项、生产流程33项与模型导入桥8项，共94个唯一测试身份；未变的TN映射12项和制作形态13项按原范围复用，共25项。Native保留原四类29项、模型媒体11项及三维合同/受影响编辑与安全存储43项；增加直接受影响的协议19项、模型银行10项、签名范围15项与进程/调用18项，共145个唯一身份。逐项核对started和passed，遗漏、重复、失败或跳过均拒绝。同一scratch、release配置和`-j2`下，先编译VideoCore，再构建测试产物，继而`swift test --skip-build`执行规则，最后构建普通Release `video` CLI；四段各650秒，job上限50分钟。模型导入Python规则仅用合成回执与假runner，不冒Swift桥编译或真实工程导入；编译与合成夹具规则不代真实业务影片、完整看听、人工审核、高级包发行或正常Host冷载E2E。
 
-当前322项公开载荷逐件核同，整体指纹从当次manifest计算。工作流按公开基准`ab628dbbc97f1f9f25a403d80eabd9d899c205f5`保护304项原字节；新增三维场景合同与规则两项，另16项既有载荷经过显式审查。白名单以外的源码、私有媒体、缓存、签名材料及凭据不进入源码包；fixture媒体验证不授声音听审、字幕确认、商业权利或上传同意。
+当前328项公开载荷逐件核同，整体指纹从当次manifest计算。工作流按公开基准`ab628dbbc97f1f9f25a403d80eabd9d899c205f5`保护293项原字节；相对该基准新增三维合同、模型银行与通用导入桥8项，另27项既有载荷经过显式审查。白名单以外的源码、私有媒体、缓存、签名材料及凭据不进入源码包；fixture媒体验证不授声音听审、字幕确认、商业权利或上传同意。
 
 ## 显式知识制作入口
 
