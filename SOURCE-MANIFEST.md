@@ -2,10 +2,10 @@
 
 VideoFree source export · package_free.py · version 1
 
-生成时间：2026-11-05 02:35:45 北京时间
+生成时间：2026-11-05 05:40:03 北京时间
 
-- 源码与必要元数据：322个文件；5161779字节（不含本清单）。
-- 整体内容指纹：`0b5495b3684563771f88dec485acb465e323cbc7d27e18b780abe24f1421fa76`。
+- 源码与必要元数据：322个文件；5250212字节（不含本清单）。
+- 整体内容指纹：`6c859001b6ff31e7b91a4c7fe1b93269d515814bd7d34d51cdf1d1e294adf4e0`。
 - 来源：受控原始工程中的逐文件白名单；Package.swift、唯一免费制作workflow与README均来自Distribution/Free精确模板。
 - 本包不含.git，不可作为新业务checkout；本清单生成过程不执行构建、设备验收、签名安装或公共上传，各阶段以独立证据为准。
 - 排除：App、VideoGame、VideoCartoon、Premium、高级实现运行时测试、私有仓库地址、凭据、客户数据、缓存、日志及媒体过程产物。
@@ -14,7 +14,7 @@ VideoFree source export · package_free.py · version 1
 
 | SHA-256 | 字节数 | 包内路径 / 原工程来源 |
 |---|---:|---|
-| 68af6ad4956651776e8b18d555110aec34459960873d970e6976ba81ca200373 | 19653 | .github/workflows/free-production.yml |
+| 973247cf464b7a8b46ba660dd46fa30c0c018651f2d5ba3faad9f06e58c9c705 | 19772 | .github/workflows/free-production.yml |
 | ac90de9132befb9227282c230671875edb7fd8dc4297999fc39622ea7efe3644 | 52964 | Integrations/README.md |
 | 28833193551aa06befb3bc0fc30b69ef87f74cccae39895f4242af4321d717dd | 15308 | Integrations/actor_motion.py |
 | 39dd8274ff1e6b0649acb63281087a1144e1f4a4e0eed3dc2b92e10df2cbd121 | 28488 | Integrations/asset_reuse.py |
@@ -110,7 +110,7 @@ VideoFree source export · package_free.py · version 1
 | cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30 | 11358 | LICENSE |
 | c369f09e50d62d1a1c8eff1500888667ff7a192d0fdc7b32d39c800dfa1e9721 | 1597 | NOTICE |
 | e3dae895ffcaa4ce4470f1dc9d63eee5071f829d63cfe227360c3dabfbdd0d91 | 1213 | Package.swift |
-| 6ffe64da58032109645e4d0bba2e81164205e3b287d267b1221dc5f107f91306 | 14678 | README.md |
+| 5b39f083afe215a16d0c295df13bde596c3816656059df42349a7c8ad3e74bc1 | 15975 | README.md |
 | bbfe59a972a3e8e09e347c04bc22c0eacd2544881af8a4b6068bfc30b38466e8 | 80 | Sources/CSQLite/module.modulemap |
 | b052d8e561e942f97b503033ecd2eaa2b35213bdbf374983efe9e68eabdfc024 | 21 | Sources/CSQLite/shim.h |
 | 347257a3cd5bcb0e501506a29ab4dc2892a46d2560a111a8d779b124e594ebb9 | 60 | Sources/CZlib/module.modulemap |
@@ -121,7 +121,7 @@ VideoFree source export · package_free.py · version 1
 | 0cc6b1fc70ead576d728d7a6dfc5e09fa774c82ebba66cb9d3012ee6515ce80f | 6557 | Sources/VideoCore/AgentJobAccess.swift |
 | cb4efd88fef797fcad71b186df5ce284d0e242f0d5ce098f922c8cfc91c4853f | 20878 | Sources/VideoCore/AgentMutation.swift |
 | 3ef9d0608df8801f8ff54aa1b1a691fbc6f1a34ff5c57482ddc5220012112cf3 | 12354 | Sources/VideoCore/AgentPreview.swift |
-| 0a37c256a00ccaae804b112ab5dc5cd2ac84e3cdb561b4669600e2ef370d8b3f | 25624 | Sources/VideoCore/AgentSchemas.swift |
+| 40c866c17956b8d439e36cd318828392a2ad008f9ec372f529f0cdf40759780f | 26186 | Sources/VideoCore/AgentSchemas.swift |
 | 9027d2fdc8d9faf0c86e0808a700bda3460bbfeff970d8cdcb60432d8c9dd1d6 | 4673 | Sources/VideoCore/AgentWorker.swift |
 | a4a917beec4d38f3d9c9aa6f13c83f269987305ab84a195e953a86907fadc3ac | 4979 | Sources/VideoCore/AttributionEditing.swift |
 | 3eccea5aad16c8d64ac506d260d97eba8489fe997a47394f4f77d27d0ca8808d | 5570 | Sources/VideoCore/AudioMixRules.swift |
@@ -165,7 +165,7 @@ VideoFree source export · package_free.py · version 1
 | 2f461e3df93f7459f4aa225b0b63bc7745cd60f66eae93c22e7e73660ba775d7 | 1726 | Sources/VideoCore/MediaFraming.swift |
 | bb260ac090a0ccbeee94ee378af09db835eec91bb69a476d5be437b9b6285ded | 1852 | Sources/VideoCore/MediaPresentation.swift |
 | 6d53a60baea77835e72f130a19698102cc13a9bd160a20a36d8ed0529389c717 | 16421 | Sources/VideoCore/ModelScene3D.swift |
-| b99c05929ffc58761b3c6c429256aa486106d6bc2db8872faedaf8d40c8c7193 | 15930 | Sources/VideoCore/ModelSceneContract.swift |
+| 29dcf971671de7b565b8e114747995ceb5dff6cba34ca1ef7b515796631151f6 | 18009 | Sources/VideoCore/ModelSceneContract.swift |
 | babefe641845b26a0b8fddf4483fa9b184a56512f91e53e6a5b20c2e699e9fa0 | 23711 | Sources/VideoCore/Models.swift |
 | 56a47a4d5c48c0b33b6b87cd7288273d21869463b268429fd815d9fdaa8abb59 | 22121 | Sources/VideoCore/ModuleCatalogPublication.swift |
 | b94a05c6d2c9b3a2dca61c529a68210a5c3508e1e727e730ca77aff1f245740d | 7112 | Sources/VideoCore/NarrationWritingRules.swift |
@@ -211,7 +211,7 @@ VideoFree source export · package_free.py · version 1
 | 8fb3c17142049afe4b1ec265649d63e0c079db6a26063f21514f406a9c478a2f | 8298 | Sources/VideoMedia/LocalJobExecutor.swift |
 | 1708f587453edbc4b12552b7b10b1c0fa570a37a7191b0eb1e3ca27588008207 | 1037 | Sources/VideoMedia/MediaFramingRenderer.swift |
 | 858c6ede8930832e89244cdf914a4024a90fa5a1caf674cebeaf5170e4208e43 | 4490 | Sources/VideoMedia/MediaPresentationPainter.swift |
-| 1a963c21ec9d3e52557a82da0e252ce3ac3147a111940343198f72806d068592 | 7517 | Sources/VideoMedia/ModelPackageMedia.swift |
+| 6c5e493ad2158598fe18ddf8f6dd8805264cfff8f6dd2189582dadef97c1f530 | 38434 | Sources/VideoMedia/ModelPackageMedia.swift |
 | e2ef0b7692a5b757747e8a30bb441c1cdfa7efc7367dbf2243c54480650d9e43 | 21050 | Sources/VideoMedia/MotaBuiltinAssets.swift |
 | 947fe33cc101a4452a28fde6e6341ecff93e196bd5e9f791958bbfc4f22d3713 | 36794 | Sources/VideoMedia/MotaWorldAssets.swift |
 | 3c67ed9bfa913b217bc0dbf97ccd67c3a9813bf6ae5fe94eafba81481a5900a4 | 7269 | Sources/VideoMedia/NativeEncoder.swift |
@@ -283,7 +283,7 @@ VideoFree source export · package_free.py · version 1
 | ec8248d7142b874c623cd4426a3e5888347b4f3c90dea8c6abc7d6463b783caf | 16820 | Tests/VideoCoreTests/MediaConfirmationTests.swift |
 | a1772ddbb3af741656c1266d4e944d2156b16c8dd32416dd9a79d33881f39eed | 3943 | Tests/VideoCoreTests/MediaFramingTests.swift |
 | e17e78bd026e76ef225c8f72aa97adb6302c94124d39c3ba6dce9059d73e12e6 | 11886 | Tests/VideoCoreTests/MediaPresentationTests.swift |
-| 49221e2e175a6f0bab0cea25df46b47d197074f1193d704f94e91b2b68ed9d26 | 17840 | Tests/VideoCoreTests/ModelSceneContractTests.swift |
+| 9d2ffaa7b35c269fdd9c1ff19c3e84dc3f196d534bd4948571183ffc25acfc8b | 26735 | Tests/VideoCoreTests/ModelSceneContractTests.swift |
 | 0d0b590c0396a48de3752769e96a1b2568ee533c3ad72d7340941c9da4ec5ae3 | 21770 | Tests/VideoCoreTests/ModuleCatalogPublicationTests.swift |
 | e3b277d23a6c7a7951f541f010d35b7bce7cd9522eaaa53e726e58edcf8686b5 | 17747 | Tests/VideoCoreTests/NarrativeTests.swift |
 | c499c8ae6aca4855864eb5a5e2c5a55305643953a9c47073fc66b45c9bb41767 | 5752 | Tests/VideoCoreTests/NativeAgentTests.swift |
@@ -323,7 +323,7 @@ VideoFree source export · package_free.py · version 1
 | 8bb6f22b67c1aa5565a485b3c59e37281a728e49c9dd3d06935706ea51420efe | 3990 | Tests/VideoMediaTests/MediaFramingMediaTests.swift |
 | 8c140ba98957835fea19c6df877728b52103269a0f4f2c5aed437b7e1adcf0b6 | 15265 | Tests/VideoMediaTests/MediaPresentationMediaTests.swift |
 | 4e735b7700b6c618f736fd983eeab28e1dbe93f7ffe82c3e564ab997036d5642 | 23423 | Tests/VideoMediaTests/MediaTests.swift |
-| 2123628b2a7611cbe5a507fcf07d92a3fda5555a18d8004ff264d9ff33854307 | 7303 | Tests/VideoMediaTests/ModelPackageMediaTests.swift |
+| 8245534f9e1228f080d857bcf5c9d39e4cf9b3bc9711028f2a89f5c17a0dd004 | 51867 | Tests/VideoMediaTests/ModelPackageMediaTests.swift |
 | 2f24b48426df45f31fd87fcb62e727426a451cb8cb9c2949e0fc8d4238744d18 | 7697 | Tests/VideoMediaTests/NativeEncoderTests.swift |
 | 4107b55c496e037cb26708cfcfc224301c35ac98dc06598130c0219ac351f934 | 15795 | Tests/VideoMediaTests/PaperPresentationMediaTests.swift |
 | 5f7860dd20481161d38fc3860fb68c122d0381ccd030b52fa231484028ae0cbe | 22555 | Tests/VideoMediaTests/PluginProcessTests.swift |

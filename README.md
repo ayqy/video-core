@@ -38,9 +38,13 @@ MacApp、旧 App、VideoGame、VideoCartoon、Premium、高级实现运行时测
 
 真实图片或录屏镜头可显式设置`mediaPresentation: {"version":1,"layout":"fullFrame","backgroundColor":"FFFFFF"}`，使用普通媒体纯画面模式。Host不再叠加通用VIDEO标签、重复标题或页码时间，保留电影字幕与明确作者图层；原件先按显式`mediaFraming`取景，默认居中等比容纳于稳定内容窗，不拉伸或额外裁源。作者显式设置`x/y/scale`时仍按原变换绘制，并裁在固定内容窗内，不能进入字幕区域。背景为六位RGB，默认白色。实际源资产、源窗口、速度、停顿及声音映射沿原规则校验；模式增删或背景色变化使声音、字幕及完整预览需要重新复核。旧镜头省略该字段时保留原编码与画面；该Host普通媒体字段不扩展高级RPC或模块权限。
 
-公共仓库的`free-production`工作流执行三个完整受影响Python模块：字幕打轴29项、生产声明24项、生产流程33项，共86个唯一测试身份；未变的TN映射12项和制作形态13项按原范围复用，共25项。每项实际started/passed身份及数量均核同，遗漏、重复、失败或跳过均拒绝。在同一scratch、release配置和`-j2`下，先以显式`-Xswiftc -enable-testing`编译VideoCore，再用同一显式参数执行`swift build --build-tests`；两段成功后才由`swift test --skip-build`实际执行原29条Native规则，最后保留普通Release `video` CLI构建门禁：Core呈现7、普通媒体绘制6、局部取景媒体2、独立媒体确认14。四段分别保持650秒预算，外层job为50分钟有限上限；成功打印实际耗时，不预称缓存已复用。每段build/test超时仅增加被捕获原stdout的最多9000字节原尾后仍失败，不放宽29项身份及通过条件。Native源码和选择未改，编译阶段不执行规则、不证明性能根因，CI自然执行不作为本轮Native新修复。媒体fixture和纯规则成功不冒真实业务影片、完整看听或人工审核。
+三维资源SDK提供`ModelPackageMedia.importPackage`与`load`。跨组原PNG可用`textureBindings: [String: ModelTextureBinding]`显式指定：键必须是DAE声明的规范相对别名，值为所选来源目录内实际PNG的URL及预定SHA256；指定原件缺失或不符时拒绝，不猜同名文件或回退。原DAE、PNG字节与引用关系保持入库，返回资产仍须正常事务保存并独立记录来源。加载只使用当前工作区已核原件；材质纹理由原sampler、surface、image与UV绑定链确定，直接解码为图像，保留常量和原光照模型。仅缺少材质显示名时，临时原生加载数据补`name=id`；该运行时投影不写回原件。当前适配支持明确的COMMON材质及FCOLLADA法线，歧义、稀疏UV或未支持采样扩展明确拒绝。公开包不含动森素材或三维高级绘制实现；三维合同可编辑、保存和恢复，现有正常绘制入口仍明确报告缺少相容能力。
 
-发布差额保护以公开基准`c5b4c171c0776392e730eec85855f35487395eb7`的317项载荷为准：无新增载荷；只允许三份既有Python生产文件及其三份测试、README和唯一workflow共八项变化，其余309项按完整路径、字节数和SHA-256保持。当前317项载荷逐件核同，整体指纹从当次manifest计算。白名单以外的源码、私有媒体、缓存、签名材料及凭据不进入源码包；fixture媒体验证不授声音听审、字幕确认、商业权利或上传同意。
+`ModelInstance3D.materialInterpretation`是可选的显式呈现设置。省略时保留旧编码与原顶点色、RGB法线行为；作者可分别选择忽略顶点色、将法线解释为`redGreenPositiveZ`（RG映射XY，Z固定正向并由绘制端归一化）。`opaqueDiffuseMaterialIDs`仅为明确选中的原DAE材质ID忽略diffuse alpha，独立transparent、transparency等控制仍保留；未知或重复ID拒绝。设置进入工程摘要、正常编辑、锁定保护和含源备份；不改原模型或PNG，也不依据文件名和像素自动推断。SDK的`materialsBySourceID`映射来自原material/effect与实际原生名称的唯一对应，保留原名称。该设置不表示原游戏缺失的BFRES材质参数、透明度、混合贴图或完整着色器已还原；实际支持须由相容高级绘制端确认。
+
+公共仓库的`free-production`工作流执行三个完整受影响Python模块：字幕打轴29项、生产声明24项、生产流程33项，共86个唯一测试身份；未变的TN映射12项和制作形态13项按原范围复用，共25项。Native为原四类29项、模型媒体11项及三维合同/受影响编辑与安全存储43项，共83个唯一身份；逐项核对started和passed，遗漏、重复、失败或跳过均拒绝。同一scratch、release配置和`-j2`下，先编译VideoCore，再构建测试产物，继而`swift test --skip-build`执行规则，最后构建普通Release `video` CLI；四段各650秒，job上限50分钟。编译与合成夹具规则不代真实业务影片、完整看听、人工审核或高级模块发行。
+
+当前322项公开载荷逐件核同，整体指纹从当次manifest计算。工作流按公开基准`ab628dbbc97f1f9f25a403d80eabd9d899c205f5`保护304项原字节；新增三维场景合同与规则两项，另16项既有载荷经过显式审查。白名单以外的源码、私有媒体、缓存、签名材料及凭据不进入源码包；fixture媒体验证不授声音听审、字幕确认、商业权利或上传同意。
 
 ## 显式知识制作入口
 

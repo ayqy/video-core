@@ -37,9 +37,25 @@ public struct ModelTransform3D: Codable, Hashable, Sendable {
     }
     fileprivate static func mix(_ a: Self, _ b: Self, _ t: Double) -> Self { .init(translation:.mix(a.translation,b.translation,t),rotation:.mix(a.rotation,b.rotation,t),scale:.mix(a.scale,b.scale,t)) }
 }
+/// Explicit interpretation of unchanged source attributes; never inferred from
+/// a game name, inventory entry, texture filename or sampled pixel values.
+public enum ModelVertexColorUsage: String, Codable, Hashable, CaseIterable, Sendable { case source, ignored }
+public enum ModelNormalTextureEncoding: String, Codable, Hashable, CaseIterable, Sendable { case rgb, redGreenPositiveZ }
+public struct ModelMaterialInterpretation: Codable, Hashable, Sendable {
+    public var vertexColors: ModelVertexColorUsage
+    public var normalEncoding: ModelNormalTextureEncoding
+    /// Explicit source material IDs whose diffuse alpha is interpreted as opaque.
+    /// Nil retains source alpha; this never changes source texture or vertex bytes.
+    public var opaqueDiffuseMaterialIDs: [String]?
+    public init(vertexColors: ModelVertexColorUsage = .source, normalEncoding: ModelNormalTextureEncoding = .rgb, opaqueDiffuseMaterialIDs: [String]? = nil) {
+        self.vertexColors=vertexColors;self.normalEncoding=normalEncoding;self.opaqueDiffuseMaterialIDs=opaqueDiffuseMaterialIDs
+    }
+}
 public struct ModelInstance3D: Codable, Equatable, Identifiable, Sendable {
     public var id: String; public var name: String; public var resource: ModelDAEResource; public var transform: ModelTransform3D; public var locked: Bool
-    public init(id: String, name: String, resource: ModelDAEResource, transform: ModelTransform3D = .init(), locked: Bool = false) { self.id=id; self.name=name; self.resource=resource; self.transform=transform; self.locked=locked }
+    /// Nil preserves the legacy wire representation and source/rgb behavior.
+    public var materialInterpretation: ModelMaterialInterpretation?
+    public init(id: String, name: String, resource: ModelDAEResource, transform: ModelTransform3D = .init(), locked: Bool = false, materialInterpretation: ModelMaterialInterpretation? = nil) { self.id=id; self.name=name; self.resource=resource; self.transform=transform; self.locked=locked;self.materialInterpretation=materialInterpretation }
 }
 public struct ModelTransformKeyframe: Codable, Equatable, Sendable {
     public var frame: Int; public var transform: ModelTransform3D
@@ -89,6 +105,11 @@ public struct ModelScene3D: Codable, Equatable, Sendable {
         for instance in instances {
             guard PluginProtocolRules.text(instance.id,maximum:160),PluginProtocolRules.text(instance.name,maximum:160) else { throw VideoError.invalid("三维实例须有明确标识和名称") }
             try instance.transform.validate();try instance.resource.validate(assets:assets)
+            if let ids=instance.materialInterpretation?.opaqueDiffuseMaterialIDs {
+                let sourceIDs=Set(instance.resource.inspection.materials.map(\.id))
+                guard (1...128).contains(ids.count),Set(ids).count==ids.count,
+                      ids.allSatisfy({PluginProtocolRules.text($0,maximum:160) && $0 == $0.trimmingCharacters(in:.whitespacesAndNewlines) && sourceIDs.contains($0)}) else { throw VideoError.invalid("不透明漫反射须明确指定1至128个不重复的原DAE材质标识") }
+            }
             if let assets {
                 guard assets.first(where:{$0.id==instance.resource.model.assetID})?.mediaType == "model3d" else { throw VideoError.invalid("三维实例须绑定已入库的真实模型类型") }
                 for texture in instance.resource.textures.values {
@@ -164,7 +185,8 @@ public enum ModelScene3DSchema {
         "ModelDAEResource":"model:ModelAssetReference inspection:DAEInspection textures:{ModelAssetReference}",
         "ModelVector3":"x:n y:n z:n", "ModelQuaternion":"x:n y:n z:n w:n",
         "ModelTransform3D":"translation:ModelVector3 rotation:ModelQuaternion scale:ModelVector3",
-        "ModelInstance3D":"id:s name:s resource:ModelDAEResource transform:ModelTransform3D locked:b",
+        "ModelMaterialInterpretation":"vertexColors:ModelVertexColorUsage normalEncoding:ModelNormalTextureEncoding opaqueDiffuseMaterialIDs?:[s]",
+        "ModelInstance3D":"id:s name:s resource:ModelDAEResource transform:ModelTransform3D locked:b materialInterpretation?:ModelMaterialInterpretation",
         "ModelTransformKeyframe":"frame:i transform:ModelTransform3D",
         "ModelTransformTrack":"instanceID:s keyframes:[ModelTransformKeyframe]",
         "ModelJointTrack":"instanceID:s jointName:s keyframes:[ModelTransformKeyframe]",

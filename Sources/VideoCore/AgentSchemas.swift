@@ -91,6 +91,8 @@ public enum AgentSchemas {
             var schema=entity(declaration).object!;schema["additionalProperties"] = .boolean(false);result[name] = .object(schema)
         }
         result["ModelLightKind"] = .object(["type":.string("string"),"enum":.array(["ambient","directional","omni"].map(AgentValue.string))])
+        result["ModelVertexColorUsage"] = .object(["type":.string("string"),"enum":.array(ModelVertexColorUsage.allCases.map { .string($0.rawValue) })])
+        result["ModelNormalTextureEncoding"] = .object(["type":.string("string"),"enum":.array(ModelNormalTextureEncoding.allCases.map { .string($0.rawValue) })])
         result["MediaConfirmationMethod"] = .object(["type":.string("string"),"enum":.array(["manual","approved_original","reliable_timestamps"].map(AgentValue.string))])
         for name in ["MediaConfirmationRequest","MediaConfirmationBinding","MediaVoiceBinding"] {var shape=result[name]!.object!;shape["additionalProperties"] = .boolean(false);result[name] = .object(shape)}
         let dataRecords:[String:String] = [
@@ -128,6 +130,7 @@ public enum AgentSchemas {
         constraint("ModelScene3D","lights",["minItems":.number(1),"maxItems":.number(16)])
         constraint("ModelScene3D","transformTracks",["maxItems":.number(128)])
         constraint("ModelScene3D","jointTracks",["maxItems":.number(4096)])
+        constraint("ModelMaterialInterpretation","opaqueDiffuseMaterialIDs",["minItems":.number(1),"maxItems":.number(128),"uniqueItems":.boolean(true),"items":.object(["type":.string("string"),"minLength":.number(1),"maxLength":.number(160)])])
         constraint("ModelTransformKeyframe","frame",["minimum":.number(0),"maximum":.number(53999)])
         constraint("ModelAssetReference","bytes",["minimum":.number(1),"maximum":.number(134217728)])
         constraint("ModelAssetReference","sha256",["pattern":.string("^[a-f0-9]{64}$")])

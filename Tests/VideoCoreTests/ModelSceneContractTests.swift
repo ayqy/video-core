@@ -15,6 +15,8 @@ final class ModelSceneContractTests: XCTestCase {
         <COLLADA xmlns="http://www.collada.org/2005/11/COLLADASchema" version="1.4.1">
         <asset><unit meter="1"/><up_axis>Y_UP</up_axis></asset>
         <library_images><image id="body"><init_from>body.png</init_from></image></library_images>
+        <library_effects><effect id="surfaceEffect"><profile_COMMON><technique sid="common"><lambert><diffuse><color>1 1 1 1</color></diffuse></lambert></technique></profile_COMMON></effect></library_effects>
+        <library_materials><material id="bodyMaterial"><instance_effect url="#surfaceEffect"/></material><material id="capMaterial"><instance_effect url="#surfaceEffect"/></material></library_materials>
         <library_geometries><geometry id="triangle"><mesh><source id="positions"><float_array id="position-array" count="9">0 0 0 1 0 0 0 1 0</float_array></source></mesh></geometry></library_geometries>
         <library_visual_scenes><visual_scene id="stage"><node id="hip" sid="hip" type="JOINT"/><node id="mesh"><instance_geometry url="#triangle"/></node></visual_scene></library_visual_scenes>
         <scene><instance_visual_scene url="#stage"/></scene></COLLADA>
@@ -48,20 +50,34 @@ final class ModelSceneContractTests: XCTestCase {
         let f=try fixture();defer{try? FileManager.default.removeItem(at:f.root)}
         var original=scene(f);original.modelScene3D=nil
         let project=project(original,f);try f.repository.transaction{$0.projects=[project]}
-        let replacement=scene(f),data=try input(project,edits:[.replaceScene(original.id,replacement)])
+        var interpreted=f.model
+        interpreted.instances[0].materialInterpretation = .init(vertexColors:.ignored,normalEncoding:.redGreenPositiveZ,opaqueDiffuseMaterialIDs:["bodyMaterial"])
+        var replacement=scene(f);replacement.modelScene3D=interpreted
+        let data=try input(project,edits:[.replaceScene(original.id,replacement)])
         let before=try Codec.data(f.repository.read())
         _=try AgentMutationExecutor.preview(command:"edit apply",data:data,database:f.repository.read(),principal:"owner",repository:f.repository)
         XCTAssertEqual(try Codec.data(f.repository.read()),before,"正常dry-run不得保存模型或回执")
+        let unknownEncoding=Data(String(decoding:data,as:UTF8.self).replacingOccurrences(of:"redGreenPositiveZ",with:"unknownNormalEncoding").utf8)
+        XCTAssertThrowsError(try AgentMutationExecutor.preview(command:"edit apply",data:unknownEncoding,database:f.repository.read(),principal:"owner",repository:f.repository),"未知材质解释须在正常Agent解码时拒绝")
+        XCTAssertEqual(try Codec.data(f.repository.read()),before)
+        for (index,ids) in [["unknownMaterial"],["bodyMaterial","bodyMaterial"],[]].enumerated() {
+            var invalid=replacement;invalid.modelScene3D!.instances[0].materialInterpretation!.opaqueDiffuseMaterialIDs=ids
+            let invalidInput=try input(project,edits:[.replaceScene(original.id,invalid)])
+            XCTAssertThrowsError(try AgentMutationExecutor.preview(command:"edit apply",data:invalidInput,database:f.repository.read(),principal:"owner",repository:f.repository))
+            XCTAssertThrowsError(try f.repository.performAgentMutation(command:"edit apply",data:invalidInput,principal:"owner",requestID:"invalid-opaque-material-\(index)"))
+            XCTAssertEqual(try Codec.data(f.repository.read()),before,"错误材质列表不能增加版本或保存回执")
+        }
         let answer=try f.repository.performAgentMutation(command:"edit apply",data:data,principal:"owner",requestID:"model-edit")
         XCTAssertEqual(answer,try f.repository.performAgentMutation(command:"edit apply",data:data,principal:"owner",requestID:"model-edit"))
         let current=try XCTUnwrap(f.repository.read().projects.first?.current)
-        XCTAssertEqual(current.scenes[0].modelScene3D,f.model)
+        XCTAssertEqual(current.scenes[0].modelScene3D,interpreted)
         XCTAssertEqual(Set((current.dependencies?.records ?? []).filter{$0.kind == .asset}.map{$0.asset!.id}),f.model.assetIDs)
         XCTAssertEqual(Set((current.dependencies?.records ?? []).filter{$0.kind == .evidence}.map{$0.evidence!.id}),Set(f.evidence.map(\.id)))
         let digest=try current.contentDigest(),backup=try f.repository.backup()
         let restored=try Repository.restore(backup,to:f.root.appendingPathComponent("restored"))
         let cold=try XCTUnwrap(restored.read().projects.first?.current)
-        XCTAssertEqual(try cold.contentDigest(),digest);XCTAssertEqual(cold.scenes[0].modelScene3D,f.model)
+        XCTAssertEqual(try cold.contentDigest(),digest);XCTAssertEqual(cold.scenes[0].modelScene3D,interpreted)
+        XCTAssertEqual(cold.scenes[0].modelScene3D?.instances[0].materialInterpretation?.opaqueDiffuseMaterialIDs,["bodyMaterial"])
         for asset in f.assets {XCTAssertEqual(try Data(contentsOf:restored.assetURL(asset)),try Data(contentsOf:f.repository.assetURL(asset)))}
         var changedAssets=f.assets;changedAssets[1].hash=String(repeating:"b",count:64)
         XCTAssertTrue(DependencyRules.diff(revision:current,assets:changedAssets,evidence:f.evidence).contains{$0.id=="asset:"+f.assets[1].id+":changed" && $0.sceneIDs==[current.scenes[0].id]})
@@ -85,6 +101,41 @@ final class ModelSceneContractTests: XCTestCase {
         XCTAssertThrowsError(try f.model.sampledTransform(instanceID:"actor",jointName:"invented",sourceFrame:0,durationFrames:21))
         let reopened=try Codec.decoder().decode(ModelScene3D.self,from:Codec.data(f.model))
         XCTAssertEqual(try f.model.contentDigest(durationFrames:21),try reopened.contentDigest(durationFrames:21))
+        let legacyBytes=try Codec.data(f.model.instances[0])
+        let legacy=try XCTUnwrap(JSONSerialization.jsonObject(with:legacyBytes) as? [String:Any])
+        XCTAssertNil(legacy["materialInterpretation"],"旧缺省不得新增解释键或改变原编码")
+        XCTAssertEqual(legacyBytes,try Codec.data(Codec.decoder().decode(ModelInstance3D.self,from:legacyBytes)))
+        XCTAssertNil(reopened.instances[0].materialInterpretation)
+        let defaults=ModelMaterialInterpretation()
+        XCTAssertEqual(defaults.vertexColors,.source);XCTAssertEqual(defaults.normalEncoding,.rgb)
+        XCTAssertNil(defaults.opaqueDiffuseMaterialIDs)
+        let oldInterpretation=Data(#"{"normalEncoding":"rgb","vertexColors":"source"}"#.utf8)
+        XCTAssertEqual(try Codec.data(defaults),oldInterpretation,"nil列表不得在旧显式解释编码中新增键")
+        XCTAssertEqual(try Codec.data(Codec.decoder().decode(ModelMaterialInterpretation.self,from:oldInterpretation)),oldInterpretation)
+        var explicit=f.model;explicit.instances[0].materialInterpretation=defaults
+        XCTAssertNotEqual(try f.model.contentDigest(durationFrames:21),try explicit.contentDigest(durationFrames:21),"显式设置进入内容摘要")
+        var ignored=explicit;ignored.instances[0].materialInterpretation!.vertexColors = .ignored
+        XCTAssertNotEqual(try explicit.contentDigest(durationFrames:21),try ignored.contentDigest(durationFrames:21))
+        var encoded=ignored;encoded.instances[0].materialInterpretation!.normalEncoding = .redGreenPositiveZ
+        XCTAssertNotEqual(try ignored.contentDigest(durationFrames:21),try encoded.contentDigest(durationFrames:21))
+        XCTAssertEqual(encoded,try Codec.decoder().decode(ModelScene3D.self,from:Codec.data(encoded)))
+        var opaque=encoded;opaque.instances[0].materialInterpretation!.opaqueDiffuseMaterialIDs=["bodyMaterial"]
+        XCTAssertNotEqual(try encoded.contentDigest(durationFrames:21),try opaque.contentDigest(durationFrames:21),"显式不透明材质列表进入内容摘要")
+        var otherOpaque=opaque;otherOpaque.instances[0].materialInterpretation!.opaqueDiffuseMaterialIDs=["capMaterial"]
+        XCTAssertNotEqual(try opaque.contentDigest(durationFrames:21),try otherOpaque.contentDigest(durationFrames:21))
+        XCTAssertEqual(opaque,try Codec.decoder().decode(ModelScene3D.self,from:Codec.data(opaque)))
+        let definitions=AgentSchemas.definitions()
+        XCTAssertEqual(definitions["ModelVertexColorUsage"]?.object?["enum"],AgentValue.array([.string("source"),.string("ignored")]))
+        XCTAssertEqual(definitions["ModelNormalTextureEncoding"]?.object?["enum"],AgentValue.array([.string("rgb"),.string("redGreenPositiveZ")]))
+        XCTAssertEqual(definitions["ModelMaterialInterpretation"]?.object?["additionalProperties"],.boolean(false))
+        XCTAssertEqual(definitions["ModelMaterialInterpretation"]?.object?["properties"]?.object?["normalEncoding"]?.object?["$ref"],.string("#/$defs/ModelNormalTextureEncoding"))
+        XCTAssertEqual(definitions["ModelMaterialInterpretation"]?.object?["required"],.array([.string("vertexColors"),.string("normalEncoding")]))
+        if case .array(let options)?=definitions["ModelMaterialInterpretation"]?.object?["properties"]?.object?["opaqueDiffuseMaterialIDs"]?.object?["anyOf"] {
+            XCTAssertEqual(options.first?.object?["minItems"],.number(1));XCTAssertEqual(options.first?.object?["maxItems"],.number(128))
+            XCTAssertEqual(options.first?.object?["uniqueItems"],.boolean(true));XCTAssertEqual(options.first?.object?["items"]?.object?["type"],.string("string"))
+            XCTAssertEqual(options.last?.object?["type"],.string("null"))
+        } else {XCTFail("可选原材质列表须有明确数组schema")}
+        XCTAssertNotNil(definitions["ModelInstance3D"]?.object?["properties"]?.object?["materialInterpretation"])
     }
     func testMalformedCameraTracksAndTextureClosureRejectBeforeSave() throws {
         let f=try fixture();defer{try? FileManager.default.removeItem(at:f.root)}
@@ -100,10 +151,22 @@ final class ModelSceneContractTests: XCTestCase {
         bad=f.model;bad.transformTracks[0].keyframes[1].frame=19;candidates.append(bad)
         bad=f.model;bad.instances[0].resource.textures.removeAll();candidates.append(bad)
         bad=f.model;bad.lights[0].intensity = .infinity;candidates.append(bad)
+        for ids in [[],["unknownMaterial"],["bodyMaterial","bodyMaterial"],[" bodyMaterial"],["bodyMaterial\n"],[String(repeating:"x",count:161)]] {
+            bad=f.model;bad.instances[0].materialInterpretation = .init(opaqueDiffuseMaterialIDs:ids);candidates.append(bad)
+        }
         for candidate in candidates {XCTAssertThrowsError(try candidate.validate(durationFrames:21,assets:f.assets))}
+        var bounded=f.model
+        bounded.instances[0].resource.inspection.materials=(0..<129).map{.init(id:"material\($0)",effectID:"surfaceEffect")}
+        bounded.instances[0].materialInterpretation = .init(opaqueDiffuseMaterialIDs:(0..<128).map{"material\($0)"})
+        XCTAssertNoThrow(try bounded.validate(durationFrames:21,assets:f.assets),"纯结构边界接受128个明确声明的材质，不代原件验真")
+        bounded.instances[0].materialInterpretation!.opaqueDiffuseMaterialIDs!.append("material128")
+        XCTAssertThrowsError(try bounded.validate(durationFrames:21,assets:f.assets),"129个均已声明的材质仍超过有限上限")
         var wrong=scene(f);wrong.gameWorld=GameWorld(width:1,height:1,tiles:["floor"],entities:[])
         XCTAssertThrowsError(try wrong.validate(assets:f.assets))
         wrong=scene(f);wrong.kind = .explanation;XCTAssertThrowsError(try wrong.validate(assets:f.assets))
+        for bytes in [Data(#"{"vertexColors":"guessed","normalEncoding":"rgb"}"#.utf8),Data(#"{"vertexColors":"source","normalEncoding":"guessed"}"#.utf8)] {
+            XCTAssertThrowsError(try Codec.decoder().decode(ModelMaterialInterpretation.self,from:bytes),"未知枚举不能回退成默认解释")
+        }
     }
     func testLocksProtectResourceTracksAndDeletionUntilExplicitNormalUnlock() throws {
         let f=try fixture();defer{try? FileManager.default.removeItem(at:f.root)}
@@ -112,10 +175,18 @@ final class ModelSceneContractTests: XCTestCase {
         var changed=locked.current.scenes[0];changed.modelScene3D!.jointTracks[0].keyframes[1].transform.translation.x=3
         XCTAssertThrowsError(try Editor.apply([.replaceScene(s.id,changed)],to:locked,baseRevision:locked.current.id,assets:f.assets,message:"不可改锁定骨骼"))
         XCTAssertThrowsError(try Editor.apply([.removeScene(s.id)],to:locked,baseRevision:locked.current.id,assets:f.assets,message:"不可删锁定实例"))
+        var changedInterpretation=locked.current.scenes[0]
+        changedInterpretation.modelScene3D!.instances[0].materialInterpretation = .init(vertexColors:.ignored,normalEncoding:.redGreenPositiveZ,opaqueDiffuseMaterialIDs:["bodyMaterial"])
+        XCTAssertThrowsError(try Editor.apply([.replaceScene(s.id,changedInterpretation)],to:locked,baseRevision:locked.current.id,assets:f.assets,message:"不可改锁定实例材质解释"))
+        var opacityOnly=locked.current.scenes[0]
+        opacityOnly.modelScene3D!.instances[0].materialInterpretation = .init(opaqueDiffuseMaterialIDs:["bodyMaterial"])
+        XCTAssertThrowsError(try Editor.apply([.replaceScene(s.id,opacityOnly)],to:locked,baseRevision:locked.current.id,assets:f.assets,message:"仅改不透明材质也须先解锁"))
         XCTAssertThrowsError(try Editor.apply([.splitScene(s.id,10)],to:original,baseRevision:original.current.id,assets:f.assets,message:"不可复制动作区间"))
         let unlocked=try Editor.apply([.lockModelInstance(s.id,"actor",false)],to:locked,baseRevision:locked.current.id,assets:f.assets,message:"显式解锁")
         changed.modelScene3D!.instances[0].locked=false
         XCTAssertNoThrow(try Editor.apply([.replaceScene(s.id,changed)],to:unlocked,baseRevision:unlocked.current.id,assets:f.assets,message:"修改明确骨骼轨道"))
+        changedInterpretation.modelScene3D!.instances[0].locked=false
+        XCTAssertNoThrow(try Editor.apply([.replaceScene(s.id,changedInterpretation)],to:unlocked,baseRevision:unlocked.current.id,assets:f.assets,message:"解锁后显式修改材质解释"))
         var sceneLocked=original;sceneLocked.revisions[0].scenes[0].locked=true
         XCTAssertThrowsError(try Editor.apply([.lockModelInstance(s.id,"actor",true)],to:sceneLocked,baseRevision:sceneLocked.current.id,assets:f.assets,message:"镜头锁优先"))
     }
@@ -129,6 +200,12 @@ final class ModelSceneContractTests: XCTestCase {
         XCTAssertFalse(result.current.scenes[0].captions[0].confirmed)
         XCTAssertNotEqual(try original.current.contentDigest(),try result.current.contentDigest())
         XCTAssertTrue(result.current.invalidated.contains(where:{$0.contains("三维模型")}))
+        var materialChange=s
+        materialChange.modelScene3D!.instances[0].materialInterpretation = .init(opaqueDiffuseMaterialIDs:["bodyMaterial"])
+        let materialResult=try Editor.apply([.replaceScene(s.id,materialChange)],to:original,baseRevision:original.current.id,assets:f.assets,message:"显式材质解释")
+        XCTAssertFalse(materialResult.current.review.sound);XCTAssertFalse(materialResult.current.review.captions)
+        XCTAssertFalse(materialResult.current.scenes[0].captions[0].confirmed)
+        XCTAssertNotEqual(try original.current.contentDigest(),try materialResult.current.contentDigest())
         var database=try f.repository.read();database.projects=[result]
         XCTAssertTrue(try Quality.inspect(result.current,database:database,requireReview:false).contains{$0.id==s.id+"model_renderer" && $0.blocking})
         let legacy=Scene(title:"旧工程",body:"")
