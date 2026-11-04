@@ -24,14 +24,19 @@ public enum AgentMutationExecutor {
     public static func envelope(requestID:String,state:String="succeeded",projectID:String?=nil,revisionID:String?=nil,result:AgentValue = .null)->AgentValue {
         .object(["schema_version":.string(AgentContract.version),"request_id":.string(requestID),"ok":.boolean(true),"state":.string(state),"project_id":projectID.map(AgentValue.string) ?? .null,"revision":revisionID.map(AgentValue.string) ?? .null,"job_id":.null,"artifacts":.array([]),"result":result,"error":.null,"cost":.object(["currency":.string("CNY"),"estimated":.null,"reserved":.null,"actual":.null,"unknown":.string("此操作不提交付费任务；经营费用另记")])])
     }
-    public static func preview(command:String,data:Data,database:Database,principal:String)throws->AgentValue {
+    public static func preview(command:String,data:Data,database:Database,principal:String,repository:Repository?=nil)throws->AgentValue {
         let request=(try AgentContract.validate(command:command,data:data))["request_id"]?.string ?? Codec.id()
         let canonical=try canonicalInput(command:command,data:data,principal:principal,requestID:request)
         let values=try AgentContract.validate(command:command,data:canonical)
         try authorize(command:command,values:values,database:database,principal:principal)
-        if case .replay(let result)=try AgentContract.replay(command:command,data:canonical,records:database.agentReplayRecords ?? []) {try replayAccess(command:command,response:result,database:database,principal:principal);return result}
+        if case .replay(let result)=try AgentContract.replay(command:command,data:canonical,records:database.agentReplayRecords ?? []) {try replayAccess(command:command,response:result,database:database,principal:principal);try verifyModelSources(database,workspaceID:values["workspace_id"]?.string,repository:repository);return result}
         var copy=database;let result=try apply(command:command,values:values,database:&copy,principal:principal,requestID:request,repository:nil)
-        try copy.validate();return result
+        try copy.validate();try verifyModelSources(copy,workspaceID:values["workspace_id"]?.string,repository:repository);return result
+    }
+    private static func verifyModelSources(_ database:Database,workspaceID:String?,repository:Repository?) throws {
+        guard let workspaceID,database.projects.contains(where:{$0.workspaceID==workspaceID && $0.revisions.contains(where:{$0.scenes.contains(where:{$0.modelScene3D != nil})})}) else {return}
+        guard let repository else {throw VideoError.review("三维工程预演需要工作区原件核验，不能仅信任调用方声明的模型解析信息")}
+        try repository.verifyModelSceneSources(in:database,workspaceID:workspaceID)
     }
     fileprivate static func replayAccess(command:String,response:AgentValue,database:Database,principal:String)throws {
         if command=="workspaces create" {guard let id=response.object?["result"]?.object?["id"]?.string,database.workspaces.contains(where:{$0.id==id && $0.owner==principal}) else{throw VideoError.permission("原回执空间已不存在或不再属于当前本机身份")}}

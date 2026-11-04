@@ -15,6 +15,7 @@ public enum Edit: Codable, Sendable {
     case purpose(Purpose)
     case restore(String)
     case lockLayer(String, String, Bool)
+    case lockModelInstance(String, String, Bool)
     case recordSimulation(String)
     case confirmSimulationRecording(String)
 }
@@ -33,6 +34,12 @@ public enum Editor {
             case .replaceScene(let id, var scene):
                 guard let i = revision.scenes.firstIndex(where: { $0.id == id }) else { throw VideoError.notFound("片段不存在") }; let old = revision.scenes[i]; guard !old.locked else { throw VideoError.permission("镜头已锁定，请先解锁再编辑") }; scene.id = id
                 try LayerRules.protectLocked(old:old,new:scene)
+                try ModelScene3DRules.protectLocked(old:old,new:scene)
+                if old.modelScene3D != scene.modelScene3D || ((old.modelScene3D != nil || scene.modelScene3D != nil) && (old.durationFrames != scene.durationFrames || old.speed != scene.speed || old.pauseFrames != scene.pauseFrames || old.kind != scene.kind)) {
+                    scene.voice?.listened=false
+                    for j in scene.captions.indices {scene.captions[j].confirmed=false}
+                    revision.invalidated += ["三维模型、材质、相机灯光与动作时序及声音字幕重新复核"]
+                }
                 if old.storyActions != scene.storyActions || old.storyCausality != scene.storyCausality || old.gameWorld != scene.gameWorld || old.cartoonRig != scene.cartoonRig || old.cartoonPresenter != scene.cartoonPresenter ||
                     ((old.storyActions != nil || old.storyCausality != nil || old.gameWorld != nil || old.cartoonRig != nil || old.cartoonPresenter != nil) && (old.durationFrames != scene.durationFrames || old.kind != scene.kind)) ||
                     ((old.storyCausality != nil || scene.storyCausality != nil) && (old.speed != scene.speed || old.pauseFrames != scene.pauseFrames)) {
@@ -127,13 +134,13 @@ public enum Editor {
                     revision.invalidated += ["字幕内容、时轴与声音重新复核"]
                 }
                 try scene.validate(assets: assets); revision.scenes[i] = scene
-            case .removeScene(let id): guard let s = revision.scenes.first(where: { $0.id == id }), !s.locked, (revision.scenes.count > 1 || revision.contentContext != nil) else { throw VideoError.permission("不能删除锁定镜头；旧产品工程须保留至少一个镜头") }; revision.scenes.removeAll { $0.id == id }
+            case .removeScene(let id): guard let s = revision.scenes.first(where: { $0.id == id }), !s.locked, !(s.modelScene3D?.instances.contains(where:{$0.locked}) ?? false), (revision.scenes.count > 1 || revision.contentContext != nil) else { throw VideoError.permission("不能删除锁定镜头或含锁定三维实例的镜头；旧产品工程须保留至少一个镜头") }; revision.scenes.removeAll { $0.id == id }
             case .moveScene(let id, let target): guard let i = revision.scenes.firstIndex(where: { $0.id == id }), (0..<revision.scenes.count).contains(target), !revision.scenes[i].locked else { throw VideoError.invalid("重排目标无效或片段已锁定") }; let s = revision.scenes.remove(at: i); revision.scenes.insert(s, at: target)
             case .splitScene(let id, let frame):
                 guard let i = revision.scenes.firstIndex(where: { $0.id == id }), !revision.scenes[i].locked else { throw VideoError.permission("片段不存在或已锁定") }; let original = revision.scenes[i]
                 guard frame > 0, frame < original.durationFrames else { throw VideoError.invalid("拆分点必须位于片段内部") }
                 guard original.voice == nil else { throw VideoError.review("有配音的片段请先解除配音并重新录制两段，避免截断句子") }
-                guard original.storyActions==nil,original.storyCausality==nil,original.gameWorld==nil,original.cartoonRig==nil,original.cartoonPresenter==nil else {throw VideoError.review("动态世界、因果来源、过程动作与原音口型须按新镜头重新编排后拆分；不会复制旧源帧或旧声音cue")}
+                guard original.storyActions==nil,original.storyCausality==nil,original.gameWorld==nil,original.modelScene3D==nil,original.cartoonRig==nil,original.cartoonPresenter==nil else {throw VideoError.review("动态世界、三维动作、因果来源、过程动作与原音口型须按新镜头重新编排后拆分；不会复制旧源帧或旧声音cue")}
                 guard !(original.layers ?? []).contains(where:{$0.locked}) else { throw VideoError.permission("请先解锁元素，再拆分场景") }
                 let hasEntrances=(original.layers ?? []).contains{$0.entrance != nil || $0.imageSequence != nil}
                 if original.speed != 1 || hasEntrances {
@@ -194,6 +201,9 @@ public enum Editor {
                 revision.scenes.replaceSubrange(i...i, with: [a,b])
             case .lockScene(let id, let locked): guard let i = revision.scenes.firstIndex(where: { $0.id == id }) else { throw VideoError.notFound("片段不存在") }; revision.scenes[i].locked = locked
             case .lockLayer(let id,let layerID,let locked): guard let i=revision.scenes.firstIndex(where:{$0.id==id}),!revision.scenes[i].locked,let j=revision.scenes[i].layers?.firstIndex(where:{$0.id==layerID}) else { throw VideoError.permission("镜头已锁定或元素不存在") };revision.scenes[i].layers?[j].locked=locked
+            case .lockModelInstance(let id,let instanceID,let locked):
+                guard let i=revision.scenes.firstIndex(where:{$0.id==id}),!revision.scenes[i].locked,let j=revision.scenes[i].modelScene3D?.instances.firstIndex(where:{$0.id==instanceID}) else {throw VideoError.permission("镜头已锁定或三维实例不存在")}
+                revision.scenes[i].modelScene3D?.instances[j].locked=locked
             case .recordSimulation(let id):
                 guard let i=revision.scenes.firstIndex(where:{$0.id==id}),!revision.scenes[i].locked else {throw VideoError.permission("规则镜头不存在或已锁定")}
                 revision.scenes[i].simulationRecording = try SimulationReplay.record(scene:revision.scenes[i],fps:revision.fps)
@@ -214,6 +224,7 @@ public enum Editor {
         }
         for s in revision.scenes {
             try s.validate(assets: assets)
+            try s.modelScene3D?.validate(durationFrames:s.durationFrames,assets:assets.filter{$0.workspaceID==project.workspaceID})
             try ClassicArtworkRules.validateWalkingSources(scene:s,assets:assets.filter{$0.workspaceID==project.workspaceID})
             try ClassicArtworkRules.validateGateSources(scene:s,assets:assets.filter{$0.workspaceID==project.workspaceID})
         }
@@ -298,6 +309,7 @@ public enum Quality {
             do {try FontRightsRules.validate(fontName:s.fontName ?? "PingFangSC-Medium",workspaceID:revision.workspaceID,evidenceIDs:s.evidenceIDs,evidence:database.evidence,commercial:commercial,now:now)}
             catch{issues.append(QualityIssue(s.id+"font_rights",(error as? VideoError)?.localizedDescription ?? "镜头字体授权尚未核对"))}
             if s.kind == .simulation || s.kind == .cartoon {
+                if s.modelScene3D != nil {issues.append(QualityIssue(s.id+"model_renderer","三维场景已保存；当前发行协议尚未支持模型载荷，须安装相容且受信的高级模块后才能制作，未回退二维图集"))}
                 if s.kind == .simulation && !(s.gameWorld != nil && s.storyCausality != nil && s.simulation.knowledge == nil && s.simulationRecording == nil) {
                     do {try SimulationReplay.verify(scene:s,fps:revision.fps)}
                     catch {issues.append(QualityIssue(s.id+"simulation_recording",(error as? VideoError)?.localizedDescription ?? "规则录制尚未核对"))}
@@ -306,7 +318,7 @@ public enum Quality {
                 // voice/source binding and its explicit independence from classic
                 // artwork. An ordinary cartoon without that rig keeps the old gate.
                 let nativeRig = s.kind == .cartoon && s.cartoonRig != nil
-                if !nativeRig {
+                if !nativeRig && s.modelScene3D == nil {
                     if s.classicArtwork == nil {issues.append(QualityIssue(s.id+"classic_artwork","请绑定有来源的Q版角色与场景；旧几何预览不代表已满足当前素材要求"))}
                     else if s.gameWorld == nil && s.cartoonPresenter == nil && s.classicArtwork?.derivation != .qStyle {issues.append(QualityIssue(s.id+"classic_qstyle","下载原件须绑定实际Q版处理产物及来源后再制作新成片"))}
                     // A full original game map is explicitly authored through

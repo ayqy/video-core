@@ -413,6 +413,7 @@ public final class RenderModuleRegistry: @unchecked Sendable {
         return RenderModuleStatus(pluginID: manifest.id, version: manifest.version, capabilities: manifest.capabilities, access: entry.policy.access, sourceVisibility: entry.policy.sourceVisibility, expiresAt: entry.license?.expiresAt ?? entry.storeAccess?.expiresAt, policyVersion: entry.policy.version, implementationDigest: manifest.implementationDigest)
     }
     public func draw(scene: VideoCore.Scene, localFrame: Int, fps: Int, rect: CGRect, context: CGContext, resources: RenderResources = .empty, now: Date = Date(), invocation:RenderInvocation?=nil) throws {
+        guard scene.modelScene3D == nil else {throw VideoError.unavailable("当前发行协议尚不支持三维模型场景；未回退二维地图或忽略模型、材质和骨骼动作")}
         guard let capability = Self.capability(for: scene.kind) else { throw VideoError.invalid("普通图文/素材镜头不需要高级模块") }
         guard localFrame >= 0, fps > 0, fps <= 120, rect.width.isFinite, rect.height.isFinite, rect.minX.isFinite, rect.minY.isFinite, rect.width > 0, rect.height > 0 else { throw VideoError.invalid("高级模块绘制的时间或画布无效") }
         lock.lock(); let entry = entries.values.first { $0.module.manifest.capabilities.contains(capability) }; lock.unlock()

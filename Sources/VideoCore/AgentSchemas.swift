@@ -62,7 +62,7 @@ public enum AgentSchemas {
             "BrandApproval":"revisionID:s digest:s reviewer:s at:d note:s termsDigest?:s revisionsUsed?:i",
             "VerticalChecklistTemplate":"id:s name:s version:i requirements:[ChecklistRequirement]",
             "ChecklistRequirement":"id:s label:s evidenceRequired:b maximumAgeDays?:i",
-            "Scene":"id:s kind:SceneKind title:s body:s narration:s durationFrames:i assetID?:s evidenceIDs:[s] sourceStartFrame:i sourceEndFrame?:i speed:n preservePitch:b locked:b x:n y:n scale:n voiceGain:n sourceGain:n musicGain:n muted:b pauseFrames:i captions:[Caption] voice?:VoiceTake simulation:Simulation character:s emotion:s color:s showPrice:b keyframes:[Keyframe] courseMappingIDs?:[s] speechPlan?:SpeechPlan layers?:[SceneLayer] characterProfile?:CharacterProfile cartoonPerformance?:CartoonPerformance storyActions?:[StoryAction] storyCausality?:StoryCausality gameWorld?:GameWorld cartoonRig?:CartoonRig cartoonPresenter?:CartoonPresenter narrativeSources?:[NarrativeSource] fontName?:s classicArtwork?:ClassicArtwork classicArtworkRequired?:b simulationRecording?:RuleTrace simulationRecordingConfirmed?:b simulationPresentation?:SimulationPresentation mediaFraming?:MediaFraming mediaPresentation?:MediaPresentation paperPresentation?:PaperPresentation",
+            "Scene":"id:s kind:SceneKind title:s body:s narration:s durationFrames:i assetID?:s evidenceIDs:[s] sourceStartFrame:i sourceEndFrame?:i speed:n preservePitch:b locked:b x:n y:n scale:n voiceGain:n sourceGain:n musicGain:n muted:b pauseFrames:i captions:[Caption] voice?:VoiceTake simulation:Simulation character:s emotion:s color:s showPrice:b keyframes:[Keyframe] courseMappingIDs?:[s] speechPlan?:SpeechPlan layers?:[SceneLayer] characterProfile?:CharacterProfile cartoonPerformance?:CartoonPerformance storyActions?:[StoryAction] storyCausality?:StoryCausality gameWorld?:GameWorld modelScene3D?:ModelScene3D cartoonRig?:CartoonRig cartoonPresenter?:CartoonPresenter narrativeSources?:[NarrativeSource] fontName?:s classicArtwork?:ClassicArtwork classicArtworkRequired?:b simulationRecording?:RuleTrace simulationRecordingConfirmed?:b simulationPresentation?:SimulationPresentation mediaFraming?:MediaFraming mediaPresentation?:MediaPresentation paperPresentation?:PaperPresentation",
             "MediaFraming":"x:n y:n width:n height:n",
             "ClassicArtwork":"gameplay:ClassicGameplay sprites:[ClassicSprite] sources:[ClassicSource] derivation:ClassicDerivation transformation:s originalAssetIDs:[s] audioCues:[ClassicAudioCue] knowledgeParticipants?:[KnowledgeParticipantAppearance]",
             "KnowledgeParticipantAppearance":"participantID:s poseRoles:{s}",
@@ -87,6 +87,10 @@ public enum AgentSchemas {
             "NarrativeSource":"id:s assetID:s pages:[i] startFrame?:i endFrame?:i excerpt:s confirmed:b"
         ]
         var result=records.mapValues(entity)
+        for (name,declaration) in ModelScene3DSchema.records {
+            var schema=entity(declaration).object!;schema["additionalProperties"] = .boolean(false);result[name] = .object(schema)
+        }
+        result["ModelLightKind"] = .object(["type":.string("string"),"enum":.array(["ambient","directional","omni"].map(AgentValue.string))])
         result["MediaConfirmationMethod"] = .object(["type":.string("string"),"enum":.array(["manual","approved_original","reliable_timestamps"].map(AgentValue.string))])
         for name in ["MediaConfirmationRequest","MediaConfirmationBinding","MediaVoiceBinding"] {var shape=result[name]!.object!;shape["additionalProperties"] = .boolean(false);result[name] = .object(shape)}
         let dataRecords:[String:String] = [
@@ -119,6 +123,15 @@ public enum AgentSchemas {
             properties[field] = .object(shape);record["properties"] = .object(properties);result[name] = .object(record)
         }
         constraint("DataPresentation","version",["const":.number(1)])
+        constraint("ModelScene3D","version",["const":.number(1)])
+        constraint("ModelScene3D","instances",["minItems":.number(1),"maxItems":.number(128)])
+        constraint("ModelScene3D","lights",["minItems":.number(1),"maxItems":.number(16)])
+        constraint("ModelScene3D","transformTracks",["maxItems":.number(128)])
+        constraint("ModelScene3D","jointTracks",["maxItems":.number(4096)])
+        constraint("ModelTransformKeyframe","frame",["minimum":.number(0),"maximum":.number(53999)])
+        constraint("ModelAssetReference","bytes",["minimum":.number(1),"maximum":.number(134217728)])
+        constraint("ModelAssetReference","sha256",["pattern":.string("^[a-f0-9]{64}$")])
+        constraint("ModelAssetReference","fileExtension",["enum":.array(["dae","png"].map(AgentValue.string))])
         constraint("PaperPresentation","version",["const":.number(1)])
         constraint("MediaPresentation","version",["const":.number(1)])
         constraint("MediaPresentation","backgroundColor",["pattern":.string("^[A-Fa-f0-9]{6}$"),"minLength":.number(6),"maxLength":.number(6)])
@@ -209,7 +222,7 @@ public enum AgentSchemas {
         }
         let enums:[String:[String]]=["Purpose":Purpose.allCases.map(\.rawValue),"SceneKind":SceneKind.allCases.map(\.rawValue),"Aspect":Aspect.allCases.map(\.rawValue),"RangeKind":CourseMapping.RangeKind.allCases.map(\.rawValue),"CustomerKind":CustomerKind.allCases.map(\.rawValue),"RevenueKind":RevenueKind.allCases.map(\.rawValue),"Settlement":Settlement.allCases.map(\.rawValue),"AuthorizationScope":AuthorizationScope.allCases.map(\.rawValue),"LayerKind":SceneLayer.Kind.allCases.map(\.rawValue),"PaperLayout":PaperPresentation.Layout.allCases.map(\.rawValue),"MediaLayout":MediaPresentation.Layout.allCases.map(\.rawValue),"LayerEntranceKind":LayerEntrance.Kind.allCases.map(\.rawValue),"CharacterSilhouette":CharacterSilhouette.allCases.map(\.rawValue),"BaiduSegmentKind":["text","image","video"],"BillingKind":["charge","refundRequested","refundReceived"],"ClassicGameplay":ClassicGameplay.allCases.map(\.rawValue),"ClassicDerivation":ClassicArtwork.Derivation.allCases.map(\.rawValue),"ClassicAudioUse":ClassicAudioCue.Use.allCases.map(\.rawValue)]
         for (key,values) in enums{result[key] = .object(["type":.string("string"),"enum":.array(values.map(AgentValue.string))])}
-        let edits:[String:String] = ["insertScene":"_0:Scene _1:i","replaceScene":"_0:s _1:Scene","removeScene":"_0:s","moveScene":"_0:s _1:i","splitScene":"_0:s _1:i","lockScene":"_0:s _1:b","aspect":"_0:Aspect","cta":"_0:s","music":"_0?:s","audioQuality":"_0?:AudioQualityPolicy","productionBrief":"_0?:ProductionBrief","purpose":"_0:Purpose","restore":"_0:s","lockLayer":"_0:s _1:s _2:b","recordSimulation":"_0:s","confirmSimulationRecording":"_0:s"]
+        let edits:[String:String] = ["insertScene":"_0:Scene _1:i","replaceScene":"_0:s _1:Scene","removeScene":"_0:s","moveScene":"_0:s _1:i","splitScene":"_0:s _1:i","lockScene":"_0:s _1:b","aspect":"_0:Aspect","cta":"_0:s","music":"_0?:s","audioQuality":"_0?:AudioQualityPolicy","productionBrief":"_0?:ProductionBrief","purpose":"_0:Purpose","restore":"_0:s","lockLayer":"_0:s _1:s _2:b","lockModelInstance":"_0:s _1:s _2:b","recordSimulation":"_0:s","confirmSimulationRecording":"_0:s"]
         result["Edit"] = .object(["oneOf":.array(edits.keys.sorted().map{key in .object(["type":.string("object"),"required":.array([.string(key)]),"properties":.object([key:entity(edits[key]!)]),"additionalProperties":.boolean(false)])})])
         return result
     }

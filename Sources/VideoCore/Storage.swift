@@ -154,7 +154,7 @@ public final class Repository: @unchecked Sendable {
         do {
             try ManagedInstallRules.authorizeWrite(repositoryRoot:root)
             var state = try readUnlocked(); if let expectedGeneration, state.generation != expectedGeneration { throw VideoError.conflict("数据已在另一窗口修改，请刷新后重试") }
-            let result = try mutate(&state); try state.validate(); state.generation += 1; let data = try Codec.data(state)
+            let result = try mutate(&state); try state.validate(); try verifyModelSceneSources(in:state); state.generation += 1; let data = try Codec.data(state)
             var stmt: OpaquePointer?; guard sqlite3_prepare_v2(db, "INSERT OR REPLACE INTO snapshot(id,payload) VALUES(1,?)", -1, &stmt, nil) == SQLITE_OK else { throw VideoError.unavailable("保存数据失败") }; defer { sqlite3_finalize(stmt) }
             let rc = data.withUnsafeBytes { sqlite3_bind_blob(stmt, 1, $0.baseAddress, Int32($0.count), unsafeBitCast(-1, to: sqlite3_destructor_type.self)) }; guard rc == SQLITE_OK, sqlite3_step(stmt) == SQLITE_DONE else { throw VideoError.unavailable("保存数据失败") }; try sql("COMMIT"); cachedSnapshot = nil; revisionDigests.removeAll(keepingCapacity: true); return result
         } catch { cachedSnapshot = nil; revisionDigests.removeAll(keepingCapacity: true); try? sql("ROLLBACK"); throw error }
@@ -177,6 +177,37 @@ public final class Repository: @unchecked Sendable {
             guard data.count==asset.bytes,Codec.hash(data)==asset.hash else {
                 throw VideoError.invalid("源素材缺失或哈希不符：\(asset.name)")
             }
+        }
+    }
+    /// A declared joint or image list is not evidence of the stored DAE. Run at
+    /// the persistence boundary and in repository-backed Agent previews. The
+    /// cache is local to one verification and contains only parsed, hashed bytes.
+    func verifyModelSceneSources(in state:Database,workspaceID:String?=nil) throws {
+        try Self.verifyModelSceneSources(in:state,workspaceID:workspaceID) { asset in
+            var budget=DAEInspector.maximumBytes
+            return try verifyStoredFile(components:["assets",asset.hash+"."+asset.ext],bytes:asset.bytes,sha256:asset.hash,budget:&budget,includeData:true)
+        }
+    }
+    private static func verifyModelSceneSources(in state:Database,workspaceID:String?=nil,readSource:(Asset)throws->Data) throws {
+        var inspected:[ModelAssetReference:DAEInspection]=[:]
+        for project in state.projects where workspaceID==nil || project.workspaceID==workspaceID {
+            let assets=state.assets.filter{$0.workspaceID==project.workspaceID}
+            for revision in project.revisions { for scene in revision.scenes {
+                guard let model=scene.modelScene3D else {continue}
+                for instance in model.instances {
+                    let resource=instance.resource,reference=resource.model
+                    try resource.validate(assets:assets)
+                    guard let asset=assets.first(where:{$0.id==reference.assetID}),asset.mediaType=="model3d",asset.bytes<=DAEInspector.maximumBytes else {throw VideoError.invalid("三维场景缺少同工作区的有界模型原件")}
+                    let actual:DAEInspection
+                    if let cached=inspected[reference] {actual=cached}
+                    else {
+                        let bytes=try readSource(asset)
+                        guard bytes.count==asset.bytes,Codec.hash(bytes)==asset.hash else {throw VideoError.invalid("三维模型原件实际字节或摘要不符")}
+                        actual=try DAEInspector.inspect(bytes);inspected[reference]=actual
+                    }
+                    guard actual==resource.inspection else {throw VideoError.invalid("三维场景声明的骨骼、纹理或完整解析结果与实际入库DAE不一致")}
+                }
+            }}
         }
     }
     public func verifyDelivery(_ job:Job,revision:Revision) throws {
@@ -260,32 +291,38 @@ public final class Repository: @unchecked Sendable {
         return locations
     }
     private func verifyArtifactFile(_ artifact:Artifact,components:[String],budget:inout Int,includeData:Bool=false)throws->Data {
-        guard artifact.bytes<=budget else{throw VideoError.review("历史导出校验超过本次读取上限，原记录保留")}
+        try verifyStoredFile(components:components,bytes:artifact.bytes,sha256:artifact.sha256,budget:&budget,includeData:includeData)
+    }
+    private func verifyStoredFile(components:[String],bytes:Int,sha256:String,budget:inout Int,includeData:Bool=false)throws->Data {
+        guard bytes>=0,bytes<=budget,!components.isEmpty,components.allSatisfy({!$0.isEmpty && $0 != "." && $0 != ".." && !$0.contains("/") && !$0.contains("\\")}) else{throw VideoError.review("工作区文件路径或本次读取上限无效，原记录保留")}
         // Opening each component relative to the previous descriptor prevents
         // both final-file and parent-directory symlinks, including internal ones.
         let base=open(root.path,O_RDONLY|O_DIRECTORY|O_NOFOLLOW)
         guard base>=0 else{throw VideoError.review("当前工作区不可读取")};defer{close(base)}
         var parents:[Int32]=[],directory=base
         defer{for descriptor in parents.reversed(){close(descriptor)}}
-        for component in components.dropLast(){let next=openat(directory,component,O_RDONLY|O_DIRECTORY|O_NOFOLLOW);guard next>=0 else{throw VideoError.review("原任务产物目录缺失或为链接")};parents.append(next);directory=next}
+        for component in components.dropLast(){let next=openat(directory,component,O_RDONLY|O_DIRECTORY|O_NOFOLLOW);guard next>=0 else{throw VideoError.review("工作区文件目录缺失或为链接")};parents.append(next);directory=next}
         let file=openat(directory,components.last!,O_RDONLY|O_NOFOLLOW|O_NONBLOCK)
-        guard file>=0 else{throw VideoError.review("导出产物缺失或为链接")};defer{close(file)}
+        guard file>=0 else{throw VideoError.review("工作区文件缺失或为链接")};defer{close(file)}
         var before=stat()
-        guard fstat(file,&before)==0,(before.st_mode & S_IFMT)==S_IFREG,before.st_nlink==1,before.st_size==Int64(artifact.bytes) else{throw VideoError.review("导出产物类型、链接数或大小不符")}
-        budget -= artifact.bytes
+        guard fstat(file,&before)==0,(before.st_mode & S_IFMT)==S_IFREG,before.st_nlink==1,before.st_size==Int64(bytes) else{throw VideoError.review("工作区文件类型、链接数或大小不符")}
+        budget -= bytes
         var digest=SHA256(),buffer=[UInt8](repeating:0,count:1024*1024),total=0,data=Data()
         while true {
             try Task.checkCancellation()
             let count=buffer.withUnsafeMutableBytes{Darwin.read(file,$0.baseAddress,$0.count)}
-            guard count>=0 else{throw VideoError.review("导出产物读取失败")}
+            guard count>=0 else{throw VideoError.review("工作区文件读取失败")}
             if count==0{break}
-            guard count<=artifact.bytes-total else{throw VideoError.review("导出产物在校验中变化")}
+            guard count<=bytes-total else{throw VideoError.review("工作区文件在校验中变化")}
             total += count;let block=Data(buffer[0..<count]);digest.update(data:block);if includeData{data.append(block)}
         }
-        var after=stat()
-        guard fstat(file,&after)==0,total==artifact.bytes,after.st_size==before.st_size,
+        var after=stat(),located=stat()
+        guard fstat(file,&after)==0,fstatat(directory,components.last!,&located,AT_SYMLINK_NOFOLLOW)==0,
+              (located.st_mode & S_IFMT)==S_IFREG,located.st_dev==before.st_dev,located.st_ino==before.st_ino,
+              after.st_dev==before.st_dev,after.st_ino==before.st_ino,after.st_nlink==1,total==bytes,after.st_size==before.st_size,
               after.st_mtimespec.tv_sec==before.st_mtimespec.tv_sec,after.st_mtimespec.tv_nsec==before.st_mtimespec.tv_nsec,
-              digest.finalize().map({String(format:"%02x",$0)}).joined()==artifact.sha256 else{throw VideoError.review("导出产物缺失、变化或摘要不符")}
+              after.st_ctimespec.tv_sec==before.st_ctimespec.tv_sec,after.st_ctimespec.tv_nsec==before.st_ctimespec.tv_nsec,
+              digest.finalize().map({String(format:"%02x",$0)}).joined()==sha256 else{throw VideoError.review("工作区文件缺失、变化或摘要不符")}
         return data
     }
     public struct Backup: Codable { public var version: Int; public var snapshot: Data; public var digest: String; public var assets: [String: Data]; public var exports: [String:Data]? }
@@ -320,6 +357,9 @@ public final class Repository: @unchecked Sendable {
             throw VideoError.invalid("备份文件集合与源素材或历史产物引用不一致；请从原工程重新准备完整备份，未写入恢复目录")
         }
         for a in state.assets { guard let d = b.assets[a.relativePath], Codec.hash(d) == a.hash, d.count == a.bytes, a.relativePath == "assets/\(Codec.hash(d)).\(a.ext)", a.ext.range(of: "^[a-z0-9]{1,12}$", options: .regularExpression) != nil else { throw VideoError.invalid("备份缺少源文件或摘要不符") } }
+        try Self.verifyModelSceneSources(in:state) {asset in
+            guard let bytes=b.assets[asset.relativePath] else {throw VideoError.invalid("含源备份缺少实际模型原件")};return bytes
+        }
         for j in state.jobs.indices {
             if b.version==1 && !state.jobs[j].artifacts.isEmpty {state.jobs[j].artifacts=[];state.jobs[j].state = .interrupted;state.jobs[j].message="旧版备份没有历史成片，请沿原任务重做；源素材与版本保留";continue}
             for a in state.jobs[j].artifacts.indices {let artifact=state.jobs[j].artifacts[a];guard Self.validExportPath(artifact.path),let d=b.exports?[artifact.path],d.count==artifact.bytes,Codec.hash(d)==artifact.sha256 else{throw VideoError.invalid("备份缺少历史导出或摘要不符")};state.jobs[j].artifacts[a].path=root.appendingPathComponent(artifact.path).path}

@@ -93,7 +93,7 @@ struct CommandSchema: Encodable {
                         try snapshot.validate()
                         response.result="完整备份需在实际执行时逐文件核对；本次未写文件"
                     }else{
-                        var preview=try AgentPreview.evaluate(command:command,data:inputData,database:snapshot,principal:input.principal ?? LocalWorkspaceIdentity.principal(workspaceID:input.workspace_id,in:snapshot.workspaces,creatingWorkspace:command=="workspaces create"))
+                        var preview=try AgentPreview.evaluate(command:command,data:inputData,database:snapshot,principal:input.principal ?? LocalWorkspaceIdentity.principal(workspaceID:input.workspace_id,in:snapshot.workspaces,creatingWorkspace:command=="workspaces create"),repository:command=="workspaces create" ? nil:Repository(root:rootURL,readOnly:true))
                         if command=="jobs run" {
                             guard let job=snapshot.jobs.first(where:{$0.id==input.job_id}),let revision=try snapshot.project(job.projectID).revisions.first(where:{$0.id==job.revisionID}) else{throw VideoError.notFound("原任务冻结版本不存在")}
                             var fields:[String:AgentValue]

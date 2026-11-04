@@ -347,6 +347,10 @@ public enum DependencyRules {
             for source in scene.narrativeSources ?? [] { try source.validate(workspaceID:workspaceID,assets:assets);try addAsset(source.assetID,ids);selectedPages[source.assetID,default:[]].formUnion(source.pages) }
             try addAsset(scene.assetID, ids); try addAsset(scene.voice?.assetID, ids)
             for layer in scene.layers ?? [] { try addAsset(layer.assetID, ids) }
+            if let model=scene.modelScene3D {
+                try model.validate(durationFrames:scene.durationFrames,assets:assets.filter{$0.workspaceID==workspaceID})
+                for id in model.assetIDs { try addAsset(id,ids) }
+            }
             if let artwork=scene.classicArtwork {
                 try ClassicArtworkRules.validate(scene:scene,assets:assets.filter{$0.workspaceID==workspaceID})
                 for id in artwork.assetIDs { try addAsset(id,ids) }

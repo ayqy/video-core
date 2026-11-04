@@ -76,6 +76,7 @@ public enum EditorPracticeRules {
         referenceIDs.append(contentsOf:narrativeAssetIDs)
         var references:Set<String>=Set(referenceIDs)
         for artwork in project.current.scenes.compactMap(\.classicArtwork) {references.formUnion(artwork.assetIDs)}
+        for model in project.current.scenes.compactMap(\.modelScene3D) {references.formUnion(model.assetIDs)}
         if let music=project.current.musicAssetID{references.insert(music)}
         for character in project.current.scenes.compactMap(\.characterProfile){if let voice=character.voiceAssetID{references.insert(voice)}}
         return references.isSubset(of:[source.id])

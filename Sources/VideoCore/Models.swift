@@ -85,6 +85,8 @@ public struct Scene: Codable, Equatable, Identifiable, Sendable {
     /// Host-only verified causal branches; absent in existing project encodings.
     public var storyCausality: StoryCausality?
     public var gameWorld: GameWorld?
+    /// Explicit editable real-model scene; nil preserves all prior project encodings.
+    public var modelScene3D: ModelScene3D?
     public var cartoonRig: CartoonRig?
     /// Explicit image-sequence presenter; nil preserves every existing scene encoding.
     public var cartoonPresenter: CartoonPresenter?
@@ -118,6 +120,7 @@ public struct Scene: Codable, Equatable, Identifiable, Sendable {
             try paper.validate()
         }
         try LayerRules.validate(scene:self,assets:assets)
+        try ModelScene3DRules.validate(scene:self,assets:assets)
         try ClassicArtworkRules.validate(scene:self,assets:assets)
         try StorySceneRules.validate(scene:self,assets:assets)
         try StoryCausalRules.validate(scene:self)

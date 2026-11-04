@@ -9,7 +9,8 @@ final class AgentSchemasTests:XCTestCase {
         for key in ["id","workspaceID","sku","audience","task","outcome","prerequisite","scope","prices","assetIDs","tags","archived"] {XCTAssertTrue(fields.contains(.string(key)),key)}
         XCTAssertEqual(defs["Price"]?.object?["properties"]?.object?["money"]?.object?["$ref"],.string("#/$defs/Money"))
         guard case .array(let alternatives)=defs["Edit"]?.object?["oneOf"] else{return XCTFail("edit variants missing")}
-        XCTAssertEqual(alternatives.count,16);XCTAssertTrue(alternatives.contains{$0.object?["properties"]?.object?["lockLayer"] != nil})
+        XCTAssertEqual(alternatives.count,17);XCTAssertTrue(alternatives.contains{$0.object?["properties"]?.object?["lockLayer"] != nil})
+        XCTAssertTrue(alternatives.contains{$0.object?["properties"]?.object?["lockModelInstance"] != nil})
         for edit in ["recordSimulation","confirmSimulationRecording","productionBrief","purpose"] {XCTAssertTrue(alternatives.contains{$0.object?["properties"]?.object?[edit] != nil})}
     }
     func testEncodedRepresentativeEntitiesHaveEveryRequiredNestedFieldAndResolvableRefs()throws {

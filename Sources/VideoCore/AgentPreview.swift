@@ -2,9 +2,9 @@ import Foundation
 
 /// Validate an agent operation against a value snapshot. No task, network call or file is created.
 public enum AgentPreview {
-    public static func evaluate(command:String,data:Data,database:Database,principal:String="local-owner") throws -> AgentValue {
+    public static func evaluate(command:String,data:Data,database:Database,principal:String="local-owner",repository:Repository?=nil) throws -> AgentValue {
         let object=try AgentContract.validate(command:command,data:data)
-        if AgentMutationExecutor.commands.contains(command) {return try AgentMutationExecutor.preview(command:command,data:data,database:database,principal:principal)}
+        if AgentMutationExecutor.commands.contains(command) {return try AgentMutationExecutor.preview(command:command,data:data,database:database,principal:principal,repository:repository)}
         func text(_ key:String)->String { object[key]?.string ?? "" }
         func decode<T:Decodable>(_ key:String,_ type:T.Type)throws->T { guard let value=object[key] else {throw VideoError.invalid("缺少"+key)};return try Codec.decoder().decode(type,from:Codec.data(value)) }
         if command=="workspaces create" { guard !text("name").trimmingCharacters(in:.whitespacesAndNewlines).isEmpty else {throw VideoError.invalid("工作区名称为空")};return .string("仅校验新工作区名称，不创建目录或工程") }

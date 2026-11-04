@@ -36,6 +36,13 @@ final class ModelPackageMediaTests: XCTestCase {
         var actualMesh = false
         loaded.scene.rootNode.enumerateChildNodes { node, _ in actualMesh = actualMesh || node.geometry != nil }
         XCTAssertTrue(actualMesh)
+        var draft=VideoCore.Scene(kind:.simulation,title:"模型草稿",body:"")
+        draft.modelScene3D=ModelScene3D(instances:[.init(id:"mesh",name:"已入库网格",resource:imported.resource)],camera:.init(position:.init(x:0,y:1,z:4),target:.init()),lights:[.init(id:"sun",kind:.directional)])
+        let revision=Revision(contentContext:.init(workspaceID:"local",name:"模型草稿"),aspect:.landscape,scenes:[draft])
+        XCTAssertThrowsError(try ScenePainter.image(revision:revision,frame:0,modules:RenderModuleRegistry())) { error in
+            XCTAssertEqual((error as? VideoError)?.code,"unavailable")
+            XCTAssertTrue(error.localizedDescription.contains("不支持三维模型场景"),"正常绘制入口须显式拒绝当前未支持载荷，不能退回旧二维图集")
+        }
         XCTAssertThrowsError(try ModelPackageMedia.load(imported.resource, workspaceID: "other", repository: repo, database: db, commercial: false))
         try Data("changed".utf8).write(to: repo.assetURL(asset))
         XCTAssertThrowsError(try ModelPackageMedia.load(imported.resource, workspaceID: "local", repository: repo, database: db, commercial: false))
