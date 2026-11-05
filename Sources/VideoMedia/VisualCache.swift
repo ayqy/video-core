@@ -111,6 +111,7 @@ enum VisualClipCache {
         var scene=revision.scenes[index]
         let cartoonSpeechBinding=try CartoonSpeechBinding.from(scene:scene,assets:database.assets.filter{$0.workspaceID==revision.workspaceID})
         scene.voice=nil; scene.speechPlan=nil; scene.voiceGain=1; scene.sourceGain=0; scene.musicGain=0; scene.muted=false
+        scene.audioCues=nil // Host-only events are mixed after cached pictures; listening changes no pixels.
         scene.evidenceIDs=[]; scene.courseMappingIDs=nil; scene.narrativeSources=nil; scene.locked=false
         // Legacy mouth motion depends only on speech presence. New native rig
         // cues and their independently read source binding remain in the key.

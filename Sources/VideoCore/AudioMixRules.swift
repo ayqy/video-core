@@ -18,7 +18,7 @@ public enum AudioMixRules {
         var result = 1.0
         for scene in scenes {
             try validate(scene, fps: fps)
-            for cue in scene.classicArtwork?.audioCues ?? [] {
+            for cue in SceneAudioCueRules.combined(scene:scene) {
                 guard cue.gain.isFinite, (0...1).contains(cue.gain) else { throw VideoError.invalid("游戏音效音量超出0到1范围") }
             }
             if !scene.muted { result = max(result, max(scene.voiceGain, max(scene.sourceGain, scene.musicGain))) }

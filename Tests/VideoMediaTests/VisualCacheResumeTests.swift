@@ -4,6 +4,7 @@ import VideoCore
 @preconcurrency import AVFoundation
 import CoreMedia
 import CoreGraphics
+import CryptoKit
 
 final class VisualCacheResumeTests:XCTestCase {
     private enum Interrupted:Error {case checkpoint}
@@ -84,6 +85,95 @@ final class VisualCacheResumeTests:XCTestCase {
         let duration=try await asset.load(.duration)
         XCTAssertEqual(CMTimeCompare(duration,CMTime(value:Int64(frames),timescale:Int32(fps))),0)
         return result
+    }
+
+    func testHostAudioChangesAndListeningDoNotChangeVisualFingerprint()throws {
+        let workspace=Workspace(name:"Host音效画面缓存边界",owner:"rules")
+        let original=revision(workspace)
+        let encoding=try VisualClipCache.EncodingConfiguration.capture(aspect:original.aspect,fps:original.fps)
+        let first=Asset(workspaceID:workspace.id,name:"first-rule.wav",hash:String(repeating:"a",count:64),ext:"wav",bytes:100,mediaType:"audio",durationFrames:30)
+        let second=Asset(workspaceID:workspace.id,name:"second-rule.wav",hash:String(repeating:"b",count:64),ext:"wav",bytes:100,mediaType:"audio",durationFrames:30)
+        var database=Database();database.assets=[first,second]
+        func key(_ value:Revision)throws->String {
+            try VisualClipCache.fingerprint(revision:value,index:0,database:database,modules:nil,encoding:encoding)
+        }
+        let baseline=try key(original)
+        var withCue=original
+        withCue.scenes[0].audioCues=[ClassicAudioCue(assetID:first.id,startFrame:30,durationFrames:30,gain:0.25)]
+        try withCue.scenes[0].validate(assets:database.assets)
+        XCTAssertNotEqual(try Codec.data(original.scenes[0]),try Codec.data(withCue.scenes[0]),"工程确有新增音效输入")
+        XCTAssertEqual(try key(withCue),baseline)
+        for edit in 0..<5 {
+            var changed=withCue
+            switch edit {
+            case 0:changed.scenes[0].audioCues?[0].assetID=second.id
+            case 1:changed.scenes[0].audioCues?[0].startFrame=60
+            case 2:changed.scenes[0].audioCues?[0].durationFrames=15
+            case 3:changed.scenes[0].audioCues?[0].gain=0.8
+            default:changed.scenes[0].audioCues?[0].listened=true
+            }
+            try changed.scenes[0].validate(assets:database.assets)
+            XCTAssertNotEqual(try Codec.data(changed.scenes[0]),try Codec.data(withCue.scenes[0]))
+            XCTAssertEqual(try key(changed),baseline,"只改真实音效来源、时窗、音量或试听声明不能重绘画面")
+        }
+        var visualChange=withCue;visualChange.scenes[0].layers?[0].color="2563EB"
+        XCTAssertNotEqual(try key(visualChange),baseline,"画面图层变化仍须使画面缓存失效")
+    }
+
+    /// Isolated metadata authority; a fingerprint test must never draw a model
+    /// or substitute this fixture for the installed trusted production Host.
+    private struct FingerprintOnlyModule:ScopedSceneRenderModule {
+        let manifest:PluginManifest
+        func draw(scene:VideoCore.Scene,localFrame:Int,fps:Int,rect:CGRect,context:CGContext)throws {
+            throw VideoError.unavailable("指纹规则夹具禁止实际绘图")
+        }
+        func draw(scene:VideoCore.Scene,localFrame:Int,fps:Int,rect:CGRect,context:CGContext,resources:RenderResources,invocation:RenderInvocation)throws {
+            throw VideoError.unavailable("指纹规则夹具禁止实际绘图")
+        }
+        func close(invocationID:String)throws {}
+    }
+
+    func testNativeVisualChangesStillInvalidateFingerprintWithHostAudioCues()throws {
+        let workspace=Workspace(name:"三维画面指纹",owner:"rules")
+        let xml="""
+        <COLLADA xmlns="http://www.collada.org/2005/11/COLLADASchema" version="1.4.1">
+        <asset><unit meter="1"/><up_axis>Y_UP</up_axis></asset>
+        <library_geometries><geometry id="triangle"><mesh><source id="positions"><float_array id="position-array" count="9">0 0 0 1 0 0 0 1 0</float_array></source></mesh></geometry></library_geometries>
+        <library_visual_scenes><visual_scene id="stage"><node id="mesh"><instance_geometry url="#triangle"/></node></visual_scene></library_visual_scenes>
+        <scene><instance_visual_scene url="#stage"/></scene></COLLADA>
+        """
+        let bytes=Data(xml.utf8)
+        let mesh=Asset(workspaceID:workspace.id,name:"authored-fingerprint.dae",hash:Codec.hash(bytes),ext:"dae",bytes:bytes.count,mediaType:"model3d")
+        let resource=ModelDAEResource(model:.init(asset:mesh),inspection:try DAEInspector.inspect(bytes),textures:[:])
+        let audio=Asset(workspaceID:workspace.id,name:"rule-event.wav",hash:String(repeating:"c",count:64),ext:"wav",bytes:100,mediaType:"audio",durationFrames:30)
+        var scene=Scene(kind:.simulation,title:"真实三维IR指纹",body:"只检查输入键，不画图或审批。",durationFrames:60)
+        scene.modelScene3D=ModelScene3D(instances:[.init(id:"mesh",name:"自制规则网格",resource:resource)],camera:.init(position:.init(x:0,y:2,z:5),target:.init()),lights:[.init(id:"sun",kind:.directional)])
+        scene.audioCues=[ClassicAudioCue(assetID:audio.id,startFrame:0,durationFrames:30,gain:0.25)]
+        try scene.validate(assets:[mesh,audio])
+        let original=Revision(contentContext:ContentContext(workspaceID:workspace.id,name:"三维画面指纹"),aspect:.landscape,scenes:[scene])
+        let encoding=try VisualClipCache.EncodingConfiguration.capture(aspect:original.aspect,fps:original.fps)
+        let authority=Curve25519.Signing.PrivateKey(),registry=RenderModuleRegistry()
+        let manifest=PluginManifest(id:"video.game",version:"fingerprint-rule",capabilities:["game.simulate"],inputSchema:10,implementationDigest:try BuiltinExecutableIdentity.current().digest,permissions:[])
+        let policy=CommercialPolicy(pluginID:manifest.id,version:1,access:"free",updatedAt:Date(),sourceVisibility:"closed")
+        func signed<T:Encodable>(_ value:T)throws->SignedDocument {let raw=try Codec.data(value);return SignedDocument(payload:raw,signature:try authority.signature(for:raw))}
+        try registry.register(FingerprintOnlyModule(manifest:manifest),signedManifest:signed(manifest),signedPolicy:signed(policy),publicKey:authority.publicKey.rawRepresentation)
+        var database=Database();database.assets=[mesh,audio]
+        func key(_ value:Revision)throws->String {
+            try VisualClipCache.fingerprint(revision:value,index:0,database:database,modules:registry,encoding:encoding)
+        }
+        let baseline=try key(original)
+        var heard=original;heard.scenes[0].audioCues?[0].listened=true
+        XCTAssertEqual(try key(heard),baseline)
+        for edit in 0..<3 {
+            var changed=original
+            switch edit {
+            case 0:changed.scenes[0].modelScene3D?.camera.target.x=0.3
+            case 1:changed.scenes[0].modelScene3D?.instances[0].transform.translation.x=0.3
+            default:changed.scenes[0].modelScene3D?.lights[0].intensity=0.4
+            }
+            try changed.scenes[0].validate(assets:database.assets)
+            XCTAssertNotEqual(try key(changed),baseline,"相机、原生实例或光照变化仍须使缓存失效")
+        }
     }
 
     func testInterruptedSecondIntervalRetainsAndReusesTheFirstCompleteCheckpoint()async throws {

@@ -27,265 +27,136 @@ jobs:
           ref: ${{ github.sha }}
           persist-credentials: false
 
-      - name: Verify exact current payload and protected baseline
+      - name: Verify exact 331 payloads against the direct immutable 329 baseline
         shell: bash
         run: |
           python3 -B - <<'PYCODE'
           from pathlib import Path
           import hashlib, os, re, subprocess
           root=Path(os.environ['GITHUB_WORKSPACE'])
+          BASE='3b38b98e0503633f28a4b391adae93327278b2d9'
+          ADDITIONS=set(['Sources/VideoCore/SceneAudioCues.swift', 'Tests/VideoCoreTests/SceneAudioCueTests.swift'])
+          REVIEWED=set(['.github/workflows/free-production.yml', 'Sources/VideoCore/AgentSchemas.swift', 'Sources/VideoCore/AudioMixRules.swift', 'Sources/VideoCore/Dependencies.swift', 'Sources/VideoCore/Editing.swift', 'Sources/VideoCore/Models.swift', 'Sources/VideoMedia/Renderer.swift', 'Sources/VideoMedia/VisualCache.swift', 'Tests/VideoMediaTests/AudioMixMediaTests.swift', 'Tests/VideoMediaTests/VisualCacheResumeTests.swift'])
+          METADATA=set(['.gitignore', 'docs/.nojekyll', 'docs/index.html', 'docs/privacy.html', 'docs/site.css', 'docs/support.html', 'docs/terms.html'])
+          def digest_rows(value):
+              return hashlib.sha256(''.join(f'{name}\0{value[name][0]}\0{value[name][1]}\n' for name in sorted(value)).encode()).hexdigest()
+          def parse(text):
+              values=re.findall(r'(?m)^\| ([a-f0-9]{64}) \| ([0-9]+) \| ([^|\n]+) \|$',text)
+              result={name:(digest,int(size)) for digest,size,name in values}
+              assert len(result)==len(values)>0
+              return result
           head=subprocess.check_output(['git','rev-parse','HEAD'],cwd=root,text=True).strip()
           assert head==os.environ['VIDEO_SOURCE_COMMIT']
-          manifest_text=(root/'SOURCE-MANIFEST.md').read_text()
-          entries=re.findall(r'(?m)^\| ([a-f0-9]{64}) \| ([0-9]+) \| ([^|\n]+) \|$',manifest_text)
-          rows={name:(digest,int(size)) for digest,size,name in entries}
-          assert len(entries)==len(rows)==329
-          for name,(digest,size) in rows.items():
+          text=(root/'SOURCE-MANIFEST.md').read_text()
+          current=parse(text)
+          assert len(current)==331
+          for name,(digest,size) in current.items():
               relative=Path(name)
-              assert not relative.is_absolute() and '..' not in relative.parts
+              assert not relative.is_absolute() and '..' not in relative.parts and '\\' not in name
               path=root/relative
-              assert path.is_file() and not path.is_symlink() and not any(p.is_symlink() for p in path.parents)
+              assert path.is_file() and not any(p.is_symlink() for p in (path,*path.parents))
               raw=path.read_bytes()
               assert len(raw)==size and hashlib.sha256(raw).hexdigest()==digest,name
-          metadata={'.gitignore','docs/.nojekyll','docs/index.html','docs/privacy.html','docs/site.css','docs/support.html','docs/terms.html'}
           tracked=set(subprocess.check_output(['git','ls-files'],cwd=root,text=True).splitlines())
-          assert tracked==set(rows)|metadata|{'SOURCE-MANIFEST.md'}
+          assert tracked==set(current)|METADATA|{'SOURCE-MANIFEST.md'}
           assert not any((root/name).exists() for name in ['App','MacApp','MacUITests','Examples','Premium','Sources/VideoGame','Sources/VideoCartoon','Sources/VideoAdvanced'])
-          BASE_PUBLIC_COMMIT='ab628dbbc97f1f9f25a403d80eabd9d899c205f5'
-          ADDITIONS={'Sources/VideoCore/ModelSceneContract.swift', 'Sources/VideoCore/ModelStoryActions3D.swift', 'Sources/VideoCore/PluginModelBank.swift', 'Sources/VideoMedia/ModelBankMedia.swift', 'Tests/VideoCoreTests/ModelSceneContractTests.swift', 'Tests/VideoCoreTests/PluginModelBankTests.swift', 'Integrations/model_material_import.py', 'Integrations/test_model_material_import.py', 'Integrations/native/ImportModelMaterials.swift'}
-          PRIOR_REVIEWED_CHANGED={'.github/workflows/free-production.yml', 'Integrations/skills/video/references/narration-writing.md', 'Integrations/story_planning.py', 'README.md', 'Sources/VideoCLI/VideoCLI.swift', 'Sources/VideoCore/AgentMutation.swift', 'Sources/VideoCore/AgentPreview.swift', 'Sources/VideoCore/AgentSchemas.swift', 'Sources/VideoCore/Dependencies.swift', 'Sources/VideoCore/Editing.swift', 'Sources/VideoCore/EditorPracticeRules.swift', 'Sources/VideoCore/Models.swift', 'Sources/VideoCore/PluginProtocol.swift', 'Sources/VideoCore/Storage.swift', 'Sources/VideoCore/VendorFreeModuleTrust.swift', 'Sources/VideoMedia/ClassicArtworkMedia.swift', 'Sources/VideoMedia/LocalJobExecutor.swift', 'Sources/VideoMedia/ModelPackageMedia.swift', 'Sources/VideoMedia/Painter.swift', 'Sources/VideoMedia/PluginProcess.swift', 'Sources/VideoMedia/PluginRPCServer.swift', 'Sources/VideoMedia/RemoteSceneModule.swift', 'Sources/VideoMedia/RenderModules.swift', 'Sources/VideoMedia/VisualCache.swift', 'Tests/VideoCoreTests/AgentSchemasTests.swift', 'Tests/VideoCoreTests/PluginProtocolTests.swift', 'Tests/VideoCoreTests/VendorFreeModuleTrustTests.swift', 'Tests/VideoMediaTests/ModelPackageMediaTests.swift', 'Tests/VideoMediaTests/PluginProcessTests.swift'}
-          CURRENT_REVIEWED_DELTA={'Sources/VideoCore/StoryCausalSources.swift', 'Tests/VideoCoreTests/StoryCausalSourcesTests.swift', 'Tests/VideoCoreTests/PluginPackageTests.swift', 'Integrations/knowledge_story.py', 'Integrations/test_knowledge_story.py'}
-          REVIEWED_CHANGED=PRIOR_REVIEWED_CHANGED|CURRENT_REVIEWED_DELTA
-          PROTECTED_COUNT=291
-          PROTECTED_SHA256='6656736578a189abcd557894c015bf6d4ef1784a0ca86defadacac8e55f05c50'
-          CURRENT_UNCHANGED_COUNT=286
-          CURRENT_UNCHANGED_SHA256='97524356e57dfa48181f9649ee98972223cc0d2c46d604f78d83930c0f465ac8'
-          # Fetch only this immutable public baseline, never a private repo or
-          # a moving branch. Keep the original 291-file protection auditable;
-          # its five newly reviewed changes are explicit, not called unchanged.
-          subprocess.run(['git','fetch','--no-tags','--depth=1','origin',BASE_PUBLIC_COMMIT],cwd=root,check=True,timeout=60,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
-          baseline_text=subprocess.check_output(['git','show',BASE_PUBLIC_COMMIT+':SOURCE-MANIFEST.md'],cwd=root,text=True,timeout=15)
-          baseline_entries=re.findall(r'(?m)^\| ([a-f0-9]{64}) \| ([0-9]+) \| ([^|\n]+) \|$',baseline_text)
-          baseline={name:(digest,int(size)) for digest,size,name in baseline_entries}
-          assert len(baseline_entries)==len(baseline)==320
-          original_protected={name:value for name,value in baseline.items() if name not in PRIOR_REVIEWED_CHANGED}
-          digest_input=''.join(f'{name}\0{original_protected[name][0]}\0{original_protected[name][1]}\n' for name in sorted(original_protected))
-          assert len(original_protected)==PROTECTED_COUNT and hashlib.sha256(digest_input.encode()).hexdigest()==PROTECTED_SHA256
-          assert len(PRIOR_REVIEWED_CHANGED)==29 and len(CURRENT_REVIEWED_DELTA)==5 and not PRIOR_REVIEWED_CHANGED&CURRENT_REVIEWED_DELTA
-          assert len(ADDITIONS)==9 and len(REVIEWED_CHANGED)==34
-          assert set(rows)==set(baseline)|ADDITIONS and not set(baseline)&ADDITIONS
-          assert {name for name in baseline if rows[name]!=baseline[name]}==REVIEWED_CHANGED
-          unchanged={name:value for name,value in rows.items() if name not in REVIEWED_CHANGED and name not in ADDITIONS}
-          assert all(value==baseline[name] for name,value in unchanged.items())
-          unchanged_input=''.join(f'{name}\0{unchanged[name][0]}\0{unchanged[name][1]}\n' for name in sorted(unchanged))
-          assert len(unchanged)==CURRENT_UNCHANGED_COUNT and hashlib.sha256(unchanged_input.encode()).hexdigest()==CURRENT_UNCHANGED_SHA256
-          inventory_input=''.join(f'{name}\0{rows[name][0]}\0{rows[name][1]}\n' for name in sorted(rows))
-          inventory_sha256=hashlib.sha256(inventory_input.encode()).hexdigest()
-          assert f'整体内容指纹：`{inventory_sha256}`' in manifest_text
-          print('current_payload_fingerprint='+inventory_sha256)
-          print('manifest_payloads=329 added_public_inputs=9 changed_reviewed_inputs=34 unchanged_current_inputs=286 historical_protected_inputs=291 source_commit='+head)
-          print('protected_baseline_commit='+BASE_PUBLIC_COMMIT+' current_native_checks=pending current_python_rules=169 reused_python_rules=25')
+          assert not any('scene-audio-cc0-v1' in name or name.lower().endswith('.wav') for name in tracked)
+          subprocess.run(['git','fetch','--no-tags','--depth=1','origin',BASE],cwd=root,check=True,timeout=60,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+          baseline=parse(subprocess.check_output(['git','show',BASE+':SOURCE-MANIFEST.md'],cwd=root,text=True))
+          assert len(baseline)==329 and digest_rows(baseline)=='36ef038022eb9e2cb5fe219d9711809d646a7119fe6e77d253a81e577c4f193f'
+          for name in METADATA:
+              assert (root/name).read_bytes()==subprocess.check_output(['git','show',BASE+':'+name],cwd=root),name
+          assert set(current)==set(baseline)|ADDITIONS and not set(baseline)&ADDITIONS
+          assert {name for name in baseline if current[name]!=baseline[name]}==REVIEWED
+          unchanged={name:value for name,value in baseline.items() if name not in REVIEWED}
+          assert len(unchanged)==319 and digest_rows(unchanged)=='01d6e6e2f769a8ac685632e4be60ee16574460dde38bbdf96174f509fff473f6'
+          assert all(current[name]==value for name,value in unchanged.items())
+          assert '整体内容指纹：`'+digest_rows(current)+'`' in text
+          # Only the workflow, Core/Host audio rules/cache and two additions differ.
+          # The existing Python modules, SDK inputs, Package and ordinary recipe bytes
+          # retain the direct 3b baseline. Reuse its confirmed run; do not call 169 tests new.
+          assert not any(name.startswith('Integrations/') or name in {'Package.swift','README.md'} for name in REVIEWED)
+          print('public_payloads=331 direct_baseline_payloads=329 additions=2 reviewed_changed='+str(len(REVIEWED))+' unchanged='+str(len(unchanged)))
+          print('current_payload_sha256='+digest_rows(current)+' unchanged_sha256='+digest_rows(unchanged))
+          print('reused_python_rules=169 current_python_rules=0 sdk_rules_reused=true prior_run='+'https://github.com/ayqy/video-core/actions/runs/41956201470')
           PYCODE
 
-      - name: Execute exactly the affected production and SDK import Python rules
+      - name: Run finite affected Native rules and real ordinary public production
         shell: bash
         run: |
           python3 -B - <<'PYCODE'
           from pathlib import Path
-          import hashlib, io, os, sys, unittest
+          import hashlib, os, re, shutil, subprocess, sys, time
           root=Path(os.environ['GITHUB_WORKSPACE'])
-          sys.path.insert(0,str(root/'Integrations'))
-          groups=[('test_story_speech',29),('test_production_document',24),('test_production_workflow',33),('test_model_material_import',8),('test_story_planning',7),('test_knowledge_story',55),('test_knowledge_delivery',13)]
-          def tests(suite):
-              for item in suite:
-                  if isinstance(item,unittest.TestSuite):yield from tests(item)
-                  else:yield item
-          suites=[unittest.defaultTestLoader.loadTestsFromName(name) for name,_ in groups]
-          identities=[[test.id() for test in tests(suite)] for suite in suites]
-          assert all(len(items)==len(set(items))==count and all(identity.startswith(name+'.') for identity in items)
-                     for (name,count),items in zip(groups,identities))
-          expected={identity for items in identities for identity in items}
-          assert len(expected)==sum(count for _,count in groups)==169
-          for name,_ in groups:
-              print('current_python_test_source_sha256='+name+':'+hashlib.sha256((root/'Integrations'/(name+'.py')).read_bytes()).hexdigest())
-          class ExactResult(unittest.TextTestResult):
-              def __init__(self,*args,**kwargs):
-                  super().__init__(*args,**kwargs);self.started=[];self.passed=[]
-              def startTest(self,test):
-                  self.started.append(test.id());super().startTest(test)
-              def addSuccess(self,test):
-                  self.passed.append(test.id());super().addSuccess(test)
-          output=io.StringIO()
-          result=unittest.TextTestRunner(stream=output,verbosity=2,resultclass=ExactResult).run(unittest.TestSuite(suites))
-          if not result.wasSuccessful():
-              print(output.getvalue()[-9000:],file=sys.stderr)
-              raise RuntimeError('Affected production and SDK import Python rules failed')
-          assert not result.failures and not result.errors and not result.skipped and not result.expectedFailures and not result.unexpectedSuccesses
-          assert len(result.started)==len(set(result.started))==len(result.passed)==len(set(result.passed))==result.testsRun==169
-          assert set(result.started)==set(result.passed)==expected
-          for identity in sorted(expected):print('current_python_passed='+identity)
-          print('current_python_rules=169 reused_python_rules=25 real_business_media_executed=false review=false')
-          PYCODE
-
-      - name: Compile the ordinary VideoCore dependency for testability
-        shell: bash
-        run: |
-          python3 -B - <<'PYCODE'
-          from pathlib import Path
-          import os, subprocess, sys, time
-          root=Path(os.environ['GITHUB_WORKSPACE'])
-          scratch=Path(os.environ['RUNNER_TEMP'])/'video-production-swiftpm'
-          argv=['swift','build','-c','release','--target','VideoCore','--scratch-path',str(scratch),'-j','2','-Xswiftc','-enable-testing']
-          started_at=time.monotonic()
-          try:
-              result=subprocess.run(argv,cwd=root,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,timeout=650)
-          except subprocess.TimeoutExpired as error:
-              captured=error.stdout or b''
-              if isinstance(captured,str):captured=captured.encode('utf-8',errors='replace')
-              print('native_core_precompile_timeout_seconds=650 captured_stdout_bytes='+str(len(captured)),file=sys.stderr)
-              print(captured[-9000:].decode('utf-8',errors='replace') if captured else 'captured_stdout_unavailable',file=sys.stderr)
-              raise
-          assert len(result.stdout.encode())<=16*1024*1024,'Bounded compiler diagnostics required'
-          if result.returncode:
-              print(result.stdout.encode('utf-8',errors='replace')[-9000:].decode('utf-8',errors='replace'),file=sys.stderr)
-              raise RuntimeError('Ordinary VideoCore dependency precompile failed')
-          print('current_native_core_precompile=1 elapsed_seconds='+format(time.monotonic()-started_at,'.3f')+' native_tests_in_precompile=0 source_changed=false review=false')
-          PYCODE
-
-      - name: Compile the ordinary test products with the same explicit testability inputs
-        shell: bash
-        run: |
-          python3 -B - <<'PYCODE'
-          from pathlib import Path
-          import os, subprocess, sys, time
-          root=Path(os.environ['GITHUB_WORKSPACE'])
-          scratch=Path(os.environ['RUNNER_TEMP'])/'video-production-swiftpm'
-          argv=['swift','build','-c','release','--build-tests','--scratch-path',str(scratch),'-j','2','-Xswiftc','-enable-testing']
-          started_at=time.monotonic()
-          try:
-              result=subprocess.run(argv,cwd=root,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,timeout=650)
-          except subprocess.TimeoutExpired as error:
-              captured=error.stdout or b''
-              if isinstance(captured,str):captured=captured.encode('utf-8',errors='replace')
-              print('native_test_build_timeout_seconds=650 captured_stdout_bytes='+str(len(captured)),file=sys.stderr)
-              print(captured[-9000:].decode('utf-8',errors='replace') if captured else 'captured_stdout_unavailable',file=sys.stderr)
-              raise
-          assert len(result.stdout.encode())<=16*1024*1024,'Bounded compiler diagnostics required'
-          if result.returncode:
-              print(result.stdout.encode('utf-8',errors='replace')[-9000:].decode('utf-8',errors='replace'),file=sys.stderr)
-              raise RuntimeError('Ordinary test products build failed')
-          print('current_native_test_product_builds=1 elapsed_seconds='+format(time.monotonic()-started_at,'.3f')+' native_rules_executed_in_compile=0 cache_reuse_claimed=false review=false')
-          PYCODE
-
-      - name: Execute exactly the affected ordinary Native rules
-        shell: bash
-        run: |
-          python3 -B - <<'PYCODE'
-          from pathlib import Path
-          import hashlib, os, re, subprocess, sys, time
-          root=Path(os.environ['GITHUB_WORKSPACE'])
-          scratch=Path(os.environ['RUNNER_TEMP'])/'video-production-swiftpm'
-          groups=[('VideoCoreTests','MediaPresentationTests',7),
-                  ('VideoMediaTests','MediaPresentationMediaTests',6),
-                  ('VideoMediaTests','MediaFramingMediaTests',2),
-                  ('VideoCoreTests','MediaConfirmationTests',14),
-                  ('VideoMediaTests','ModelPackageMediaTests',13),
-                  ('VideoCoreTests','ModelSceneContractTests',10),
-                  ('VideoCoreTests','StoryCausalSourcesTests',42),
-                  ('VideoCoreTests','PluginPackageTests',17),
-                  ('VideoCoreTests','AgentSchemasTests',3),
-                  ('VideoCoreTests','DependencyTests',10),
-                  ('VideoCoreTests','AgentMutationTests',9),
-                  ('VideoCoreTests','ArtifactRelocationTests',10),
-                  ('VideoCoreTests','BackupRestoreInventoryTests',5),
-                  ('VideoCoreTests','PluginProtocolTests',19),
-                  ('VideoCoreTests','PluginModelBankTests',15),
-                  ('VideoCoreTests','VendorFreeModuleTrustTests',15),
-                  ('VideoMediaTests','PluginProcessTests',18)]
+          scratch=Path(os.environ['RUNNER_TEMP'])/'video-scene-audio-swiftpm'
+          SELECTED={'SceneAudioCueTests': ['testAbsentHostListKeepsLiteralLegacySceneBytesAndRoundTrip', 'testAssetScopeActualDurationAndIntegerExtremesRejectWithoutMutation', 'testChangedEventRevokesOnlyItsListeningAndWholeMixReview', 'testClassicAndHostListsKeepOrderAndRejectDuplicateIDsOrCombinedOverflow', 'testExplicitListeningDeclarationDoesNotBecomeAContentChange', 'testFrozenGraphIncludesExactCueAssetAndSourceAndDetectsSourceChanges', 'testHostCuePresentationEndHonoursRoundedSceneBoundaryAndRealTrailingPause', 'testIndependentCuesNeverCrossTheExistingDrawingWire', 'testNativeModelSceneAcceptsHostEventsWithoutAddingAnArtworkOrRPCField', 'testNormalBindingUsesRealRegisteredWholeRecordingWithoutClassicArtwork', 'testOrdinarySplitKeepsEachEventOnceAndRejectsCuttingItsActualWindow', 'testQualityRequiresActualCueRightsAndListeningOnlyWhenReviewed', 'testRightsDependencyChainCannotEscapeWorkspaceOrLoseItsSourceDocument', 'testSourceOwnerExpiryCommercialScopeAndListeningStayIndependent', 'testVideoSourceAndWindowChangesRevokeCueListeningWithoutRevokingUnchangedVoice'], 'AudioMixRulesTests': ['testCommonHeadroomKeepsDuckReleaseTimesAndUnaffectedTrackGain', 'testDuckingEndsAfterActualVoiceRatherThanWholeScene', 'testMixedPCMRejectsOverloadNonFiniteAndInvalidScaleWithoutPartialWrite', 'testMixedPCMRestoresOnceAndUnityKeepsExactSampleBits', 'testMixerHeadroomDoesNotExpandCueRangeOrBoostItsRequestedGain', 'testMixerHeadroomKeepsUnityAndHonoursAllThreeGainRanges', 'testMixerVolumePreservesRequestedLevelsWithinAppleRange', 'testMuteAndZeroVoiceGainNeverKeepBackgroundOrSpuriousDuck', 'testSourceDucksActualVoiceAndRestoresBeforeHeldFramePause', 'testSourceRejectsInvalidGainTimingAndVoiceTruncation', 'testSourceVoiceAtClipEndNeverReleasesIntoPause', 'testSourceWithoutAudibleVoiceKeepsGainAndMutedSourceIsSilent', 'testSpeedUsesActualAudioIntervalAndRejectsTruncation', 'testSubFrameSpeedRetainsOneVisibleOutputFrameAndPositiveVoiceEnvelope'], 'DependencyTests': ['testAddingSourceToEarlierSnapshotRequiresNewFreeze', 'testCyclicRightsGraphPropagatesEveryAffectedSceneWithoutLooping', 'testEvidenceExpiryInvalidatesOnlyReferencingSceneAndPreservesOriginal', 'testFrozenPageDependencyIgnoresUnusedPageButInvalidatesReferencedPage', 'testLayerImageAndCharacterVoiceRightsBelongToDependencyGraph', 'testLegacyRevisionDecodesWithoutNewOptionalFields', 'testMappingRequiresActualBoundedPagesAndConfirmedText', 'testMappingsAndSceneReferencesCannotCrossWorkspace', 'testSourceEditPreservesHistoryAndSkipsUnrelatedPagesAndWorkspace', 'testTimeRangeUsesRealMediaLengthAndRespectsSceneLock'], 'PluginProtocolTests': ['testCartoonSixDiscoveryBoundsRigTwoWithoutChangingFiveOrExposingHostCausality', 'testCartoonWalkingUsesVerifiedImageBytesAcrossSeparateAssetIDs', 'testDiscoveryPublishesAllEightActualWireMethodsAndNoSceneSchema', 'testFrozenInputRoundTripAndDigestBindEveryIdentityAndFrame', 'testHistoricalRPCSceneLayerSchemaBytesAndDigestRemainFrozen', 'testHostImageFlipStaysInSceneButNotPluginSnapshotOrDigest', 'testImageHashBankCroppingAndNumericBoundsFailClosed', 'testInvocationRequiresWorkspaceDigestCurrencyAndRealBoundedDeadline', 'testLocalCashEstimateNeverModifiesOriginalBudgetReference', 'testMatrixNegotiationRequiresSchemaThreeWhileLegacyKnowledgeKeepsSchemaTwo', 'testNewRPCRejectsLegacyGeometricFallbackAndWrongCapability', 'testOutputIsBoundToActualInputFrameAndDependencyBytes', 'testPublicationSchemaSelectionUsesCurrentDefaultsAndRetainsExplicitLegacyRequests', 'testRPCRejectsInjectedHostImageFlipInsteadOfDroppingIt', 'testRigVersionTwoRequiresCartoonSixEvenForOneActorAndKeepsLegacyFive', 'testRuleTableRequiresExplicitSchemaFiveWithoutChangingEarlierShapes', 'testSchemaTwoKnowledgeShapeStaysFrozenAndMatrixThreeDiscoveryHasResolvableRules', 'testStandaloneFrameValidationRejectsDuplicateAssetIDsWithoutDictionaryTrap', 'testVisualSnapshotCannotEncodeNarrationSourcesVoiceOrApprovals'], 'ModelSceneContractTests': ['testForgedInspectionAndJointTrackRejectInSaveDryRunActualAndBackupRestore', 'testLocksProtectResourceTracksAndDeletionUntilExplicitNormalUnlock', 'testMalformedCameraTracksAndTextureClosureRejectBeforeSave', 'testModelChangesInvalidateReviewAndSourceRightsGateModelsWithoutLegacyRecording', 'testNormalAgentEditFreezesModelAndTextureAndColdBackupPreservesContract', 'testSourceFrameSamplingUsesExplicitJointAndShortestQuaternionArc', 'testV1WireAndStrictV2DecodingDoNotSilentlyAcceptNewActions', 'testV2NativeActionsRejectFakeMovementPoseHiddenFieldsAndFutureDependencies', 'testV2NativeOperationsUseOriginalTracksAndRandomAccessVisibilityAndSpeech', 'testV2NormalDryRunSaveColdRestoreAndLockedNativeOperations'], 'AudioMixMediaTests': ['testActual44100MonoAndStereoSlowPCMRetainsRoundedVoiceTailAndSilence', 'testActualAACDucksOnlyDuringVoiceRestoresMusicAndMutesWholeScene', 'testActualBoostOverloadAndCancellationCleanPreparedAudioWithoutChangingSources', 'testActualThreeTrackAACPreservesOneOnePointFiveAndTwoGainRatios', 'testCompleteVoiceRejectsPhysicalSourceBeyondRegisteredFrameBoundary', 'testCopiedMixerPCMRetainsTimestampsFramesAndRejectsWrongFormat', 'testHostEventCueRejectsUnusableRightsAndChangedRawSourceBeforeOutput', 'testHostEventCuesMixOnceAtSpeedAdjustedTimesAndRespectMuteAndZeroGain', 'testMusicOnlyWarningMatchesDecodedAACIncludingMutedAndZeroGain', 'testThreeTrackAACDucksSourceWindowAndMusicPreservesVoiceTailAndPause', 'testUnitSpeedFractionalPCMDoesNotUseCeilingFrameAsStretchTarget'], 'SpeechTests': ['testMusicChangesKeepUnchangedSourceVoiceAndCaptionApprovalsButRevokeWholeFilmReview', 'testSourceGainMuteAndSilentWindowChangesKeepIndependentCaptionApprovals'], 'VisualCacheResumeTests': ['testHostAudioChangesAndListeningDoNotChangeVisualFingerprint', 'testNativeVisualChangesStillInvalidateFingerprintWithHostAudioCues']}
+          FILES={'SceneAudioCueTests': 'Tests/VideoCoreTests/SceneAudioCueTests.swift', 'AudioMixRulesTests': 'Tests/VideoCoreTests/AudioMixRulesTests.swift', 'DependencyTests': 'Tests/VideoCoreTests/DependencyTests.swift', 'PluginProtocolTests': 'Tests/VideoCoreTests/PluginProtocolTests.swift', 'ModelSceneContractTests': 'Tests/VideoCoreTests/ModelSceneContractTests.swift', 'AudioMixMediaTests': 'Tests/VideoMediaTests/AudioMixMediaTests.swift', 'SpeechTests': 'Tests/VideoCoreTests/SpeechTests.swift', 'VisualCacheResumeTests': 'Tests/VideoMediaTests/VisualCacheResumeTests.swift'}
+          EXPECTED=set(['AudioMixMediaTests.testActual44100MonoAndStereoSlowPCMRetainsRoundedVoiceTailAndSilence', 'AudioMixMediaTests.testActualAACDucksOnlyDuringVoiceRestoresMusicAndMutesWholeScene', 'AudioMixMediaTests.testActualBoostOverloadAndCancellationCleanPreparedAudioWithoutChangingSources', 'AudioMixMediaTests.testActualThreeTrackAACPreservesOneOnePointFiveAndTwoGainRatios', 'AudioMixMediaTests.testCompleteVoiceRejectsPhysicalSourceBeyondRegisteredFrameBoundary', 'AudioMixMediaTests.testCopiedMixerPCMRetainsTimestampsFramesAndRejectsWrongFormat', 'AudioMixMediaTests.testHostEventCueRejectsUnusableRightsAndChangedRawSourceBeforeOutput', 'AudioMixMediaTests.testHostEventCuesMixOnceAtSpeedAdjustedTimesAndRespectMuteAndZeroGain', 'AudioMixMediaTests.testMusicOnlyWarningMatchesDecodedAACIncludingMutedAndZeroGain', 'AudioMixMediaTests.testThreeTrackAACDucksSourceWindowAndMusicPreservesVoiceTailAndPause', 'AudioMixMediaTests.testUnitSpeedFractionalPCMDoesNotUseCeilingFrameAsStretchTarget', 'AudioMixRulesTests.testCommonHeadroomKeepsDuckReleaseTimesAndUnaffectedTrackGain', 'AudioMixRulesTests.testDuckingEndsAfterActualVoiceRatherThanWholeScene', 'AudioMixRulesTests.testMixedPCMRejectsOverloadNonFiniteAndInvalidScaleWithoutPartialWrite', 'AudioMixRulesTests.testMixedPCMRestoresOnceAndUnityKeepsExactSampleBits', 'AudioMixRulesTests.testMixerHeadroomDoesNotExpandCueRangeOrBoostItsRequestedGain', 'AudioMixRulesTests.testMixerHeadroomKeepsUnityAndHonoursAllThreeGainRanges', 'AudioMixRulesTests.testMixerVolumePreservesRequestedLevelsWithinAppleRange', 'AudioMixRulesTests.testMuteAndZeroVoiceGainNeverKeepBackgroundOrSpuriousDuck', 'AudioMixRulesTests.testSourceDucksActualVoiceAndRestoresBeforeHeldFramePause', 'AudioMixRulesTests.testSourceRejectsInvalidGainTimingAndVoiceTruncation', 'AudioMixRulesTests.testSourceVoiceAtClipEndNeverReleasesIntoPause', 'AudioMixRulesTests.testSourceWithoutAudibleVoiceKeepsGainAndMutedSourceIsSilent', 'AudioMixRulesTests.testSpeedUsesActualAudioIntervalAndRejectsTruncation', 'AudioMixRulesTests.testSubFrameSpeedRetainsOneVisibleOutputFrameAndPositiveVoiceEnvelope', 'DependencyTests.testAddingSourceToEarlierSnapshotRequiresNewFreeze', 'DependencyTests.testCyclicRightsGraphPropagatesEveryAffectedSceneWithoutLooping', 'DependencyTests.testEvidenceExpiryInvalidatesOnlyReferencingSceneAndPreservesOriginal', 'DependencyTests.testFrozenPageDependencyIgnoresUnusedPageButInvalidatesReferencedPage', 'DependencyTests.testLayerImageAndCharacterVoiceRightsBelongToDependencyGraph', 'DependencyTests.testLegacyRevisionDecodesWithoutNewOptionalFields', 'DependencyTests.testMappingRequiresActualBoundedPagesAndConfirmedText', 'DependencyTests.testMappingsAndSceneReferencesCannotCrossWorkspace', 'DependencyTests.testSourceEditPreservesHistoryAndSkipsUnrelatedPagesAndWorkspace', 'DependencyTests.testTimeRangeUsesRealMediaLengthAndRespectsSceneLock', 'ModelSceneContractTests.testForgedInspectionAndJointTrackRejectInSaveDryRunActualAndBackupRestore', 'ModelSceneContractTests.testLocksProtectResourceTracksAndDeletionUntilExplicitNormalUnlock', 'ModelSceneContractTests.testMalformedCameraTracksAndTextureClosureRejectBeforeSave', 'ModelSceneContractTests.testModelChangesInvalidateReviewAndSourceRightsGateModelsWithoutLegacyRecording', 'ModelSceneContractTests.testNormalAgentEditFreezesModelAndTextureAndColdBackupPreservesContract', 'ModelSceneContractTests.testSourceFrameSamplingUsesExplicitJointAndShortestQuaternionArc', 'ModelSceneContractTests.testV1WireAndStrictV2DecodingDoNotSilentlyAcceptNewActions', 'ModelSceneContractTests.testV2NativeActionsRejectFakeMovementPoseHiddenFieldsAndFutureDependencies', 'ModelSceneContractTests.testV2NativeOperationsUseOriginalTracksAndRandomAccessVisibilityAndSpeech', 'ModelSceneContractTests.testV2NormalDryRunSaveColdRestoreAndLockedNativeOperations', 'PluginProtocolTests.testCartoonSixDiscoveryBoundsRigTwoWithoutChangingFiveOrExposingHostCausality', 'PluginProtocolTests.testCartoonWalkingUsesVerifiedImageBytesAcrossSeparateAssetIDs', 'PluginProtocolTests.testDiscoveryPublishesAllEightActualWireMethodsAndNoSceneSchema', 'PluginProtocolTests.testFrozenInputRoundTripAndDigestBindEveryIdentityAndFrame', 'PluginProtocolTests.testHistoricalRPCSceneLayerSchemaBytesAndDigestRemainFrozen', 'PluginProtocolTests.testHostImageFlipStaysInSceneButNotPluginSnapshotOrDigest', 'PluginProtocolTests.testImageHashBankCroppingAndNumericBoundsFailClosed', 'PluginProtocolTests.testInvocationRequiresWorkspaceDigestCurrencyAndRealBoundedDeadline', 'PluginProtocolTests.testLocalCashEstimateNeverModifiesOriginalBudgetReference', 'PluginProtocolTests.testMatrixNegotiationRequiresSchemaThreeWhileLegacyKnowledgeKeepsSchemaTwo', 'PluginProtocolTests.testNewRPCRejectsLegacyGeometricFallbackAndWrongCapability', 'PluginProtocolTests.testOutputIsBoundToActualInputFrameAndDependencyBytes', 'PluginProtocolTests.testPublicationSchemaSelectionUsesCurrentDefaultsAndRetainsExplicitLegacyRequests', 'PluginProtocolTests.testRPCRejectsInjectedHostImageFlipInsteadOfDroppingIt', 'PluginProtocolTests.testRigVersionTwoRequiresCartoonSixEvenForOneActorAndKeepsLegacyFive', 'PluginProtocolTests.testRuleTableRequiresExplicitSchemaFiveWithoutChangingEarlierShapes', 'PluginProtocolTests.testSchemaTwoKnowledgeShapeStaysFrozenAndMatrixThreeDiscoveryHasResolvableRules', 'PluginProtocolTests.testStandaloneFrameValidationRejectsDuplicateAssetIDsWithoutDictionaryTrap', 'PluginProtocolTests.testVisualSnapshotCannotEncodeNarrationSourcesVoiceOrApprovals', 'SceneAudioCueTests.testAbsentHostListKeepsLiteralLegacySceneBytesAndRoundTrip', 'SceneAudioCueTests.testAssetScopeActualDurationAndIntegerExtremesRejectWithoutMutation', 'SceneAudioCueTests.testChangedEventRevokesOnlyItsListeningAndWholeMixReview', 'SceneAudioCueTests.testClassicAndHostListsKeepOrderAndRejectDuplicateIDsOrCombinedOverflow', 'SceneAudioCueTests.testExplicitListeningDeclarationDoesNotBecomeAContentChange', 'SceneAudioCueTests.testFrozenGraphIncludesExactCueAssetAndSourceAndDetectsSourceChanges', 'SceneAudioCueTests.testHostCuePresentationEndHonoursRoundedSceneBoundaryAndRealTrailingPause', 'SceneAudioCueTests.testIndependentCuesNeverCrossTheExistingDrawingWire', 'SceneAudioCueTests.testNativeModelSceneAcceptsHostEventsWithoutAddingAnArtworkOrRPCField', 'SceneAudioCueTests.testNormalBindingUsesRealRegisteredWholeRecordingWithoutClassicArtwork', 'SceneAudioCueTests.testOrdinarySplitKeepsEachEventOnceAndRejectsCuttingItsActualWindow', 'SceneAudioCueTests.testQualityRequiresActualCueRightsAndListeningOnlyWhenReviewed', 'SceneAudioCueTests.testRightsDependencyChainCannotEscapeWorkspaceOrLoseItsSourceDocument', 'SceneAudioCueTests.testSourceOwnerExpiryCommercialScopeAndListeningStayIndependent', 'SceneAudioCueTests.testVideoSourceAndWindowChangesRevokeCueListeningWithoutRevokingUnchangedVoice', 'SpeechTests.testMusicChangesKeepUnchangedSourceVoiceAndCaptionApprovalsButRevokeWholeFilmReview', 'SpeechTests.testSourceGainMuteAndSilentWindowChangesKeepIndependentCaptionApprovals', 'VisualCacheResumeTests.testHostAudioChangesAndListeningDoNotChangeVisualFingerprint', 'VisualCacheResumeTests.testNativeVisualChangesStillInvalidateFingerprintWithHostAudioCues'])
           expected=set()
-          for module,name,count in groups:
-              source=root/'Tests'/module/('DomainTests.swift' if name in {'ArtifactRelocationTests','BackupRestoreInventoryTests'} else name+'.swift')
-              source_text=source.read_text()
-              header=re.search(r'(?m)^final class '+re.escape(name)+r'\b',source_text)
-              assert header is not None,name
-              tail=source_text[header.end():]
-              next_class=re.search(r'(?m)^final class ',tail)
-              body=tail[:next_class.start()] if next_class else tail
-              methods=re.findall(r'func (test[A-Za-z0-9_]+)\(',body)
-              assert len(methods)==len(set(methods))==count
-              identities={module+'.'+name+'.'+method for method in methods}
-              assert not expected&identities
-              expected.update(identities)
-              print('current_native_test_source_sha256='+name+':'+hashlib.sha256(source.read_bytes()).hexdigest())
-          assert len(expected)==215
-          selection='('+'|'.join(name for _,name,_ in groups)+')'
-          argv=['swift','test','--skip-build','-c','release','--scratch-path',str(scratch),'-j','2','-Xswiftc','-enable-testing','--filter',selection]
-          started_at=time.monotonic()
-          try:
-              result=subprocess.run(argv,cwd=root,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,timeout=650)
-          except subprocess.TimeoutExpired as error:
-              captured=error.stdout or b''
-              if isinstance(captured,str):captured=captured.encode('utf-8',errors='replace')
-              print('native_rules_timeout_seconds=650 captured_stdout_bytes='+str(len(captured)),file=sys.stderr)
-              print(captured[-9000:].decode('utf-8',errors='replace') if captured else 'captured_stdout_unavailable',file=sys.stderr)
-              raise
-          assert len(result.stdout.encode())<=16*1024*1024,'Bounded compiler/test diagnostics required'
-          if result.returncode:
-              print(result.stdout.encode('utf-8',errors='replace')[-9000:].decode('utf-8',errors='replace'),file=sys.stderr)
-              raise RuntimeError('Affected Native test execution failed')
-          started=['.'.join(row) for row in re.findall(r"Test Case '-\[([^ ]+) ([^]]+)\]' started",result.stdout)]
-          passed=['.'.join(row) for row in re.findall(r"Test Case '-\[([^ ]+) ([^]]+)\]' passed",result.stdout)]
-          assert len(started)==len(set(started))==len(passed)==len(set(passed))==len(expected)
-          assert set(started)==set(passed)==expected
-          # Outcome words belong after the quoted XCTest identity. Test names
-          # such as testFailedDomainWriteRollsBackEntityAndReceipt are valid.
-          assert re.search(r"(?m)^Test (?:Case|Suite) '[^\r\n]*' (?:failed|skipped)\b",result.stdout) is None
-          for identity in sorted(expected):print('current_native_passed='+identity)
-          print('current_native_rules=215 elapsed_seconds='+format(time.monotonic()-started_at,'.3f')+' current_python_rules=169 reused_python_rules=25 synthetic_fixture_media=true real_business_media_executed=false review=false')
-          PYCODE
-
-      - name: Build the ordinary Release CLI
-        shell: bash
-        run: |
-          python3 -B - <<'PYCODE'
-          import os, subprocess, sys, time
-          from pathlib import Path
-          root=Path(os.environ['GITHUB_WORKSPACE'])
-          def execute(argv,seconds):
-              started_at=time.monotonic()
+          for name,methods in SELECTED.items():
+              source=root/FILES[name]
+              text=source.read_text()
+              assert len(re.findall(r'(?m)^final class '+re.escape(name)+r'\s*:\s*XCTestCase\b',text))==1
+              actual=re.findall(r'(?m)^\s*func (test\w+)\s*\(',text)
+              assert len(actual)==len(set(actual)) and set(methods)<=set(actual)
+              expected.update(name+'.'+method for method in methods)
+              print('current_native_source_sha256='+name+':'+hashlib.sha256(source.read_bytes()).hexdigest())
+          assert expected==EXPECTED
+          def execute(argv,seconds,label):
+              started=time.monotonic()
               try:
                   result=subprocess.run(argv,cwd=root,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,timeout=seconds)
               except subprocess.TimeoutExpired as error:
                   captured=error.stdout or b''
                   if isinstance(captured,str):captured=captured.encode('utf-8',errors='replace')
-                  print('ordinary_release_build_timeout_seconds='+str(seconds)+' captured_stdout_bytes='+str(len(captured)),file=sys.stderr)
-                  print(captured[-9000:].decode('utf-8',errors='replace') if captured else 'captured_stdout_unavailable',file=sys.stderr)
+                  print(label+'_timeout=true captured_bytes='+str(len(captured)),file=sys.stderr)
+                  print(captured[-9000:].decode('utf-8',errors='replace'),file=sys.stderr)
                   raise
+              assert len(result.stdout.encode())<=16*1024*1024,'Bounded Native diagnostics required'
               if result.returncode:
                   print(result.stdout.encode('utf-8',errors='replace')[-9000:].decode('utf-8',errors='replace'),file=sys.stderr)
-                  raise RuntimeError('Ordinary CLI build failed')
-              assert len(result.stdout.encode())<=16*1024*1024,'Bounded build diagnostics required'
-              print('ordinary_release_command_elapsed_seconds='+format(time.monotonic()-started_at,'.3f')+' budget_seconds='+str(seconds))
+                  raise RuntimeError(label+' failed')
+              print(label+'_passed=true elapsed_seconds='+format(time.monotonic()-started,'.3f'))
               return result.stdout
-          scratch=Path(os.environ['RUNNER_TEMP'])/'video-production-swiftpm'
-          execute(['swift','build','-c','release','--product','video','--scratch-path',str(scratch),'-j','2'],650)
-          bins=execute(['swift','build','-c','release','--scratch-path',str(scratch),'-j','2','--show-bin-path'],30).strip()
-          product=Path(bins)/'video'
-          assert product.is_file() and not product.is_symlink() and os.access(product,os.X_OK)
-          print('current_release_cli_builds=1 current_native_rules=215 current_python_rules=169 reused_python_rules=25 real_business_media_executed=false review=false')
-          PYCODE
-
-      - name: Record exact current Native and reused Python evidence boundaries
-        shell: bash
-        run: |
-          python3 -B - <<'PYCODE'
-          import os
-          text=("本次实际执行七个完整受影响Python模块：test_story_speech 29项、test_production_document 24项、test_production_workflow 33项、test_model_material_import 8项、test_story_planning 7项、test_knowledge_story 55项、test_knowledge_delivery 13项，共169个唯一测试身份；未变的test_speech_plan_alignment 12项和test_production_styles 13项按各自源码与调用条件复用，共25项，不重复计数。遗漏、重复、失败、skip、预期失败或不完整汇总均拒绝。模型导入与三维故事适配Python规则使用合成回执与假runner，只核声明、字节边界和正常调用次序，不代表Swift辅助程序已编译、真实工程已导入或Core接受了合成实迹。\n\n"
-                "在同一 scratch、release 配置和 -j2 下，先以显式 -Xswiftc -enable-testing 编译 VideoCore，再以同一显式参数执行 swift build --build-tests；两段都成功后才执行受影响Native规则，swift test --skip-build 不再编译。最后保留原普通 Release CLI 构建。四段各保留 650 秒预算，外层 job 50 分钟有限上限；各段成功打印实际 elapsed，不预称缓存已复用。所有 build/test 超时打印捕获原 stdout 的最多 9000 字节原尾后仍失败；缺失明确报告，不忽略超时。编译不执行规则、不说明性能根因，也不授效果通过。\n\n"
-                "保留上一版147项覆盖；三维合同由6项增至10项、模型字节银行由10项增至15项，并纳入直接修改的故事因果42项和包协议17项，共215个唯一实际身份，每项started、passed各一次。规则覆盖原DAE/PNG字节、材质映射与工作区权利、模型银行分块/提交/引用/释放、完整资源摘要、game9旧编码及game10原生操作协商、原轨变化窗、真实因果与Scoped拒绝边界。仅使用合成网格和隔离规则签名，不冒真实高级包签发、动森素材、角色效果或正常Host冷载E2E。\n\n"
-                "新增字幕分段是显式可选的 observed-natural-cues 策略，使用真实整词与精确 TN 映射，保持原文、原音、完整动作和旧缺省一镜一条字幕行为。纯规则测试使用合成观察或临时假消费者；不冒真实 SDK、影片制作、正常观看、声音试听、字幕确认或整片审核。真实用户链有独立托管证据。\n\n"
-                "329项公开载荷逐件核同，整体指纹从当次manifest动态计算。固定公开基线ab628dbbc97f1f9f25a403d80eabd9d899c205f5的原291项清单和665673…指纹继续独立校验；其中本次修改的故事因果、包测试及三维作者适配5项明确转入审查范围，当前共34项既有载荷经过显式审查、286项逐件保持基线原字节。新增三维合同、原生动作、模型银行与通用导入桥9项。三维高级实现、动森原件、业务作者与验收控制器始终不进入公开包。\n\n"
-                "本 workflow 不读取私有源码、业务素材或凭据，不含闭源 Painter，不调用 TTS、外部服务、Mac App 或高级模块；不授声音听审、字幕确认、商业权利、上传同意或整片批准。\n")
+          # Keep all original public #filePath locations. No relocated/rewritten tests,
+          # fabricated Linux main, private Classic fixtures or source-linked substitute.
+          common=['--package-path',str(root),'--scratch-path',str(scratch),'-c','release','--jobs','2','-Xswiftc','-enable-testing']
+          execute(['swift','build',*common,'--target','VideoCore'],650,'public_core_compile')
+          execute(['swift','build',*common,'--build-tests'],650,'public_test_product_compile')
+          pattern='('+'|'.join(r'(?:^|[./])'+re.escape(item.rsplit('.',1)[0])+r'[./]'+re.escape(item.rsplit('.',1)[1])+'$' for item in sorted(expected))+')'
+          output=execute(['swift','test',*common,'--skip-build','--filter',pattern],360,'public_affected_native')
+          events=re.findall(r"Test Case '-\[([^ ]+) ([^\]]+)\]' (started|passed)",output)
+          actual={state:[scope.split('.')[-1]+'.'+method for scope,method,kind in events if kind==state] for state in ('started','passed')}
+          assert all(len(items)==len(set(items))==len(expected) and set(items)==expected for items in actual.values())
+          assert not re.search(r"(?m)^Test (?:Case|Suite) '[^\r\n]*' (?:failed|skipped)\b",output)
+          for identity in sorted(expected):print('current_native_passed='+identity)
+          execute(['swift','build',*common,'--product','video'],650,'public_release_cli')
+          bins=execute(['swift','build',*common,'--show-bin-path'],30,'public_release_bin_path').strip()
+          binary=Path(bins)/'video'
+          assert binary.is_file() and not binary.is_symlink() and os.access(binary,os.X_OK)
+          if not (shutil.which('ffmpeg') and shutil.which('ffprobe')):
+              assert shutil.which('brew'),'The ordinary recipe requires ffmpeg and ffprobe'
+              execute(['brew','install','ffmpeg'],120,'public_smoke_dependency')
+          assert shutil.which('ffmpeg') and shutil.which('ffprobe')
+          temporary=Path(os.environ['RUNNER_TEMP'])
+          smoke=temporary/'video-scene-audio-production-smoke'
+          cache=temporary/'video-scene-audio-production-cache'
+          # The unchanged public recipe performs normal source import, revision edits,
+          # zero-price production, all four outputs, complete decode and cold restoration.
+          # It preserves needs_review; its tone fixtures and recipe are not ACNH audio.
+          execute([sys.executable,'-B',str(root/'Integrations/examples/free_production.py'),'--binary',str(binary),
+              '--binary-sha256',hashlib.sha256(binary.read_bytes()).hexdigest(),'--output',str(smoke),'--cache',str(cache)],360,'public_ordinary_production_smoke')
+          summary=smoke/'summary.md'
+          assert summary.is_file() and '声音、字幕及五项Review始终未审' in summary.read_text()
+          # Recheck actual public source bytes after builds and production. Scratch and
+          # smoke stay outside the source checkout; no compiled output becomes payload.
+          manifest=(root/'SOURCE-MANIFEST.md').read_text()
+          for digest,size,name in re.findall(r'(?m)^\| ([a-f0-9]{64}) \| ([0-9]+) \| ([^|\n]+) \|$',manifest):
+              data=(root/name).read_bytes()
+              assert len(data)==int(size) and hashlib.sha256(data).hexdigest()==digest,name
+          text=('本次在原公开Package、release配置、jobs=2下实际执行'+str(len(expected))+'个唯一受影响Native规则，started/passed各一次，无失败或跳过。普通Release CLI及公开配方真实制作、四件、完整解码、含源冷恢复通过。\n\n'
+                '169项Python/SDK规则来源与调用条件保持3b基线原字节，复用已确认run 41956201470，本次未重新执行。私有Classic图集规则不移入公库。\n\n'
+                '公开包不含闭源游戏绘制实现、动森原件、两件私库候选WAV或本控制器。规则与普通smoke不代表动森声画、音效听审、字幕、商业权利或整片批准。\n')
           with open(os.environ['GITHUB_STEP_SUMMARY'],'a') as stream:stream.write(text)
-          print('current_native_rules=215 current_python_rules=169 reused_python_rules=25 current_release_cli_builds=1 real_business_media_executed=false review=false')
+          print('current_native_rules='+str(len(expected))+' current_python_rules=0 reused_python_rules=169 current_release_cli_builds=1 ordinary_public_production_smoke=true acnh_media_accepted=false listening_accepted=false review=false')
           PYCODE

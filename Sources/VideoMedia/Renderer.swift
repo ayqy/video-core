@@ -32,6 +32,7 @@ public final class MediaRenderer: @unchecked Sendable {
         let start = Date(); let db = try repository.read()
         for scene in r.scenes {
             if let take=scene.voice {try SpeechProjectRules.validateCompleteTake(take,workspaceID:r.workspaceID,assets:db.assets)}
+            try SceneAudioCueRules.validateRights(scene:scene,workspaceID:r.workspaceID,assets:db.assets,evidence:db.evidence,commercial:r.purpose != .education)
         }
         // Verify every actual dependency, including layer images, voices, music and rights documents.
         // A valid scene cache does not authorize silently changed source bytes.
@@ -61,7 +62,7 @@ public final class MediaRenderer: @unchecked Sendable {
             let policy=r.audioQuality ?? AudioQualityPolicy()
             let audio=try await AudioInspection.inspect(final,policy:policy)
             guard audio.clippedSamples==0,audio.rmsDBFS <= -10 else { throw VideoError.review("实际混音存在削波或过高平均电平，请降低分轨音量并重做、听审；失败产物未标可交付") }
-            let audible=r.scenes.contains { !$0.muted && (($0.voice != nil && $0.voiceGain>0) || ($0.kind == .video && $0.sourceGain>0) || ($0.classicArtwork?.audioCues.contains(where:{$0.gain>0}) == true)) } || (r.musicAssetID != nil && r.scenes.contains{!$0.muted && $0.musicGain>0})
+            let audible=r.scenes.contains { !$0.muted && (($0.voice != nil && $0.voiceGain>0) || ($0.kind == .video && $0.sourceGain>0) || SceneAudioCueRules.combined(scene:$0).contains(where:{$0.gain>0})) } || (r.musicAssetID != nil && r.scenes.contains{!$0.muted && $0.musicGain>0})
             if audible && audio.peakDBFS < -50 { throw VideoError.review("工程含声音但实际混音接近静音，请核对分轨与源音轨后重做") }
             guard let loudness=audio.loudness else{throw VideoError.review("实际混音尚无响度与真峰值检测，未标可交付")}
             if audible,let peak=loudness.truePeakDBTP,peak>=0 {throw VideoError.review(String(format:"实际混音的4倍过采样真峰值估计 %.2f dBTP 达到满幅过载，请降低分轨音量并重新制作、听审",peak))}
@@ -94,11 +95,12 @@ public final class MediaRenderer: @unchecked Sendable {
         for s in r.scenes {
             let at=CMTime(value:Int64(cursor),timescale:Int32(r.fps)); let span=CMTime(value:Int64(s.timelineFrames-s.pauseFrames),timescale:Int32(r.fps))
             if !s.muted {
-                for cue in s.classicArtwork?.audioCues ?? [] where cue.gain>0 {
-                    guard let asset=database.assets.first(where:{$0.id==cue.assetID && $0.workspaceID==r.workspaceID}) else{throw VideoError.notFound("场景游戏录音已缺失")}
+                let hostCueIDs=Set((s.audioCues ?? []).map(\.id))
+                for cue in SceneAudioCueRules.combined(scene:s) where cue.gain>0 {
+                    guard let asset=database.assets.first(where:{$0.id==cue.assetID && $0.workspaceID==r.workspaceID}) else{throw VideoError.notFound("场景音效原件已缺失")}
                     let offset=try Self.sceneAudioTime(frames:cue.startFrame,fps:r.fps,speed:s.speed)
                     let length=try Self.sceneAudioTime(frames:cue.durationFrames,fps:r.fps,speed:s.speed)
-                    let parameter=try await addAudio(repository.assetURL(asset),to:composition,at:CMTimeAdd(at,offset),sourceStart:.zero,sourceFrames:cue.durationFrames,targetDuration:length,fps:r.fps,gain:cue.gain,headroom:headroom,preservePitch:s.preservePitch,preparationDirectory:preparationDirectory)
+                    let parameter=try await addAudio(repository.assetURL(asset),to:composition,at:CMTimeAdd(at,offset),sourceStart:.zero,sourceFrames:cue.durationFrames,targetDuration:length,fps:r.fps,gain:cue.gain,headroom:headroom,preservePitch:s.preservePitch,preparationDirectory:preparationDirectory,preservedPitchAlgorithm:hostCueIDs.contains(cue.id) ? .timeDomain : .spectral)
                     parameters.append(parameter)
                 }
                 if let take=s.voice,let a=database.assets.first(where:{$0.id==take.assetID}) { let p=try await addAudio(repository.assetURL(a),to:composition,at:at,sourceStart:.zero,sourceFrames:take.durationFrames,targetDuration:try Self.sceneAudioTime(frames:take.durationFrames,fps:r.fps,speed:s.speed),fps:r.fps,gain:s.voiceGain,headroom:headroom,preservePitch:s.preservePitch,preparationDirectory:preparationDirectory,completeVoiceSpeed:s.speed); parameters.append(p) }
@@ -186,7 +188,7 @@ public final class MediaRenderer: @unchecked Sendable {
             parameters.setVolumeRamp(fromStartVolume:Float(try AudioMixRules.mixerVolume(segment.startGain,headroom:headroom)),toEndVolume:Float(try AudioMixRules.mixerVolume(segment.endGain,headroom:headroom)),timeRange:CMTimeRange(start:start,end:end))
         }
     }
-    private func addAudio(_ url:URL,to composition:AVMutableComposition,at:CMTime,sourceStart:CMTime,sourceFrames:Int,targetDuration:CMTime,fps:Int,gain:Double,headroom:Double,preservePitch:Bool,preparationDirectory:URL,envelope:[MusicGainSegment]?=nil,completeVoiceSpeed:Double?=nil) async throws -> AVMutableAudioMixInputParameters {
+    private func addAudio(_ url:URL,to composition:AVMutableComposition,at:CMTime,sourceStart:CMTime,sourceFrames:Int,targetDuration:CMTime,fps:Int,gain:Double,headroom:Double,preservePitch:Bool,preparationDirectory:URL,envelope:[MusicGainSegment]?=nil,completeVoiceSpeed:Double?=nil,preservedPitchAlgorithm:AVAudioTimePitchAlgorithm = .spectral) async throws -> AVMutableAudioMixInputParameters {
         let asset=AVURLAsset(url:url); guard let src=try await asset.loadTracks(withMediaType:.audio).first,let track=composition.addMutableTrack(withMediaType:.audio,preferredTrackID:kCMPersistentTrackID_Invalid) else { throw VideoError.invalid("声音素材没有可用音轨") }
         let available=try await asset.load(.duration); let desired=CMTime(value:Int64(sourceFrames),timescale:Int32(fps)); let duration=CMTimeMinimum(desired,CMTimeSubtract(available,sourceStart)); guard duration.seconds>0 else { throw VideoError.invalid("音轨裁切超出范围") }
         let target:CMTime
@@ -219,7 +221,7 @@ public final class MediaRenderer: @unchecked Sendable {
             try track.insertTimeRange(CMTimeRange(start:sourceStart,duration:duration),of:src,at:at)
             track.scaleTimeRange(CMTimeRange(start:at,duration:duration),toDuration:target)
         }
-        let p=AVMutableAudioMixInputParameters(track:track); p.audioTimePitchAlgorithm=preservePitch ? .spectral : .varispeed
+        let p=AVMutableAudioMixInputParameters(track:track); p.audioTimePitchAlgorithm=preservePitch ? preservedPitchAlgorithm : .varispeed
         if let envelope {try Self.applyEnvelope(envelope,to:p,at:at,headroom:headroom)} else {p.setVolume(Float(try AudioMixRules.mixerVolume(gain,headroom:headroom)),at:.zero)}
         return p
     }

@@ -133,6 +133,9 @@ public enum Editor {
                     for j in scene.captions.indices { scene.captions[j].confirmed = false }
                     revision.invalidated += ["字幕内容、时轴与声音重新复核"]
                 }
+                if SceneAudioCueRules.invalidatingChangedEvents(old:old,scene:&scene) {
+                    revision.invalidated += ["场景音效、混音与声音审核重新复核"]
+                }
                 try scene.validate(assets: assets); revision.scenes[i] = scene
             case .removeScene(let id): guard let s = revision.scenes.first(where: { $0.id == id }), !s.locked, !(s.modelScene3D?.instances.contains(where:{$0.locked}) ?? false), (revision.scenes.count > 1 || revision.contentContext != nil) else { throw VideoError.permission("不能删除锁定镜头或含锁定三维实例的镜头；旧产品工程须保留至少一个镜头") }; revision.scenes.removeAll { $0.id == id }
             case .moveScene(let id, let target): guard let i = revision.scenes.firstIndex(where: { $0.id == id }), (0..<revision.scenes.count).contains(target), !revision.scenes[i].locked else { throw VideoError.invalid("重排目标无效或片段已锁定") }; let s = revision.scenes.remove(at: i); revision.scenes.insert(s, at: target)
@@ -162,8 +165,9 @@ public enum Editor {
                     }
                 }
                 try ClassicArtworkRules.validate(scene:original,assets:assets)
+                try SceneAudioCueRules.validate(scene:original,assets:assets,workspaceID:project.workspaceID)
                 let audioCues=original.classicArtwork?.audioCues ?? []
-                guard !audioCues.contains(where:{$0.startFrame<frame && $0.durationFrames>frame-$0.startFrame}) else { throw VideoError.review("拆分点穿过游戏音效或原录音提示，请调整拆分点或先移除该声音；不会自动截断原音") }
+                guard !SceneAudioCueRules.combined(scene:original).contains(where:{$0.startFrame<frame && $0.durationFrames>frame-$0.startFrame}) else { throw VideoError.review("拆分点穿过游戏音效或原录音提示，请调整拆分点或先移除该声音；不会自动截断原音") }
                 var a = original, b = original; a.durationFrames = frame; b.id = Codec.id(); b.durationFrames = original.durationFrames - frame; b.sourceStartFrame += frame; a.sourceEndFrame = original.sourceStartFrame + frame
                 // A trailing hold belongs to the end of the original scene, not
                 // to every piece created by splitting its source interval.
@@ -173,6 +177,8 @@ public enum Editor {
                 }
                 a.classicArtwork?.audioCues=audioCues.filter{$0.startFrame<frame}.map { cue in var copy=cue;copy.listened=false;return copy }
                 b.classicArtwork?.audioCues=audioCues.filter{$0.startFrame>=frame}.map { cue in var copy=cue;copy.startFrame-=frame;copy.listened=false;return copy }
+                a.audioCues=original.audioCues.map { $0.filter{$0.startFrame<frame}.map { cue in var copy=cue;copy.listened=false;return copy } }
+                b.audioCues=original.audioCues.map { $0.filter{$0.startFrame>=frame}.map { cue in var copy=cue;copy.startFrame-=frame;copy.listened=false;return copy } }
                 if let acting=original.cartoonPerformance {
                     a.cartoonPerformance=try acting.trimmed(from:0,to:frame,durationFrames:original.durationFrames)
                     b.cartoonPerformance=try acting.trimmed(from:frame,to:original.durationFrames,durationFrames:original.durationFrames)
@@ -225,6 +231,7 @@ public enum Editor {
         for s in revision.scenes {
             try s.validate(assets: assets)
             try s.modelScene3D?.validate(durationFrames:s.durationFrames,assets:assets.filter{$0.workspaceID==project.workspaceID})
+            try SceneAudioCueRules.validate(scene:s,assets:assets,workspaceID:project.workspaceID)
             try ClassicArtworkRules.validateWalkingSources(scene:s,assets:assets.filter{$0.workspaceID==project.workspaceID})
             try ClassicArtworkRules.validateGateSources(scene:s,assets:assets.filter{$0.workspaceID==project.workspaceID})
         }
@@ -302,6 +309,8 @@ public enum Quality {
         }
         for s in revision.scenes {
             try s.validate(assets: database.assets.filter{$0.workspaceID==revision.workspaceID})
+            do {try SceneAudioCueRules.validateRights(scene:s,workspaceID:revision.workspaceID,assets:database.assets,evidence:database.evidence,commercial:commercial,requireListening:requireReview,now:now)}
+            catch {issues.append(QualityIssue(s.id+"scene_audio_rights",(error as? VideoError)?.localizedDescription ?? "场景音效来源、授权或试听尚未核对"))}
             if let take=s.voice {
                 do {try SpeechProjectRules.validateCompleteTake(take,workspaceID:revision.workspaceID,assets:database.assets)}
                 catch {issues.append(QualityIssue(s.id+"voice_source",(error as? VideoError)?.localizedDescription ?? "配音未绑定完整音频原件"))}

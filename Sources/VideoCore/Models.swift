@@ -75,6 +75,9 @@ public struct Scene: Codable, Equatable, Identifiable, Sendable {
     public var sourceStartFrame = 0; public var sourceEndFrame: Int?; public var speed: Double = 1; public var preservePitch = true; public var locked = false
     public var x: Double = 0.5; public var y: Double = 0.5; public var scale: Double = 1; public var voiceGain: Double = 1; public var sourceGain: Double = 0; public var musicGain: Double = 0.15; public var muted = false; public var pauseFrames = 0
     public var captions: [Caption] = []; public var voice: VoiceTake?; public var simulation: Simulation = .init(); public var character = "圆仔"; public var emotion = "好奇"; public var color = "6366F1"; public var showPrice = false
+    /// Host-only recording events, independent of any visual artwork or plugin.
+    /// Missing in older projects; nil preserves their original encoded bytes.
+    public var audioCues: [ClassicAudioCue]?
     public var keyframes: [Keyframe] = []
     public var courseMappingIDs: [String]?
     public var speechPlan: SpeechPlan?
@@ -122,6 +125,7 @@ public struct Scene: Codable, Equatable, Identifiable, Sendable {
         try LayerRules.validate(scene:self,assets:assets)
         try ModelScene3DRules.validate(scene:self,assets:assets)
         try ClassicArtworkRules.validate(scene:self,assets:assets)
+        try SceneAudioCueRules.validate(scene:self,assets:assets)
         try StorySceneRules.validate(scene:self,assets:assets)
         try StoryCausalRules.validate(scene:self)
         if mediaFraming != nil || mediaPresentation != nil {

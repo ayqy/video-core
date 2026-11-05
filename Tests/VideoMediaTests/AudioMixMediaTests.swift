@@ -88,6 +88,79 @@ final class AudioMixMediaTests:XCTestCase {
         XCTAssertEqual(try samples(mono),monoBefore)
     }
 
+    func testHostEventCuesMixOnceAtSpeedAdjustedTimesAndRespectMuteAndZeroGain()async throws {
+        let root=FileManager.default.temporaryDirectory.appendingPathComponent("host-event-aac-"+Codec.id())
+        try FileManager.default.createDirectory(at:root,withIntermediateDirectories:true)
+        defer{try? FileManager.default.removeItem(at:root)}
+        let firstFile=root.appendingPathComponent("first.caf"),secondFile=root.appendingPathComponent("second.caf")
+        // Calibrated test tones measure the Host's event timing and gain only;
+        // they are neither production sound effects nor listening evidence.
+        try tone(firstFile,seconds:1,frequency:400)
+        try tone(secondFile,seconds:1,frequency:700)
+        let repo=try Repository(root:root.appendingPathComponent("workspace"))
+        let workspace=Workspace(name:"通用Host音效规则",owner:"rules")
+        var assets:[Asset]=[],proofs:[Evidence]=[]
+        for file in [firstFile,secondFile] {
+            var asset=try repo.ingest(Data(contentsOf:file),name:file.lastPathComponent,workspaceID:workspace.id,mediaType:"audio",durationFrames:30)
+            let proof=Evidence(workspaceID:workspace.id,title:"隔离校准信号",source:"isolated-rule-fixture",claim:"仅检查音效混合",owner:"rules",commercialAllowed:true,verified:true,assetID:asset.id)
+            asset.evidenceID=proof.id;assets.append(asset);proofs.append(proof)
+        }
+        var scene=VideoCore.Scene(title:"独立事件音效",body:"无需经典场景、旁白或配乐即可混入真实事件原件。",durationFrames:90)
+        scene.speed=2;scene.pauseFrames=15;scene.preservePitch=true;scene.voiceGain=2
+        scene.audioCues=[ClassicAudioCue(assetID:assets[0].id,startFrame:15,durationFrames:30,gain:0.4),
+                         ClassicAudioCue(assetID:assets[1].id,startFrame:45,durationFrames:30,gain:0.2)]
+        var muted=scene;muted.id=Codec.id();muted.muted=true
+        var zero=scene;zero.id=Codec.id();zero.audioCues=scene.audioCues?.map{cue in var value=cue;value.gain=0;return value}
+        var revision=try Planner.create(workspaceID:workspace.id,name:"Host事件音效",aspect:.landscape,scenes:[scene,muted,zero])
+        revision.dependencies=try DependencyRules.freeze(revision:revision,assets:assets,evidence:proofs)
+        try repo.transaction{db in db.workspaces=[workspace];db.assets=assets;db.evidence=proofs;db.projects=[Project(workspaceID:workspace.id,name:"Host事件音效",revision:revision)]}
+        let before=try Codec.digest(repo.read())
+        let rendered=try await MediaRenderer().render(revision:revision,repository:repo,output:root.appendingPathComponent("output"))
+        let movie=URL(fileURLWithPath:try XCTUnwrap(rendered.artifacts.first{$0.mime=="video/mp4"}).path)
+        let samples=try await decodedMono(movie),firstSource=try await decodedMono(firstFile),secondSource=try await decodedMono(secondFile)
+        let firstLevel=try amplitude(firstSource,from:0.2,to:0.8,frequency:400)
+        let secondLevel=try amplitude(secondSource,from:0.2,to:0.8,frequency:700)
+        XCTAssertEqual(try amplitude(samples,from:0.35,to:0.65,frequency:400)/firstLevel,0.4,accuracy:0.04,"不能重复混入同一个事件，也不能被统一余量多放大一次")
+        XCTAssertEqual(try amplitude(samples,from:0.85,to:1.15,frequency:700)/secondLevel,0.2,accuracy:0.025)
+        XCTAssertLessThan(try amplitude(samples,from:0.05,to:0.15,frequency:400),0.0005,"事件不得提前到镜头起点")
+        XCTAssertLessThan(try amplitude(samples,from:0.85,to:1.15,frequency:400),0.0005,"事件原件按镜头速度播放完整后应结束")
+        for window in [(1.35,1.85),(2.35,2.65),(2.85,3.15),(4.35,4.65),(4.85,5.15)] {
+            for frequency in [400.0,700.0] {XCTAssertLessThan(try amplitude(samples,from:window.0,to:window.1,frequency:frequency),0.0005,"留白、全轨静音和零音量不能漏出音效")}
+        }
+        XCTAssertEqual(samples.count,6*48000);XCTAssertEqual(rendered.artifacts.count,4)
+        XCTAssertFalse(rendered.warnings.contains{$0.contains("静音底轨")},"仅有Host事件音效时应正确识别为有声工程")
+        XCTAssertNil(scene.classicArtwork);XCTAssertNil(scene.voice);XCTAssertNil(revision.musicAssetID)
+        XCTAssertFalse(revision.review.sound,"AAC信号检查不代替人工听审")
+        XCTAssertEqual(try Codec.digest(repo.read()),before)
+    }
+
+    func testHostEventCueRejectsUnusableRightsAndChangedRawSourceBeforeOutput()async throws {
+        let root=FileManager.default.temporaryDirectory.appendingPathComponent("host-event-boundary-"+Codec.id())
+        try FileManager.default.createDirectory(at:root,withIntermediateDirectories:true)
+        defer{try? FileManager.default.removeItem(at:root)}
+        let file=root.appendingPathComponent("event.caf");try tone(file,seconds:1,frequency:400)
+        let repo=try Repository(root:root.appendingPathComponent("workspace")),workspace=Workspace(name:"音效来源边界",owner:"rules")
+        var asset=try repo.ingest(Data(contentsOf:file),name:"event.caf",workspaceID:workspace.id,mediaType:"audio",durationFrames:30)
+        let proof=Evidence(workspaceID:workspace.id,title:"隔离校准信号",source:"isolated-rule-fixture",claim:"仅检查Host边界",owner:"rules",commercialAllowed:true,verified:true,assetID:asset.id)
+        asset.evidenceID=proof.id
+        var scene=VideoCore.Scene(title:"事件来源",body:"未核授权或原件变化须在创建输出前拒绝。",durationFrames:30)
+        scene.audioCues=[ClassicAudioCue(assetID:asset.id,startFrame:0,durationFrames:30,gain:0.25)]
+        var revision=try Planner.create(workspaceID:workspace.id,name:"音效来源边界",aspect:.landscape,scenes:[scene])
+        revision.dependencies=try DependencyRules.freeze(revision:revision,assets:[asset],evidence:[proof])
+        try repo.transaction{db in db.workspaces=[workspace];db.assets=[asset];db.evidence=[proof];db.projects=[Project(workspaceID:workspace.id,name:"音效来源边界",revision:revision)]}
+        try repo.transaction{$0.evidence[0].verified=false}
+        let denied=root.appendingPathComponent("denied-output")
+        do {_ = try await MediaRenderer().render(revision:revision,repository:repo,output:denied);XCTFail("未核授权不能生成输出")}
+        catch {XCTAssertTrue(error is VideoError)}
+        XCTAssertFalse(FileManager.default.fileExists(atPath:denied.path))
+        try repo.transaction{$0.evidence[0].verified=true}
+        try Data("changed-event-source".utf8).write(to:repo.assetURL(asset),options:.atomic)
+        let changed=root.appendingPathComponent("changed-output")
+        do {_ = try await MediaRenderer().render(revision:revision,repository:repo,output:changed);XCTFail("事件原件摘要变化不能混音")}
+        catch {XCTAssertTrue(error is VideoError)}
+        XCTAssertFalse(FileManager.default.fileExists(atPath:changed.path))
+    }
+
     func testActualAACDucksOnlyDuringVoiceRestoresMusicAndMutesWholeScene()async throws {
         let root=FileManager.default.temporaryDirectory.appendingPathComponent("actual-mix-rules-"+Codec.id())
         try FileManager.default.createDirectory(at:root,withIntermediateDirectories:true);defer{try? FileManager.default.removeItem(at:root)}

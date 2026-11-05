@@ -346,6 +346,8 @@ public enum DependencyRules {
             let ids: Set<String> = [scene.id]
             for source in scene.narrativeSources ?? [] { try source.validate(workspaceID:workspaceID,assets:assets);try addAsset(source.assetID,ids);selectedPages[source.assetID,default:[]].formUnion(source.pages) }
             try addAsset(scene.assetID, ids); try addAsset(scene.voice?.assetID, ids)
+            try SceneAudioCueRules.validate(scene:scene,assets:assets,workspaceID:workspaceID)
+            for cue in scene.audioCues ?? [] { try addAsset(cue.assetID,ids) }
             for layer in scene.layers ?? [] { try addAsset(layer.assetID, ids) }
             if let model=scene.modelScene3D {
                 try model.validate(durationFrames:scene.durationFrames,assets:assets.filter{$0.workspaceID==workspaceID})
