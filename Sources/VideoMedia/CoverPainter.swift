@@ -60,14 +60,25 @@ public enum CoverPainter {
         let drawBackground=cover.background != nil || hero==nil
         let width=CGFloat(w),height=CGFloat(h),portrait=h>w,p=Palette(cover.style)
         let canvas=CGRect(x:0,y:0,width:width,height:height),margin=width*(portrait ? 0.07:0.052)
+        let wide=hero==nil && !portrait && background.width>background.height
         c.setFillColor(color(p.paper));c.fill(canvas)
         let editorial=cover.template == .editorial
-        if editorial && drawBackground {
+        if editorial && drawBackground && !wide {
             draw(background,in:canvas,fill:true,context:c)
             c.setFillColor(color(p.paper,alpha:0.9));c.fill(canvas)
         }
         let visual:CGRect,title:CGRect,subtitle:CGRect,label:CGRect
-        if portrait {
+        if wide {
+            // Keep the complete authored frame below a separate headline. Fit
+            // the actual selected pixels, including an explicit background crop.
+            let area=CGRect(x:margin,y:height*0.055,width:width-margin*2,height:height*(cover.subtitle.isEmpty ? 0.67:0.62))
+            let factor=min((area.width-32)/CGFloat(background.width),(area.height-32)/CGFloat(background.height))
+            let size=CGSize(width:CGFloat(background.width)*factor+32,height:CGFloat(background.height)*factor+32)
+            visual=CGRect(x:(width-size.width)/2,y:area.midY-size.height/2,width:size.width,height:size.height)
+            title=CGRect(x:margin,y:height*0.76,width:width-margin*2,height:height*0.135)
+            subtitle=CGRect(x:margin,y:height*0.69,width:width-margin*2,height:height*0.05)
+            label=CGRect(x:margin,y:height*0.925,width:width*0.44,height:height*0.05)
+        } else if portrait {
             visual=CGRect(x:margin,y:height*0.055,width:width-margin*2,height:height*0.50)
             title=CGRect(x:margin,y:height*0.665,width:width-margin*2,height:height*0.20)
             subtitle=CGRect(x:margin,y:height*0.555,width:width-margin*2,height:height*0.065)
@@ -86,7 +97,9 @@ public enum CoverPainter {
         c.setFillColor(color(p.paper));c.addPath(CGPath(roundedRect:card,cornerWidth:28,cornerHeight:28,transform:nil));c.fillPath();c.restoreGState()
         c.saveGState();c.addPath(CGPath(roundedRect:card.insetBy(dx:8,dy:8),cornerWidth:22,cornerHeight:22,transform:nil));c.clip()
         if drawBackground {
-            draw(background,in:card.insetBy(dx:8,dy:8),fill:hero==nil,context:c)
+            // The additional wide-frame inset keeps even its corner labels
+            // inside the rounded card; a complete frame must never fill-crop.
+            draw(background,in:card.insetBy(dx:wide ? 16:8,dy:wide ? 16:8),fill:hero==nil && !wide,context:c)
             if hero != nil {c.setFillColor(color(p.paper,alpha:0.52));c.fill(card)}
         }
         c.restoreGState()
@@ -101,7 +114,8 @@ public enum CoverPainter {
         c.setFillColor(color(p.accent));c.addPath(CGPath(roundedRect:pill,cornerWidth:9,cornerHeight:9,transform:nil));c.fillPath();c.restoreGState()
         let font=revision.scenes.first?.fontName ?? "PingFangSC-Medium"
         let labelText=cover.style == .presenter && cover.title.hasPrefix("豆子姐讲") ? "豆子姐开讲":p.label
-        try text(labelText,in:label.insetBy(dx:12,dy:2),maximum:portrait ? 31:28,minimum:18,color:p.ink,font:font,context:c)
+        let labelInk=(cover.style == .code || cover.style == .media) ? p.paper:p.ink
+        try text(labelText,in:label.insetBy(dx:12,dy:2),maximum:portrait ? 31:28,minimum:18,color:labelInk,font:font,context:c)
         // A high-contrast underline anchors the title without inventing facts.
         c.setFillColor(color(p.accent));c.fill(CGRect(x:title.minX,y:title.minY-9,width:title.width*0.33,height:9))
         try text(displayTitle(cover.title,style:cover.style),in:title,maximum:portrait ? 78:82,minimum:22,color:p.ink,font:font,context:c)
