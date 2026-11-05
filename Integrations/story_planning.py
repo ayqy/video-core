@@ -258,8 +258,8 @@ class StoryPlan:
         instruction = {
             'cast': '先设计人物的处境、目标、行动理由、代价和预期收益，以及故事必需的物体。',
             'outline': '先铺垫人物为何行动，再安排选择、过程、后果、反事实和知识回收；每镜推进必要信息。',
-            'details': '逐个展开谁从哪里行动、拿什么、交给谁、过程如何发生及结果；知识后果引用给定事件来源。',
-            'shots': '把动作安排为连续镜头，说明每镜让观众看懂什么、简练旁白和所需图片的名称与外观。'
+            'details': '逐个展开谁从哪里行动、拿什么、交给谁、过程如何发生及结果；移动朝向与路线一致，开门等前置动作完成后才通行，结果出现后才庆祝；知识后果引用给定事件来源。',
+            'shots': '把动作安排为连续镜头，说明每镜让观众看懂什么、简练旁白和所需图片的名称与外观。旁白只讲理解主题所需的故事与知识；事实边界保留在内部方案和来源中，不自动口播教学设定等免责声明，不把假设冒充现实事件。'
         }[stage]
         return dict(stage=stage, parent_digest=self.fingerprint, instruction=instruction,
                     brief=deepcopy(self._brief), parents={r['stage']:deepcopy(r['content']) for r in self._records})

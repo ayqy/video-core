@@ -527,17 +527,18 @@ private enum DAETextureAdapter {
         if materials.contains(where: { !$0.textures.isEmpty && bindings[$0.id] != nil }) {
             guard parsed.primitives.allSatisfy({ $0.isEmpty || $0 == Array(0..<$0.count) }) else { throw VideoError.invalid("稀疏或乱序原UV集合不能猜测为原生mappingChannel") }
         }
-        var native: [ObjectIdentifier: (material: SCNMaterial, channels: Int)] = [:], usageConflicts = Set<ObjectIdentifier>()
+        var native: [ObjectIdentifier: (material: SCNMaterial, channelSets: Set<Set<Int>>)] = [:]
         scene.rootNode.enumerateChildNodes { node, _ in
             guard let geometry = node.geometry else { return }
-            let count = geometry.sources(for: .texcoord).count
+            let channels = Set(0..<geometry.sources(for: .texcoord).count)
             for material in geometry.materials {
                 let id = ObjectIdentifier(material)
-                if let previous = native[id], previous.channels != count { usageConflicts.insert(id) }
-                native[id] = (material, count)
+                var usage = native[id] ?? (material: material, channelSets: [])
+                usage.channelSets.insert(channels)
+                native[id] = usage
             }
         }
-        var decoded: [String: CGImage] = [:], pixels = 0, sourceChannels: [String: Int] = [:]
+        var decoded: [String: CGImage] = [:], pixels = 0
         var bySourceID: [String: [SCNMaterial]] = [:]
         var assignments: [(property: SCNMaterialProperty, image: CGImage, channel: Int, s: SCNWrapMode?, t: SCNWrapMode?)] = []
         for value in native.values {
@@ -548,11 +549,12 @@ private enum DAETextureAdapter {
             let original = candidates[0]
             bySourceID[original.id, default: []].append(value.material)
             if original.textures.isEmpty { continue }
-            guard !usageConflicts.contains(ObjectIdentifier(value.material)) else { throw VideoError.invalid("共享原生贴图材质的实际UV通道数量冲突") }
-            guard sourceChannels[original.id] == nil || sourceChannels[original.id] == value.channels else { throw VideoError.invalid("同源材质实际几何UV通道数量不一致") }
-            sourceChannels[original.id] = value.channels
             for texture in original.textures {
-                guard let channel = bindings[original.id]?[texture.semantic], channel < value.channels,
+                // A shared material may have additional unused UV sets on only
+                // some meshes. Every actual usage must still supply the exact
+                // channel bound by the original material's texture semantic.
+                guard let channel = bindings[original.id]?[texture.semantic],
+                      value.channelSets.allSatisfy({ $0.contains(channel) }),
                       let reference = resource.textures[texture.alias], let data = textureData[reference.assetID] else { throw VideoError.invalid("材质贴图UV语义或实际原件闭包不完整") }
                 let image: CGImage
                 if let existing = decoded[reference.sha256] { image = existing }

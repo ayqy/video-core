@@ -393,6 +393,67 @@ final class ModelPackageMediaTests: XCTestCase {
         XCTAssertNotEqual(try Self.uv(channels[0]), try Self.uv(channels[1]), "UV1对照须实际区别于UV0")
     }
 
+    func testSharedMaterialAcceptsRequiredUVDespiteAdditionalUnusedChannel() throws {
+        for reversed in [false, true] {
+            let fixture = try BindingFixture()
+            let data = Data(try sharedMaterialUVFixture(requiredChannel: 0, reversed: reversed).utf8)
+            let model = try fixture.put(data, at: "models/shared.dae")
+            let png = try Self.png(red: 0.2, green: 0.7, blue: 0.4)
+            let source = try fixture.put(png, at: "group/body.png")
+            let raw = try Self.rawScene(data)
+            let rawGeometry = try sharedUVGeometry(raw)
+            let imported = try ModelPackageMedia.importPackage(modelURL: model, sourceRoot: fixture.sources, workspaceID: "local", repository: fixture.repository,
+                textureBindings: ["body.png": .init(url: source, sha256: Codec.hash(png))])
+            let database = authorized(imported), databaseBytes = try Codec.data(database)
+            let before = try Self.inventory(fixture.repository)
+            let loaded = try ModelPackageMedia.load(imported.resource, workspaceID: "local", repository: fixture.repository, database: database, commercial: false)
+            let actualGeometry = try sharedUVGeometry(loaded.scene)
+            let material = try XCTUnwrap(actualGeometry.first?.materials.first)
+            XCTAssertEqual(loaded.materialsBySourceID["SkinMaterial"]?.count, 1, "共享原生材质只登记原对象，不克隆以规避usage校验")
+            XCTAssertTrue(loaded.materialsBySourceID["SkinMaterial"]?.first === material)
+            XCTAssertEqual(try Self.nativePixels(material.diffuse), try Self.pixels(Self.image(png)))
+            XCTAssertEqual(material.diffuse.mappingChannel, 0)
+            XCTAssertEqual(Self.geometrySignature(loaded.scene), Self.geometrySignature(raw))
+            for (actual, original) in zip(actualGeometry, rawGeometry) {
+                let actualUV = actual.sources(for: .texcoord), originalUV = original.sources(for: .texcoord)
+                XCTAssertEqual(actualUV.count, originalUV.count)
+                for (current, previous) in zip(actualUV, originalUV) { XCTAssertEqual(try Self.uv(current), try Self.uv(previous)) }
+            }
+            let extra = try XCTUnwrap(actualGeometry.last)
+            let extraUV = extra.sources(for: .texcoord)
+            XCTAssertNotEqual(try Self.uv(extraUV[0]), try Self.uv(extraUV[1]), "额外未使用的UV1必须真实存在且区别于UV0")
+            XCTAssertEqual(try Data(contentsOf: model), data)
+            XCTAssertEqual(try Data(contentsOf: source), png)
+            XCTAssertEqual(try Self.inventory(fixture.repository), before)
+            XCTAssertEqual(try Codec.data(database), databaseBytes)
+        }
+    }
+
+    func testSourceMaterialRejectsRequiredUVMissingFromAnyNativeUsage() throws {
+        for reversed in [false, true] {
+            let fixture = try BindingFixture()
+            let data = Data(try sharedMaterialUVFixture(requiredChannel: 1, reversed: reversed).utf8)
+            let model = try fixture.put(data, at: "models/shared-missing.dae")
+            let png = try Self.png(red: 0.8, green: 0.3, blue: 0.1)
+            let source = try fixture.put(png, at: "group/body.png")
+            // With UV1 requested but absent from one mesh, SceneKit creates
+            // separate native objects for this same source material. Keep that
+            // actual shape explicit rather than claiming a shared-object case.
+            _ = try sharedUVGeometry(Self.rawScene(data), expectShared: false)
+            let imported = try ModelPackageMedia.importPackage(modelURL: model, sourceRoot: fixture.sources, workspaceID: "local", repository: fixture.repository,
+                textureBindings: ["body.png": .init(url: source, sha256: Codec.hash(png))])
+            let database = authorized(imported), databaseBytes = try Codec.data(database)
+            let before = try Self.inventory(fixture.repository)
+            XCTAssertThrowsError(try ModelPackageMedia.load(imported.resource, workspaceID: "local", repository: fixture.repository, database: database, commercial: false)) { error in
+                XCTAssertTrue(error.localizedDescription.contains("材质贴图UV语义或实际原件闭包不完整"), "必须由实际usage缺少所需UV1的门禁拒绝，不能以无关错误通过；reversed=\(reversed)")
+            }
+            XCTAssertEqual(try Data(contentsOf: model), data)
+            XCTAssertEqual(try Data(contentsOf: source), png)
+            XCTAssertEqual(try Self.inventory(fixture.repository), before)
+            XCTAssertEqual(try Codec.data(database), databaseBytes)
+        }
+    }
+
     func testAmbiguousMaterialSamplerAndConflictingUVChainsAreRejected() throws {
         let base = texturedTriangle(aliases: ["body.png"])
         let variants = [
@@ -511,6 +572,51 @@ final class ModelPackageMediaTests: XCTestCase {
             .replacingOccurrences(of: "<triangles count=\"1\">", with: "<triangles count=\"1\" material=\"SkinSymbol\">")
             .replacingOccurrences(of: "<p>0 1 2</p>", with: "<input semantic=\"TEXCOORD\" source=\"#uv\" offset=\"1\" set=\"0\"/><p>0 0 1 1 2 2</p>")
             .replacingOccurrences(of: "<instance_geometry url=\"#triangle\"/>", with: "<instance_geometry url=\"#triangle\"><bind_material><technique_common><instance_material symbol=\"SkinSymbol\" target=\"#SkinMaterial\"><bind_vertex_input semantic=\"UVSET0\" input_semantic=\"TEXCOORD\" input_set=\"0\"/></instance_material></technique_common></bind_material></instance_geometry>")
+    }
+
+    private func sharedMaterialUVFixture(requiredChannel: Int, reversed: Bool) throws -> String {
+        var xml = texturedTriangle(aliases: ["body.png"])
+            .replacingOccurrences(of: "<material id=\"SkinMaterial\">", with: "<material id=\"SkinMaterial\" name=\"SkinMaterial\">")
+        let start = try XCTUnwrap(xml.range(of: "<geometry id=\"triangle\">"))
+        let end = try XCTUnwrap(xml.range(of: "</geometry>", range: start.upperBound..<xml.endIndex))
+        let original = String(xml[start.lowerBound..<end.upperBound])
+        var extra = original
+        for id in ["triangle", "positions", "position-array", "vertices", "uv", "uv-array"] {
+            extra = extra.replacingOccurrences(of: "id=\"\(id)\"", with: "id=\"extra-\(id)\"")
+                .replacingOccurrences(of: "source=\"#\(id)\"", with: "source=\"#extra-\(id)\"")
+        }
+        let secondUV = """
+        <source id="extra-uv1"><float_array id="extra-uv1-array" count="6">1 1 0 1 1 0</float_array><technique_common><accessor source="#extra-uv1-array" count="3" stride="2"><param name="S" type="float"/><param name="T" type="float"/></accessor></technique_common></source>
+        """
+        extra = extra.replacingOccurrences(of: "<vertices id=\"extra-vertices\">", with: secondUV + "<vertices id=\"extra-vertices\">")
+            .replacingOccurrences(of: "<p>0 0 1 1 2 2</p>", with: "<input semantic=\"TEXCOORD\" source=\"#extra-uv1\" offset=\"2\" set=\"1\"/><p>0 0 0 1 1 1 2 2 2</p>")
+        xml.replaceSubrange(start.lowerBound..<end.upperBound, with: original + extra)
+        let nodeStart = try XCTUnwrap(xml.range(of: "<node id=\"Mesh\">"))
+        let nodeEnd = try XCTUnwrap(xml.range(of: "</node>", range: nodeStart.upperBound..<xml.endIndex))
+        let firstNode = String(xml[nodeStart.lowerBound..<nodeEnd.upperBound])
+        let extraNode = firstNode.replacingOccurrences(of: "id=\"Mesh\"", with: "id=\"ExtraUV\"")
+            .replacingOccurrences(of: "url=\"#triangle\"", with: "url=\"#extra-triangle\"")
+        xml.replaceSubrange(nodeStart.lowerBound..<nodeEnd.upperBound, with: reversed ? extraNode + firstNode : firstNode + extraNode)
+        return xml.replacingOccurrences(of: "input_set=\"0\"", with: "input_set=\"\(requiredChannel)\"")
+    }
+
+    private func sharedUVGeometry(_ scene: SCNScene, expectShared: Bool = true) throws -> [SCNGeometry] {
+        var geometries: [SCNGeometry] = []
+        scene.rootNode.enumerateChildNodes { node, _ in if let geometry = node.geometry { geometries.append(geometry) } }
+        geometries.sort { $0.sources(for: .texcoord).count < $1.sources(for: .texcoord).count }
+        XCTAssertEqual(geometries.count, 2)
+        guard geometries.count == 2 else { throw VideoError.invalid("共享UV夹具必须有两块真实原生网格") }
+        let channels = geometries.map { $0.sources(for: .texcoord).count }
+        XCTAssertEqual(channels, [1, 2])
+        guard channels == [1, 2] else { throw VideoError.invalid("共享UV夹具必须实际保留UV0及额外UV1") }
+        let first = try XCTUnwrap(geometries[0].materials.first), second = try XCTUnwrap(geometries[1].materials.first)
+        XCTAssertEqual(first.name, "SkinMaterial"); XCTAssertEqual(second.name, "SkinMaterial")
+        if expectShared {
+            XCTAssertTrue(first === second, "两网格必须实际共享同一个SCNMaterial对象，不能用独立材质绕过回归")
+        } else {
+            XCTAssertFalse(first === second, "负例明确记录原生拆开的两个对象，同源名称不冒充对象共享")
+        }
+        return geometries
     }
 
     private func dualTexturedTriangle() -> String {
