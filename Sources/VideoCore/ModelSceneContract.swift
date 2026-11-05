@@ -51,11 +51,61 @@ public struct ModelMaterialInterpretation: Codable, Hashable, Sendable {
         self.vertexColors=vertexColors;self.normalEncoding=normalEncoding;self.opaqueDiffuseMaterialIDs=opaqueDiffuseMaterialIDs
     }
 }
+/// An explicit step change between mutually exclusive original DAE nodes.
+/// Frame zero uses the group's default; no expression or filename is inferred.
+public struct ModelNodeVariantKeyframe: Codable, Equatable, Sendable {
+    public var frame: Int
+    public var nodeID: String
+    public init(frame: Int, nodeID: String) { self.frame=frame;self.nodeID=nodeID }
+    private enum CodingKeys:String,CodingKey {case frame,nodeID}
+    public init(from decoder:Decoder)throws {
+        try ModelStoryDecoding3D.keys(decoder,required:["frame","nodeID"])
+        let c=try decoder.container(keyedBy:CodingKeys.self)
+        frame=try c.decode(Int.self,forKey:.frame);nodeID=try c.decode(String.self,forKey:.nodeID)
+    }
+}
+/// Visibility only: all original meshes, textures and joints remain intact.
+/// Native loaders must reject ambiguous node identities or overlapping branches.
+public struct ModelNodeVariantGroup: Codable, Equatable, Sendable {
+    public var id: String
+    public var nodeIDs: [String]
+    public var defaultNodeID: String
+    public var keyframes: [ModelNodeVariantKeyframe]?
+    public init(id:String,nodeIDs:[String],defaultNodeID:String,keyframes:[ModelNodeVariantKeyframe]?=nil) {
+        self.id=id;self.nodeIDs=nodeIDs;self.defaultNodeID=defaultNodeID;self.keyframes=keyframes
+    }
+    private enum CodingKeys:String,CodingKey {case id,nodeIDs,defaultNodeID,keyframes}
+    public init(from decoder:Decoder)throws {
+        try ModelStoryDecoding3D.keys(decoder,required:["id","nodeIDs","defaultNodeID"],optional:["keyframes"])
+        let c=try decoder.container(keyedBy:CodingKeys.self)
+        id=try c.decode(String.self,forKey:.id);nodeIDs=try c.decode([String].self,forKey:.nodeIDs)
+        defaultNodeID=try c.decode(String.self,forKey:.defaultNodeID)
+        if c.contains(.keyframes) {keyframes=try c.decode([ModelNodeVariantKeyframe].self,forKey:.keyframes)}
+    }
+    /// Already-validated immutable input; arbitrary source-frame order is safe.
+    public func selectedNodeID(at sourceFrame:Int)->String {
+        guard let keys=keyframes,!keys.isEmpty,sourceFrame>=keys[0].frame else {return defaultNodeID}
+        var low=0,high=keys.count
+        while low<high {let middle=low+(high-low)/2;if keys[middle].frame<=sourceFrame {low=middle+1}else{high=middle}}
+        return keys[low-1].nodeID
+    }
+}
 public struct ModelInstance3D: Codable, Equatable, Identifiable, Sendable {
     public var id: String; public var name: String; public var resource: ModelDAEResource; public var transform: ModelTransform3D; public var locked: Bool
     /// Nil preserves the legacy wire representation and source/rgb behavior.
     public var materialInterpretation: ModelMaterialInterpretation?
-    public init(id: String, name: String, resource: ModelDAEResource, transform: ModelTransform3D = .init(), locked: Bool = false, materialInterpretation: ModelMaterialInterpretation? = nil) { self.id=id; self.name=name; self.resource=resource; self.transform=transform; self.locked=locked;self.materialInterpretation=materialInterpretation }
+    /// Nil preserves legacy bytes. Explicit selections require game schema 11.
+    public var nodeVariants: [ModelNodeVariantGroup]?
+    public init(id: String, name: String, resource: ModelDAEResource, transform: ModelTransform3D = .init(), locked: Bool = false, materialInterpretation: ModelMaterialInterpretation? = nil, nodeVariants:[ModelNodeVariantGroup]?=nil) { self.id=id; self.name=name; self.resource=resource; self.transform=transform; self.locked=locked;self.materialInterpretation=materialInterpretation;self.nodeVariants=nodeVariants }
+    private enum CodingKeys:String,CodingKey {case id,name,resource,transform,locked,materialInterpretation,nodeVariants}
+    public init(from decoder:Decoder)throws {
+        try ModelStoryDecoding3D.keys(decoder,required:["id","name","resource","transform","locked"],optional:["materialInterpretation","nodeVariants"])
+        let c=try decoder.container(keyedBy:CodingKeys.self)
+        id=try c.decode(String.self,forKey:.id);name=try c.decode(String.self,forKey:.name)
+        resource=try c.decode(ModelDAEResource.self,forKey:.resource);transform=try c.decode(ModelTransform3D.self,forKey:.transform)
+        locked=try c.decode(Bool.self,forKey:.locked);materialInterpretation=try c.decodeIfPresent(ModelMaterialInterpretation.self,forKey:.materialInterpretation)
+        if c.contains(.nodeVariants) {nodeVariants=try c.decode([ModelNodeVariantGroup].self,forKey:.nodeVariants)}
+    }
 }
 public struct ModelTransformKeyframe: Codable, Equatable, Sendable {
     public var frame: Int; public var transform: ModelTransform3D
@@ -121,10 +171,31 @@ public struct ModelScene3D: Codable, Equatable, Sendable {
         guard ((version==1 && actions==nil) || (version==2 && !(actions?.isEmpty ?? true))),(1...54000).contains(durationFrames),(1...128).contains(instances.count),(1...16).contains(lights.count),transformTracks.count<=128,jointTracks.count<=4096,
               Set(instances.map(\.id)).count==instances.count,Set(lights.map(\.id)).count==lights.count,Set(instances.map(\.id)).isDisjoint(with:Set(lights.map(\.id))) else { throw VideoError.invalid("三维场景版本、实例、灯光数量或标识无效") }
         try camera.validate()
-        var bindings: [String:ModelAssetReference]=[:]
+        var bindings: [String:ModelAssetReference]=[:],variantFrames=0,variantNodes=0
         for instance in instances {
             guard PluginProtocolRules.text(instance.id,maximum:160),PluginProtocolRules.text(instance.name,maximum:160) else { throw VideoError.invalid("三维实例须有明确标识和名称") }
             try instance.transform.validate();try instance.resource.validate(assets:assets)
+            if let groups=instance.nodeVariants {
+                guard (1...32).contains(groups.count),Set(groups.map(\.id)).count==groups.count else {throw VideoError.invalid("三维节点互斥组须有1至32个不重复的明确组标识")}
+                var selectedNodes=Set<String>()
+                let sourceNodes=Set(instance.resource.inspection.nodeIDs)
+                for group in groups {
+                    guard PluginProtocolRules.text(group.id,maximum:160),group.id==group.id.trimmingCharacters(in:.whitespacesAndNewlines),
+                          (2...128).contains(group.nodeIDs.count),Set(group.nodeIDs).count==group.nodeIDs.count,
+                          group.nodeIDs.contains(group.defaultNodeID),group.nodeIDs.allSatisfy({PluginProtocolRules.text($0,maximum:160) && $0==$0.trimmingCharacters(in:.whitespacesAndNewlines) && sourceNodes.contains($0) && selectedNodes.insert($0).inserted}) else {throw VideoError.invalid("互斥组须明确引用2至128个实际原DAE节点ID，默认项属于本组，且各组不得重复占用节点")}
+                    variantNodes+=group.nodeIDs.count
+                    if let frames=group.keyframes {
+                        guard (1...4096).contains(frames.count) else {throw VideoError.invalid("节点切换关键帧须有界且非空，静态组请省略keyframes")}
+                        var previous=0
+                        for key in frames {
+                            guard key.frame>previous,key.frame<durationFrames,group.nodeIDs.contains(key.nodeID) else {throw VideoError.invalid("节点切换须按有效源帧严格递增并选择本组实际节点；0帧由默认项定义")}
+                            previous=key.frame
+                        }
+                        variantFrames+=frames.count
+                        guard variantFrames<=65536 else {throw VideoError.invalid("三维节点切换关键帧超过总上限")}
+                    }
+                }
+            }
             if let ids=instance.materialInterpretation?.opaqueDiffuseMaterialIDs {
                 let sourceIDs=Set(instance.resource.inspection.materials.map(\.id))
                 guard (1...128).contains(ids.count),Set(ids).count==ids.count,
@@ -146,7 +217,8 @@ public struct ModelScene3D: Codable, Equatable, Sendable {
             guard PluginProtocolRules.text(light.id,maximum:160),light.color.utf8.count==6,light.color.range(of:"^[A-Fa-f0-9]{6}$",options:.regularExpression) != nil,light.intensity.isFinite,(0...100000).contains(light.intensity) else { throw VideoError.invalid("三维灯光标识、颜色或强度无效") }
             try light.transform.validate()
         }
-        var targets=Set<String>(), jointTargets=Set<String>(), totalFrames=0
+        guard variantNodes<=8192 else {throw VideoError.invalid("三维互斥节点总数超过8192")}
+        var targets=Set<String>(), jointTargets=Set<String>(), totalFrames=variantFrames
         for track in transformTracks {
             guard instances.contains(where:{$0.id==track.instanceID}),targets.insert(track.instanceID).inserted else { throw VideoError.invalid("三维位置轨道须唯一绑定实际实例") }
             try Self.validate(track.keyframes,durationFrames:durationFrames);totalFrames+=track.keyframes.count
@@ -187,6 +259,14 @@ public struct ModelScene3D: Codable, Equatable, Sendable {
         let a=keys[index-1],b=keys[index]
         return .mix(a.transform,b.transform,Double(sourceFrame-a.frame)/Double(b.frame-a.frame))
     }
+}
+/// Host and game11 extend the instance record; game9/game10 records stay exact.
+public enum ModelNodeVariantSchema {
+    public static let records:[String:String] = [
+        "ModelNodeVariantKeyframe":"frame:i nodeID:s",
+        "ModelNodeVariantGroup":"id:s nodeIDs:[s] defaultNodeID:s keyframes?:[ModelNodeVariantKeyframe]",
+        "ModelInstance3D":"id:s name:s resource:ModelDAEResource transform:ModelTransform3D locked:b materialInterpretation?:ModelMaterialInterpretation nodeVariants?:[ModelNodeVariantGroup]"
+    ]
 }
 public enum ModelScene3DRules {
     public static func validate(scene: Scene, assets: [Asset]? = nil) throws {

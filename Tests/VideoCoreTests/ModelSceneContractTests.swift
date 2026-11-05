@@ -18,7 +18,7 @@ final class ModelSceneContractTests: XCTestCase {
         <library_effects><effect id="surfaceEffect"><profile_COMMON><technique sid="common"><lambert><diffuse><color>1 1 1 1</color></diffuse></lambert></technique></profile_COMMON></effect></library_effects>
         <library_materials><material id="bodyMaterial"><instance_effect url="#surfaceEffect"/></material><material id="capMaterial"><instance_effect url="#surfaceEffect"/></material></library_materials>
         <library_geometries><geometry id="triangle"><mesh><source id="positions"><float_array id="position-array" count="9">0 0 0 1 0 0 0 1 0</float_array></source></mesh></geometry></library_geometries>
-        <library_visual_scenes><visual_scene id="stage"><node id="hip" sid="hip" type="JOINT"/><node id="mesh"><instance_geometry url="#triangle"/></node></visual_scene></library_visual_scenes>
+        <library_visual_scenes><visual_scene id="stage"><node id="hip" sid="hip" type="JOINT"/><node id="mesh"><instance_geometry url="#triangle"/></node><node id="alternate"><instance_geometry url="#triangle"/></node></visual_scene></library_visual_scenes>
         <scene><instance_visual_scene url="#stage"/></scene></COLLADA>
         """
         let bytes=Data(xml.utf8),png=Data(base64Encoded:"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aL1sAAAAASUVORK5CYII=")!
@@ -45,6 +45,69 @@ final class ModelSceneContractTests: XCTestCase {
     }
     private func input(_ project: Project, edits: [Edit]) throws -> Data {
         try Codec.data(AgentValue.object(["workspace_id":.string(project.workspaceID),"project_id":.string(project.id),"base_revision":.string(project.current.id),"edits":try Codec.decoder().decode(AgentValue.self,from:Codec.data(edits))]))
+    }
+    func testNodeVariantStepSamplingDigestAndLegacyWireAreExplicit()throws {
+        let f=try fixture();defer{try? FileManager.default.removeItem(at:f.root)}
+        let old=try Codec.data(f.model.instances[0])
+        XCTAssertNil((try JSONSerialization.jsonObject(with:old) as? [String:Any])?["nodeVariants"])
+        XCTAssertEqual(old,try Codec.data(Codec.decoder().decode(ModelInstance3D.self,from:old)))
+        var changed=f.model
+        let group=ModelNodeVariantGroup(id:"expression",nodeIDs:["mesh","alternate"],defaultNodeID:"mesh",keyframes:[.init(frame:5,nodeID:"alternate"),.init(frame:10,nodeID:"mesh")])
+        changed.instances[0].nodeVariants=[group]
+        try changed.validate(durationFrames:21)
+        for (frame,expected) in [(20,"mesh"),(5,"alternate"),(0,"mesh"),(9,"alternate"),(10,"mesh"),(4,"mesh"),(5,"alternate")] {XCTAssertEqual(group.selectedNodeID(at:frame),expected)}
+        XCTAssertNotEqual(try changed.contentDigest(durationFrames:21),try f.model.contentDigest(durationFrames:21))
+        XCTAssertEqual(try PluginModelBankManifest(scene:changed,durationFrames:21),try PluginModelBankManifest(scene:f.model,durationFrames:21),"只改变视觉状态，不重写原DAE或纹理闭包")
+        XCTAssertEqual(changed,try Codec.decoder().decode(ModelScene3D.self,from:Codec.data(changed)))
+        let host=AgentSchemas.definitions(),legacy=PluginRPCSchemas.definitions(inputSchemaVersion:10,pluginID:"video.game")
+        XCTAssertNotNil(host["ModelInstance3D"]?.object?["properties"]?.object?["nodeVariants"])
+        XCTAssertNil(legacy["ModelInstance3D"]?.object?["properties"]?.object?["nodeVariants"])
+        XCTAssertEqual(host["ModelNodeVariantKeyframe"]?.object?["properties"]?.object?["frame"]?.object?["minimum"],.number(1))
+    }
+    func testNodeVariantMalformedGroupsFramesAndWireRejectWithoutGuessing()throws {
+        let f=try fixture();defer{try? FileManager.default.removeItem(at:f.root)}
+        let valid=ModelNodeVariantGroup(id:"face",nodeIDs:["mesh","alternate"],defaultNodeID:"mesh")
+        var invalid:[[ModelNodeVariantGroup]]=[[],[valid,valid]]
+        for ids in [["mesh"],["mesh","mesh"],["mesh","missing"],["mesh"," alternate"]] {var item=valid;item.nodeIDs=ids;invalid.append([item])}
+        var item=valid;item.defaultNodeID="missing";invalid.append([item])
+        item=valid;item.id=" face";invalid.append([item])
+        var other=valid;other.id="another";invalid.append([valid,other])
+        let badKeys:[[ModelNodeVariantKeyframe]]=[[],[.init(frame:0,nodeID:"mesh")],[.init(frame:21,nodeID:"mesh")],[.init(frame:1,nodeID:"missing")],[.init(frame:2,nodeID:"mesh"),.init(frame:1,nodeID:"alternate")],[.init(frame:1,nodeID:"mesh"),.init(frame:1,nodeID:"alternate")]]
+        for keys in badKeys {item=valid;item.keyframes=keys;invalid.append([item])}
+        for groups in invalid {var model=f.model;model.instances[0].nodeVariants=groups;XCTAssertThrowsError(try model.validate(durationFrames:21))}
+        var model=f.model;model.instances[0].nodeVariants=[valid]
+        let bytes=try Codec.data(model.instances[0]),object=try XCTUnwrap(JSONSerialization.jsonObject(with:bytes) as? [String:Any])
+        for field in ["unknown", "nodeVariants"] {
+            var wrong=object;wrong[field]=NSNull()
+            XCTAssertThrowsError(try Codec.decoder().decode(ModelInstance3D.self,from:JSONSerialization.data(withJSONObject:wrong)))
+        }
+        var group=try XCTUnwrap((object["nodeVariants"] as? [[String:Any]])?.first)
+        for field in ["unknown","keyframes"] {var wrong=group;wrong[field]=NSNull();XCTAssertThrowsError(try Codec.decoder().decode(ModelNodeVariantGroup.self,from:JSONSerialization.data(withJSONObject:wrong)))}
+        group["keyframes"]=[["frame":1,"nodeID":"mesh","emotion":"guessed"]]
+        XCTAssertThrowsError(try Codec.decoder().decode(ModelNodeVariantGroup.self,from:JSONSerialization.data(withJSONObject:group)))
+    }
+    func testNodeVariantsNormalAgentSaveLocksReviewAndColdRestorePreserveOriginalBytes()throws {
+        let f=try fixture();defer{try? FileManager.default.removeItem(at:f.root)}
+        var original=scene(f);original.modelScene3D=nil
+        var project=project(original,f);project.revisions[0].review.sound=true;project.revisions[0].review.fullPreview=true
+        try f.repository.transaction{$0.projects=[project]}
+        var replacement=scene(f);replacement.id=original.id
+        replacement.modelScene3D!.instances[0].nodeVariants=[.init(id:"face",nodeIDs:["mesh","alternate"],defaultNodeID:"mesh",keyframes:[.init(frame:7,nodeID:"alternate")])]
+        let data=try input(project,edits:[.replaceScene(original.id,replacement)]),before=try Codec.data(f.repository.read())
+        _=try AgentMutationExecutor.preview(command:"edit apply",data:data,database:f.repository.read(),principal:"owner",repository:f.repository)
+        XCTAssertEqual(before,try Codec.data(f.repository.read()))
+        _=try f.repository.performAgentMutation(command:"edit apply",data:data,principal:"owner",requestID:"node-variants")
+        let current=try XCTUnwrap(f.repository.read().projects.first?.current)
+        XCTAssertEqual(current.scenes[0].modelScene3D,replacement.modelScene3D)
+        XCTAssertFalse(current.review.sound);XCTAssertFalse(current.review.fullPreview)
+        XCTAssertEqual(Set((current.dependencies?.records ?? []).filter{$0.kind == .asset}.map{$0.asset!.id}),f.model.assetIDs)
+        var locked=replacement;locked.modelScene3D!.instances[0].locked=true
+        var changed=locked;changed.modelScene3D!.instances[0].nodeVariants![0].defaultNodeID="alternate"
+        XCTAssertThrowsError(try ModelScene3DRules.protectLocked(old:locked,new:changed))
+        let restored=try Repository.restore(f.repository.backup(),to:f.root.appendingPathComponent("variant-cold"))
+        let cold=try XCTUnwrap(restored.read().projects.first?.current)
+        XCTAssertEqual(try cold.contentDigest(),try current.contentDigest());XCTAssertEqual(cold.scenes[0].modelScene3D,replacement.modelScene3D)
+        for asset in f.assets {XCTAssertEqual(try Data(contentsOf:restored.assetURL(asset)),try Data(contentsOf:f.repository.assetURL(asset)))}
     }
     func testNormalAgentEditFreezesModelAndTextureAndColdBackupPreservesContract() throws {
         let f=try fixture();defer{try? FileManager.default.removeItem(at:f.root)}

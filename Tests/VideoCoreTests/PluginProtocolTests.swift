@@ -137,9 +137,9 @@ final class PluginProtocolTests:XCTestCase {
         XCTAssertEqual(descriptor.inputSchema.object?["$defs"]?.object?["KnowledgePayoffMatrix"], current["KnowledgePayoffMatrix"])
     }
     func testPublicationSchemaSelectionUsesCurrentDefaultsAndRetainsExplicitLegacyRequests() throws {
-        XCTAssertEqual(try PluginInputCompatibility.publicationSchema(pluginID: "video.game"), 10)
+        XCTAssertEqual(try PluginInputCompatibility.publicationSchema(pluginID: "video.game"), 11)
         XCTAssertEqual(try PluginInputCompatibility.publicationSchema(pluginID: "video.cartoon"), 8)
-        for version in [1, 2, 3, 5, 6, 7, 8, 9, 10] {
+        for version in [1, 2, 3, 5, 6, 7, 8, 9, 10, 11] {
             XCTAssertEqual(try PluginInputCompatibility.publicationSchema(pluginID: "video.game", requested: String(version)), version)
         }
         for version in [1, 4, 5, 6, 7, 8] {
@@ -154,7 +154,7 @@ final class PluginProtocolTests:XCTestCase {
         XCTAssertThrowsError(try PluginInputCompatibility.publicationSchema(pluginID: "video.cartoon", requested: "3"))
         XCTAssertThrowsError(try PluginInputCompatibility.publicationSchema(pluginID: "video.cartoon", requested: "9"))
         XCTAssertThrowsError(try PluginInputCompatibility.publicationSchema(pluginID: "video.cartoon", requested: "10"))
-        XCTAssertThrowsError(try PluginInputCompatibility.publicationSchema(pluginID: "video.game", requested: "11"))
+        XCTAssertThrowsError(try PluginInputCompatibility.publicationSchema(pluginID: "video.game", requested: "12"))
     }
     func testRuleTableRequiresExplicitSchemaFiveWithoutChangingEarlierShapes() throws {
         var simulation=Simulation()

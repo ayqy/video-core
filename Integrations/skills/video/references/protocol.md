@@ -48,6 +48,10 @@
 
 `title`、`subtitle`、`hero`、`background` 和 `poses` 均为可选；留空标题使用主题默认标题。`hero`、`background` 引用已导入的真实图片，可用 `sourceRect` 选择图集中的静态裁区。可选 `poses` 逐项声明唯一 `id`、`image`、`expression`、`action` 和 `keywords`，供封面按内容选择已有表情动作；它不生成图片、不改变视频角色、也不自动确认来源许可。豆子姐保持现有 IP 特征，动森使用原游戏素材提取的静态画面。`automatic`、`explanation`、`pencil`、`presenter`、`game`、`cartoon`、`media`、`chart`、`code` 是封面风格；`automatic`、`spotlight`、`editorial` 是模板。免费源码包含模板与合同，不附带业务 IP 和游戏原件。
 
+三维工程的 `modelScene3D.instances[].nodeVariants` 显式选择原 DAE 中互斥的状态节点，实际字段见 `video schema` 的 `$defs.ModelNodeVariantGroup` 和 `ModelNodeVariantKeyframe`。每组填写唯一 `id`、2至128个真实 `nodeIDs`、属于本组的 `defaultNodeID`；各组不得重复占用节点。0帧使用默认节点，可选 `keyframes` 逐项填写严格递增、位于片段时长内的正整数源帧 `frame` 和本组 `nodeID`，按源帧切换并保持到下一次切换。静态组省略 `keyframes`，不传空数组或 `null`。节点标识来自已核原模型，不按名称猜表情，也不生成或删除原网格、纹理与骨架。
+
+该节点选择需要实际受信 game11 模块；game9/10保留各自原合同，不能静默忽略新字段。game11继续支持旧三维v1、原生动作v2和原有有界资源银行；旧工程省略新字段时保持原字节与摘要。保存仍受原工程锁、版本CAS、来源权利和审核失效规则约束，编辑后重新估算并通过正常Host制作预览。公开源码提供编辑和校验合同，不包含闭源三维绘制器或高级二进制发行；发现字段不等于模块已安装、视觉通过或整片已审。
+
 退出码：0成功/已接受（继续检查state）；2输入/未找到；3权限；4预算；5待审核；6版本/幂等冲突；8外部条件或远端不确定。当前ABI/永久失败的更细分码未宣称实现。
 
 写操作是否以request_id安全回放，按该命令schema里的idempotency字段判断。幂等账本需要与业务修改同一事务保存；单独调用fingerprint/replay工具函数不能自动提供断电原子性。不要因CLI接受了request_id便给全部命令许诺“恰好一次”。
