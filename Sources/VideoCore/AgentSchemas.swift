@@ -97,6 +97,9 @@ public enum AgentSchemas {
         result["MediaConfirmationMethod"] = .object(["type":.string("string"),"enum":.array(["manual","approved_original","reliable_timestamps"].map(AgentValue.string))])
         for name in ["MediaConfirmationRequest","MediaConfirmationBinding","MediaVoiceBinding"] {var shape=result[name]!.object!;shape["additionalProperties"] = .boolean(false);result[name] = .object(shape)}
         let dataRecords:[String:String] = [
+            "CoverPresentation":"version:i style:CoverStyle template:CoverTemplate title?:s subtitle?:s hero?:CoverImage background?:CoverImage poses?:[CoverPose]",
+            "CoverImage":"assetID:s sourceRect?:MediaFraming",
+            "CoverPose":"id:s image:CoverImage expression:s action:s keywords:[s]",
             "MediaPresentation":"version:i layout:MediaLayout backgroundColor:s",
             "PaperPresentation":"version:i layout:PaperLayout paperColor:s inkColor:s",
             "LayerEntrance":"version:i kind:LayerEntranceKind startFrame:i endFrame:i sourceOffsetFrames?:i",
@@ -125,6 +128,12 @@ public enum AgentSchemas {
             } else {shape.merge(values,uniquingKeysWith:{$1})}
             properties[field] = .object(shape);record["properties"] = .object(properties);result[name] = .object(record)
         }
+        constraint("CoverPresentation","version",["const":.number(1)])
+        constraint("CoverPresentation","title",["minLength":.number(1),"maxLength":.number(160)])
+        constraint("CoverPresentation","subtitle",["minLength":.number(1),"maxLength":.number(100)])
+        constraint("CoverPresentation","poses",["minItems":.number(1),"maxItems":.number(24)])
+        constraint("CoverImage","assetID",["minLength":.number(1),"maxLength":.number(200)])
+        constraint("CoverPose","keywords",["maxItems":.number(16),"uniqueItems":.boolean(true)])
         constraint("DataPresentation","version",["const":.number(1)])
         constraint("ModelScene3D","version",["enum":.array([.number(1),.number(2)])])
         constraint("ModelScene3D","instances",["minItems":.number(1),"maxItems":.number(128)])
@@ -224,9 +233,9 @@ public enum AgentSchemas {
         for key in ["KnowledgeRule","KnowledgeRuleCondition","KnowledgeRuleEffect"] {
             var record=result[key]!.object!;record["additionalProperties"] = .boolean(false);result[key] = .object(record)
         }
-        let enums:[String:[String]]=["Purpose":Purpose.allCases.map(\.rawValue),"SceneKind":SceneKind.allCases.map(\.rawValue),"Aspect":Aspect.allCases.map(\.rawValue),"RangeKind":CourseMapping.RangeKind.allCases.map(\.rawValue),"CustomerKind":CustomerKind.allCases.map(\.rawValue),"RevenueKind":RevenueKind.allCases.map(\.rawValue),"Settlement":Settlement.allCases.map(\.rawValue),"AuthorizationScope":AuthorizationScope.allCases.map(\.rawValue),"LayerKind":SceneLayer.Kind.allCases.map(\.rawValue),"PaperLayout":PaperPresentation.Layout.allCases.map(\.rawValue),"MediaLayout":MediaPresentation.Layout.allCases.map(\.rawValue),"LayerEntranceKind":LayerEntrance.Kind.allCases.map(\.rawValue),"CharacterSilhouette":CharacterSilhouette.allCases.map(\.rawValue),"BaiduSegmentKind":["text","image","video"],"BillingKind":["charge","refundRequested","refundReceived"],"ClassicGameplay":ClassicGameplay.allCases.map(\.rawValue),"ClassicDerivation":ClassicArtwork.Derivation.allCases.map(\.rawValue),"ClassicAudioUse":ClassicAudioCue.Use.allCases.map(\.rawValue)]
+        let enums:[String:[String]]=["CoverStyle":CoverStyle.allCases.map(\.rawValue),"CoverTemplate":CoverTemplate.allCases.map(\.rawValue),"Purpose":Purpose.allCases.map(\.rawValue),"SceneKind":SceneKind.allCases.map(\.rawValue),"Aspect":Aspect.allCases.map(\.rawValue),"RangeKind":CourseMapping.RangeKind.allCases.map(\.rawValue),"CustomerKind":CustomerKind.allCases.map(\.rawValue),"RevenueKind":RevenueKind.allCases.map(\.rawValue),"Settlement":Settlement.allCases.map(\.rawValue),"AuthorizationScope":AuthorizationScope.allCases.map(\.rawValue),"LayerKind":SceneLayer.Kind.allCases.map(\.rawValue),"PaperLayout":PaperPresentation.Layout.allCases.map(\.rawValue),"MediaLayout":MediaPresentation.Layout.allCases.map(\.rawValue),"LayerEntranceKind":LayerEntrance.Kind.allCases.map(\.rawValue),"CharacterSilhouette":CharacterSilhouette.allCases.map(\.rawValue),"BaiduSegmentKind":["text","image","video"],"BillingKind":["charge","refundRequested","refundReceived"],"ClassicGameplay":ClassicGameplay.allCases.map(\.rawValue),"ClassicDerivation":ClassicArtwork.Derivation.allCases.map(\.rawValue),"ClassicAudioUse":ClassicAudioCue.Use.allCases.map(\.rawValue)]
         for (key,values) in enums{result[key] = .object(["type":.string("string"),"enum":.array(values.map(AgentValue.string))])}
-        let edits:[String:String] = ["insertScene":"_0:Scene _1:i","replaceScene":"_0:s _1:Scene","removeScene":"_0:s","moveScene":"_0:s _1:i","splitScene":"_0:s _1:i","lockScene":"_0:s _1:b","aspect":"_0:Aspect","cta":"_0:s","music":"_0?:s","audioQuality":"_0?:AudioQualityPolicy","productionBrief":"_0?:ProductionBrief","purpose":"_0:Purpose","restore":"_0:s","lockLayer":"_0:s _1:s _2:b","lockModelInstance":"_0:s _1:s _2:b","recordSimulation":"_0:s","confirmSimulationRecording":"_0:s"]
+        let edits:[String:String] = ["insertScene":"_0:Scene _1:i","replaceScene":"_0:s _1:Scene","removeScene":"_0:s","moveScene":"_0:s _1:i","splitScene":"_0:s _1:i","lockScene":"_0:s _1:b","aspect":"_0:Aspect","cta":"_0:s","music":"_0?:s","audioQuality":"_0?:AudioQualityPolicy","productionBrief":"_0?:ProductionBrief","coverPresentation":"_0?:CoverPresentation","purpose":"_0:Purpose","restore":"_0:s","lockLayer":"_0:s _1:s _2:b","lockModelInstance":"_0:s _1:s _2:b","recordSimulation":"_0:s","confirmSimulationRecording":"_0:s"]
         result["Edit"] = .object(["oneOf":.array(edits.keys.sorted().map{key in .object(["type":.string("object"),"required":.array([.string(key)]),"properties":.object([key:entity(edits[key]!)]),"additionalProperties":.boolean(false)])})])
         return result
     }

@@ -28,7 +28,10 @@ final class ContentProjectMediaTests:XCTestCase {
         let cover=try XCTUnwrap(result.artifacts.first{$0.mime=="image/png"})
         let generator=AVAssetImageGenerator(asset:AVURLAsset(url:URL(fileURLWithPath:video.path)))
         generator.appliesPreferredTrackTransform=true;generator.requestedTimeToleranceBefore = .zero;generator.requestedTimeToleranceAfter = .zero
-        XCTAssertEqual(cover.sha256,Codec.hash(try ScenePainter.png(generator.copyCGImage(at:.zero,actualTime:nil))),"封面须来自这份已编码成片首帧，不能另重执行旧帧任务")
+        let first=try generator.copyCGImage(at:.zero,actualTime:nil)
+        let expected=try CoverPainter.image(revision:revision,source:first)
+        XCTAssertEqual(cover.sha256,Codec.hash(try ScenePainter.png(expected)),"封面应由同版成片画面经模板独立合成，不重新进入高级渲染器")
+        XCTAssertNotEqual(cover.sha256,Codec.hash(try ScenePainter.png(first)),"默认封面须有特色标题版式，不能继续直接取首帧")
         let notes=try XCTUnwrap(result.artifacts.first{$0.mime=="text/plain"})
         let text=try String(contentsOf:URL(fileURLWithPath:notes.path),encoding:.utf8)
         XCTAssertTrue(text.contains("普通教学剪辑"));XCTAssertFalse(text.contains("SKU："));XCTAssertFalse(text.contains("已有承接页："))

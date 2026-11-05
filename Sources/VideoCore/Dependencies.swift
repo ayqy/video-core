@@ -372,6 +372,11 @@ public enum DependencyRules {
                 for eid in mapping.evidenceIDs { evidenceScenes[eid, default: []].formUnion(ids) }
             }
         }
+        try CoverRules.validate(revision:revision,assets:assets)
+        let resolvedCover=try CoverRules.resolved(revision:revision)
+        for image in (revision.coverPresentation?.images ?? [])+[resolvedCover.hero,resolvedCover.background].compactMap({$0}) {
+            try addAsset(image.assetID,[])
+        }
         for id in revision.productionBrief?.evidenceIDs ?? [] {
             evidenceScenes[id,default:[]].formUnion(Set(revision.scenes.map(\.id)))
         }

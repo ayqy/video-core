@@ -12,6 +12,7 @@ public enum Edit: Codable, Sendable {
     case music(String?)
     case audioQuality(AudioQualityPolicy?)
     case productionBrief(ProductionBrief?)
+    case coverPresentation(CoverPresentation?)
     case purpose(Purpose)
     case restore(String)
     case lockLayer(String, String, Bool)
@@ -224,8 +225,9 @@ public enum Editor {
             case .music(let id): revision.musicAssetID = id; revision.invalidated += ["混音"]
             case .audioQuality(let policy): try policy?.validate();revision.audioQuality=policy;revision.invalidated += ["混音测量策略","声音审核"]
             case .productionBrief(let brief): try brief?.validate();revision.productionBrief=brief;revision.invalidated += ["制作Brief与指定版本审稿","用途/权利交付核对"]
+            case .coverPresentation(let cover): try cover?.validate();revision.coverPresentation=cover;revision.invalidated += ["封面与标题审核"]
             case .purpose(let purpose): revision.purpose=purpose;revision.invalidated += ["交付用途与权利审核"]
-            case .restore(let id): guard let r = p.revisions.first(where: { $0.id == id }) else { throw VideoError.notFound("历史版本不存在") }; revision.schemaVersion=r.schemaVersion; revision.scenes = r.scenes; revision.product = r.product; revision.contentContext=r.contentContext; revision.cta = r.cta; revision.aspect = r.aspect; revision.musicAssetID = r.musicAssetID; revision.dependencies=r.dependencies;revision.audioQuality=r.audioQuality;revision.productionBrief=r.productionBrief;revision.purpose=r.purpose
+            case .restore(let id): guard let r = p.revisions.first(where: { $0.id == id }) else { throw VideoError.notFound("历史版本不存在") }; revision.schemaVersion=r.schemaVersion; revision.scenes = r.scenes; revision.product = r.product; revision.contentContext=r.contentContext; revision.cta = r.cta; revision.aspect = r.aspect; revision.musicAssetID = r.musicAssetID; revision.dependencies=r.dependencies;revision.audioQuality=r.audioQuality;revision.productionBrief=r.productionBrief;revision.coverPresentation=r.coverPresentation;revision.purpose=r.purpose
             }
         }
         for s in revision.scenes {
@@ -235,6 +237,7 @@ public enum Editor {
             try ClassicArtworkRules.validateWalkingSources(scene:s,assets:assets.filter{$0.workspaceID==project.workspaceID})
             try ClassicArtworkRules.validateGateSources(scene:s,assets:assets.filter{$0.workspaceID==project.workspaceID})
         }
+        try CoverRules.validate(revision:revision,assets:assets)
         p.revisions.append(revision); return p
     }
     public static func updateFacts(_ product: Product, project: Project) -> Project {
@@ -278,6 +281,7 @@ public enum Quality {
     public static func inspect(_ revision: Revision, database: Database, requireReview: Bool, now: Date = Date(), enforceBrandDelivery: Bool = true) throws -> [QualityIssue] {
         try revision.validateContext()
         try revision.audioQuality?.validate()
+        try CoverRules.validate(revision:revision,assets:database.assets)
         var issues: [QualityIssue] = []
         let commercial = revision.purpose != .education
         if requireReview && enforceBrandDelivery {

@@ -10,6 +10,8 @@ MacApp、旧 App、VideoGame、VideoCartoon、Premium、高级实现运行时测
 
 ## 使用条件
 
+每种视频默认生成与其画面风格一致的代码模板封面，提供聚焦主角和杂志海报版式。正常 `edit apply` 的 `coverPresentation` 可覆盖标题、副标题、风格、模板以及已导入的主角/背景图片，并可登记按主题选用的 IP 表情动作图片；省略配置仍自动生成封面。豆包解说员面向观众昵称为“豆子姐”，默认使用“豆子姐讲「主题」”标题。封面图片和完整视频绑定同一版本，改动后重新制作并看审。模板不调用生图服务；免费源码不附业务 IP 图片、游戏素材或声音，所选素材仍须核对实际来源与用途许可。字段和普通 CLI 示例见 `Integrations/skills/video/references/protocol.md`。
+
 - CLI 宿主为 macOS 14 及以上，构建需对应 Xcode / Swift 工具链；共享库仍保留历史 iOS 17 兼容声明，不代表发行手机 App。
 - CLI：构建后先查询 `video schema`、`video capabilities`；原生 CLI 不是无认证远程服务。
 - 更新器：`video-install --help`说明固定发行者签名目录包和程序/数据成对回滚；不提供私钥、许可证或未签名安装开关。

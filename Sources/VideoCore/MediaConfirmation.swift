@@ -169,11 +169,43 @@ public enum MediaConfirmationRules {
         }
         let owners=database.projects.filter {$0.workspaceID==revision.workspaceID && $0.revisions.contains(where:{$0.id==revision.id})}
         guard owners.count==1 else {return MediaConfirmationStatus(voice:false,captions:false)}
+        let project=owners[0]
+        var eligible:[String:MediaConfirmationBinding]=[revision.id:exact]
+        var child=revision,visited:Set<String>=[revision.id]
+        // Retain a declaration's original record and scope. A cover-only parent
+        // chain may query it because no movie/audio/subtitle input has changed.
+        // Stop at the first different audiovisual edit, even if later reverted.
+        while let parentID=child.parentID,!visited.contains(parentID),
+              let parent=project.revisions.first(where:{$0.id==parentID}),
+              try coverOnlyParent(parent,child,database:database),
+              let priorScene=parent.scenes.first(where:{$0.id==scene.id}),
+              let prior=try? binding(revision:parent,scene:priorScene,database:database) {
+            eligible[parentID]=prior;visited.insert(parentID);child=parent
+        }
         let matches=(database.mediaConfirmations ?? []).filter { record in
-            record.projectID==owners[0].id && record.workspaceID==revision.workspaceID &&
-            record.revisionID==revision.id && record.sceneID==scene.id && record.binding==exact && record.at<=now
+            guard record.projectID==project.id,record.workspaceID==revision.workspaceID,
+                  record.sceneID==scene.id,record.at<=now,eligible[record.revisionID]==record.binding else{return false}
+            if record.revisionID==revision.id {return true}
+            // An ownership change must not carry another owner's declaration.
+            return database.workspaces.first(where:{$0.id==revision.workspaceID})?.owner==record.reviewer
         }
         return MediaConfirmationStatus(voice:matches.contains(where:{$0.voice}),captions:matches.contains(where:{$0.captions}))
+    }
+    private static func coverOnlyParent(_ parent:Revision,_ child:Revision,database:Database)throws->Bool {
+        guard child.parentID==parent.id,parent.workspaceID==child.workspaceID,
+              let old=parent.dependencies,let new=child.dependencies else{return false}
+        let oldMedia=old.records.filter{!$0.sceneIDs.isEmpty},newMedia=new.records.filter{!$0.sceneIDs.isEmpty}
+        guard try Codec.data(oldMedia)==Codec.data(newMedia) else{return false}
+        let differences=DependencyRules.diff(revision:parent,assets:database.assets,evidence:database.evidence)
+        guard differences.allSatisfy({$0.sceneIDs.isEmpty}) else{return false}
+        let coverDependenciesChanged=try Codec.data(old.records.filter{$0.sceneIDs.isEmpty}) != Codec.data(new.records.filter{$0.sceneIDs.isEmpty})
+        let changedCover=parent.coverPresentation != child.coverPresentation || coverDependenciesChanged || !differences.isEmpty
+        guard changedCover else{return false}
+        var normalized=child
+        normalized.id=parent.id;normalized.parentID=parent.parentID;normalized.number=parent.number
+        normalized.createdAt=parent.createdAt;normalized.change=parent.change;normalized.invalidated=parent.invalidated
+        normalized.review=parent.review;normalized.dependencies=parent.dependencies;normalized.coverPresentation=parent.coverPresentation
+        return try Codec.data(normalized)==Codec.data(parent)
     }
 }
 

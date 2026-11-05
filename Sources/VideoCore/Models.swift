@@ -183,6 +183,8 @@ public struct Revision: Codable, Identifiable, Sendable {
     public var dependencies: DependencySnapshot?
     public var audioQuality:AudioQualityPolicy?
     public var productionBrief:ProductionBrief?
+    /// Optional so historical projects retain their original encoding/digest.
+    public var coverPresentation:CoverPresentation?
     public var id = Codec.id(); public var parentID: String?; public var number: Int; public var schemaVersion = 1; public var toolchain = "video-native-1"; public var product: Product?; public var contentContext: ContentContext?; public var purpose: Purpose; public var aspect: Aspect; public var fps = 30; public var scenes: [Scene]; public var cta: String; public var musicAssetID: String?; public var review = Review(); public var createdAt = Date(); public var change: String; public var invalidated: [String] = []
     public init(number: Int = 1, product: Product, purpose: Purpose, aspect: Aspect, scenes: [Scene], cta: String, change: String = "创建") { self.number = number; self.product = product; self.purpose = purpose; self.aspect = aspect; self.scenes = scenes; self.cta = cta; self.change = change }
     public init(number:Int = 1,contentContext:ContentContext,purpose:Purpose = .education,aspect:Aspect,scenes:[Scene],cta:String = "",change:String = "创建") {self.number=number;self.schemaVersion=2;self.contentContext=contentContext;self.purpose=purpose;self.aspect=aspect;self.scenes=scenes;self.cta=cta;self.change=change}
@@ -191,15 +193,16 @@ public struct Revision: Codable, Identifiable, Sendable {
     public var courseMappings:[CourseMapping] {contentContext?.courseMappings ?? product?.courseMappings ?? []}
     public var sourceAssetIDs:[String] {contentContext?.assetIDs ?? product?.assetIDs ?? []}
     public func validateContext() throws {
+        try coverPresentation?.validate()
         guard (product == nil) != (contentContext == nil) else{throw VideoError.invalid("工程须且仅须有独立内容上下文或既有产品事实")}
         guard (product != nil && schemaVersion==1) || (contentContext != nil && schemaVersion==2) else{throw VideoError.unavailable("工程IR版本与内容上下文不兼容，请使用支持该版本的工具")}
         if let context=contentContext {try context.validate()}
         if let product {try product.validate()}
     }
-    private enum CodingKeys:String,CodingKey {case dependencies,audioQuality,productionBrief,id,parentID,number,schemaVersion,toolchain,product,contentContext,purpose,aspect,fps,scenes,cta,musicAssetID,review,createdAt,change,invalidated}
+    private enum CodingKeys:String,CodingKey {case dependencies,audioQuality,productionBrief,coverPresentation,id,parentID,number,schemaVersion,toolchain,product,contentContext,purpose,aspect,fps,scenes,cta,musicAssetID,review,createdAt,change,invalidated}
     public init(from decoder:Decoder)throws {
         let c=try decoder.container(keyedBy:CodingKeys.self)
-        dependencies=try c.decodeIfPresent(DependencySnapshot.self,forKey:.dependencies);audioQuality=try c.decodeIfPresent(AudioQualityPolicy.self,forKey:.audioQuality);productionBrief=try c.decodeIfPresent(ProductionBrief.self,forKey:.productionBrief)
+        dependencies=try c.decodeIfPresent(DependencySnapshot.self,forKey:.dependencies);audioQuality=try c.decodeIfPresent(AudioQualityPolicy.self,forKey:.audioQuality);productionBrief=try c.decodeIfPresent(ProductionBrief.self,forKey:.productionBrief);coverPresentation=try c.decodeIfPresent(CoverPresentation.self,forKey:.coverPresentation)
         id=try c.decode(String.self,forKey:.id);parentID=try c.decodeIfPresent(String.self,forKey:.parentID);number=try c.decode(Int.self,forKey:.number);schemaVersion=try c.decode(Int.self,forKey:.schemaVersion);toolchain=try c.decode(String.self,forKey:.toolchain)
         product=try c.decodeIfPresent(Product.self,forKey:.product);contentContext=try c.decodeIfPresent(ContentContext.self,forKey:.contentContext);purpose=try c.decode(Purpose.self,forKey:.purpose);aspect=try c.decode(Aspect.self,forKey:.aspect);fps=try c.decode(Int.self,forKey:.fps);scenes=try c.decode([Scene].self,forKey:.scenes);cta=try c.decode(String.self,forKey:.cta);musicAssetID=try c.decodeIfPresent(String.self,forKey:.musicAssetID);review=try c.decode(Review.self,forKey:.review);createdAt=try c.decode(Date.self,forKey:.createdAt);change=try c.decode(String.self,forKey:.change);invalidated=try c.decode([String].self,forKey:.invalidated)
         try validateContext()

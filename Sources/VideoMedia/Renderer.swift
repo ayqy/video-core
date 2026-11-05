@@ -69,14 +69,16 @@ public final class MediaRenderer: @unchecked Sendable {
             let violations=loudness.violations(policy:policy,audible:audible)
             guard violations.isEmpty else{throw VideoError.review(violations.joined(separator:"；"))}
 
-            // The cover is the first decoded frame of this verified final video.
-            // Re-submitting frame zero to a long-lived plugin scope would replay an
-            // evicted execution receipt, and could differ from the actual encode.
+            // Compose an editable code template around a decoded frame of this
+            // verified same-version movie and normally imported CAS artwork.
+            // Never replay frame zero in a long-lived advanced plugin scope.
             try invocation?.check(); try Task.checkCancellation()
             let generator=AVAssetImageGenerator(asset:AVURLAsset(url:final))
             generator.appliesPreferredTrackTransform=true;generator.requestedTimeToleranceBefore = .zero;generator.requestedTimeToleranceAfter = .zero
             let cover=output.appendingPathComponent("cover.png")
-            try ScenePainter.png(generator.copyCGImage(at:.zero,actualTime:nil)).write(to:cover,options:.atomic)
+            let coverImages=try CoverPainter.loadImages(revision:r,repository:repository,database:db)
+            let coverImage=try CoverPainter.image(revision:r,source:generator.copyCGImage(at:.zero,actualTime:nil),images:coverImages)
+            try ScenePainter.png(coverImage).write(to:cover,options:.atomic)
             let subtitles=output.appendingPathComponent("captions.srt"); try subtitleText.write(to:subtitles,atomically:true,encoding:.utf8)
             let text=output.appendingPathComponent("publication.txt");let note=try Self.publicationNotes(r,audio:audio);try note.write(to:text,atomically:true,encoding:.utf8)
             let refs=try [final,cover,subtitles,text].map { u -> Artifact in let data=try Data(contentsOf:u); let mime:[String:String]=["mp4":"video/mp4","png":"image/png","srt":"application/x-subrip","txt":"text/plain"]; return Artifact(path:u.path,mime:mime[u.pathExtension]!,bytes:data.count,sha256:Codec.hash(data),revision:r.id) }
@@ -326,7 +328,8 @@ public final class MediaRenderer: @unchecked Sendable {
     }
     private static func silence(to url:URL,seconds:Double) throws { let format=AVAudioFormat(standardFormatWithSampleRate:48000,channels:1)!; let file=try AVAudioFile(forWriting:url,settings:format.settings); let buffer=AVAudioPCMBuffer(pcmFormat:format,frameCapacity:48000)!; buffer.frameLength=48000; memset(buffer.floatChannelData![0],0,48000*MemoryLayout<Float>.size); var remaining=Int(ceil(seconds*48000)); while remaining>0 { buffer.frameLength=AVAudioFrameCount(min(remaining,48000)); try file.write(from:buffer); remaining -= Int(buffer.frameLength) } }
     public static func publicationNotes(_ r:Revision,audio:AudioDiagnostics) throws -> String {
-        var lines=[r.contentName,r.cta,"","用途："+r.purpose.rawValue,"AI辅助制作；请按实际用途核对AI/商业标识、版权和文字。通用文件导出不要求运营账号或平台挂载资格。","平台账号/挂载资格：未核实（仅通用文件交付）","版本："+r.id,"IR/schema：\(r.schemaVersion)；工具链：\(r.toolchain)","摘要："+(try r.contentDigest()),"混音实测：峰值 \(audio.peakDBFS) dBFS；未加权RMS \(audio.rmsDBFS) dBFS（不是LUFS）","当前文件为待看听预览；人工审核与真实发布状态在工程中另记。","此包未自动发布。"]
+        let cover=try CoverRules.resolved(revision:r)
+        var lines=[r.contentName,r.cta,"封面："+cover.title+"；风格 "+cover.style.rawValue+"；模板 "+cover.template.rawValue,"封面素材：同版成片画面与本工程导入原图；封面为代码模板独立合成，不向视频正文加标题。","","用途："+r.purpose.rawValue,"AI辅助制作；请按实际用途核对AI/商业标识、版权和文字。通用文件导出不要求运营账号或平台挂载资格。","平台账号/挂载资格：未核实（仅通用文件交付）","版本："+r.id,"IR/schema：\(r.schemaVersion)；工具链：\(r.toolchain)","摘要："+(try r.contentDigest()),"混音实测：峰值 \(audio.peakDBFS) dBFS；未加权RMS \(audio.rmsDBFS) dBFS（不是LUFS）","当前文件为待看听预览；人工审核与真实发布状态在工程中另记。","此包未自动发布。"]
         if let brief=r.productionBrief {
             lines += ["制作目标："+brief.objective,"约定用途："+brief.intendedUse,"修改要求："+brief.modifications,"AI标识声明："+brief.aiDisclosure,"商业标识声明："+brief.commercialDisclosure,"使用限制："+brief.restrictions,"用途截止："+(brief.permittedUntil.map(BeijingTime.string) ?? "未另设；不扩张原授权"),"Brief证据："+brief.evidenceIDs.joined(separator:",")]
         }

@@ -24,6 +24,30 @@
 
 `edit apply`的`audioQuality`为可选响度策略编辑，具体字段见`$defs.AudioQualityPolicy`；`null`清除自定策略，数值须通过领域范围校验。响度目标是用户自定值，不冒充平台强制规范，测量不能代替完整听审。
 
+`edit apply` 的 `coverPresentation` 编辑本片的模板封面，实际字段与枚举可由 `video schema` 的 `$defs.CoverPresentation`、`CoverImage`、`CoverPose`、`CoverStyle` 和 `CoverTemplate` 发现。它与镜头、版本和导出共用正常编辑事务，修改后重新估算、制作完整预览并看审，不复用旧成片。省略封面配置时仍按工程风格自动生成；`{"coverPresentation":{"_0":null}}` 恢复自动封面。
+
+例如，将真实已有图片用作豆子姐主角，保留其余工程内容：
+
+```json
+{
+  "workspace_id": "已存在工作区ID",
+  "project_id": "已存在项目ID",
+  "base_revision": "当前版本ID",
+  "edits": [{
+    "coverPresentation": {"_0": {
+      "version": 1,
+      "style": "presenter",
+      "template": "spotlight",
+      "title": "豆子姐讲「囚徒困境」",
+      "subtitle": "合作，还是背叛？",
+      "hero": {"assetID": "已导入的同一IP图片ID"}
+    }}
+  }]
+}
+```
+
+`title`、`subtitle`、`hero`、`background` 和 `poses` 均为可选；留空标题使用主题默认标题。`hero`、`background` 引用已导入的真实图片，可用 `sourceRect` 选择图集中的静态裁区。可选 `poses` 逐项声明唯一 `id`、`image`、`expression`、`action` 和 `keywords`，供封面按内容选择已有表情动作；它不生成图片、不改变视频角色、也不自动确认来源许可。豆子姐保持现有 IP 特征，动森使用原游戏素材提取的静态画面。`automatic`、`explanation`、`pencil`、`presenter`、`game`、`cartoon`、`media`、`chart`、`code` 是封面风格；`automatic`、`spotlight`、`editorial` 是模板。免费源码包含模板与合同，不附带业务 IP 和游戏原件。
+
 退出码：0成功/已接受（继续检查state）；2输入/未找到；3权限；4预算；5待审核；6版本/幂等冲突；8外部条件或远端不确定。当前ABI/永久失败的更细分码未宣称实现。
 
 写操作是否以request_id安全回放，按该命令schema里的idempotency字段判断。幂等账本需要与业务修改同一事务保存；单独调用fingerprint/replay工具函数不能自动提供断电原子性。不要因CLI接受了request_id便给全部命令许诺“恰好一次”。
