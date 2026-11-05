@@ -38,7 +38,7 @@ final class VendorFreeModuleTrustTests: XCTestCase {
     }
     func testCompleteFreeClosedPairPassesForOnlyCurrentModuleSchemasAndBothArchitectures()throws {
         let key=Curve25519.Signing.PrivateKey()
-        for id in ["video.game","video.cartoon"] {for architecture in ["arm64","x86_64"] {for schema in (id == "video.game" ? [6,7,8,9,10,11]:[4,5,6,7,8]) {
+        for id in ["video.game","video.cartoon"] {for architecture in ["arm64","x86_64"] {for schema in (id == "video.game" ? [6,7,8,9,10,11,12]:[4,5,6,7,8]) {
             var (manifest,policy)=try values(id:id,architecture:architecture);manifest.module.inputSchema=schema
             let documents=try pair(manifest,policy,key:key)
             let verified=try verify(documents,key:key)
@@ -46,9 +46,9 @@ final class VendorFreeModuleTrustTests: XCTestCase {
             XCTAssertEqual(try VendorFreeModuleTrust.pairDigest(manifest:manifest,policy:policy),try Codec.digest(Pair(manifest:manifest,policy:policy)))
             XCTAssertNoThrow(try PluginPackageRules.validate(verified.0,policy:verified.1,architecture:architecture,osMajor:14,now:now))
         }}}
-        for (id, schema) in [("video.game",12),("video.cartoon",9),("video.cartoon",10)] {
+        for (id, schema) in [("video.game",13),("video.cartoon",9),("video.cartoon",10),("video.cartoon",12)] {
             var (manifest,policy)=try values(id:id);manifest.module.inputSchema=schema
-            XCTAssertThrowsError(try VendorFreeModuleTrust.validateScope(manifest:manifest,policy:policy), "新增game11不扩大cartoon或未知输入版本")
+            XCTAssertThrowsError(try VendorFreeModuleTrust.validateScope(manifest:manifest,policy:policy), "新增game12不扩大cartoon或未知输入版本")
         }
     }
     func testRestrictedAndOriginalSignedEnvelopesKeepXMLAndBinaryCompatibility()throws {

@@ -46,6 +46,63 @@ final class ModelSceneContractTests: XCTestCase {
     private func input(_ project: Project, edits: [Edit]) throws -> Data {
         try Codec.data(AgentValue.object(["workspace_id":.string(project.workspaceID),"project_id":.string(project.id),"base_revision":.string(project.current.id),"edits":try Codec.decoder().decode(AgentValue.self,from:Codec.data(edits))]))
     }
+    func testAlphaCutoutUsesExplicitBoundedOriginalIDsAndKeepsLegacyBytes()throws {
+        let f=try fixture();defer{try? FileManager.default.removeItem(at:f.root)}
+        let legacy=Data(#"{"normalEncoding":"rgb","opaqueDiffuseMaterialIDs":["bodyMaterial"],"vertexColors":"source"}"#.utf8)
+        let old=try Codec.decoder().decode(ModelMaterialInterpretation.self,from:legacy)
+        XCTAssertNil(old.alphaCutoutMaterialIDs);XCTAssertEqual(try Codec.data(old),legacy)
+        for invalid in [#"{"normalEncoding":"rgb","vertexColors":"source","alphaCutoutThreshold":0.2}"#,#"{"normalEncoding":"rgb","vertexColors":"source","alphaCutoutMaterialIDs":"bodyMaterial"}"#] {
+            XCTAssertThrowsError(try Codec.decoder().decode(ModelMaterialInterpretation.self,from:Data(invalid.utf8)),"裁切阈值固定且未知解释不能被静默忽略")
+        }
+        var model=f.model;model.instances[0].materialInterpretation=old
+        let oldDigest=try model.contentDigest(durationFrames:21),bank=try PluginModelBankManifest(scene:model,durationFrames:21)
+        model.instances[0].materialInterpretation!.alphaCutoutMaterialIDs=["bodyMaterial"]
+        XCTAssertNoThrow(try model.validate(durationFrames:21,assets:f.assets),"同一原材质可同时声明diffuse不透明与独立transparent裁切")
+        XCTAssertNotEqual(try model.contentDigest(durationFrames:21),oldDigest)
+        XCTAssertEqual(try PluginModelBankManifest(scene:model,durationFrames:21),bank)
+        XCTAssertEqual(try Codec.decoder().decode(ModelScene3D.self,from:Codec.data(model)),model)
+        for ids in [[],["unknownMaterial"],["bodyMaterial","bodyMaterial"],[" bodyMaterial"],["bodyMaterial\n"],[String(repeating:"x",count:161)]] {
+            var invalid=model;invalid.instances[0].materialInterpretation!.alphaCutoutMaterialIDs=ids
+            XCTAssertThrowsError(try invalid.validate(durationFrames:21,assets:f.assets))
+        }
+        var bounded=f.model
+        bounded.instances[0].resource.inspection.materials=(0..<129).map{.init(id:"material\($0)",effectID:"surfaceEffect")}
+        bounded.instances[0].materialInterpretation = .init(alphaCutoutMaterialIDs:(0..<128).map{"material\($0)"})
+        XCTAssertNoThrow(try bounded.validate(durationFrames:21,assets:f.assets))
+        bounded.instances[0].materialInterpretation!.alphaCutoutMaterialIDs!.append("material128")
+        XCTAssertThrowsError(try bounded.validate(durationFrames:21,assets:f.assets))
+    }
+    func testAlphaCutoutNormalCASLocksInvalidationAndColdRestorePreserveSources()throws {
+        let f=try fixture();defer{try? FileManager.default.removeItem(at:f.root)}
+        let original=scene(f);var project=project(original,f)
+        project.revisions[0].review.sound=true;project.revisions[0].review.fullPreview=true
+        try f.repository.transaction{$0.projects=[project]}
+        var changed=original
+        changed.modelScene3D!.instances[0].materialInterpretation = .init(opaqueDiffuseMaterialIDs:["bodyMaterial"],alphaCutoutMaterialIDs:["bodyMaterial"])
+        let before=try Codec.data(f.repository.read())
+        for ids in [[],["missing"],["bodyMaterial","bodyMaterial"]] {
+            var invalid=changed;invalid.modelScene3D!.instances[0].materialInterpretation!.alphaCutoutMaterialIDs=ids
+            let data=try input(project,edits:[.replaceScene(original.id,invalid)])
+            XCTAssertThrowsError(try f.repository.performAgentMutation(command:"edit apply",data:data,principal:"owner",requestID:Codec.id()))
+            XCTAssertEqual(try Codec.data(f.repository.read()),before)
+        }
+        let data=try input(project,edits:[.replaceScene(original.id,changed)])
+        _=try AgentMutationExecutor.preview(command:"edit apply",data:data,database:f.repository.read(),principal:"owner",repository:f.repository)
+        XCTAssertEqual(try Codec.data(f.repository.read()),before)
+        let answer=try f.repository.performAgentMutation(command:"edit apply",data:data,principal:"owner",requestID:"alpha-cutout-save")
+        XCTAssertEqual(answer,try f.repository.performAgentMutation(command:"edit apply",data:data,principal:"owner",requestID:"alpha-cutout-save"))
+        let current=try XCTUnwrap(f.repository.read().projects.first?.current)
+        XCTAssertEqual(current.scenes[0].modelScene3D,changed.modelScene3D)
+        XCTAssertFalse(current.review.sound);XCTAssertFalse(current.review.fullPreview)
+        XCTAssertEqual(Set((current.dependencies?.records ?? []).filter{$0.kind == .asset}.map{$0.asset!.id}),f.model.assetIDs)
+        let locked=try Editor.apply([.lockModelInstance(original.id,"actor",true)],to:project,baseRevision:project.current.id,assets:f.assets,message:"锁定原实例")
+        var lockedChange=locked.current.scenes[0];lockedChange.modelScene3D!.instances[0].materialInterpretation=changed.modelScene3D!.instances[0].materialInterpretation
+        XCTAssertThrowsError(try Editor.apply([.replaceScene(original.id,lockedChange)],to:locked,baseRevision:locked.current.id,assets:f.assets,message:"锁定时不能新增裁切"))
+        let restored=try Repository.restore(f.repository.backup(),to:f.root.appendingPathComponent("alpha-cutout-cold"))
+        let cold=try XCTUnwrap(restored.read().projects.first?.current)
+        XCTAssertEqual(try cold.contentDigest(),try current.contentDigest());XCTAssertEqual(cold.scenes[0].modelScene3D,changed.modelScene3D)
+        for asset in f.assets {XCTAssertEqual(try Data(contentsOf:restored.assetURL(asset)),try Data(contentsOf:f.repository.assetURL(asset)))}
+    }
     func testNodeVariantStepSamplingDigestAndLegacyWireAreExplicit()throws {
         let f=try fixture();defer{try? FileManager.default.removeItem(at:f.root)}
         let old=try Codec.data(f.model.instances[0])

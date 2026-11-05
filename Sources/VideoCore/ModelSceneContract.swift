@@ -47,8 +47,20 @@ public struct ModelMaterialInterpretation: Codable, Hashable, Sendable {
     /// Explicit source material IDs whose diffuse alpha is interpreted as opaque.
     /// Nil retains source alpha; this never changes source texture or vertex bytes.
     public var opaqueDiffuseMaterialIDs: [String]?
-    public init(vertexColors: ModelVertexColorUsage = .source, normalEncoding: ModelNormalTextureEncoding = .rgb, opaqueDiffuseMaterialIDs: [String]? = nil) {
-        self.vertexColors=vertexColors;self.normalEncoding=normalEncoding;self.opaqueDiffuseMaterialIDs=opaqueDiffuseMaterialIDs
+    /// Explicit source material IDs whose original alphaOne transparent alpha is
+    /// cut out below 0.5. May overlap opaque diffuse IDs; nil retains source behavior.
+    /// This visual interpretation requires game12 and never rewrites source bytes.
+    public var alphaCutoutMaterialIDs: [String]?
+    public init(vertexColors: ModelVertexColorUsage = .source, normalEncoding: ModelNormalTextureEncoding = .rgb, opaqueDiffuseMaterialIDs: [String]? = nil, alphaCutoutMaterialIDs: [String]? = nil) {
+        self.vertexColors=vertexColors;self.normalEncoding=normalEncoding;self.opaqueDiffuseMaterialIDs=opaqueDiffuseMaterialIDs;self.alphaCutoutMaterialIDs=alphaCutoutMaterialIDs
+    }
+    private enum CodingKeys:String,CodingKey {case vertexColors,normalEncoding,opaqueDiffuseMaterialIDs,alphaCutoutMaterialIDs}
+    public init(from decoder:Decoder)throws {
+        try ModelStoryDecoding3D.keys(decoder,required:["vertexColors","normalEncoding"],optional:["opaqueDiffuseMaterialIDs","alphaCutoutMaterialIDs"])
+        let c=try decoder.container(keyedBy:CodingKeys.self)
+        vertexColors=try c.decode(ModelVertexColorUsage.self,forKey:.vertexColors);normalEncoding=try c.decode(ModelNormalTextureEncoding.self,forKey:.normalEncoding)
+        opaqueDiffuseMaterialIDs=try c.decodeIfPresent([String].self,forKey:.opaqueDiffuseMaterialIDs)
+        alphaCutoutMaterialIDs=try c.decodeIfPresent([String].self,forKey:.alphaCutoutMaterialIDs)
     }
 }
 /// An explicit step change between mutually exclusive original DAE nodes.
@@ -201,6 +213,11 @@ public struct ModelScene3D: Codable, Equatable, Sendable {
                 guard (1...128).contains(ids.count),Set(ids).count==ids.count,
                       ids.allSatisfy({PluginProtocolRules.text($0,maximum:160) && $0 == $0.trimmingCharacters(in:.whitespacesAndNewlines) && sourceIDs.contains($0)}) else { throw VideoError.invalid("不透明漫反射须明确指定1至128个不重复的原DAE材质标识") }
             }
+            if let ids=instance.materialInterpretation?.alphaCutoutMaterialIDs {
+                let sourceIDs=Set(instance.resource.inspection.materials.map(\.id))
+                guard (1...128).contains(ids.count),Set(ids).count==ids.count,
+                      ids.allSatisfy({PluginProtocolRules.text($0,maximum:160) && $0 == $0.trimmingCharacters(in:.whitespacesAndNewlines) && sourceIDs.contains($0)}) else { throw VideoError.invalid("透明裁切须明确指定1至128个不重复的原DAE材质标识") }
+            }
             if let assets {
                 guard assets.first(where:{$0.id==instance.resource.model.assetID})?.mediaType == "model3d" else { throw VideoError.invalid("三维实例须绑定已入库的真实模型类型") }
                 for texture in instance.resource.textures.values {
@@ -302,5 +319,11 @@ public enum ModelScene3DSchema {
         "ModelCamera3D":"position:ModelVector3 target:ModelVector3 up:ModelVector3 verticalFieldOfViewDegrees:n near:n far:n",
         "ModelLight3D":"id:s kind:ModelLightKind color:s intensity:n transform:ModelTransform3D",
         "ModelScene3D":"version:i instances:[ModelInstance3D] camera:ModelCamera3D lights:[ModelLight3D] transformTracks:[ModelTransformTrack] jointTracks:[ModelJointTrack]"
+    ]
+}
+/// Host/game12 only. Keep game9/10/11 material records byte-for-byte unchanged.
+public enum ModelAlphaCutoutSchema {
+    public static let records:[String:String] = [
+        "ModelMaterialInterpretation":"vertexColors:ModelVertexColorUsage normalEncoding:ModelNormalTextureEncoding opaqueDiffuseMaterialIDs?:[s] alphaCutoutMaterialIDs?:[s]"
     ]
 }

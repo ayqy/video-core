@@ -119,7 +119,7 @@ public final class PluginRPCServer:@unchecked Sendable {
         let raster=try resources(input.assets).bindingSpeech(input.props.voiceBinding)
         guard let scene=input.props.modelScene3D else{return raster}
         guard PluginInputCompatibility.supportsModelBank(pluginID:descriptor.pluginID,inputSchema:descriptor.inputSchemaVersion),let reference=input.modelBankReference else {
-            throw VideoError.permission("只有schema9/schema10/schema11游戏服务可绑定完整三维字节库")
+            throw VideoError.permission("只有schema9/schema10/schema11/schema12游戏服务可绑定完整三维字节库")
         }
         let snapshot=try modelBanks.snapshot(reference:reference,invocation:input.invocation,scene:scene,durationFrames:input.props.durationFrames)
         // Keep the exact value-semantic snapshot outside the replaceable store;
@@ -130,7 +130,7 @@ public final class PluginRPCServer:@unchecked Sendable {
         if let operation=request.modelBankOperation {
             guard PluginInputCompatibility.supportsModelBank(pluginID:descriptor.pluginID,inputSchema:descriptor.inputSchemaVersion),request.method == .validate,
                   request.input==nil,request.invocation==nil,request.taskID==nil else {
-                throw VideoError.permission("三维字节操作仅用于schema9/schema10/schema11游戏服务，且不能夹带其它请求")
+                throw VideoError.permission("三维字节操作仅用于schema9/schema10/schema11/schema12游戏服务，且不能夹带其它请求")
             }
             try bind(operation.invocation)
             lock.lock();let available = !closing;lock.unlock()

@@ -137,9 +137,9 @@ final class PluginProtocolTests:XCTestCase {
         XCTAssertEqual(descriptor.inputSchema.object?["$defs"]?.object?["KnowledgePayoffMatrix"], current["KnowledgePayoffMatrix"])
     }
     func testPublicationSchemaSelectionUsesCurrentDefaultsAndRetainsExplicitLegacyRequests() throws {
-        XCTAssertEqual(try PluginInputCompatibility.publicationSchema(pluginID: "video.game"), 11)
+        XCTAssertEqual(try PluginInputCompatibility.publicationSchema(pluginID: "video.game"), 12)
         XCTAssertEqual(try PluginInputCompatibility.publicationSchema(pluginID: "video.cartoon"), 8)
-        for version in [1, 2, 3, 5, 6, 7, 8, 9, 10, 11] {
+        for version in [1, 2, 3, 5, 6, 7, 8, 9, 10, 11, 12] {
             XCTAssertEqual(try PluginInputCompatibility.publicationSchema(pluginID: "video.game", requested: String(version)), version)
         }
         for version in [1, 4, 5, 6, 7, 8] {
@@ -154,7 +154,31 @@ final class PluginProtocolTests:XCTestCase {
         XCTAssertThrowsError(try PluginInputCompatibility.publicationSchema(pluginID: "video.cartoon", requested: "3"))
         XCTAssertThrowsError(try PluginInputCompatibility.publicationSchema(pluginID: "video.cartoon", requested: "9"))
         XCTAssertThrowsError(try PluginInputCompatibility.publicationSchema(pluginID: "video.cartoon", requested: "10"))
-        XCTAssertThrowsError(try PluginInputCompatibility.publicationSchema(pluginID: "video.game", requested: "12"))
+        XCTAssertThrowsError(try PluginInputCompatibility.publicationSchema(pluginID: "video.game", requested: "13"))
+        XCTAssertThrowsError(try PluginInputCompatibility.publicationSchema(pluginID: "video.cartoon", requested: "12"))
+    }
+    func testGameTwelveDiscoversBoundedAlphaCutoutWithoutChangingEarlierMaterialSchemas()throws {
+        let frozen=try Codec.decoder().decode(AgentValue.self,from:Data(##"{"type":"object","properties":{"vertexColors":{"$ref":"#/$defs/ModelVertexColorUsage"},"normalEncoding":{"$ref":"#/$defs/ModelNormalTextureEncoding"},"opaqueDiffuseMaterialIDs":{"type":"array","items":{"type":"string"}}},"required":["vertexColors","normalEncoding"],"additionalProperties":false}"##.utf8))
+        for schema in [9,10,11] {
+            let definitions=PluginRPCSchemas.definitions(inputSchemaVersion:schema,pluginID:"video.game")
+            XCTAssertEqual(try Codec.data(XCTUnwrap(definitions["ModelMaterialInterpretation"])),try Codec.data(frozen),"旧材质schema保持精确原字节")
+            XCTAssertNil(definitions["ModelMaterialInterpretation"]?.object?["properties"]?.object?["alphaCutoutMaterialIDs"])
+        }
+        let twelve=PluginRPCSchemas.definitions(inputSchemaVersion:12,pluginID:"video.game"),host=AgentSchemas.definitions()
+        let field=try XCTUnwrap(twelve["ModelMaterialInterpretation"]?.object?["properties"]?.object?["alphaCutoutMaterialIDs"]?.object)
+        XCTAssertEqual(field["minItems"],.number(1));XCTAssertEqual(field["maxItems"],.number(128));XCTAssertEqual(field["uniqueItems"],.boolean(true))
+        XCTAssertEqual(field["items"]?.object?["maxLength"],.number(160))
+        XCTAssertNotNil(twelve["ModelInstance3D"]?.object?["properties"]?.object?["nodeVariants"])
+        XCTAssertNotNil(twelve["ModelScene3D"]?.object?["properties"]?.object?["actions"])
+        XCTAssertEqual(twelve["ModelMaterialInterpretation"]?.object?["additionalProperties"],.boolean(false))
+        XCTAssertEqual(twelve["ModelMaterialInterpretation"]?.object?["required"],.array([.string("vertexColors"),.string("normalEncoding")]))
+        if case .array(let alternatives)?=host["ModelMaterialInterpretation"]?.object?["properties"]?.object?["alphaCutoutMaterialIDs"]?.object?["anyOf"] {
+            XCTAssertEqual(alternatives.first?.object?["minItems"],.number(1));XCTAssertEqual(alternatives.first?.object?["uniqueItems"],.boolean(true))
+        }else{XCTFail("Host应声明同一可选有界裁切列表")}
+        XCTAssertNil(PluginRPCSchemas.definitions(inputSchemaVersion:8,pluginID:"video.cartoon")["ModelMaterialInterpretation"])
+        let descriptor=PluginDescription(pluginID:"video.game",capabilityID:"game.simulate",version:"1.6.1",inputSchemaVersion:12)
+        XCTAssertFalse(descriptor.filesystemAccess);XCTAssertFalse(descriptor.networkAccess)
+        XCTAssertNotNil(descriptor.inputSchema.object?["properties"]?.object?["modelBankOperation"])
     }
     func testRuleTableRequiresExplicitSchemaFiveWithoutChangingEarlierShapes() throws {
         var simulation=Simulation()

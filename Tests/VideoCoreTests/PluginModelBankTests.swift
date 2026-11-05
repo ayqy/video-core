@@ -6,13 +6,14 @@ final class PluginModelBankTests:XCTestCase {
     private struct Fixture {
         let invocation:PluginInvocation;let scene:ModelScene3D;let manifest:PluginModelBankManifest;let assets:[String:Data]
     }
-    private func fixture() throws -> Fixture {
+    private func fixture(withMaterial:Bool=false) throws -> Fixture {
         let invocation=PluginInvocation(workspaceID:"workspace",projectID:"project",revisionID:"revision",revisionDigest:String(repeating:"a",count:64),jobID:"original-job",invocationID:"invocation",budgetReference:"original-quote",currency:"CNY",deadlineUnixTime:now.timeIntervalSince1970+60)
         // Authored rule-test geometry and a real tiny PNG. No game media or appearance claim.
+        let material=withMaterial ? "<library_effects><effect id=\"surfaceEffect\"><profile_COMMON><technique sid=\"common\"><lambert><diffuse><color>1 1 1 1</color></diffuse></lambert></technique></profile_COMMON></effect></library_effects><library_materials><material id=\"bodyMaterial\"><instance_effect url=\"#surfaceEffect\"/></material></library_materials>":""
         let dae=Data("""
         <COLLADA xmlns="http://www.collada.org/2005/11/COLLADASchema" version="1.4.1">
         <asset><unit meter="1"/><up_axis>Y_UP</up_axis></asset>
-        <library_images><image id="body"><init_from>body.png</init_from></image></library_images>
+        <library_images><image id="body"><init_from>body.png</init_from></image></library_images>\(material)
         <library_geometries><geometry id="triangle"><mesh><source id="positions"><float_array id="position-array" count="9">0 0 0 1 0 0 0 1 0</float_array></source></mesh></geometry></library_geometries>
         <library_visual_scenes><visual_scene id="stage"><node id="hip" sid="hip" type="JOINT"/><node id="faceA"/><node id="faceB"/></visual_scene></library_visual_scenes>
         <scene><instance_visual_scene url="#stage"/></scene></COLLADA>
@@ -208,7 +209,8 @@ final class PluginModelBankTests:XCTestCase {
         current.props.modelScene3D=model
         XCTAssertNoThrow(try PluginProtocolRules.validate(current,capabilityID:"game.simulate",inputSchemaVersion:10,now:now))
         XCTAssertThrowsError(try PluginProtocolRules.validate(current,capabilityID:"game.simulate",inputSchemaVersion:9,now:now))
-        XCTAssertThrowsError(try PluginProtocolRules.validate(current,capabilityID:"game.simulate",inputSchemaVersion:12,now:now))
+        XCTAssertNoThrow(try PluginProtocolRules.validate(current,capabilityID:"game.simulate",inputSchemaVersion:12,now:now))
+        XCTAssertThrowsError(try PluginProtocolRules.validate(current,capabilityID:"game.simulate",inputSchemaVersion:13,now:now))
         XCTAssertThrowsError(try PluginProtocolRules.validate(current,capabilityID:"cartoon.animate",inputSchemaVersion:10,now:now))
         XCTAssertEqual(try current.dependencyFingerprints(),try legacy.dependencyFingerprints())
         XCTAssertEqual(try PluginModelBankManifest(scene:model,durationFrames:21),f.manifest)
@@ -231,7 +233,8 @@ final class PluginModelBankTests:XCTestCase {
         let f=try fixture(),operation=operation(.begin,f)
         let request=PluginRPCRequest(requestID:"register-ten",method:.validate,modelBankOperation:operation)
         XCTAssertNoThrow(try PluginProtocolRules.validate(request,pluginID:"video.game",inputSchemaVersion:10,now:now))
-        for schema in [8,12] {XCTAssertThrowsError(try PluginProtocolRules.validate(request,pluginID:"video.game",inputSchemaVersion:schema,now:now))}
+        for schema in [8,13] {XCTAssertThrowsError(try PluginProtocolRules.validate(request,pluginID:"video.game",inputSchemaVersion:schema,now:now))}
+        XCTAssertNoThrow(try PluginProtocolRules.validate(request,pluginID:"video.game",inputSchemaVersion:12,now:now))
         XCTAssertThrowsError(try PluginProtocolRules.validate(request,pluginID:"video.cartoon",inputSchemaVersion:10,now:now))
         var mixed=request;mixed.method = .execute
         XCTAssertThrowsError(try PluginProtocolRules.validate(mixed,pluginID:"video.game",inputSchemaVersion:10,now:now))
@@ -245,15 +248,15 @@ final class PluginModelBankTests:XCTestCase {
         XCTAssertEqual(PluginProtocolRules.maximumRequestBytes,16*1024*1024)
         XCTAssertEqual(PluginProtocolRules.maximumTotalImagePixels,48_000_000)
     }
-    func testOnlyGameElevenAcceptsExplicitNodeVariantsWithoutChangingOriginalBank()throws {
+    func testGameElevenAndTwelveAcceptExplicitNodeVariantsWithoutChangingOriginalBank()throws {
         let f=try fixture(),store=PluginModelBankStore(),receipt=try upload(store,f)
         var input=frame(f,reference:receipt.reference)
         let legacy=try XCTUnwrap(input.props.modelScene3D)
         XCTAssertNoThrow(try PluginProtocolRules.validate(input,capabilityID:"game.simulate",inputSchemaVersion:11,now:now))
         input.props.modelScene3D!.instances[0].nodeVariants=[.init(id:"expression",nodeIDs:["faceA","faceB"],defaultNodeID:"faceA",keyframes:[.init(frame:5,nodeID:"faceB")])]
         let changed=try XCTUnwrap(input.props.modelScene3D)
-        for schema in [8,9,10,12] {XCTAssertThrowsError(try PluginProtocolRules.validate(input,capabilityID:"game.simulate",inputSchemaVersion:schema,now:now))}
-        XCTAssertNoThrow(try PluginProtocolRules.validate(input,capabilityID:"game.simulate",inputSchemaVersion:11,now:now))
+        for schema in [8,9,10,13] {XCTAssertThrowsError(try PluginProtocolRules.validate(input,capabilityID:"game.simulate",inputSchemaVersion:schema,now:now))}
+        for schema in [11,12] {XCTAssertNoThrow(try PluginProtocolRules.validate(input,capabilityID:"game.simulate",inputSchemaVersion:schema,now:now))}
         input.props.modelScene3D!.version=2;input.props.modelScene3D!.actions=[.init(id:"visible",kind:.show,instanceID:"actor",startFrame:0,endFrame:1)]
         XCTAssertNoThrow(try PluginProtocolRules.validate(input,capabilityID:"game.simulate",inputSchemaVersion:11,now:now))
         XCTAssertEqual(try PluginModelBankManifest(scene:changed,durationFrames:21),f.manifest)
@@ -275,6 +278,25 @@ final class PluginModelBankTests:XCTestCase {
         XCTAssertNotNil(eleven["ModelScene3D"]?.object?["properties"]?.object?["actions"])
         XCTAssertEqual(eleven["ModelNodeVariantGroup"]?.object?["additionalProperties"],.boolean(false))
         XCTAssertEqual(eleven["ModelNodeVariantGroup"]?.object?["properties"]?.object?["nodeIDs"]?.object?["uniqueItems"],.boolean(true))
+    }
+    func testOnlyGameTwelveAcceptsExplicitAlphaCutoutAndKeepsOriginalBank()throws {
+        let f=try fixture(withMaterial:true),store=PluginModelBankStore(),receipt=try upload(store,f)
+        var input=frame(f,reference:receipt.reference)
+        let legacy=try XCTUnwrap(input.props.modelScene3D)
+        for schema in [9,10,11,12] {XCTAssertNoThrow(try PluginProtocolRules.validate(input,capabilityID:"game.simulate",inputSchemaVersion:schema,now:now))}
+        input.props.modelScene3D!.instances[0].materialInterpretation = .init(opaqueDiffuseMaterialIDs:["bodyMaterial"],alphaCutoutMaterialIDs:["bodyMaterial"])
+        for schema in [8,9,10,11,13] {XCTAssertThrowsError(try PluginProtocolRules.validate(input,capabilityID:"game.simulate",inputSchemaVersion:schema,now:now))}
+        XCTAssertThrowsError(try PluginProtocolRules.validate(input,capabilityID:"cartoon.animate",inputSchemaVersion:8,now:now))
+        XCTAssertNoThrow(try PluginProtocolRules.validate(input,capabilityID:"game.simulate",inputSchemaVersion:12,now:now))
+        input.props.modelScene3D!.instances[0].nodeVariants=[.init(id:"expression",nodeIDs:["faceA","faceB"],defaultNodeID:"faceA")]
+        input.props.modelScene3D!.version=2;input.props.modelScene3D!.actions=[.init(id:"visible",kind:.show,instanceID:"actor",startFrame:0,endFrame:1)]
+        XCTAssertNoThrow(try PluginProtocolRules.validate(input,capabilityID:"game.simulate",inputSchemaVersion:12,now:now))
+        let changed=try XCTUnwrap(input.props.modelScene3D)
+        XCTAssertEqual(try PluginModelBankManifest(scene:changed,durationFrames:21),f.manifest)
+        XCTAssertEqual(try store.snapshot(reference:receipt.reference,invocation:f.invocation,scene:changed,durationFrames:21,now:now).assets,f.assets)
+        XCTAssertNotEqual(try changed.contentDigest(durationFrames:21),try legacy.contentDigest(durationFrames:21))
+        XCTAssertEqual(try input.dependencyFingerprints(),f.manifest.dependencyFingerprints)
+        XCTAssertNoThrow(try PluginProtocolRules.validate(PluginRPCRequest(requestID:"twelve-bank",method:.validate,modelBankOperation:operation(.begin,f)),pluginID:"video.game",inputSchemaVersion:12,now:now))
     }
     func testNativeV2VisualPropsRemoveKnowledgeWithoutMutatingHostOrLegacyWire()throws {
         let f=try fixture(),store=PluginModelBankStore(),receipt=try upload(store,f)
