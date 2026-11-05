@@ -93,12 +93,32 @@ public struct ModelLight3D: Codable, Equatable, Identifiable, Sendable {
 public struct ModelScene3D: Codable, Equatable, Sendable {
     public var version: Int; public var instances: [ModelInstance3D]; public var camera: ModelCamera3D; public var lights: [ModelLight3D]
     public var transformTracks: [ModelTransformTrack]; public var jointTracks: [ModelJointTrack]
-    public init(version: Int = 1, instances: [ModelInstance3D], camera: ModelCamera3D, lights: [ModelLight3D], transformTracks: [ModelTransformTrack] = [], jointTracks: [ModelJointTrack] = []) { self.version=version; self.instances=instances; self.camera=camera; self.lights=lights; self.transformTracks=transformTracks; self.jointTracks=jointTracks }
+    /// Explicit v2 only. Nil preserves the exact v1 wire representation.
+    /// These are operations on actual native instances and original joints,
+    /// never two-dimensional stand-ins for a rule event.
+    public var actions: [ModelStoryAction3D]?
+    public init(version: Int = 1, instances: [ModelInstance3D], camera: ModelCamera3D, lights: [ModelLight3D], transformTracks: [ModelTransformTrack] = [], jointTracks: [ModelJointTrack] = [], actions: [ModelStoryAction3D]? = nil) { self.version=version; self.instances=instances; self.camera=camera; self.lights=lights; self.transformTracks=transformTracks; self.jointTracks=jointTracks; self.actions=actions }
+    private enum CodingKeys: String, CodingKey { case version,instances,camera,lights,transformTracks,jointTracks,actions }
+    public init(from decoder: Decoder) throws {
+        try ModelStoryDecoding3D.keys(decoder,required:["version","instances","camera","lights","transformTracks","jointTracks"],optional:["actions"])
+        let c=try decoder.container(keyedBy:CodingKeys.self)
+        version=try c.decode(Int.self,forKey:.version);instances=try c.decode([ModelInstance3D].self,forKey:.instances)
+        camera=try c.decode(ModelCamera3D.self,forKey:.camera);lights=try c.decode([ModelLight3D].self,forKey:.lights)
+        transformTracks=try c.decode([ModelTransformTrack].self,forKey:.transformTracks);jointTracks=try c.decode([ModelJointTrack].self,forKey:.jointTracks)
+        if c.contains(.actions) {
+            guard version==2,!(try c.decodeNil(forKey:.actions)) else {throw VideoError.invalid("三维动作须显式使用v2，旧v1不接受隐藏动作、空值或新字段")}
+            actions=try c.decode([ModelStoryAction3D].self,forKey:.actions)
+            guard !(actions?.isEmpty ?? true) else {throw VideoError.invalid("三维v2须有实际原生动作")}
+        } else {
+            guard version==1 else {throw VideoError.invalid("三维v2必须声明实际原生动作；未知版本不会降级")}
+            actions=nil
+        }
+    }
     public var assetIDs: Set<String> { instances.reduce(into:Set<String>()) { $0.formUnion($1.resource.assetIDs) } }
     private struct DigestInput: Encodable { let scene: ModelScene3D; let durationFrames: Int }
     public func contentDigest(durationFrames: Int) throws -> String { try validate(durationFrames:durationFrames);return try Codec.digest(DigestInput(scene:self,durationFrames:durationFrames)) }
     public func validate(durationFrames: Int, assets: [Asset]? = nil) throws {
-        guard version==1,(1...54000).contains(durationFrames),(1...128).contains(instances.count),(1...16).contains(lights.count),transformTracks.count<=128,jointTracks.count<=4096,
+        guard ((version==1 && actions==nil) || (version==2 && !(actions?.isEmpty ?? true))),(1...54000).contains(durationFrames),(1...128).contains(instances.count),(1...16).contains(lights.count),transformTracks.count<=128,jointTracks.count<=4096,
               Set(instances.map(\.id)).count==instances.count,Set(lights.map(\.id)).count==lights.count,Set(instances.map(\.id)).isDisjoint(with:Set(lights.map(\.id))) else { throw VideoError.invalid("三维场景版本、实例、灯光数量或标识无效") }
         try camera.validate()
         var bindings: [String:ModelAssetReference]=[:]
@@ -136,6 +156,7 @@ public struct ModelScene3D: Codable, Equatable, Sendable {
             try Self.validate(track.keyframes,durationFrames:durationFrames);totalFrames+=track.keyframes.count
         }
         guard totalFrames<=65536 else { throw VideoError.invalid("三维动作关键帧超过总上限") }
+        if let actions {try ModelStoryActionRules3D.validateVerifiedModel(actions,model:self,durationFrames:durationFrames)}
     }
     private static func validate(_ frames: [ModelTransformKeyframe], durationFrames: Int) throws {
         guard (1...4096).contains(frames.count),frames.first?.frame==0,frames.last?.frame==durationFrames-1 else { throw VideoError.invalid("三维轨道须明确覆盖完整源帧区间") }
@@ -155,9 +176,14 @@ public struct ModelScene3D: Codable, Equatable, Sendable {
             guard instance.resource.inspection.jointNames.contains(jointName) else { throw VideoError.invalid("采样关节不在实际DAE骨架") }
             keys=jointTracks.first{$0.instanceID==instanceID && $0.jointName==jointName}?.keyframes ?? []
         } else { keys=transformTracks.first{$0.instanceID==instanceID}?.keyframes ?? [] }
-        guard let first=keys.first else { return jointName==nil ? instance.transform:.init() }
+        return Self.sample(keys:keys,fallback:jointName==nil ? instance.transform:.init(),sourceFrame:sourceFrame)
+    }
+    /// Internal sampling of already validated original tracks. Action validation
+    /// uses this primitive instead of recursively validating the whole model.
+    static func sample(keys:[ModelTransformKeyframe],fallback:ModelTransform3D,sourceFrame:Int)->ModelTransform3D {
+        guard let first=keys.first else {return fallback}
         if sourceFrame<=first.frame {return first.transform}
-        guard let index=keys.firstIndex(where:{$0.frame>=sourceFrame}) else { return keys.last!.transform }
+        guard let index=keys.firstIndex(where:{$0.frame>=sourceFrame}) else {return keys.last!.transform}
         let a=keys[index-1],b=keys[index]
         return .mix(a.transform,b.transform,Double(sourceFrame-a.frame)/Double(b.frame-a.frame))
     }
@@ -165,7 +191,10 @@ public struct ModelScene3D: Codable, Equatable, Sendable {
 public enum ModelScene3DRules {
     public static func validate(scene: Scene, assets: [Asset]? = nil) throws {
         guard let model=scene.modelScene3D else {return}
-        guard scene.kind == .simulation,scene.assetID==nil,scene.gameWorld==nil,scene.classicArtwork==nil,scene.cartoonRig==nil,scene.cartoonPresenter==nil,scene.cartoonPerformance==nil,scene.storyActions==nil,scene.storyCausality==nil,scene.simulationPresentation==nil else { throw VideoError.invalid("三维模型场景须独立绑定仿真镜头，不能混旧二维地图、图集或二维过程动作") }
+        guard scene.kind == .simulation,scene.assetID==nil,scene.gameWorld==nil,scene.classicArtwork==nil,scene.cartoonRig==nil,scene.cartoonPresenter==nil,scene.cartoonPerformance==nil,scene.storyActions==nil,(scene.storyCausality==nil || model.version==2),scene.simulationPresentation==nil else { throw VideoError.invalid("三维模型场景须独立绑定仿真镜头，不能混旧二维地图、图集或二维过程动作；真实因果只支持显式三维v2") }
+        if model.version==2 {
+            guard scene.sourceStartFrame==0,(scene.sourceEndFrame==nil || scene.sourceEndFrame==scene.durationFrames),scene.speed==1,scene.pauseFrames==0 else {throw VideoError.invalid("三维v2动作使用完整源帧轴，尚不支持裁切、重定时或附加停顿")}
+        }
         guard Set((scene.layers ?? []).map(\.id)).isDisjoint(with:Set(model.instances.map(\.id))) else {throw VideoError.invalid("三维实例与叠加图层标识不能冲突")}
         try model.validate(durationFrames:scene.durationFrames,assets:assets)
     }
@@ -173,7 +202,7 @@ public enum ModelScene3DRules {
         guard let previous=old.modelScene3D,previous.instances.contains(where:{$0.locked}) else {return}
         guard let next=new.modelScene3D,old.durationFrames==new.durationFrames,old.speed==new.speed,old.pauseFrames==new.pauseFrames else { throw VideoError.permission("请先解锁三维实例，再移除场景或改动作时基") }
         for item in previous.instances where item.locked {
-            guard next.instances.first(where:{$0.id==item.id})==item,previous.transformTracks.filter({$0.instanceID==item.id})==next.transformTracks.filter({$0.instanceID==item.id}),previous.jointTracks.filter({$0.instanceID==item.id})==next.jointTracks.filter({$0.instanceID==item.id}) else { throw VideoError.permission("已锁定三维实例的资源、变换或骨骼动作不能改变") }
+            guard next.instances.first(where:{$0.id==item.id})==item,previous.transformTracks.filter({$0.instanceID==item.id})==next.transformTracks.filter({$0.instanceID==item.id}),previous.jointTracks.filter({$0.instanceID==item.id})==next.jointTracks.filter({$0.instanceID==item.id}),(previous.actions ?? []).filter({$0.instanceID==item.id})==(next.actions ?? []).filter({$0.instanceID==item.id}) else { throw VideoError.permission("已锁定三维实例的资源、变换、骨骼动作或原生表现不能改变") }
         }
     }
 }

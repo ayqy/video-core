@@ -767,5 +767,203 @@ class KnowledgeStoryTests(unittest.TestCase):
             with self.assertRaises(KnowledgeStoryError):compile_presentation(project,plan,recorded)
 
 
+def native_fixture():
+    """Literal author-boundary fixture, never a parsed/rendered native mesh.
+
+    The retained operation payload is the object under test. Only the real
+    Core dry-run can establish original DAE bytes or physical track coverage.
+    """
+    project, plan, recorded, source = fixture('pencil')
+    old = StoryPlan.from_dict(plan['story'])
+    details = old.stage('details')
+    for row in details['actions']:
+        row['verb'] = 'react'
+        row.pop('recipient_id', None)
+        if row['id'] == 'deposit':
+            row['event_refs'][0]['rule_id'] = 'offer'
+    story = StoryPlan(old.to_dict()['brief'])
+    for stage, value in [('cast', old.stage('cast')), ('outline', old.stage('outline')),
+                         ('details', details), ('shots', old.stage('shots'))]:
+        story = story.accept(stage, value, story.fingerprint)
+    plan['story'] = story.to_dict()
+    plan['target']['mode'] = 'model3d'
+    plan['anchors'] = {}
+    plan['actors'] = [dict(actor_id='weaver', subject_id=key) for key in ('person-weaver', 'result-weaver')]
+    plan['actors'].append(dict(actor_id='grower', subject_id='person-grower'))
+    def transform(x=0, rotation=0):
+        return dict(translation=dict(x=x, y=0, z=0), rotation=dict(x=0, y=0, z=rotation, w=(1-rotation*rotation)**.5), scale=dict(x=1,y=1,z=1))
+    operations = [
+        dict(id='inspect', kind='speak', instanceID='person-weaver', startFrame=10, endFrame=40,
+             requires=[], anchor=dict(x=0, y=80, z=0), text='你会怎么选？'),
+        dict(id='deposit', kind='move', instanceID='person-weaver', startFrame=130, endFrame=160, requires=['inspect']),
+        dict(id='money', kind='hide', instanceID='result-weaver', startFrame=250, endFrame=280, requires=['deposit']),
+        dict(id='changed', kind='pose', instanceID='person-weaver', startFrame=285, endFrame=310,
+             requires=['money'], jointNames=['original-hip']),
+        dict(id='kept', kind='speak', instanceID='person-grower', startFrame=375, endFrame=410,
+             requires=[], anchor=dict(x=0,y=80,z=0), text='这次我先保留。'),
+        dict(id='branch-reset', kind='show', instanceID='result-weaver', startFrame=360, endFrame=361, requires=[]),
+    ]
+    for beat, operation in zip(plan['beats'], operations):
+        beat.update(subject_id=operation['instanceID'], visual=dict(kind=operation['kind'], action_id=operation['id']))
+    plan['beats'][1]['effect'] = dict(kind='performedAction', actor_id='weaver', action_key='offer')
+    plan['beats'][2]['effect'] = dict(kind='stateChange', actor_id='weaver', rule_id='swap', from_state_id='open', to_state_id='agreed')
+    scene = project['revisions'][-1]['scenes'][0]
+    scene['kind'] = '规则模拟'
+    scene['layers'] = []
+    scene['modelScene3D'] = dict(version=2,
+        instances=[dict(id=key, name=key, locked=False,
+            resource=dict(model=dict(assetID='synthetic-dae-reference',sha256='d'*64,bytes=128,fileExtension='dae'),
+                          inspection=dict(jointNames=['original-hip']),textures={}))
+            for key in ('person-weaver','person-grower','result-weaver','pool')],
+        camera=dict(position=dict(x=0,y=2,z=5),target=dict(x=0,y=0,z=0)),lights=[],
+        transformTracks=[dict(instanceID='person-weaver',keyframes=[dict(frame=frame,transform=transform(x=x))
+            for frame,x in ((0,0),(130,0),(159,1),(479,1))])],
+        jointTracks=[dict(instanceID='person-weaver',jointName='original-hip',keyframes=[dict(frame=frame,transform=transform(rotation=value))
+            for frame,value in ((0,0),(285,0),(309,.25),(479,.25))])],actions=operations)
+    return project, plan, recorded, source
+
+
+class NativeKnowledgeStoryTests(unittest.TestCase):
+    def test_legacy_game_and_pencil_complete_payloads_match_frozen_original_goldens(self):
+        expected = {
+            ('game','plan'):'f8ed9f771928d23d4475005fb3206d6f899b340a5a04a8957482b5e1423cf11e',
+            ('game','cost'):'11a99826d48a66d861be77d17a8d68f00c09b2d15b24f0bbc07d61cef2a61a37',
+            ('game','rule-amount'):'79affee87350645f7c65e9168c4d857172a5678f481e17099d951a9a0ccdbdec',
+            ('game','rule-condition'):'656a38e79330934ce5d41436626737cbcd9b0777e674c92b2e6b5fd0bccfdbe8',
+            ('pencil','plan'):'a08961477904346299b2f334131599aecf7dbb7d9a40455289a6b13f91f600b3',
+            ('pencil','cost'):'d1c92df161f72569c124020e6a3ec6c664bc0ac98a20764e271bb274ea332b26',
+            ('pencil','rule-amount'):'cb5c556704e1727da0fe603de74e2bbcd64ec9bc9427e2d2f9772f7627b60325',
+            ('pencil','rule-condition'):'bb95a45c14c2153967a32e4b10ab94aaa08542e9430ad471398004984931325a',
+        }
+        # Captured independently from fe1a26b's original adapter before this
+        # extension, including complete edits, models, observations and specs.
+        for mode in ('game','pencil'):
+            for label,factory in [('plan',fixture),('cost',cost_fixture),('rule-amount',lambda m:rule_fixture(m,'amount')),
+                                  ('rule-condition',lambda m:rule_fixture(m,'condition'))]:
+                project,plan,recorded,_=factory(mode)
+                self.assertEqual(_digest(compile_presentation(project,plan,recorded)),expected[(mode,label)])
+
+    def test_native_compile_preserves_full_actual_model_and_binds_only_existing_operations(self):
+        project, plan, recorded, source = native_fixture()
+        scene = project['revisions'][-1]['scenes'][0]
+        scene['voice'] = dict(assetID='original-voice', textDigest='a'*64, durationFrames=480, listened=True)
+        scene['captions'] = [dict(startFrame=0,endFrame=480,text='完整原字幕',confirmed=True)]
+        before = deepcopy((project,plan,recorded,source))
+        result = compile_presentation(project,plan,recorded)
+        entry = result['story_spec']['scenes'][0]
+        self.assertEqual(entry['mode'],'model3d')
+        self.assertNotIn('actions',entry)
+        self.assertEqual(entry['model_scene_3d'],scene['modelScene3D'])
+        replacement = result['edit_body']['edits'][0]['replaceScene']['_1']
+        self.assertEqual(replacement['modelScene3D'],scene['modelScene3D'])
+        self.assertEqual(replacement['storyCausality']['sources'],recorded['sources'])
+        self.assertEqual(len(replacement['storyCausality']['bindings']),5)
+        self.assertEqual(len(replacement['modelScene3D']['actions']),6,'未绑定的明确原生分支复位不能被编译器静默丢掉')
+        for key in ('storyActions','gameWorld','classicArtwork','cartoonRig','cartoonPresenter'):
+            self.assertNotIn(key,replacement)
+        self.assertEqual(replacement['modelScene3D']['actions'][0]['text'],'你会怎么选？')
+        self.assertEqual(replacement['modelScene3D']['actions'][0]['anchor']['y'],80,'本地原单位不能转换成二维归一化点或猜成米')
+        self.assertEqual(replacement['modelScene3D']['actions'][3]['jointNames'],['original-hip'])
+        self.assertFalse(replacement['voice']['listened']);self.assertFalse(replacement['captions'][0]['confirmed'])
+        self.assertEqual((project,plan,recorded,source),before)
+
+    def test_native_record_and_apply_use_same_source_queries_dry_run_then_one_cas(self):
+        project, plan, recorded, source = native_fixture()
+        source_spy = NativeBoundary(source,recorded,source)
+        self.assertEqual(record_sources(source,plan,source_spy),recorded)
+        self.assertEqual([call[0] for call in source_spy.calls],['edit apply','edit apply','projects list','knowledge compare'])
+        spy = NativeBoundary(project,recorded,source)
+        result = apply_presentation(project,plan,recorded,spy)
+        self.assertTrue(result['changed'])
+        self.assertEqual([call[0] for call in spy.calls],['projects list','edit apply','edit apply'])
+        self.assertEqual([call[2] for call in spy.calls],[False,True,False])
+        self.assertEqual(spy.calls[1][1],spy.calls[2][1])
+        self.assertTrue(spy.calls[2][1]['request_id'].startswith('knowledge-model3d-v1-'))
+        self.assertEqual(spy.project['revisions'][-1]['scenes'][0]['modelScene3D'],project['revisions'][-1]['scenes'][0]['modelScene3D'])
+
+    def test_native_binding_cannot_change_existing_identity_kind_window_instance_or_requires(self):
+        changes = [lambda p:p['beats'][0]['visual'].update(action_id='missing'),
+                   lambda p:p['beats'][0]['visual'].update(kind='show'),
+                   lambda p:p['beats'][0].update(subject_id='person-grower'),
+                   lambda p:p['beats'][0].update(end_frame=41),
+                   lambda p:p['beats'][3].update(requires=[]),
+                   lambda p:p['beats'][0]['visual'].update(text='编译器添加的台词'),
+                   lambda p:p['anchors'].update(head=dict(x=.5,y=.5))]
+        for change in changes:
+            project,plan,recorded,_ = native_fixture();change(plan)
+            with self.subTest(change=change),self.assertRaises(KnowledgeStoryError):
+                compile_presentation(project,plan,recorded)
+
+    def test_native_move_or_pose_cannot_claim_deposit_transfer_payment_or_goods_delivery(self):
+        for kind in ('deposit','transfer','payment','delivery'):
+            project,plan,recorded,_ = native_fixture()
+            if kind == 'deposit':
+                plan['beats'][1]['effect'] = dict(kind=kind,from_actor_id='weaver')
+                StoryPlan.from_dict(plan['story'])
+                old=StoryPlan.from_dict(plan['story']);details=old.stage('details')
+                details['actions'][1]['event_refs'][0]['rule_id']='deposit'
+                story=StoryPlan(old.to_dict()['brief'])
+                for stage,value in [('cast',old.stage('cast')),('outline',old.stage('outline')),('details',details),('shots',old.stage('shots'))]:
+                    story=story.accept(stage,value,story.fingerprint)
+                plan['story']=story.to_dict()
+            elif kind == 'delivery':
+                plan['beats'][2]['effect'] = dict(kind=kind,actor_id='weaver',rule_id='swap',from_state_id='open',to_state_id='agreed',to_actor_id='grower')
+            else:
+                plan['beats'][2]['effect'] = dict(kind=kind,rule_id='swap',from_actor_id='weaver',to_actor_id='grower')
+            with self.subTest(kind=kind),self.assertRaisesRegex(KnowledgeStoryError,'do not implement'):
+                compile_presentation(project,plan,recorded)
+
+    def test_native_structural_boundary_rejects_unknown_fields_missing_real_tracks_and_bad_anchors(self):
+        changes = [lambda m:m.update(version=1),lambda m:m.pop('actions'),
+                   lambda m:m['actions'][0].update(quantity=2),
+                   lambda m:m['actions'][0]['anchor'].update(screenX=.5),
+                   lambda m:m['actions'][0]['anchor'].update(y=float('inf')),
+                   lambda m:m['actions'][0].update(text='字'*49),
+                   lambda m:m.update(transformTracks=[]),lambda m:m.update(jointTracks=[]),
+                   lambda m:m['actions'][3].update(jointNames=['invented']),
+                   lambda m:m['actions'][1].update(requires=['kept'])]
+        for change in changes:
+            project,plan,recorded,_ = native_fixture();change(project['revisions'][-1]['scenes'][0]['modelScene3D'])
+            with self.subTest(change=change),self.assertRaises(KnowledgeStoryError):
+                compile_presentation(project,plan,recorded)
+
+    def test_native_legacy_presentation_and_locked_scene_are_not_silently_replaced(self):
+        for field,value in [('gameWorld',{}),('classicArtwork',{}),('storyActions',[]),('simulationPresentation',{}),
+                            ('sourceEndFrame',479),('locked',True)]:
+            project,plan,recorded,_ = native_fixture();project['revisions'][-1]['scenes'][0][field]=value
+            with self.subTest(field=field),self.assertRaises(KnowledgeStoryError):
+                compile_presentation(project,plan,recorded)
+
+    def test_native_applied_sources_still_require_original_persisted_revision_and_core_dry_run(self):
+        project,plan,recorded,source = native_fixture()
+        spy=NativeBoundary(project,recorded,source)
+        spy.source['revisions'][0]['scenes'][0]['simulationRecording']['knowledgeTrace']['seed']=31
+        with self.assertRaises(KnowledgeStoryError):apply_presentation(project,plan,recorded,spy)
+        self.assertEqual([row[0] for row in spy.calls],['projects list'])
+        spy=NativeBoundary(project,recorded,source)
+        def reject_dry(command,body,dry):
+            if dry:
+                spy.calls.append((command,deepcopy(body),dry))
+                return dict(ok=False,state='error')
+            return spy(command,body,dry)
+        with self.assertRaisesRegex(KnowledgeStoryError,'native editor refused'):
+            apply_presentation(project,plan,recorded,reject_dry)
+        self.assertEqual([row[0] for row in spy.calls],['projects list','edit apply'])
+        self.assertEqual(len(spy.project['revisions']),1,'Core拒绝后不得落下一个伪造成功修订')
+
+    def test_native_reapplying_the_same_bound_operations_is_a_source_checked_noop(self):
+        project,plan,recorded,source = native_fixture()
+        spy=NativeBoundary(project,recorded,source)
+        apply_presentation(project,plan,recorded,spy)
+        latest=deepcopy(spy.project)
+        plan['target']['base_revision']=latest['revisions'][-1]['id']
+        spy.calls=[]
+        result=apply_presentation(latest,plan,recorded,spy)
+        self.assertFalse(result['changed'])
+        self.assertEqual(result['revision'],'target-v2')
+        self.assertEqual([row[0] for row in spy.calls],['projects list'])
+        self.assertEqual(spy.project,latest)
+
+
 if __name__=='__main__':
     unittest.main()

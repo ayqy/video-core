@@ -89,11 +89,46 @@ public struct StoryCausality: Codable, Equatable, Sendable {
     }
 }
 
+/// Rule-level facts needed from a real visual operation. This internal value
+/// has no 2D position and is never serialized into a project or plugin input.
+/// A three-dimensional operation cannot acquire money/delivery semantics by
+/// setting a quantity that its native renderer does not actually implement.
+private struct StoryCausalVisualEffect {
+    enum Kind:Equatable {case move,transfer,build,show,hide,speak,pose}
+    let id:String;let subjectID:String;let targetID:String?;let startFrame:Int;let endFrame:Int
+    let kind:Kind;let quantity:Int?;let nativeRequires:[String]?
+    init(_ action:StoryAction) {
+        id=action.id;subjectID=action.subjectID;targetID=action.targetID;startFrame=action.startFrame;endFrame=action.endFrame;quantity=action.quantity;nativeRequires=nil
+        switch action.kind {case .move:kind = .move;case .transfer:kind = .transfer;case .build:kind = .build;case .show:kind = .show;case .hide:kind = .hide;case .speak:kind = .speak}
+    }
+    init(_ action:ModelStoryAction3D) {
+        id=action.id;subjectID=action.instanceID;targetID=nil;startFrame=action.startFrame;endFrame=action.endFrame;quantity=nil;nativeRequires=action.requires
+        switch action.kind {case .move:kind = .move;case .pose:kind = .pose;case .show:kind = .show;case .hide:kind = .hide;case .speak:kind = .speak}
+    }
+}
 public enum StoryCausalRules {
     public static func validate(scene:Scene)throws {
         guard let value=scene.storyCausality else {return}
-        let actions=scene.storyActions ?? []
-        var subjects=Set((scene.layers ?? []).map(\.id));subjects.formUnion(scene.gameWorld?.entities.map(\.id) ?? []);subjects.formUnion(scene.cartoonRig?.actors.map(\.id) ?? []);if let presenter=scene.cartoonPresenter {subjects.insert(presenter.id)}
+        let actions:[StoryCausalVisualEffect]
+        var subjects:Set<String>
+        if let model=scene.modelScene3D {
+            // Native operations are fully validated against real instances and
+            // changing original tracks before yielding a typed effect. No
+            // StoryAction, layer or empty game entity is manufactured here.
+            try ModelScene3DRules.validate(scene:scene)
+            guard model.version==2,let native=model.actions else {throw VideoError.invalid("三维真实因果须绑定显式v2原生动作")}
+            actions=native.map(StoryCausalVisualEffect.init)
+            subjects=Set(model.instances.map(\.id))
+        } else {
+            actions=(scene.storyActions ?? []).map(StoryCausalVisualEffect.init)
+            subjects=Set((scene.layers ?? []).map(\.id));subjects.formUnion(scene.gameWorld?.entities.map(\.id) ?? []);subjects.formUnion(scene.cartoonRig?.actors.map(\.id) ?? []);if let presenter=scene.cartoonPresenter {subjects.insert(presenter.id)}
+        }
+        try validate(value: value,actions: actions,subjects: subjects,durationFrames: scene.durationFrames)
+    }
+    /// Shared rule provenance, independent of visual coordinates. Only the two
+    /// concrete entry paths above can produce these descriptions; native ones
+    /// already proved their actual mesh/joint operation rather than a 2D proxy.
+    private static func validate(value:StoryCausality,actions:[StoryCausalVisualEffect],subjects:Set<String>,durationFrames:Int)throws {
         let hasActionCost=value.sources.contains{$0.actionCost != nil}
         let hasRuleChange=value.sources.contains{$0.ruleChange != nil}
         guard ((value.version==1 && !hasActionCost && !hasRuleChange) || (value.version==2 && hasActionCost && !hasRuleChange) || (value.version==3 && hasRuleChange)),(1...3).contains(value.sources.count),(1...64).contains(value.actors.count),(1...256).contains(value.bindings.count),subjects.contains(value.poolSubjectID),
@@ -104,7 +139,7 @@ public enum StoryCausalRules {
         func owns(_ actor:String?,_ subject:String?)->Bool {guard let actor,let subject else{return false};return value.actors.contains{$0.actorID==actor && $0.subjectID==subject}}
         var sources:[String:StoryCausalSource]=[:]
         for source in value.sources {
-            guard StoryActionRules.identifier(source.id),source.model.version==3,source.model.ruleTable != nil,source.startFrame>=0,source.endFrame>source.startFrame,source.endFrame<=scene.durationFrames else {throw VideoError.invalid("故事因果须绑定完整有限规则模型及有效独立帧窗")}
+            guard StoryActionRules.identifier(source.id),source.model.version==3,source.model.ruleTable != nil,source.startFrame>=0,source.endFrame>source.startFrame,source.endFrame<=durationFrames else {throw VideoError.invalid("故事因果须绑定完整有限规则模型及有效独立帧窗")}
             try source.model.validate()
             try KnowledgeSimulationEngine.verify(source.trace,model:source.model,seed:source.seed)
             guard source.trace.throughTick == (try source.model.lastSettlementTick()),source.trace.rounds.count==source.model.rounds,source.trace.events.count==source.model.rounds*KnowledgePhase.allCases.count else {throw VideoError.review("故事因果必须保留正常规则引擎生成的完整实迹，不能用部分录制或摘要代替")}
@@ -144,6 +179,9 @@ public enum StoryCausalRules {
             guard let source=sources[binding.sourceID],let action=byAction[binding.actionID],let event=source.trace.events.first(where:{$0.id==binding.eventID}),
                   action.startFrame>=source.startFrame,action.endFrame<=source.endFrame,binding.requires.count<=32,Set(binding.requires).count==binding.requires.count,
                   binding.actorID.map({participants.contains($0)}) ?? true,binding.fromActorID.map({participants.contains($0)}) ?? true,binding.toActorID.map({participants.contains($0)}) ?? true else {throw VideoError.invalid("因果绑定须引用当前动作、真实来源事件、参与者和分支内时窗")}
+            if let required=action.nativeRequires {
+                guard Set(required)==Set(binding.requires) else {throw VideoError.invalid("三维真实因果与原生动作必须保留同一组实际前置，不能隐藏、删减或替换动作依赖")}
+            }
             var allowed=Set<String>()
             switch binding.kind {
             case .performedAction:
@@ -188,6 +226,24 @@ public enum StoryCausalRules {
             for required in binding.requires {
                 guard required != binding.actionID,let dependency=bindings[required],dependency.sourceID==binding.sourceID,let prior=byAction[required],prior.endFrame<=action.startFrame,
                       let priorEvent=source.trace.events.first(where:{$0.id==dependency.eventID}),priorEvent.tick<=event.tick else {throw VideoError.invalid("动作前置必须属于同分支真实事件并已完成，不能循环或引用未来")}
+            }
+        }
+        if actions.contains(where:{$0.nativeRequires != nil}) {
+            // Native presentation uses the same finite chronology rule as the
+            // normal story compiler: a later source event cannot be displayed
+            // before, or overlap, an earlier actual event in this one branch.
+            // Independent counterfactual windows remain separate above.
+            for source in value.sources {
+                let moments=value.bindings.filter{$0.sourceID==source.id}.compactMap {binding->(start:Int,end:Int,tick:Int,id:String)? in
+                    guard let action=byAction[binding.actionID],let event=source.trace.events.first(where:{$0.id==binding.eventID}) else {return nil}
+                    return (action.startFrame,action.endFrame,event.tick,action.id)
+                }.sorted{($0.start,$0.id)<($1.start,$1.id)}
+                var lastTick = -1,groupEnd = -1,lastStart = -1
+                for moment in moments {
+                    guard lastTick<=moment.tick,(lastTick==moment.tick || groupEnd<=moment.start),(lastStart != moment.start || lastTick==moment.tick) else {throw VideoError.invalid("三维同分支真实事件不能倒放或跨事件重叠；回顾须另行编排明确来源窗")}
+                    groupEnd=lastTick==moment.tick ? max(groupEnd,moment.end):moment.end
+                    lastTick=moment.tick;lastStart=moment.start
+                }
             }
         }
         guard value.sources.allSatisfy({source in value.bindings.contains{$0.sourceID==source.id}}) else {throw VideoError.invalid("每个因果来源都须绑定本镜头的实际表现动作")}

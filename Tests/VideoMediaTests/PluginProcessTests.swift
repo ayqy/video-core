@@ -84,6 +84,20 @@ final class PluginProcessTests:XCTestCase {
         scope.cancellation.cancel()
         XCTAssertThrowsError(try draw(current,scope,scene:scene,resources:resources));XCTAssertEqual(scoped.draws,1)
         try current.close(invocationID:scope.id);XCTAssertEqual(scoped.closes,1)
+        let (ten,scopedTen,scopeTen)=try fixture(inputSchema:10)
+        XCTAssertEqual(try ten.validate(scene:scene).pluginID,"video.game")
+        try draw(ten,scopeTen,scene:scene,resources:resources)
+        var native=scene;native.modelScene3D?.version=2
+        native.modelScene3D?.actions=[.init(id:"visible",kind:.show,instanceID:"mesh",startFrame:0,endFrame:1)]
+        XCTAssertThrowsError(try current.validate(scene:native),"game9不可忽略v2动作，即使使用同一资源闭包")
+        XCTAssertEqual(try ten.validate(scene:native).pluginID,"video.game")
+        XCTAssertThrowsError(try draw(ten,nil,scene:native,resources:resources))
+        XCTAssertThrowsError(try draw(ten,scopeTen,scene:native),"game10仍须携带当前完整模型字节库")
+        try draw(ten,scopeTen,scene:native,resources:resources)
+        XCTAssertEqual(scopedTen.draws,2);XCTAssertEqual(scopedTen.modelInputs,[bank.manifest.dependencyFingerprints,bank.manifest.dependencyFingerprints])
+        scopeTen.cancellation.cancel()
+        XCTAssertThrowsError(try draw(ten,scopeTen,scene:native,resources:resources));XCTAssertEqual(scopedTen.draws,2)
+        try ten.close(invocationID:scopeTen.id);XCTAssertEqual(scopedTen.closes,1)
     }
     func test_unregister_keeps_scope_reference_for_physical_cleanup()throws{
         let(registry,module,scope)=try fixture();try draw(registry,scope);registry.unregister(module.manifest.id)

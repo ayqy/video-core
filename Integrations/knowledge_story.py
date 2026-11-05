@@ -14,6 +14,10 @@ declares one complete existing rule replacement per selected source. Matrix/publ
 remain outside this adapter. Delivery and subsequent payment reuse Core's
 existing typed state-transition and settlement bindings; they never infer a
 sale from a label, a requested action, or a visual route alone.
+
+The explicit model3d target binds already authored v2 native operations. Its
+geometry, original joint tracks, local speech anchors and source-frame windows
+remain unchanged; native Core must verify their actual physical operation.
 """
 from __future__ import annotations
 
@@ -132,7 +136,7 @@ def _plan(value):
     target = value['target']
     _object(target, ('workspace_id', 'project_id', 'base_revision', 'scene_id', 'fps', 'mode'))
     _need(all(isinstance(target[key], str) and target[key] for key in ('workspace_id', 'project_id', 'base_revision', 'scene_id'))
-          and _integer(target['fps'], 1, 120) and target['mode'] in ('game', 'pencil'), 'invalid explicit target')
+          and _integer(target['fps'], 1, 120) and target['mode'] in ('game', 'pencil', 'model3d'), 'invalid explicit target')
     sources = _unique(value['sources'], 'id', 'source identity')
     _need(1 <= len(sources) <= 3 and len({s.get('scene_id') for s in sources.values()}) == len(sources),
           'one to three distinct real source scenes required')
@@ -212,6 +216,8 @@ def _plan(value):
           'the pool is a separate, unowned actual stage object')
     anchors = value['anchors']
     _need(isinstance(anchors, dict) and len(anchors) <= 256, 'invalid anchor budget')
+    if target['mode'] == 'model3d':
+        _need(not anchors, 'model3d anchors belong to the actual native action; normalized 2D author anchors are not accepted')
     for name, point in anchors.items():
         _object(point, ('x', 'y'))
         _need(_identity(name) and all(type(n) in (int, float) and math.isfinite(n) and 0 <= n <= 1 for n in point.values()),
@@ -219,6 +225,92 @@ def _plan(value):
     beats = _unique(value['beats'], 'id', 'presentation beat')
     _need(1 <= len(beats) <= 256, 'bounded nonempty presentation required')
     return story, sources, ownership
+
+
+def _native_actions(model, duration):
+    """Read actual v2 operation identities, never sample or invent a 3D engine.
+
+    This checks the bounded author shape and references. Native Core remains
+    responsible for full DAE/texture identity, real changing tracks, finite
+    track-segment coverage, quaternion sampling, visibility and source truth.
+    A pure compilation is not proof that a native operation will be accepted.
+    """
+    _object(model, ('version', 'instances', 'camera', 'lights', 'transformTracks', 'jointTracks', 'actions'))
+    _need(type(model['version']) is int and model['version'] == 2, 'model3d target must explicitly contain native v2 operations')
+    rows = model['instances']
+    _need(isinstance(rows, list) and 1 <= len(rows) <= 128
+          and all(isinstance(row, dict) and isinstance(row.get('id'), str) and 1 <= len(row['id'].encode()) <= 160 for row in rows),
+          'model3d needs actual bounded native instances')
+    instances = {row['id']: row for row in rows}
+    _need(len(instances) == len(rows), 'native instance identities are duplicated')
+    _need(all(isinstance(row.get('resource'), dict) and isinstance(row['resource'].get('inspection'), dict)
+              and isinstance(row['resource'].get('model'), dict) and isinstance(row['resource'].get('textures'), dict)
+              for row in rows), 'native instances must retain their actual inspected model-resource closure')
+    _need(isinstance(model['transformTracks'], list) and isinstance(model['jointTracks'], list),
+          'native operation tracks must be actual model lists')
+    actions = _unique(model['actions'], 'id', 'native action')
+    _need(1 <= len(actions) <= 256, 'model3d target needs a bounded nonempty actual operation list')
+    for action in actions.values():
+        _object(action, ('id', 'kind', 'instanceID', 'startFrame', 'endFrame', 'requires'), ('jointNames', 'anchor', 'text'))
+        kind = action['kind']
+        _need(kind in ('move', 'pose', 'show', 'hide', 'speak') and isinstance(action['instanceID'], str) and action['instanceID'] in instances,
+              'native operation must name its real instance and a supported native operation')
+        _need(_integer(action['startFrame'], 0, duration - 1) and _integer(action['endFrame'], action['startFrame'] + 1, duration),
+              'native operation exceeds the complete source-frame axis')
+        if kind in ('move', 'pose'):
+            _need(action['endFrame'] - action['startFrame'] >= 2, 'native movement and pose need at least two actual source frames')
+        required = action['requires']
+        _need(isinstance(required, list) and len(required) <= 32 and all(_identity(key) for key in required)
+              and len(set(required)) == len(required), 'native prerequisites must be bounded actual operation IDs')
+        for key in required:
+            _need(key in actions and key != action['id'] and _integer(actions[key].get('endFrame'), 1, duration)
+                  and actions[key]['endFrame'] <= action['startFrame'],
+                  'native prerequisite is absent, future or self-referential')
+        if kind == 'pose':
+            names = action.get('jointNames')
+            actual = ((instances[action['instanceID']].get('resource') or {}).get('inspection') or {}).get('jointNames')
+            _need(set(action) <= {'id', 'kind', 'instanceID', 'startFrame', 'endFrame', 'requires', 'jointNames'}
+                  and isinstance(names, list) and 1 <= len(names) <= 64 and all(isinstance(name, str) for name in names)
+                  and len(set(names)) == len(names) and isinstance(actual, list) and set(names) <= set(actual),
+                  'native pose must name actual original DAE joints without hidden speech fields')
+            _need(all(any(isinstance(track, dict) and track.get('instanceID') == action['instanceID'] and track.get('jointName') == name
+                          for track in model['jointTracks']) for name in names), 'native pose is not attached to its original joint tracks')
+        elif kind == 'speak':
+            _need('jointNames' not in action, 'native speech cannot carry hidden pose joints')
+            _object(action.get('anchor'), ('x', 'y', 'z'))
+            _need(all(type(number) in (int, float) and math.isfinite(number) and abs(number) <= 1_000_000
+                      for number in action['anchor'].values())
+                  and isinstance(action.get('text'), str) and 1 <= len(action['text']) <= 48
+                  and action['text'].strip() == action['text'] and bool(action['text'].strip())
+                  and len(action['text'].encode()) <= 192, 'native dialogue requires its bounded actual local anchor and short authored text')
+        else:
+            _need(not {'jointNames', 'anchor', 'text'}.intersection(action), 'native movement or visibility has hidden operation fields')
+            if kind == 'move':
+                _need(any(isinstance(track, dict) and track.get('instanceID') == action['instanceID'] for track in model['transformTracks']),
+                      'native movement is not attached to its actual instance transform track')
+    return instances, actions
+
+
+def _compile_native_edit(project, revision, scene, model, causality):
+    """Prepare one normal replaceScene while retaining the actual 3D model.
+
+    No 2D compiler is invoked, and no old presentation is quietly retired to
+    force this new target mode through an incompatible renderer.
+    """
+    _need(not scene.get('locked') and not any(row.get('locked') for row in model['instances'])
+          and not any(row.get('locked') for row in scene.get('layers', [])), 'unlock the explicitly authored native scene before binding a new story')
+    replacement = deepcopy(scene)
+    replacement['modelScene3D'] = deepcopy(model)
+    replacement['storyCausality'] = deepcopy(causality)
+    edits = []
+    if replacement != scene:
+        if replacement.get('voice'):
+            replacement['voice']['listened'] = False
+        for caption in replacement.get('captions', []):
+            caption['confirmed'] = False
+        edits.append(dict(replaceScene={'_0': scene['id'], '_1': replacement}))
+    return dict(workspace_id=project['workspaceID'], project_id=project['id'], base_revision=revision['id'], edits=edits,
+                text='将真实知识实迹绑定到当前原生三维实例动作；声音、字幕和整片分别待审')
 
 
 def _project(project):
@@ -493,7 +585,19 @@ def compile_presentation(target_project, plan, recorded):
           'this adapter targets existing game or pencil objects; presenter reauthoring is a separate capability')
     subjects = {row['id'] for row in scene.get('layers', [])}
     world = deepcopy(scene.get('gameWorld'))
-    if target['mode'] == 'game':
+    native_mode = target['mode'] == 'model3d'
+    native_model, native_actions = None, {}
+    if native_mode:
+        _need(scene.get('kind') == '规则模拟' and scene.get('modelScene3D') is not None
+              and not any(scene.get(key) is not None for key in ('storyActions', 'gameWorld', 'classicArtwork', 'cartoonRig',
+                  'cartoonPresenter', 'cartoonPerformance', 'simulationPresentation', 'assetID'))
+              and scene.get('sourceEndFrame') in (None, duration),
+              'model3d needs the actual unmixed native scene and complete source axis; legacy presentation is not silently retired')
+        native_model = deepcopy(scene['modelScene3D'])
+        instances, native_actions = _native_actions(native_model, duration)
+        _need(not subjects.intersection(instances), 'native instance and Host overlay identities are ambiguous')
+        subjects, entities = set(instances), {}
+    elif target['mode'] == 'game':
         _need(isinstance(world, dict) and isinstance(scene.get('classicArtwork'), dict), 'actual existing game world and source artwork required')
         entities = _unique(world.get('entities'), 'id', 'world entity')
         _need(not subjects.intersection(entities), 'stage subject identity is ambiguous across world and layers')
@@ -530,11 +634,27 @@ def compile_presentation(target_project, plan, recorded):
         binding = _resolve(beat['effect'], event)
         subject, visual, kind = beat['subject_id'], beat['visual'], binding['kind']
         _need(subject in subjects, 'action subject is absent')
-        _object(visual, ('kind',), ('from_anchor', 'to_anchor', 'via_anchors', 'target_subject_id'))
+        if native_mode:
+            _object(visual, ('kind', 'action_id'))
+        else:
+            _object(visual, ('kind',), ('from_anchor', 'to_anchor', 'via_anchors', 'target_subject_id'))
         actor = binding.get('actorID', binding.get('fromActorID'))
         if kind in ('performedAction', 'stateChange', 'delivery'):
             _need(owns(actor, subject), 'action/state subject is not owned by the actual actor')
-        if kind == 'performedAction':
+        if native_mode:
+            _need(kind in ('performedAction', 'stateChange', 'outcome'),
+                  'native operations do not implement deposits, transfers, payments or goods delivery; movement cannot claim a financial effect')
+            _need(visual['action_id'] == beat['id'] and visual['action_id'] in native_actions,
+                  'each model3d beat must name its same-ID actual native operation')
+            action = deepcopy(native_actions[visual['action_id']])
+            _need(action['kind'] == visual['kind'] and action['instanceID'] == subject
+                  and action['startFrame'] == a and action['endFrame'] == b and action['requires'] == beat['requires'],
+                  'model3d cannot rewrite the actual operation kind, instance, source window or prerequisites')
+            if kind in ('performedAction', 'stateChange'):
+                _need(detail['actor_id'] == actor, 'native story operation differs from its actual rule actor')
+            else:
+                _need(action['kind'] in ('show', 'hide'), 'native outcome presentation must reveal or hide a real instance')
+        elif kind == 'performedAction':
             _need(detail['actor_id'] == actor and visual['kind'] in ('move', 'show', 'hide', 'build', 'speak'), 'performed action differs from its acting story character')
         elif kind in ('deposit', 'transfer', 'payment'):
             target_subject = visual.get('target_subject_id')
@@ -571,8 +691,11 @@ def compile_presentation(target_project, plan, recorded):
                   'state changes belong to their actual story actor and only reveal/build/hide that owned subject')
         else:
             _need(visual['kind'] in ('show', 'hide'), 'outcome presentation must explicitly reveal or hide an actual object')
-        action = dict(id=beat['id'], kind=visual['kind'], subjectID=subject, startFrame=a, endFrame=b)
-        if visual['kind'] in ('move', 'transfer'):
+        if not native_mode:
+            action = dict(id=beat['id'], kind=visual['kind'], subjectID=subject, startFrame=a, endFrame=b)
+        if native_mode:
+            pass  # Preserve the real v2 operation, including original joints/local speech anchor.
+        elif visual['kind'] in ('move', 'transfer'):
             _need(visual.get('from_anchor') in plan['anchors'] and visual.get('to_anchor') in plan['anchors'], 'movement needs two declared anchors')
             action['from'] = deepcopy(plan['anchors'][visual['from_anchor']])
             action['to'] = deepcopy(plan['anchors'][visual['to_anchor']])
@@ -586,7 +709,7 @@ def compile_presentation(target_project, plan, recorded):
             action.update(targetID=visual['target_subject_id'], quantity=1 if kind == 'delivery' else binding['amount'])
         else:
             _need('target_subject_id' not in visual, 'non-transfer has a hidden recipient')
-        if visual['kind'] == 'speak':
+        if visual['kind'] == 'speak' and not native_mode:
             table = source['model']['ruleTable']
             field, identity = ('actions', binding['actionKey']) if kind == 'performedAction' else ('states', binding['toStateID'])
             labels = [row.get('label') for row in table[field] if row.get('id') == identity]
@@ -612,7 +735,7 @@ def compile_presentation(target_project, plan, recorded):
             _need(detail_windows[dependency][1] <= detail_windows[detail_id][0],
                   'all evaluated detail prerequisites must finish before this process; omitting beat.requires cannot discard the story dependency')
     movements = {}
-    for action in actions:
+    for action in actions if not native_mode else []:
         if action['kind'] in ('move', 'transfer'):
             movements.setdefault(action['subjectID'], []).append(action)
     for rows in movements.values():
@@ -622,7 +745,8 @@ def compile_presentation(target_project, plan, recorded):
                   'cross-source movement of the same subject needs an explicit branch reset; this adapter requires distinct branch subjects instead of silently teleporting')
             _need(math.hypot(previous['to']['x'] - current['from']['x'], previous['to']['y'] - current['from']['y']) <= 1e-7,
                   'consecutive movements of one source subject must continue from the previous actual endpoint')
-    actions_for_scene(actions, subjects, duration)
+    if not native_mode:
+        actions_for_scene(actions, subjects, duration)
     balances = plan.get('balances', [])
     _need(isinstance(balances, list) and len(balances) <= 2048 and (not balances or target['mode'] == 'game'), 'balance observations need existing game entities')
     updates = {}
@@ -663,12 +787,18 @@ def compile_presentation(target_project, plan, recorded):
     causality = dict(version=plan['version'], poolSubjectID=pool, actors=[dict(actorID=a['actor_id'], subjectID=a['subject_id']) for a in plan['actors']],
                      sources=[deepcopy(sources[row['id']]) for row in plan['sources']], bindings=bindings)
     entry = dict(scene_id=target['scene_id'], mode=target['mode'], actions=actions, causality=causality)
+    if native_mode:
+        # Keep the complete actually authored model, including explicit ambient
+        # or branch-reset operations. Only selected real operations acquire
+        # source bindings; no unrelated 2D action list is persisted.
+        entry.pop('actions')
+        entry['model_scene_3d'] = native_model
     if world is not None:
         world['updates'] = [updates[key] for key in sorted(updates, key=lambda key: (key[1], key[0]))]
         _need(len(world['updates']) <= 2048, 'compiled world update budget exceeded')
         entry['world'] = world
     spec = dict(version=1, base_revision=revision['id'], fps=revision['fps'], scenes=[entry])
-    body = compile_story(target_project, spec)
+    body = _compile_native_edit(target_project, revision, scene, native_model, causality) if native_mode else compile_story(target_project, spec)
     return dict(edit_body=body, story_spec=spec, plan_digest=_digest(plan), observations=observations)
 
 
@@ -693,5 +823,20 @@ def apply_presentation(target_project, plan, recorded, invoke):
         _need(declaration['scene_id'] in source_scenes, 'declared scene is absent from the persisted source revision')
         actual = _trace(declaration, source_scenes[declaration['scene_id']], revisions[0]['fps'])
         _need(actual == sources[declaration['id']]['trace'], 'caller-supplied trace differs from the persisted normal recording')
-    result = apply_story(target_project, compiled['story_spec'], invoke)
+    if plan['target']['mode'] == 'model3d':
+        body = deepcopy(compiled['edit_body'])
+        if not body['edits']:
+            result = dict(changed=False, revision=body['base_revision'], scenes=0)
+        else:
+            body['request_id'] = 'knowledge-model3d-v1-' + _digest(body)
+            dry = invoke('edit apply', deepcopy(body), True)
+            _need(isinstance(dry, dict) and dry.get('ok') is True and dry.get('state') == 'dry_run',
+                  'normal native editor refused the complete model3d presentation')
+            response = invoke('edit apply', deepcopy(body), False)
+            _need(isinstance(response, dict) and response.get('ok') is True and response.get('state') == 'needs_review'
+                  and response.get('project_id') == target_project['id'] and _identity(response.get('revision')),
+                  'normal native editor did not return this model3d project revision')
+            result = dict(changed=True, revision=response['revision'], scenes=len(body['edits']))
+    else:
+        result = apply_story(target_project, compiled['story_spec'], invoke)
     return dict(result, plan_digest=compiled['plan_digest'])

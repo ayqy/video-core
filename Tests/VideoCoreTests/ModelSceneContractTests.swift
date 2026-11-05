@@ -287,4 +287,130 @@ final class ModelSceneContractTests: XCTestCase {
         XCTAssertThrowsError(try f.repository.transaction{_ in},"每次保存都重核物理文件，不复用上次通过的解析结果或跟随链接")
         XCTAssertThrowsError(try AgentPreview.evaluate(command:"edit apply",data:validInput,database:f.repository.read(),principal:"owner",repository:f.repository))
     }
+    private func nativeModel(_ f:Fixture)->ModelScene3D {
+        var model=f.model;model.version=2
+        model.actions=[
+            .init(id:"walk",kind:.move,instanceID:"actor",startFrame:0,endFrame:21),
+            .init(id:"original-pose",kind:.pose,instanceID:"actor",startFrame:0,endFrame:21,jointNames:["hip"]),
+            .init(id:"speech",kind:.speak,instanceID:"actor",startFrame:5,endFrame:10,anchor:.init(x:0,y:1,z:0),text:"门开了，再往外走。"),
+            .init(id:"hide",kind:.hide,instanceID:"actor",startFrame:15,endFrame:16),
+            .init(id:"show",kind:.show,instanceID:"actor",startFrame:18,endFrame:19,requires:["hide"])
+        ]
+        return model
+    }
+    func testV2NativeOperationsUseOriginalTracksAndRandomAccessVisibilityAndSpeech() throws {
+        let f=try fixture();defer{try? FileManager.default.removeItem(at:f.root)}
+        let model=nativeModel(f),actions=try XCTUnwrap(model.actions)
+        XCTAssertNoThrow(try model.validate(durationFrames:21,assets:f.assets))
+        XCTAssertEqual(try Codec.decoder().decode(ModelScene3D.self,from:Codec.data(model)),model)
+        let middle=try model.sampledTransform(instanceID:"actor",sourceFrame:10,durationFrames:21)
+        XCTAssertEqual(middle.translation.x,1,accuracy:0.0000001)
+        let pose=try model.sampledTransform(instanceID:"actor",jointName:"hip",sourceFrame:10,durationFrames:21)
+        XCTAssertEqual(abs(pose.rotation.z),sqrt(0.5),accuracy:0.0000001)
+        var observations:[Int:ModelStoryActionState3D]=[:]
+        for frame in [20,16,5,0,9,18,10,15,5,20] {
+            let current=ModelStoryActionRules3D.presentation(instanceID:"actor",actions:actions,frame:frame)
+            if let previous=observations[frame] {XCTAssertEqual(current,previous,"乱序采样不得继承前一帧的显隐或发言")}
+            observations[frame]=current
+            XCTAssertEqual(current.opacity,(15..<18).contains(frame) ? 0:1)
+            XCTAssertEqual(current.speech?.text,(5..<10).contains(frame) ? "门开了，再往外走。":nil)
+        }
+        let initiallyHidden=[ModelStoryAction3D(id:"first-show",kind:.show,instanceID:"actor",startFrame:4,endFrame:5)]
+        XCTAssertEqual(ModelStoryActionRules3D.presentation(instanceID:"actor",actions:initiallyHidden,frame:3).opacity,0)
+        XCTAssertEqual(ModelStoryActionRules3D.presentation(instanceID:"actor",actions:initiallyHidden,frame:4).opacity,1)
+        var hiddenSpeech=actions;hiddenSpeech[2].startFrame=15;hiddenSpeech[2].endFrame=17
+        XCTAssertNil(ModelStoryActionRules3D.presentation(instanceID:"actor",actions:hiddenSpeech,frame:16).speech)
+        var invalid=model;invalid.actions=hiddenSpeech
+        XCTAssertThrowsError(try invalid.validate(durationFrames:21),"不能保存一个在发言过程中不可见的说话者")
+    }
+    func testV2NativeActionsRejectFakeMovementPoseHiddenFieldsAndFutureDependencies() throws {
+        let f=try fixture();defer{try? FileManager.default.removeItem(at:f.root)}
+        let valid=nativeModel(f)
+        for index in 0..<17 {
+            var invalid=valid
+            switch index {
+            case 0:invalid.transformTracks=[]
+            case 1:invalid.transformTracks[0].keyframes[1].transform.translation = .init()
+            case 2:invalid.actions![0].startFrame=20
+            case 3:invalid.actions![0].instanceID="not-an-instance"
+            case 4:invalid.actions![1].jointNames=["invented"]
+            case 5:invalid.jointTracks=[]
+            case 6:invalid.jointTracks[0].keyframes[1].transform = .init(rotation:.init(w:-1))
+            case 7:invalid.actions![0].text="隐藏文本"
+            case 8:invalid.actions![2].anchor!.x=Double.infinity
+            case 9:invalid.actions![2].text=String(repeating:"字",count:49)
+            case 10:invalid.actions![2].requires=["walk"]
+            case 11:invalid.actions![0].requires=["walk"]
+            case 12:var duplicate=invalid.actions![0];duplicate.id="walk-duplicate";invalid.actions!.append(duplicate)
+            case 13:var duplicate=invalid.actions![1];duplicate.id="pose-duplicate";invalid.actions!.append(duplicate)
+            case 14:invalid.actions!.append(.init(id:"show-again",kind:.show,instanceID:"actor",startFrame:19,endFrame:20))
+            case 15:invalid.actions![0].startFrame=5
+            default:invalid.actions![1].startFrame=5
+            }
+            XCTAssertThrowsError(try invalid.validate(durationFrames:21),"拒绝未经实际操作支持的声明 \(index)")
+        }
+        // A loop may return to its start, but its intermediate source frames
+        // must contain real movement. Endpoint-only checking would miss this.
+        var returning=valid
+        returning.transformTracks[0].keyframes.insert(.init(frame:10,transform:.init(translation:.init(x:2))),at:1)
+        returning.transformTracks[0].keyframes[2].transform.translation = .init()
+        XCTAssertNoThrow(try returning.validate(durationFrames:21))
+    }
+    func testV1WireAndStrictV2DecodingDoNotSilentlyAcceptNewActions() throws {
+        let f=try fixture();defer{try? FileManager.default.removeItem(at:f.root)}
+        struct Legacy:Encodable {
+            let version:Int;let instances:[ModelInstance3D];let camera:ModelCamera3D;let lights:[ModelLight3D]
+            let transformTracks:[ModelTransformTrack];let jointTracks:[ModelJointTrack]
+        }
+        let old=f.model
+        XCTAssertEqual(try Codec.data(old),try Codec.data(Legacy(version:old.version,instances:old.instances,camera:old.camera,lights:old.lights,transformTracks:old.transformTracks,jointTracks:old.jointTracks)))
+        let base=try XCTUnwrap(JSONSerialization.jsonObject(with:Codec.data(old)) as? [String:Any])
+        let invalidValues:[Any]=[[Any](),NSNull()]
+        for value in invalidValues {
+            var invalid=base;invalid["actions"]=value
+            XCTAssertThrowsError(try Codec.decoder().decode(ModelScene3D.self,from:JSONSerialization.data(withJSONObject:invalid)))
+        }
+        var missing=base;missing["version"]=2
+        XCTAssertThrowsError(try Codec.decoder().decode(ModelScene3D.self,from:JSONSerialization.data(withJSONObject:missing)))
+        let native=try XCTUnwrap(JSONSerialization.jsonObject(with:Codec.data(nativeModel(f))) as? [String:Any])
+        for index in 0..<7 {
+            var object=native,actions=try XCTUnwrap(object["actions"] as? [[String:Any]])
+            switch index {
+            case 0:object["invented"]=true
+            case 1:actions[0]["from"]=["x":0,"y":0]
+            case 2:actions[0]["anchor"]=NSNull()
+            case 3:actions[1]["jointNames"]=NSNull()
+            case 4:actions[2]["anchor"]=["x":0,"y":1,"z":0,"screenX":0.5]
+            case 5:actions[2]["text"]=NSNull()
+            default:actions[0]["requires"]=nil
+            }
+            object["actions"]=actions
+            XCTAssertThrowsError(try Codec.decoder().decode(ModelScene3D.self,from:JSONSerialization.data(withJSONObject:object)),"未知字段、旧二维别名及null不应消失 \(index)")
+        }
+    }
+    func testV2NormalDryRunSaveColdRestoreAndLockedNativeOperations() throws {
+        let f=try fixture();defer{try? FileManager.default.removeItem(at:f.root)}
+        var original=scene(f);original.modelScene3D=nil
+        let p=project(original,f);try f.repository.transaction{$0.projects=[p]}
+        var native=scene(f);native.modelScene3D=nativeModel(f)
+        let data=try input(p,edits:[.replaceScene(original.id,native)]),before=try Codec.data(f.repository.read())
+        _=try AgentMutationExecutor.preview(command:"edit apply",data:data,database:f.repository.read(),principal:"owner",repository:f.repository)
+        XCTAssertEqual(try Codec.data(f.repository.read()),before)
+        _=try f.repository.performAgentMutation(command:"edit apply",data:data,principal:"owner",requestID:"native-v2-edit")
+        let saved=try XCTUnwrap(f.repository.read().projects.first?.current)
+        XCTAssertEqual(saved.scenes[0].modelScene3D,native.modelScene3D)
+        let restored=try Repository.restore(f.repository.backup(),to:f.root.appendingPathComponent("native-v2-cold"))
+        let savedDigest=try saved.contentDigest()
+        XCTAssertEqual(try restored.read().projects.first?.current.contentDigest(),savedDigest)
+        XCTAssertEqual(try restored.read().projects.first?.current.scenes[0].modelScene3D,native.modelScene3D)
+        for source in f.assets {XCTAssertEqual(try Data(contentsOf:restored.assetURL(source)),try Data(contentsOf:f.repository.assetURL(source)))}
+        var locked=native;locked.modelScene3D!.instances[0].locked=true
+        var changed=locked;changed.modelScene3D!.actions![2].anchor!.y=2
+        XCTAssertThrowsError(try ModelScene3DRules.protectLocked(old:locked,new:changed))
+        for index in 0..<4 {
+            var retimed=native
+            switch index {case 0:retimed.sourceStartFrame=1;case 1:retimed.sourceEndFrame=20;case 2:retimed.speed=1.2;default:retimed.pauseFrames=1}
+            XCTAssertThrowsError(try retimed.validate(assets:f.assets),"未实现三维源轴变换时明确拒绝，不能把展示轴冒原轨 \(index)")
+        }
+    }
 }

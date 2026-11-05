@@ -90,6 +90,7 @@ public enum AgentSchemas {
         for (name,declaration) in ModelScene3DSchema.records {
             var schema=entity(declaration).object!;schema["additionalProperties"] = .boolean(false);result[name] = .object(schema)
         }
+        result.merge(PluginRPCSchemas.modelStoryDefinitions(),uniquingKeysWith:{$1})
         result["ModelLightKind"] = .object(["type":.string("string"),"enum":.array(["ambient","directional","omni"].map(AgentValue.string))])
         result["ModelVertexColorUsage"] = .object(["type":.string("string"),"enum":.array(ModelVertexColorUsage.allCases.map { .string($0.rawValue) })])
         result["ModelNormalTextureEncoding"] = .object(["type":.string("string"),"enum":.array(ModelNormalTextureEncoding.allCases.map { .string($0.rawValue) })])
@@ -125,7 +126,7 @@ public enum AgentSchemas {
             properties[field] = .object(shape);record["properties"] = .object(properties);result[name] = .object(record)
         }
         constraint("DataPresentation","version",["const":.number(1)])
-        constraint("ModelScene3D","version",["const":.number(1)])
+        constraint("ModelScene3D","version",["enum":.array([.number(1),.number(2)])])
         constraint("ModelScene3D","instances",["minItems":.number(1),"maxItems":.number(128)])
         constraint("ModelScene3D","lights",["minItems":.number(1),"maxItems":.number(16)])
         constraint("ModelScene3D","transformTracks",["maxItems":.number(128)])

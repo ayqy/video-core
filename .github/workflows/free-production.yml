@@ -39,7 +39,7 @@ jobs:
           manifest_text=(root/'SOURCE-MANIFEST.md').read_text()
           entries=re.findall(r'(?m)^\| ([a-f0-9]{64}) \| ([0-9]+) \| ([^|\n]+) \|$',manifest_text)
           rows={name:(digest,int(size)) for digest,size,name in entries}
-          assert len(entries)==len(rows)==328
+          assert len(entries)==len(rows)==329
           for name,(digest,size) in rows.items():
               relative=Path(name)
               assert not relative.is_absolute() and '..' not in relative.parts
@@ -52,22 +52,39 @@ jobs:
           assert tracked==set(rows)|metadata|{'SOURCE-MANIFEST.md'}
           assert not any((root/name).exists() for name in ['App','MacApp','MacUITests','Examples','Premium','Sources/VideoGame','Sources/VideoCartoon','Sources/VideoAdvanced'])
           BASE_PUBLIC_COMMIT='ab628dbbc97f1f9f25a403d80eabd9d899c205f5'
-          ADDITIONS={'Sources/VideoCore/ModelSceneContract.swift', 'Sources/VideoCore/PluginModelBank.swift', 'Sources/VideoMedia/ModelBankMedia.swift', 'Tests/VideoCoreTests/ModelSceneContractTests.swift', 'Tests/VideoCoreTests/PluginModelBankTests.swift', 'Integrations/model_material_import.py', 'Integrations/test_model_material_import.py', 'Integrations/native/ImportModelMaterials.swift'}
-          REVIEWED_CHANGED={'.github/workflows/free-production.yml', 'Integrations/skills/video/references/narration-writing.md', 'Integrations/story_planning.py', 'README.md', 'Sources/VideoCLI/VideoCLI.swift', 'Sources/VideoCore/AgentMutation.swift', 'Sources/VideoCore/AgentPreview.swift', 'Sources/VideoCore/AgentSchemas.swift', 'Sources/VideoCore/Dependencies.swift', 'Sources/VideoCore/Editing.swift', 'Sources/VideoCore/EditorPracticeRules.swift', 'Sources/VideoCore/Models.swift', 'Sources/VideoCore/PluginProtocol.swift', 'Sources/VideoCore/Storage.swift', 'Sources/VideoCore/VendorFreeModuleTrust.swift', 'Sources/VideoMedia/ClassicArtworkMedia.swift', 'Sources/VideoMedia/LocalJobExecutor.swift', 'Sources/VideoMedia/ModelPackageMedia.swift', 'Sources/VideoMedia/Painter.swift', 'Sources/VideoMedia/PluginProcess.swift', 'Sources/VideoMedia/PluginRPCServer.swift', 'Sources/VideoMedia/RemoteSceneModule.swift', 'Sources/VideoMedia/RenderModules.swift', 'Sources/VideoMedia/VisualCache.swift', 'Tests/VideoCoreTests/AgentSchemasTests.swift', 'Tests/VideoCoreTests/PluginProtocolTests.swift', 'Tests/VideoCoreTests/VendorFreeModuleTrustTests.swift', 'Tests/VideoMediaTests/ModelPackageMediaTests.swift', 'Tests/VideoMediaTests/PluginProcessTests.swift'}
+          ADDITIONS={'Sources/VideoCore/ModelSceneContract.swift', 'Sources/VideoCore/ModelStoryActions3D.swift', 'Sources/VideoCore/PluginModelBank.swift', 'Sources/VideoMedia/ModelBankMedia.swift', 'Tests/VideoCoreTests/ModelSceneContractTests.swift', 'Tests/VideoCoreTests/PluginModelBankTests.swift', 'Integrations/model_material_import.py', 'Integrations/test_model_material_import.py', 'Integrations/native/ImportModelMaterials.swift'}
+          PRIOR_REVIEWED_CHANGED={'.github/workflows/free-production.yml', 'Integrations/skills/video/references/narration-writing.md', 'Integrations/story_planning.py', 'README.md', 'Sources/VideoCLI/VideoCLI.swift', 'Sources/VideoCore/AgentMutation.swift', 'Sources/VideoCore/AgentPreview.swift', 'Sources/VideoCore/AgentSchemas.swift', 'Sources/VideoCore/Dependencies.swift', 'Sources/VideoCore/Editing.swift', 'Sources/VideoCore/EditorPracticeRules.swift', 'Sources/VideoCore/Models.swift', 'Sources/VideoCore/PluginProtocol.swift', 'Sources/VideoCore/Storage.swift', 'Sources/VideoCore/VendorFreeModuleTrust.swift', 'Sources/VideoMedia/ClassicArtworkMedia.swift', 'Sources/VideoMedia/LocalJobExecutor.swift', 'Sources/VideoMedia/ModelPackageMedia.swift', 'Sources/VideoMedia/Painter.swift', 'Sources/VideoMedia/PluginProcess.swift', 'Sources/VideoMedia/PluginRPCServer.swift', 'Sources/VideoMedia/RemoteSceneModule.swift', 'Sources/VideoMedia/RenderModules.swift', 'Sources/VideoMedia/VisualCache.swift', 'Tests/VideoCoreTests/AgentSchemasTests.swift', 'Tests/VideoCoreTests/PluginProtocolTests.swift', 'Tests/VideoCoreTests/VendorFreeModuleTrustTests.swift', 'Tests/VideoMediaTests/ModelPackageMediaTests.swift', 'Tests/VideoMediaTests/PluginProcessTests.swift'}
+          CURRENT_REVIEWED_DELTA={'Sources/VideoCore/StoryCausalSources.swift', 'Tests/VideoCoreTests/StoryCausalSourcesTests.swift', 'Tests/VideoCoreTests/PluginPackageTests.swift', 'Integrations/knowledge_story.py', 'Integrations/test_knowledge_story.py'}
+          REVIEWED_CHANGED=PRIOR_REVIEWED_CHANGED|CURRENT_REVIEWED_DELTA
           PROTECTED_COUNT=291
           PROTECTED_SHA256='6656736578a189abcd557894c015bf6d4ef1784a0ca86defadacac8e55f05c50'
-          assert len(ADDITIONS)==8 and len(REVIEWED_CHANGED)==29
-          assert ADDITIONS<=set(rows)
-          assert REVIEWED_CHANGED<=set(rows)
-          protected={name:value for name,value in rows.items() if name not in REVIEWED_CHANGED and name not in ADDITIONS}
-          digest_input=''.join(f'{name}\0{protected[name][0]}\0{protected[name][1]}\n' for name in sorted(protected))
-          assert len(protected)==PROTECTED_COUNT and hashlib.sha256(digest_input.encode()).hexdigest()==PROTECTED_SHA256
+          CURRENT_UNCHANGED_COUNT=286
+          CURRENT_UNCHANGED_SHA256='97524356e57dfa48181f9649ee98972223cc0d2c46d604f78d83930c0f465ac8'
+          # Fetch only this immutable public baseline, never a private repo or
+          # a moving branch. Keep the original 291-file protection auditable;
+          # its five newly reviewed changes are explicit, not called unchanged.
+          subprocess.run(['git','fetch','--no-tags','--depth=1','origin',BASE_PUBLIC_COMMIT],cwd=root,check=True,timeout=60,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+          baseline_text=subprocess.check_output(['git','show',BASE_PUBLIC_COMMIT+':SOURCE-MANIFEST.md'],cwd=root,text=True,timeout=15)
+          baseline_entries=re.findall(r'(?m)^\| ([a-f0-9]{64}) \| ([0-9]+) \| ([^|\n]+) \|$',baseline_text)
+          baseline={name:(digest,int(size)) for digest,size,name in baseline_entries}
+          assert len(baseline_entries)==len(baseline)==320
+          original_protected={name:value for name,value in baseline.items() if name not in PRIOR_REVIEWED_CHANGED}
+          digest_input=''.join(f'{name}\0{original_protected[name][0]}\0{original_protected[name][1]}\n' for name in sorted(original_protected))
+          assert len(original_protected)==PROTECTED_COUNT and hashlib.sha256(digest_input.encode()).hexdigest()==PROTECTED_SHA256
+          assert len(PRIOR_REVIEWED_CHANGED)==29 and len(CURRENT_REVIEWED_DELTA)==5 and not PRIOR_REVIEWED_CHANGED&CURRENT_REVIEWED_DELTA
+          assert len(ADDITIONS)==9 and len(REVIEWED_CHANGED)==34
+          assert set(rows)==set(baseline)|ADDITIONS and not set(baseline)&ADDITIONS
+          assert {name for name in baseline if rows[name]!=baseline[name]}==REVIEWED_CHANGED
+          unchanged={name:value for name,value in rows.items() if name not in REVIEWED_CHANGED and name not in ADDITIONS}
+          assert all(value==baseline[name] for name,value in unchanged.items())
+          unchanged_input=''.join(f'{name}\0{unchanged[name][0]}\0{unchanged[name][1]}\n' for name in sorted(unchanged))
+          assert len(unchanged)==CURRENT_UNCHANGED_COUNT and hashlib.sha256(unchanged_input.encode()).hexdigest()==CURRENT_UNCHANGED_SHA256
           inventory_input=''.join(f'{name}\0{rows[name][0]}\0{rows[name][1]}\n' for name in sorted(rows))
           inventory_sha256=hashlib.sha256(inventory_input.encode()).hexdigest()
           assert f'整体内容指纹：`{inventory_sha256}`' in manifest_text
           print('current_payload_fingerprint='+inventory_sha256)
-          print('manifest_payloads=328 added_public_inputs=8 changed_reviewed_inputs=29 unchanged_protected_inputs=291 source_commit='+head)
-          print('protected_baseline_commit='+BASE_PUBLIC_COMMIT+' current_native_checks=pending current_python_rules=101 reused_python_rules=25')
+          print('manifest_payloads=329 added_public_inputs=9 changed_reviewed_inputs=34 unchanged_current_inputs=286 historical_protected_inputs=291 source_commit='+head)
+          print('protected_baseline_commit='+BASE_PUBLIC_COMMIT+' current_native_checks=pending current_python_rules=169 reused_python_rules=25')
           PYCODE
 
       - name: Execute exactly the affected production and SDK import Python rules
@@ -78,7 +95,7 @@ jobs:
           import hashlib, io, os, sys, unittest
           root=Path(os.environ['GITHUB_WORKSPACE'])
           sys.path.insert(0,str(root/'Integrations'))
-          groups=[('test_story_speech',29),('test_production_document',24),('test_production_workflow',33),('test_model_material_import',8),('test_story_planning',7)]
+          groups=[('test_story_speech',29),('test_production_document',24),('test_production_workflow',33),('test_model_material_import',8),('test_story_planning',7),('test_knowledge_story',55),('test_knowledge_delivery',13)]
           def tests(suite):
               for item in suite:
                   if isinstance(item,unittest.TestSuite):yield from tests(item)
@@ -88,7 +105,7 @@ jobs:
           assert all(len(items)==len(set(items))==count and all(identity.startswith(name+'.') for identity in items)
                      for (name,count),items in zip(groups,identities))
           expected={identity for items in identities for identity in items}
-          assert len(expected)==sum(count for _,count in groups)==101
+          assert len(expected)==sum(count for _,count in groups)==169
           for name,_ in groups:
               print('current_python_test_source_sha256='+name+':'+hashlib.sha256((root/'Integrations'/(name+'.py')).read_bytes()).hexdigest())
           class ExactResult(unittest.TextTestResult):
@@ -104,10 +121,10 @@ jobs:
               print(output.getvalue()[-9000:],file=sys.stderr)
               raise RuntimeError('Affected production and SDK import Python rules failed')
           assert not result.failures and not result.errors and not result.skipped and not result.expectedFailures and not result.unexpectedSuccesses
-          assert len(result.started)==len(set(result.started))==len(result.passed)==len(set(result.passed))==result.testsRun==101
+          assert len(result.started)==len(set(result.started))==len(result.passed)==len(set(result.passed))==result.testsRun==169
           assert set(result.started)==set(result.passed)==expected
           for identity in sorted(expected):print('current_python_passed='+identity)
-          print('current_python_rules=101 reused_python_rules=25 real_business_media_executed=false review=false')
+          print('current_python_rules=169 reused_python_rules=25 real_business_media_executed=false review=false')
           PYCODE
 
       - name: Compile the ordinary VideoCore dependency for testability
@@ -173,14 +190,16 @@ jobs:
                   ('VideoMediaTests','MediaFramingMediaTests',2),
                   ('VideoCoreTests','MediaConfirmationTests',14),
                   ('VideoMediaTests','ModelPackageMediaTests',13),
-                  ('VideoCoreTests','ModelSceneContractTests',6),
+                  ('VideoCoreTests','ModelSceneContractTests',10),
+                  ('VideoCoreTests','StoryCausalSourcesTests',42),
+                  ('VideoCoreTests','PluginPackageTests',17),
                   ('VideoCoreTests','AgentSchemasTests',3),
                   ('VideoCoreTests','DependencyTests',10),
                   ('VideoCoreTests','AgentMutationTests',9),
                   ('VideoCoreTests','ArtifactRelocationTests',10),
                   ('VideoCoreTests','BackupRestoreInventoryTests',5),
                   ('VideoCoreTests','PluginProtocolTests',19),
-                  ('VideoCoreTests','PluginModelBankTests',10),
+                  ('VideoCoreTests','PluginModelBankTests',15),
                   ('VideoCoreTests','VendorFreeModuleTrustTests',15),
                   ('VideoMediaTests','PluginProcessTests',18)]
           expected=set()
@@ -198,7 +217,7 @@ jobs:
               assert not expected&identities
               expected.update(identities)
               print('current_native_test_source_sha256='+name+':'+hashlib.sha256(source.read_bytes()).hexdigest())
-          assert len(expected)==147
+          assert len(expected)==215
           selection='('+'|'.join(name for _,name,_ in groups)+')'
           argv=['swift','test','--skip-build','-c','release','--scratch-path',str(scratch),'-j','2','-Xswiftc','-enable-testing','--filter',selection]
           started_at=time.monotonic()
@@ -222,7 +241,7 @@ jobs:
           # such as testFailedDomainWriteRollsBackEntityAndReceipt are valid.
           assert re.search(r"(?m)^Test (?:Case|Suite) '[^\r\n]*' (?:failed|skipped)\b",result.stdout) is None
           for identity in sorted(expected):print('current_native_passed='+identity)
-          print('current_native_rules=147 elapsed_seconds='+format(time.monotonic()-started_at,'.3f')+' current_python_rules=101 reused_python_rules=25 synthetic_fixture_media=true real_business_media_executed=false review=false')
+          print('current_native_rules=215 elapsed_seconds='+format(time.monotonic()-started_at,'.3f')+' current_python_rules=169 reused_python_rules=25 synthetic_fixture_media=true real_business_media_executed=false review=false')
           PYCODE
 
       - name: Build the ordinary Release CLI
@@ -253,7 +272,7 @@ jobs:
           bins=execute(['swift','build','-c','release','--scratch-path',str(scratch),'-j','2','--show-bin-path'],30).strip()
           product=Path(bins)/'video'
           assert product.is_file() and not product.is_symlink() and os.access(product,os.X_OK)
-          print('current_release_cli_builds=1 current_native_rules=147 current_python_rules=101 reused_python_rules=25 real_business_media_executed=false review=false')
+          print('current_release_cli_builds=1 current_native_rules=215 current_python_rules=169 reused_python_rules=25 real_business_media_executed=false review=false')
           PYCODE
 
       - name: Record exact current Native and reused Python evidence boundaries
@@ -261,12 +280,12 @@ jobs:
         run: |
           python3 -B - <<'PYCODE'
           import os
-          text=("本次实际执行五个完整受影响Python模块：test_story_speech 29项、test_production_document 24项、test_production_workflow 33项、test_model_material_import 8项、test_story_planning 7项，共101个唯一测试身份；未变的test_speech_plan_alignment 12项和test_production_styles 13项按各自源码与调用条件复用，共25项，不重复计数。遗漏、重复、失败、skip、预期失败或不完整汇总均拒绝。模型导入Python规则使用合成回执与假runner，只核声明、来源字节和回执范围，不代表Swift辅助程序已编译或真实工程已导入。\n\n"
+          text=("本次实际执行七个完整受影响Python模块：test_story_speech 29项、test_production_document 24项、test_production_workflow 33项、test_model_material_import 8项、test_story_planning 7项、test_knowledge_story 55项、test_knowledge_delivery 13项，共169个唯一测试身份；未变的test_speech_plan_alignment 12项和test_production_styles 13项按各自源码与调用条件复用，共25项，不重复计数。遗漏、重复、失败、skip、预期失败或不完整汇总均拒绝。模型导入与三维故事适配Python规则使用合成回执与假runner，只核声明、字节边界和正常调用次序，不代表Swift辅助程序已编译、真实工程已导入或Core接受了合成实迹。\n\n"
                 "在同一 scratch、release 配置和 -j2 下，先以显式 -Xswiftc -enable-testing 编译 VideoCore，再以同一显式参数执行 swift build --build-tests；两段都成功后才执行受影响Native规则，swift test --skip-build 不再编译。最后保留原普通 Release CLI 构建。四段各保留 650 秒预算，外层 job 50 分钟有限上限；各段成功打印实际 elapsed，不预称缓存已复用。所有 build/test 超时打印捕获原 stdout 的最多 9000 字节原尾后仍失败；缺失明确报告，不忽略超时。编译不执行规则、不说明性能根因，也不授效果通过。\n\n"
-                "保留原四类29项、模型媒体13项及三维合同/受影响编辑和安全存储43项；增加直接受影响的协议19项、模型字节银行10项、签名范围15项和进程/调用18项，共147个唯一实际身份，每项started、passed各一次。规则覆盖原DAE/PNG字节和材质映射、正常权利与工作区隔离、完整模型银行分块/提交/引用/释放、全资源摘要、schema8兼容、game9协商及Scoped拒绝边界。仅使用合成网格和隔离规则签名，不冒真实高级包签发、动森素材、角色效果或正常Host冷载E2E。\n\n"
+                "保留上一版147项覆盖；三维合同由6项增至10项、模型字节银行由10项增至15项，并纳入直接修改的故事因果42项和包协议17项，共215个唯一实际身份，每项started、passed各一次。规则覆盖原DAE/PNG字节、材质映射与工作区权利、模型银行分块/提交/引用/释放、完整资源摘要、game9旧编码及game10原生操作协商、原轨变化窗、真实因果与Scoped拒绝边界。仅使用合成网格和隔离规则签名，不冒真实高级包签发、动森素材、角色效果或正常Host冷载E2E。\n\n"
                 "新增字幕分段是显式可选的 observed-natural-cues 策略，使用真实整词与精确 TN 映射，保持原文、原音、完整动作和旧缺省一镜一条字幕行为。纯规则测试使用合成观察或临时假消费者；不冒真实 SDK、影片制作、正常观看、声音试听、字幕确认或整片审核。真实用户链有独立托管证据。\n\n"
-                "328项公开载荷逐件核同，整体指纹从当次manifest动态计算。相对公开基线ab628dbbc97f1f9f25a403d80eabd9d899c205f5新增三维合同、模型银行与通用导入桥8项，29项既有载荷经过显式审查；其余291项保持该基线原字节。三维高级实现、动森原件、业务作者与验收控制器始终不进入公开包。\n\n"
+                "329项公开载荷逐件核同，整体指纹从当次manifest动态计算。固定公开基线ab628dbbc97f1f9f25a403d80eabd9d899c205f5的原291项清单和665673…指纹继续独立校验；其中本次修改的故事因果、包测试及三维作者适配5项明确转入审查范围，当前共34项既有载荷经过显式审查、286项逐件保持基线原字节。新增三维合同、原生动作、模型银行与通用导入桥9项。三维高级实现、动森原件、业务作者与验收控制器始终不进入公开包。\n\n"
                 "本 workflow 不读取私有源码、业务素材或凭据，不含闭源 Painter，不调用 TTS、外部服务、Mac App 或高级模块；不授声音听审、字幕确认、商业权利、上传同意或整片批准。\n")
           with open(os.environ['GITHUB_STEP_SUMMARY'],'a') as stream:stream.write(text)
-          print('current_native_rules=147 current_python_rules=101 reused_python_rules=25 current_release_cli_builds=1 real_business_media_executed=false review=false')
+          print('current_native_rules=215 current_python_rules=169 reused_python_rules=25 current_release_cli_builds=1 real_business_media_executed=false review=false')
           PYCODE

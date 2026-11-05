@@ -85,9 +85,7 @@ public final class RemoteSceneModule:ScopedSceneRenderModule,@unchecked Sendable
     public func draw(scene:VideoCore.Scene,localFrame:Int,fps:Int,rect:CGRect,context:CGContext)throws {throw VideoError.permission("独立高级绘制必须携带Host实时核验的完整调用范围")}
     public func draw(scene:VideoCore.Scene,localFrame:Int,fps:Int,rect:CGRect,context:CGContext,resources:RenderResources)throws {throw VideoError.permission("独立高级绘制缺少调用范围")}
     public func draw(scene:VideoCore.Scene,localFrame:Int,fps:Int,rect:CGRect,context:CGContext,resources:RenderResources,invocation:RenderInvocation)throws {
-        if scene.modelScene3D != nil {
-            guard manifest.id=="video.game",manifest.inputSchema==9 else {throw VideoError.unavailable("三维模型场景需要明确支持schema9的受信游戏插件，不能降级为旧二维输入")}
-        }
+        try PluginInputCompatibility.requireModelSupport(scene.modelScene3D,pluginID:manifest.id,inputSchema:manifest.inputSchema)
         try invocation.check();try PluginInputCompatibility.requireKnowledgeSupport(scene.simulation,pluginID:manifest.id,inputSchema:manifest.inputSchema,appearances:scene.classicArtwork?.knowledgeParticipants);try PluginInputCompatibility.requireCartoonSupport(scene.cartoonPerformance,pluginID:manifest.id,inputSchema:manifest.inputSchema)
         try PluginInputCompatibility.requirePresenterSupport(scene.cartoonPresenter,pluginID:manifest.id,inputSchema:manifest.inputSchema)
         try PluginInputCompatibility.requireLayoutSupport(layers:scene.layers,actions:scene.storyActions,presenter:scene.cartoonPresenter,pluginID:manifest.id,inputSchema:manifest.inputSchema)

@@ -550,4 +550,82 @@ final class StoryCausalSourcesTests:XCTestCase {
         for field in ["ruleChange","ruleID","storyCausality","inputDigest","finalResources"] {XCTAssertFalse(text.contains(field),field)}
         XCTAssertNil(try Codec.decoder().decode(PluginVisualProps.self,from:bytes).drawingScene().storyCausality)
     }
+    private func nativeScene()throws->Scene {
+        let xml="""
+        <COLLADA xmlns="http://www.collada.org/2005/11/COLLADASchema" version="1.4.1">
+        <asset><unit meter="1"/><up_axis>Y_UP</up_axis></asset>
+        <library_geometries><geometry id="triangle"><mesh><source id="positions"><float_array id="position-array" count="9">0 0 0 1 0 0 0 1 0</float_array></source></mesh></geometry></library_geometries>
+        <library_visual_scenes><visual_scene id="stage"><node id="hip" sid="hip" type="JOINT"/><node id="mesh"><instance_geometry url="#triangle"/></node></visual_scene></library_visual_scenes>
+        <scene><instance_visual_scene url="#stage"/></scene></COLLADA>
+        """
+        let bytes=Data(xml.utf8),inspection=try DAEInspector.inspect(bytes)
+        let resource=ModelDAEResource(model:.init(assetID:"authored-mesh",sha256:Codec.hash(bytes),bytes:bytes.count,fileExtension:"dae"),inspection:inspection,textures:[:])
+        var result=Scene(kind:.simulation,title:"真实三维因果",body:"",durationFrames:180)
+        let actions:[ModelStoryAction3D]=[
+            .init(id:"choose",kind:.speak,instanceID:"native-a",startFrame:5,endFrame:10,anchor:.init(y:1),text:"运货"),
+            .init(id:"open",kind:.hide,instanceID:"native-gate",startFrame:20,endFrame:30),
+            .init(id:"leave",kind:.move,instanceID:"native-a",startFrame:30,endFrame:45,requires:["open"]),
+            .init(id:"celebrate",kind:.pose,instanceID:"native-a",startFrame:45,endFrame:58,requires:["leave"],jointNames:["hip"]),
+            .init(id:"alternative",kind:.speak,instanceID:"native-a",startFrame:65,endFrame:75,anchor:.init(y:1),text:"等候"),
+            .init(id:"reset-gate",kind:.show,instanceID:"native-gate",startFrame:120,endFrame:121),
+            .init(id:"rescue-choice",kind:.speak,instanceID:"native-a",startFrame:125,endFrame:135,anchor:.init(y:1),text:"运货")
+        ]
+        result.modelScene3D = .init(version:2,instances:["native-a","native-b","native-buyer","native-fund","native-gate"].map{.init(id:$0,name:$0,resource:resource)},
+            camera:.init(position:.init(x:0,y:2,z:5),target:.init()),lights:[.init(id:"sun",kind:.directional)],
+            transformTracks:[.init(instanceID:"native-a",keyframes:[.init(frame:0,transform:.init()),.init(frame:30,transform:.init()),.init(frame:44,transform:.init(translation:.init(x:1))),.init(frame:179,transform:.init(translation:.init(x:1)))])],
+            jointTracks:[.init(instanceID:"native-a",jointName:"hip",keyframes:[.init(frame:0,transform:.init()),.init(frame:44,transform:.init()),.init(frame:57,transform:.init(rotation:.init(z:1,w:0))),.init(frame:179,transform:.init(rotation:.init(z:1,w:0)))])],actions:actions)
+        let base=model();var waiting=base;waiting.ruleTable!.plans[0].defaultActionID="wait"
+        var rescue=waiting;rescue.ruleTable!.plans[0].decisions=[.init(id:"resume",priority:0,conditions:[.init(kind:.round,minimum:2,maximum:2)],actionID:"deliver")]
+        result.storyCausality = .init(poolSubjectID:"native-fund",actors:[.init(actorID:"a",subjectID:"native-a"),.init(actorID:"a",subjectID:"native-gate"),.init(actorID:"b",subjectID:"native-b"),.init(actorID:"buyer",subjectID:"native-buyer")],sources:[
+            try source(base,id:"base",start:0,end:60),try source(waiting,id:"waiting",start:60,end:120,parent:"base",plan:waiting.ruleTable!.plans[0]),try source(rescue,id:"rescue",start:120,end:180,parent:"waiting",plan:rescue.ruleTable!.plans[0])],bindings:[
+                .init(actionID:"choose",sourceID:"base",eventID:"1-实际出力与扣费",kind:.performedAction,actorID:"a",actionKey:"deliver"),
+                .init(actionID:"open",sourceID:"base",eventID:"2-收益结算",kind:.stateChange,actorID:"a",ruleID:"deliver-a",fromStateID:"loaded",toStateID:"delivered"),
+                .init(actionID:"leave",sourceID:"base",eventID:"2-收益结算",kind:.stateChange,requires:["open"],actorID:"a",ruleID:"deliver-a",fromStateID:"loaded",toStateID:"delivered"),
+                .init(actionID:"celebrate",sourceID:"base",eventID:"2-收益结算",kind:.stateChange,requires:["leave"],actorID:"a",ruleID:"deliver-a",fromStateID:"loaded",toStateID:"delivered"),
+                .init(actionID:"alternative",sourceID:"waiting",eventID:"1-实际出力与扣费",kind:.performedAction,actorID:"a",actionKey:"wait"),
+                .init(actionID:"rescue-choice",sourceID:"rescue",eventID:"2-实际出力与扣费",kind:.performedAction,actorID:"a",actionKey:"deliver")])
+        return result
+    }
+    func testNativeCausalityUsesRealInstancesTracksAndFullSourcesWithoutTwoDimensionalProxies()throws {
+        let native=try nativeScene()
+        XCTAssertNil(native.storyActions);XCTAssertNil(native.gameWorld);XCTAssertNil(native.layers)
+        XCTAssertNoThrow(try ModelScene3DRules.validate(scene:native))
+        XCTAssertNoThrow(try StoryCausalRules.validate(scene:native))
+        let decoded=try Codec.decoder().decode(Scene.self,from:Codec.data(native))
+        XCTAssertNoThrow(try StoryCausalRules.validate(scene:decoded));XCTAssertEqual(decoded,native)
+        var noSources=native;noSources.storyCausality=nil
+        XCTAssertEqual(try Codec.data(PluginVisualProps(scene:native)),try Codec.data(PluginVisualProps(scene:noSources)),"完整来源和trace只留Host，不进入插件")
+        let visual=try Codec.decoder().decode(PluginVisualProps.self,from:Codec.data(PluginVisualProps(scene:native)))
+        XCTAssertEqual(visual.modelScene3D,native.modelScene3D);XCTAssertNil(visual.drawingScene().storyCausality)
+        var downgraded=native;downgraded.modelScene3D!.version=1;downgraded.modelScene3D!.actions=nil
+        XCTAssertThrowsError(try StoryCausalRules.validate(scene:downgraded),"旧v1不能借Host因果接受未实现的原生动作")
+    }
+    func testNativeCausalBindingsRejectWrongActorsSourcesDependenciesAndFakePayments()throws {
+        let valid=try nativeScene()
+        for index in 0..<13 {
+            var invalid=valid
+            switch index {
+            case 0:invalid.storyCausality!.bindings[0].actorID="b"
+            case 1:invalid.storyCausality!.sources[0].trace.seed+=1
+            case 2:invalid.storyCausality!.bindings[1].eventID="missing-event"
+            case 3:invalid.storyCausality!.bindings[1].toStateID="sold"
+            case 4:invalid.storyCausality!.bindings[2].requires=[]
+            case 5:
+                invalid.modelScene3D!.actions![4].requires=["celebrate"]
+                invalid.storyCausality!.bindings[4].requires=["celebrate"]
+            case 6:invalid.modelScene3D!.jointTracks=[]
+            case 7:
+                for key in invalid.modelScene3D!.transformTracks[0].keyframes.indices {invalid.modelScene3D!.transformTracks[0].keyframes[key].transform.translation = .init()}
+            case 8:invalid.storyCausality!.sources[0].trace.events.removeLast()
+            case 9:
+                invalid.storyCausality!.sources[1].model.resourceLabel="偷偷改的资源"
+                invalid.storyCausality!.sources[1].trace=try KnowledgeSimulationEngine.record(model:invalid.storyCausality!.sources[1].model,seed:24,throughTick:invalid.storyCausality!.sources[1].model.lastSettlementTick())
+            case 10:
+                invalid.storyCausality!.bindings[2] = .init(actionID:"leave",sourceID:"base",eventID:"3-收益结算",kind:.payment,requires:["open"],ruleID:"sale-a",fromActorID:"buyer",toActorID:"a",amount:2)
+            case 11:invalid.modelScene3D!.actions![0].startFrame=55;invalid.modelScene3D!.actions![0].endFrame=59
+            default:invalid.modelScene3D!.actions![0].endFrame=25
+            }
+            XCTAssertThrowsError(try StoryCausalRules.validate(scene:invalid),"真实三维路径不能放松原有规则与依赖校验 \(index)")
+        }
+    }
 }

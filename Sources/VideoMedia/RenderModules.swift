@@ -415,20 +415,22 @@ public final class RenderModuleRegistry: @unchecked Sendable {
     /// Preflight the actual scene before quoting or dispatching a job. A game8
     /// capability alone does not assert that model bytes can cross its protocol.
     @discardableResult public func validate(scene: VideoCore.Scene, now: Date = Date()) throws -> RenderModuleStatus {
-        if scene.modelScene3D != nil {
+        if let model=scene.modelScene3D {
             lock.lock(); let entry = entries["video.game"]; lock.unlock()
-            guard scene.kind == .simulation, let entry, entry.module.manifest.inputSchema == 9,
+            guard scene.kind == .simulation, let entry,
                   entry.module is any ScopedSceneRenderModule else {
-                throw VideoError.unavailable("三维模型场景需要支持schema9的受信独立游戏模块；未改用旧二维地图")
+                throw VideoError.unavailable("三维模型场景需要支持schema9或schema10的受信独立游戏模块；未改用旧二维地图")
             }
+            try PluginInputCompatibility.requireModelSupport(model,pluginID:entry.module.manifest.id,inputSchema:entry.module.manifest.inputSchema)
         }
         let status = try validate(kind: scene.kind, now: now)
-        if scene.modelScene3D != nil {
+        if let model=scene.modelScene3D {
             lock.lock(); let entry = entries[status.pluginID]; lock.unlock()
-            guard let entry, entry.module.manifest.id == "video.game", entry.module.manifest.inputSchema == 9,
+            guard let entry, entry.module.manifest.id == "video.game",
                   entry.module is any ScopedSceneRenderModule else {
-                throw VideoError.unavailable("三维模型场景需要支持schema9的受信独立游戏模块；未改用旧二维地图")
+                throw VideoError.unavailable("三维模型场景需要支持schema9或schema10的受信独立游戏模块；未改用旧二维地图")
             }
+            try PluginInputCompatibility.requireModelSupport(model,pluginID:entry.module.manifest.id,inputSchema:entry.module.manifest.inputSchema)
         }
         return status
     }
@@ -439,11 +441,12 @@ public final class RenderModuleRegistry: @unchecked Sendable {
         lock.lock(); let entry = entries.values.first { $0.module.manifest.capabilities.contains(capability) }; lock.unlock()
         guard let entry else { throw VideoError.unavailable("缺少已校验的独立能力：\(capability)。请安装此构建对应的签名模块目录并核对权益，或改用免费图文/真实素材镜头。") }
         try validateEntry(entry, now: now)
-        if scene.modelScene3D != nil {
-            guard entry.module.manifest.id == "video.game", entry.module.manifest.inputSchema == 9,
+        if let model=scene.modelScene3D {
+            guard entry.module.manifest.id == "video.game",
                   entry.module is any ScopedSceneRenderModule else {
-                throw VideoError.unavailable("三维模型场景需要支持schema9的受信独立游戏模块；未改用旧二维地图")
+                throw VideoError.unavailable("三维模型场景需要支持schema9或schema10的受信独立游戏模块；未改用旧二维地图")
             }
+            try PluginInputCompatibility.requireModelSupport(model,pluginID:entry.module.manifest.id,inputSchema:entry.module.manifest.inputSchema)
         }
         context.saveGState(); defer { context.restoreGState() }; context.clip(to: rect)
         if let scoped=entry.module as? any ScopedSceneRenderModule {

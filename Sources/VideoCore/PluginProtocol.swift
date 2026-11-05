@@ -2,7 +2,7 @@ import Foundation
 
 public enum PluginInputCompatibility {
     public static func supports(pluginID: String, version: Int) -> Bool {
-        version == 1 || (pluginID == "video.game" && [2,3,5,6,7,8,9].contains(version)) || (pluginID == "video.cartoon" && [4,5,6,7,8].contains(version))
+        version == 1 || (pluginID == "video.game" && [2,3,5,6,7,8,9,10].contains(version)) || (pluginID == "video.cartoon" && [4,5,6,7,8].contains(version))
     }
     /// Publisher defaults match the current endpoints. Prior schemas remain
     /// explicitly selectable, before any signing identity or output transaction.
@@ -10,12 +10,26 @@ public enum PluginInputCompatibility {
         guard ["video.game", "video.cartoon"].contains(pluginID) else {
             throw VideoError.invalid("发行协议选择需要明确的游戏或卡通模块；未访问发行身份")
         }
-        guard let requested else { return pluginID == "video.game" ? 9:8 }
+        guard let requested else { return pluginID == "video.game" ? 10:8 }
         guard requested.range(of: "^[1-9][0-9]{0,2}$", options: .regularExpression) != nil,
               let version = Int(requested), supports(pluginID: pluginID, version: version) else {
             throw VideoError.invalid("发行输入协议版本不受此模块支持；未访问发行身份")
         }
         return version
+    }
+    public static func supportsModelBank(pluginID:String,inputSchema:Int)->Bool {
+        pluginID == "video.game" && [9,10].contains(inputSchema)
+    }
+    /// A new endpoint may read the unchanged v1 model, but v2 actions must never
+    /// be sent to game9 or silently reduced to its transform-only contract.
+    public static func requireModelSupport(_ model:ModelScene3D?,pluginID:String,inputSchema:Int)throws {
+        guard let model else{return}
+        let compatible = supportsModelBank(pluginID:pluginID,inputSchema:inputSchema) &&
+            ((model.version==1 && model.actions==nil) ||
+             (inputSchema==10 && model.version==2 && !(model.actions?.isEmpty ?? true)))
+        guard compatible else {
+            throw VideoError.unavailable("三维模型v1需要schema9或schema10；原生动作v2需要schema10受信游戏模块，旧模块不能忽略动作或降级为二维输入")
+        }
     }
     public static func requireKnowledgeSupport(_ simulation: Simulation, pluginID: String, inputSchema: Int, appearances: [KnowledgeParticipantAppearance]? = nil) throws {
         guard supports(pluginID: pluginID, version: inputSchema) else {
@@ -99,6 +113,10 @@ public struct PluginVisualProps:Codable,Equatable,Sendable {
         characterProfile=scene.characterProfile.map{PluginCharacterProps(silhouette:$0.silhouette,color:$0.color,actions:$0.actions)}
         cartoonPerformance=scene.cartoonPerformance
         storyActions=scene.storyActions;gameWorld=scene.gameWorld;cartoonRig=scene.cartoonRig;cartoonPresenter=scene.cartoonPresenter;modelScene3D=scene.modelScene3D
+        // Native v2 consumes only actual visual tracks/actions. Its complete
+        // rule model, multi-source traces and causal proof remain in the Host.
+        // Preserve the original simulation wire exactly for every v1 caller.
+        if modelScene3D?.version==2 {simulation.knowledge=nil}
         // Ordinary image pixels are drawn by the Host. Keep this Host-only
         // field out of the frozen RPC snapshot so older plugins encode the same
         // input digest without changing the original Scene or its layer pixels.
@@ -186,13 +204,29 @@ public enum PluginProtocolRules {
     public static let maximumInvocationSeconds:Double=4*60*60
     public static func text(_ value:String,maximum:Int=256)->Bool{!value.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty && value.utf8.count<=maximum && !value.unicodeScalars.contains(where:CharacterSet.controlCharacters.contains)}
     public static func hash(_ value:String)->Bool{value.range(of:"^[a-f0-9]{64}$",options:.regularExpression) != nil}
+    /// Codable model decoding rejects unknown model/action fields. Check the
+    /// enclosing model frame too, before Codable can discard Host-only sources
+    /// or unsupported visual extensions. Legacy non-model requests are unchanged.
+    public static func validateModelWire(_ data:Data)throws {
+        guard !data.isEmpty,data.count<=maximumRequestBytes else {throw VideoError.invalid("插件RPC消息为空或超过既有字节上限")}
+        guard let request=try JSONSerialization.jsonObject(with:data) as? [String:Any],
+              let input=request["input"] as? [String:Any],let props=input["props"] as? [String:Any],
+              props["modelScene3D"] != nil else {return}
+        let requestKeys:Set<String>=["protocolMajor","requestID","method","input","invocation","taskID","modelBankOperation"]
+        let inputKeys:Set<String>=["invocation","props","sourceFrame","fps","canvasWidth","canvasHeight","rect","assets","modelBankReference"]
+        let propsKeys:Set<String>=["sceneID","kind","durationFrames","simulation","character","emotion","color","fontName","narrationPresent","characterProfile","artwork","artworkRequired","cartoonPerformance","storyActions","gameWorld","cartoonRig","layers","voiceBinding","cartoonPresenter","modelScene3D"]
+        let legacyFields:Set<String>=["artwork","gameWorld","cartoonRig","storyActions","cartoonPerformance","cartoonPresenter","voiceBinding","layers"]
+        guard props["modelScene3D"] is [String:Any],Set(request.keys).isSubset(of:requestKeys),Set(input.keys).isSubset(of:inputKeys),Set(props.keys).isSubset(of:propsKeys),Set(props.keys).isDisjoint(with:legacyFields) else {
+            throw VideoError.invalid("三维插件帧含未知字段或Host专用来源/因果数据，未静默忽略扩展")
+        }
+    }
     public static func validate(_ invocation:PluginInvocation,now:Date=Date())throws {
         guard [invocation.workspaceID,invocation.projectID,invocation.revisionID,invocation.invocationID,invocation.budgetReference].allSatisfy({text($0)}),invocation.jobID.map({text($0)}) ?? true,hash(invocation.revisionDigest),invocation.currency.range(of:"^[A-Z]{3}$",options:.regularExpression) != nil,!invocation.budgetLimit.isNaN,invocation.budgetLimit>=0,invocation.deadlineUnixTime.isFinite,invocation.deadlineUnixTime>now.timeIntervalSince1970,invocation.deadlineUnixTime<=now.timeIntervalSince1970+maximumInvocationSeconds else{throw VideoError.permission("插件调用缺少有效冻结身份、预算引用或有界截止")}
     }
     public static func validate(_ request:PluginRPCRequest,pluginID:String,inputSchemaVersion:Int,now:Date=Date())throws {
         guard request.protocolMajor==1,text(request.requestID) else {throw VideoError.invalid("插件请求协议或标识无效")}
         if let operation=request.modelBankOperation {
-            guard pluginID=="video.game",inputSchemaVersion==9,request.method == .validate,request.input==nil,request.invocation==nil,request.taskID==nil else {throw VideoError.invalid("模型银行仅用于game9 validate且不能混普通帧或调用字段")}
+            guard PluginInputCompatibility.supportsModelBank(pluginID:pluginID,inputSchema:inputSchemaVersion),request.method == .validate,request.input==nil,request.invocation==nil,request.taskID==nil else {throw VideoError.invalid("模型银行仅用于game9/game10 validate且不能混普通帧或调用字段")}
             try operation.validate(now:now)
         }
     }
@@ -208,7 +242,9 @@ public enum PluginProtocolRules {
         if let profile=p.characterProfile {guard profile.actions.count<=64,profile.actions.allSatisfy({text($0,maximum:512)}),profile.color.range(of:"^[a-fA-F0-9]{6}$",options:.regularExpression) != nil else{throw VideoError.invalid("插件角色动作或颜色无效")}}
         _ = try SimulationReplay.frameState(simulation:p.simulation,frame:input.sourceFrame,fps:input.fps)
         if let model=p.modelScene3D {
-            guard capabilityID=="game.simulate",inputSchemaVersion==9,p.kind == .simulation,p.artwork==nil,!p.artworkRequired,p.gameWorld==nil,p.cartoonRig==nil,p.storyActions==nil,p.cartoonPerformance==nil,p.cartoonPresenter==nil,p.voiceBinding==nil,p.layers==nil,input.assets.isEmpty,input.sourceFrame<p.durationFrames else {throw VideoError.invalid("真实三维输入只用于game9，不能混旧图集、地图、表演或图片银行")}
+            try PluginInputCompatibility.requireModelSupport(model,pluginID:capabilityID=="game.simulate" ? "video.game":"video.cartoon",inputSchema:inputSchemaVersion)
+            guard model.version != 2 || p.simulation.knowledge==nil else {throw VideoError.invalid("三维v2只接受原生视觉动作，知识规则本体保留在Host")}
+            guard capabilityID=="game.simulate",p.kind == .simulation,p.artwork==nil,!p.artworkRequired,p.gameWorld==nil,p.cartoonRig==nil,p.storyActions==nil,p.cartoonPerformance==nil,p.cartoonPresenter==nil,p.voiceBinding==nil,p.layers==nil,input.assets.isEmpty,input.sourceFrame<p.durationFrames else {throw VideoError.invalid("真实三维输入只用于game9/game10，不能混旧图集、地图、表演或图片银行")}
             try model.validate(durationFrames:p.durationFrames);_=try input.dependencyFingerprints();return
         }
         guard input.modelBankReference==nil else {throw VideoError.invalid("非三维帧不能携带模型银行引用")}
@@ -277,9 +313,44 @@ public enum PluginRPCSchemas {
         for entry in declaration.split(separator:" ") {let parts=entry.split(separator:":",maxSplits:1);let optional=parts[0].hasSuffix("?"),key=String(optional ? parts[0].dropLast():parts[0]);properties[key]=shape(String(parts[1]));if !optional{required.append(.string(key))}}
         return .object(["type":.string("object"),"properties":.object(properties),"required":.array(required),"additionalProperties":.boolean(false)])
     }
+    /// Shared only by the current Host IR and explicit game10. Game9 continues
+    /// to use ModelScene3DSchema.records byte for byte, without these definitions.
+    public static func modelStoryDefinitions()->[String:AgentValue] {
+        var result=ModelStoryAction3DSchema.records.mapValues(record)
+        for (name,values) in ModelStoryAction3DSchema.enums {
+            result[name] = .object(["type":.string("string"),"enum":.array(values.map(AgentValue.string))])
+        }
+        var action=result["ModelStoryAction3D"]!.object!,properties=action["properties"]!.object!
+        properties["startFrame"] = .object(["type":.string("integer"),"minimum":.number(0),"maximum":.number(53999)])
+        properties["endFrame"] = .object(["type":.string("integer"),"minimum":.number(1),"maximum":.number(54000)])
+        properties["requires"] = .object(["type":.string("array"),"items":shape("s"),"maxItems":.number(32),"uniqueItems":.boolean(true)])
+        properties["jointNames"] = .object(["type":.string("array"),"items":shape("s"),"minItems":.number(1),"maxItems":.number(64),"uniqueItems":.boolean(true)])
+        properties["text"] = .object(["type":.string("string"),"minLength":.number(1),"maxLength":.number(48)])
+        action["properties"] = .object(properties)
+        func conditional(_ kind:String,required:[String],forbidden:[String])->AgentValue {
+            var then:[String:AgentValue]=[:]
+            if !required.isEmpty {then["required"] = .array(required.map(AgentValue.string))}
+            if !forbidden.isEmpty {then["not"] = .object(["anyOf":.array(forbidden.map{.object(["required":.array([.string($0)])])})])}
+            return .object(["if":.object(["properties":.object(["kind":.object(["const":.string(kind)])])]),"then":.object(then)])
+        }
+        action["allOf"] = .array([
+            conditional("pose",required:["jointNames"],forbidden:["anchor","text"]),
+            conditional("speak",required:["anchor","text"],forbidden:["jointNames"])
+        ] + ["move","show","hide"].map{conditional($0,required:[],forbidden:["jointNames","anchor","text"])})
+        result["ModelStoryAction3D"] = .object(action)
+        var model=result["ModelScene3D"]!.object!,modelProperties=model["properties"]!.object!
+        modelProperties["version"] = .object(["type":.string("integer"),"enum":.array([.number(1),.number(2)])])
+        modelProperties["actions"] = .object(["type":.string("array"),"items":shape("ModelStoryAction3D"),"minItems":.number(1),"maxItems":.number(256)])
+        model["properties"] = .object(modelProperties)
+        model["if"] = .object(["properties":.object(["version":.object(["const":.number(2)])])])
+        model["then"] = .object(["required":.array([.string("actions")])])
+        model["else"] = .object(["not":.object(["required":.array([.string("actions")])])])
+        result["ModelScene3D"] = .object(model)
+        return result
+    }
     public static func definitions(inputSchemaVersion: Int = 2,pluginID:String?=nil)->[String:AgentValue] {
         let story=inputSchemaVersion>=7 || (pluginID=="video.cartoon" && inputSchemaVersion>=5)
-        let model=pluginID=="video.game" && inputSchemaVersion==9
+        let model=pluginID=="video.game" && [9,10].contains(inputSchemaVersion)
         let declarations:[String:String]=[
             "PluginInvocation":"workspaceID:s projectID:s revisionID:s revisionDigest:s jobID?:s invocationID:s budgetReference:s currency:s budgetLimit:n deadlineUnixTime:n",
             "PluginRect":"x:n y:n width:n height:n",
@@ -301,6 +372,7 @@ public enum PluginRPCSchemas {
         var result=declarations.mapValues(record)
         if model {
             for (key,declaration) in ModelScene3DSchema.records {result[key]=record(declaration)}
+            if inputSchemaVersion==10 {result.merge(modelStoryDefinitions(),uniquingKeysWith:{$1})}
             result["ModelLightKind"] = .object(["type":.string("string"),"enum":.array(["ambient","directional","omni"].map(AgentValue.string))])
             result["ModelVertexColorUsage"] = .object(["type":.string("string"),"enum":.array(ModelVertexColorUsage.allCases.map{.string($0.rawValue)})])
             result["ModelNormalTextureEncoding"] = .object(["type":.string("string"),"enum":.array(ModelNormalTextureEncoding.allCases.map{.string($0.rawValue)})])
@@ -325,7 +397,12 @@ public enum PluginRPCSchemas {
             assets["minItems"] = .number(1);assets["maxItems"] = .number(Decimal(PluginModelBankRules.maximumAssets));properties["assets"] = .object(assets);manifest["properties"] = .object(properties);result["PluginModelBankManifest"] = .object(manifest)
             var frame=result["PluginFrameInput"]!.object!
             let mixed=AgentValue.object(["anyOf":.array(["artwork","gameWorld","cartoonRig","storyActions","cartoonPerformance","cartoonPresenter","voiceBinding","layers"].map { .object(["required":.array([.string($0)])]) })])
-            let modelProps=AgentValue.object(["required":.array([.string("modelScene3D")]),"properties":.object(["kind":.object(["const":.string(SceneKind.simulation.rawValue)]),"artworkRequired":.object(["const":.boolean(false)])]),"not":mixed])
+            var modelPropsRecord:[String:AgentValue]=["required":.array([.string("modelScene3D")]),"properties":.object(["kind":.object(["const":.string(SceneKind.simulation.rawValue)]),"artworkRequired":.object(["const":.boolean(false)])]),"not":mixed]
+            if inputSchemaVersion==10 {
+                modelPropsRecord["if"] = .object(["properties":.object(["modelScene3D":.object(["properties":.object(["version":.object(["const":.number(2)])])])])])
+                modelPropsRecord["then"] = .object(["properties":.object(["simulation":.object(["not":.object(["required":.array([.string("knowledge")])])])])])
+            }
+            let modelProps=AgentValue.object(modelPropsRecord)
             frame["oneOf"] = .array([
                 .object(["required":.array([.string("modelBankReference")]),"properties":.object(["props":modelProps,"assets":.object(["maxItems":.number(0)])])]),
                 .object(["not":.object(["required":.array([.string("modelBankReference")])]),"properties":.object(["props":.object(["not":.object(["required":.array([.string("modelScene3D")])])])])])
@@ -391,7 +468,7 @@ public enum PluginRPCSchemas {
         result["Schema"] = .object(["type":.string("object")]);return result
     }
     public static func request(inputSchemaVersion: Int = 2,pluginID:String?=nil)->AgentValue {
-        let model=pluginID=="video.game" && inputSchemaVersion==9
+        let model=pluginID=="video.game" && [9,10].contains(inputSchemaVersion)
         var schema=record("protocolMajor:i requestID:s method:PluginMethod input?:PluginFrameInput invocation?:PluginInvocation taskID?:s"+(model ? " modelBankOperation?:PluginModelBankOperation":"")).object!
         if model {
             let forbidden=AgentValue.object(["anyOf":.array(["input","invocation","taskID"].map { .object(["required":.array([.string($0)])]) })])
@@ -401,11 +478,12 @@ public enum PluginRPCSchemas {
             ])
         }
         schema["$defs"] = .object(definitions(inputSchemaVersion: inputSchemaVersion,pluginID:pluginID));schema["$schema"] = .string("https://json-schema.org/draft/2020-12/schema")
-        schema["description"] = .string("protocolMajor=1. validate/estimate/execute require input. progress/cancel require the complete matching invocation; progress also requires taskID. cancel without taskID closes the whole invocation and exits the service."+(model ? " game9 validate alternatively accepts a mutually exclusive bounded in-memory modelBankOperation; it never grants filesystem/network access.":""))
+        let modelDescription=inputSchemaVersion==10 ? " game10 validate alternatively accepts a mutually exclusive bounded in-memory modelBankOperation; model v2 actions are visual-only, while complete causal sources remain in the Host. It never grants filesystem/network access.":" game9 validate alternatively accepts a mutually exclusive bounded in-memory modelBankOperation; it never grants filesystem/network access."
+        schema["description"] = .string("protocolMajor=1. validate/estimate/execute require input. progress/cancel require the complete matching invocation; progress also requires taskID. cancel without taskID closes the whole invocation and exits the service."+(model ? modelDescription:""))
         return .object(schema)
     }
     public static func response(inputSchemaVersion: Int = 2,pluginID:String?=nil)->AgentValue {
-        var schema=record("protocolMajor:i requestID:s ok:b state:s descriptor?:PluginDescription inputDigest?:s task?:PluginTaskSnapshot cost?:PluginCost error?:PluginRPCError"+(pluginID=="video.game" && inputSchemaVersion==9 ? " modelBankReceipt?:PluginModelBankReceipt":"")).object!
+        var schema=record("protocolMajor:i requestID:s ok:b state:s descriptor?:PluginDescription inputDigest?:s task?:PluginTaskSnapshot cost?:PluginCost error?:PluginRPCError"+(pluginID=="video.game" && [9,10].contains(inputSchemaVersion) ? " modelBankReceipt?:PluginModelBankReceipt":"")).object!
         schema["$defs"] = .object(definitions(inputSchemaVersion: inputSchemaVersion,pluginID:pluginID));schema["$schema"] = .string("https://json-schema.org/draft/2020-12/schema");return .object(schema)
     }
 }

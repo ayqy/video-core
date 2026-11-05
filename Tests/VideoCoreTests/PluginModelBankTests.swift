@@ -197,4 +197,132 @@ final class PluginModelBankTests:XCTestCase {
         XCTAssertNotNil(PluginRPCSchemas.request(inputSchemaVersion:9,pluginID:"video.game").object?["oneOf"])
         XCTAssertNotNil(PluginRPCSchemas.response(inputSchemaVersion:9,pluginID:"video.game").object?["properties"]?.object?["modelBankReceipt"])
     }
+    func testGameTenAcceptsNativeV2ActionsUsingTheUnchangedBankAndNineRejectsThem()throws {
+        let f=try fixture(),store=PluginModelBankStore(),receipt=try upload(store,f)
+        let legacy=frame(f,reference:receipt.reference)
+        XCTAssertNoThrow(try PluginProtocolRules.validate(legacy,capabilityID:"game.simulate",inputSchemaVersion:10,now:now))
+        var current=legacy,model=f.scene
+        model.version=2
+        model.actions=[.init(id:"visible",kind:.show,instanceID:"actor",startFrame:0,endFrame:1),
+                       .init(id:"speaking",kind:.speak,instanceID:"actor",startFrame:1,endFrame:10,requires:["visible"],anchor:.init(x:0,y:1,z:0),text:"我会保持沉默。")]
+        current.props.modelScene3D=model
+        XCTAssertNoThrow(try PluginProtocolRules.validate(current,capabilityID:"game.simulate",inputSchemaVersion:10,now:now))
+        XCTAssertThrowsError(try PluginProtocolRules.validate(current,capabilityID:"game.simulate",inputSchemaVersion:9,now:now))
+        XCTAssertThrowsError(try PluginProtocolRules.validate(current,capabilityID:"game.simulate",inputSchemaVersion:11,now:now))
+        XCTAssertThrowsError(try PluginProtocolRules.validate(current,capabilityID:"cartoon.animate",inputSchemaVersion:10,now:now))
+        XCTAssertEqual(try current.dependencyFingerprints(),try legacy.dependencyFingerprints())
+        XCTAssertEqual(try PluginModelBankManifest(scene:model,durationFrames:21),f.manifest)
+        XCTAssertEqual(try store.snapshot(reference:receipt.reference,invocation:f.invocation,scene:model,durationFrames:21,now:now).assets,f.assets)
+        var invalid=current;invalid.props.modelScene3D?.version=1
+        XCTAssertThrowsError(try PluginProtocolRules.validate(invalid,capabilityID:"game.simulate",inputSchemaVersion:9,now:now))
+        XCTAssertThrowsError(try PluginProtocolRules.validate(invalid,capabilityID:"game.simulate",inputSchemaVersion:10,now:now))
+        for index in 0..<4 {
+            var mixed=current
+            switch index {
+            case 0:mixed.props.storyActions=[]
+            case 1:mixed.props.layers=[]
+            case 2:mixed.assets=[.init(assetID:"raster",data:Data([1]),sha256:Codec.hash(Data([1])),width:1,height:1)]
+            default:mixed.modelBankReference=nil
+            }
+            XCTAssertThrowsError(try PluginProtocolRules.validate(mixed,capabilityID:"game.simulate",inputSchemaVersion:10,now:now))
+        }
+    }
+    func testGameTenBankOperationsKeepMutualExclusionBudgetsAndNoFilesystemGrant()throws {
+        let f=try fixture(),operation=operation(.begin,f)
+        let request=PluginRPCRequest(requestID:"register-ten",method:.validate,modelBankOperation:operation)
+        XCTAssertNoThrow(try PluginProtocolRules.validate(request,pluginID:"video.game",inputSchemaVersion:10,now:now))
+        for schema in [8,11] {XCTAssertThrowsError(try PluginProtocolRules.validate(request,pluginID:"video.game",inputSchemaVersion:schema,now:now))}
+        XCTAssertThrowsError(try PluginProtocolRules.validate(request,pluginID:"video.cartoon",inputSchemaVersion:10,now:now))
+        var mixed=request;mixed.method = .execute
+        XCTAssertThrowsError(try PluginProtocolRules.validate(mixed,pluginID:"video.game",inputSchemaVersion:10,now:now))
+        mixed=request;mixed.invocation=f.invocation
+        XCTAssertThrowsError(try PluginProtocolRules.validate(mixed,pluginID:"video.game",inputSchemaVersion:10,now:now))
+        let descriptor=PluginDescription(pluginID:"video.game",capabilityID:"game.simulate",version:"1.5.0",inputSchemaVersion:10)
+        XCTAssertFalse(descriptor.filesystemAccess);XCTAssertFalse(descriptor.networkAccess)
+        XCTAssertEqual(PluginModelBankRules.maximumChunkBytes,512*1024)
+        XCTAssertEqual(PluginModelBankRules.maximumTotalBytes,64*1024*1024)
+        XCTAssertEqual(PluginModelBankRules.maximumAssets,512);XCTAssertEqual(PluginModelBankRules.maximumBanks,2)
+        XCTAssertEqual(PluginProtocolRules.maximumRequestBytes,16*1024*1024)
+        XCTAssertEqual(PluginProtocolRules.maximumTotalImagePixels,48_000_000)
+    }
+    func testNativeV2VisualPropsRemoveKnowledgeWithoutMutatingHostOrLegacyWire()throws {
+        let f=try fixture(),store=PluginModelBankStore(),receipt=try upload(store,f)
+        var host=Scene(kind:.simulation,title:"Host-only title",body:"Host-only sources",narration:"Host-only narration",durationFrames:21)
+        host.modelScene3D=f.scene
+        host.simulation.knowledge=KnowledgeSimulation(knowledgeLabel:"Host-only rule model",participants:[
+            .init(id:"a",name:"甲",strategy:.contribute,initialResources:20),
+            .init(id:"b",name:"乙",strategy:.contribute,initialResources:20)],rounds:1)
+        let legacy=PluginVisualProps(scene:host)
+        XCTAssertEqual(try Codec.data(legacy.simulation),try Codec.data(host.simulation),"v1/game9保留原simulation编码")
+        XCTAssertNotNil(legacy.simulation.knowledge)
+        host.modelScene3D?.version=2
+        host.modelScene3D?.actions=[.init(id:"visible",kind:.show,instanceID:"actor",startFrame:0,endFrame:1)]
+        let before=try Codec.data(host),visual=PluginVisualProps(scene:host)
+        XCTAssertNil(visual.simulation.knowledge);XCTAssertEqual(visual.modelScene3D,host.modelScene3D)
+        var expected=host.simulation;expected.knowledge=nil
+        XCTAssertEqual(visual.simulation,expected)
+        XCTAssertEqual(try Codec.data(host),before);XCTAssertNotNil(host.simulation.knowledge)
+        let wire=String(decoding:try Codec.data(visual),as:UTF8.self)
+        for privateText in ["Host-only rule model","Host-only title","Host-only sources","Host-only narration"] {XCTAssertFalse(wire.contains(privateText),privateText)}
+        var input=frame(f,reference:receipt.reference);input.props=visual
+        XCTAssertNoThrow(try PluginProtocolRules.validate(input,capabilityID:"game.simulate",inputSchemaVersion:10,now:now))
+        input.props.simulation.knowledge=host.simulation.knowledge
+        XCTAssertThrowsError(try PluginProtocolRules.validate(input,capabilityID:"game.simulate",inputSchemaVersion:10,now:now),"直接调用者不能将Host规则重新塞入v2 RPC")
+    }
+    func testModelFrameWireRejectsUnknownAndHostOnlyFieldsBeforeCodableCanDiscardThem()throws {
+        let f=try fixture(),store=PluginModelBankStore(),receipt=try upload(store,f)
+        let request=PluginRPCRequest(requestID:"wire",method:.validate,input:frame(f,reference:receipt.reference))
+        let data=try Codec.data(request)
+        XCTAssertNoThrow(try PluginProtocolRules.validateModelWire(data))
+        let original=try XCTUnwrap(JSONSerialization.jsonObject(with:data) as? [String:Any])
+        for key in ["storyCausality","sources","narrativeSources","unsupportedVisualField"] {
+            var root=original,input=try XCTUnwrap(root["input"] as? [String:Any]),props=try XCTUnwrap(input["props"] as? [String:Any])
+            props[key]=["private":"Host-only-source"];input["props"]=props;root["input"]=input
+            XCTAssertThrowsError(try PluginProtocolRules.validateModelWire(JSONSerialization.data(withJSONObject:root)),key)
+        }
+        for key in ["modelScene3D","storyActions","layers"] {
+            var root=original,input=try XCTUnwrap(root["input"] as? [String:Any]),props=try XCTUnwrap(input["props"] as? [String:Any])
+            props[key]=NSNull();input["props"]=props;root["input"]=input
+            XCTAssertThrowsError(try PluginProtocolRules.validateModelWire(JSONSerialization.data(withJSONObject:root)),"null不能隐藏三维或混入的旧字段")
+        }
+        var root=original;root["futureRequestField"]=true
+        XCTAssertThrowsError(try PluginProtocolRules.validateModelWire(JSONSerialization.data(withJSONObject:root)))
+        var input=try XCTUnwrap(original["input"] as? [String:Any]);input["futureBankAlias"]="bank";root=original;root["input"]=input
+        XCTAssertThrowsError(try PluginProtocolRules.validateModelWire(JSONSerialization.data(withJSONObject:root)))
+        for value in [NSNull(),[],[["kind":"show"]]] as [Any] {
+            root=original;input=try XCTUnwrap(root["input"] as? [String:Any])
+            var props=try XCTUnwrap(input["props"] as? [String:Any]),model=try XCTUnwrap(props["modelScene3D"] as? [String:Any])
+            model["actions"]=value;props["modelScene3D"]=model;input["props"]=props;root["input"]=input
+            XCTAssertThrowsError(try Codec.decoder().decode(PluginRPCRequest.self,from:JSONSerialization.data(withJSONObject:root)),"game9/v1不能吞actions字段，包括null/空数组")
+        }
+    }
+    func testOnlyGameTenAndHostDiscoverTypedNativeActionsAndKeepNineModelRecordFrozen()throws {
+        let nine=PluginRPCSchemas.definitions(inputSchemaVersion:9,pluginID:"video.game")
+        let ten=PluginRPCSchemas.definitions(inputSchemaVersion:10,pluginID:"video.game"),host=AgentSchemas.definitions()
+        let expectedNine=try Codec.decoder().decode(AgentValue.self,from:Data(##"{"type":"object","properties":{"version":{"type":"integer"},"instances":{"type":"array","items":{"$ref":"#/$defs/ModelInstance3D"}},"camera":{"$ref":"#/$defs/ModelCamera3D"},"lights":{"type":"array","items":{"$ref":"#/$defs/ModelLight3D"}},"transformTracks":{"type":"array","items":{"$ref":"#/$defs/ModelTransformTrack"}},"jointTracks":{"type":"array","items":{"$ref":"#/$defs/ModelJointTrack"}}},"required":["version","instances","camera","lights","transformTracks","jointTracks"],"additionalProperties":false}"##.utf8))
+        XCTAssertEqual(try Codec.data(nine["ModelScene3D"]!),try Codec.data(expectedNine))
+        for name in ["ModelStoryAction3D","ModelStoryActionKind3D"] {
+            XCTAssertNil(nine[name]);XCTAssertNotNil(ten[name]);XCTAssertNotNil(host[name])
+            XCTAssertNil(PluginRPCSchemas.definitions(inputSchemaVersion:8,pluginID:"video.cartoon")[name])
+        }
+        XCTAssertNil(nine["ModelScene3D"]?.object?["properties"]?.object?["actions"])
+        XCTAssertNotNil(ten["ModelScene3D"]?.object?["then"]?.object?["required"])
+        XCTAssertNotNil(host["ModelScene3D"]?.object?["else"])
+        for defs in [ten,host] {
+            XCTAssertEqual(defs["ModelStoryActionKind3D"]?.object?["enum"],.array(["move","pose","show","hide","speak"].map(AgentValue.string)))
+            XCTAssertEqual(defs["ModelStoryAction3D"]?.object?["additionalProperties"],.boolean(false))
+            XCTAssertEqual(defs["ModelScene3D"]?.object?["properties"]?.object?["actions"]?.object?["maxItems"],.number(256))
+        }
+        for name in ["Scene","Asset","Evidence","StoryCausality","StoryCausalSource","VoiceTake","ProductionBrief"] {XCTAssertNil(ten[name],name)}
+        func check(_ node:AgentValue) {
+            switch node {
+            case .object(let values):
+                if let ref=values["$ref"]?.string {XCTAssertNotNil(ten[String(ref.dropFirst("#/$defs/".count))],ref)}
+                for value in values.values {check(value)}
+            case .array(let values):for value in values {check(value)}
+            default:break
+            }
+        }
+        for value in ten.values {check(value)}
+    }
 }
