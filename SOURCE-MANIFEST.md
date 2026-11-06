@@ -2,10 +2,10 @@
 
 VideoFree source export · package_free.py · version 1
 
-生成时间：2026-11-06 09:18:20 北京时间
+生成时间：2026-11-06 09:36:18 北京时间
 
-- 源码与必要元数据：340个文件；10500773字节（不含本清单）。
-- 整体内容指纹：`ddce1df55b88b1c0debcb9ca2c3a3bf42cec8cbb98cb22149a30891bace3883c`。
+- 源码与必要元数据：340个文件；10500914字节（不含本清单）。
+- 整体内容指纹：`9122cd87730a78431419d729645cbe5742bc4f6413976a0ffdd43f703c0963ba`。
 - 来源：受控原始工程中的逐文件白名单；Package.swift、唯一免费制作workflow与README均来自Distribution/Free精确模板。
 - 本包不含.git，不可作为新业务checkout；本清单生成过程不执行构建、设备验收、签名安装或公共上传，各阶段以独立证据为准。
 - 排除：App、VideoGame、VideoCartoon、Premium、高级实现运行时测试、私有仓库地址、凭据、客户数据、缓存、日志及媒体过程产物。
@@ -208,7 +208,7 @@ VideoFree source export · package_free.py · version 1
 | b9e01b60a4e44c94dc5aa068bc455dc2bbfb19d82101bf744c2d4d83f8a4ddec | 11401 | Sources/VideoMedia/ClassicArtworkMedia.swift |
 | 6beff353416b9b4329e20ab3cbd84fcb19d34c8687427feb157b97d00ed63b4d | 10707 | Sources/VideoMedia/ClassicBuiltinAssets.swift |
 | 451de62ae66ce51bc390deb9d210ca46de5ca66e5bb52b4572a6e5e792e141a2 | 4904 | Sources/VideoMedia/CoursePreview.swift |
-| 4c93f37a67d81f4c4a14e60235f7f9bd796bc007b084f0baef1f331bb504970e | 27471 | Sources/VideoMedia/CoverPainter.swift |
+| 8dfe94df87054023e7f6bd92b06bb8e70e90276da910fa1e13c783043a2e08b6 | 27612 | Sources/VideoMedia/CoverPainter.swift |
 | cf4f47e54fb55606755e65b1f837697edca6ac3bd8f3a67497ebea9514bfb82d | 2197018 | Sources/VideoMedia/CoverTypeface.swift |
 | 5edf04222491105771fd69d3ad3c47861e1729a14e846babdf82005d8b43fd92 | 8064 | Sources/VideoMedia/DataPresentationPainter.swift |
 | a3c1ff6981dd81b2a97fee7cff2489fc9edb2381904ee46ebad18e9b6562dc91 | 4662 | Sources/VideoMedia/Diagnostics.swift |

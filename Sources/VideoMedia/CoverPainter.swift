@@ -293,8 +293,14 @@ public enum CoverPainter {
         for x in 0..<width {for y in 0..<height where data[y*context.bytesPerRow+x*4+3] != 0 {occupied[x]=true;break}}
         guard let first=occupied.firstIndex(of:true),let last=occupied.lastIndex(of:true),last-first>=4 else{return nil}
         let center=width/2
-        let empty=(first+1..<last).filter{!occupied[$0]}.min {a,b in
-            abs(a-center)==abs(b-center) ? a<b:abs(a-center)<abs(b-center)
+        var empty:Int?
+        var bestDistance=Int.max
+        for column in (first+1)..<last where !occupied[column] {
+            let distance=abs(column-center)
+            if distance<bestDistance {
+                empty=column
+                bestDistance=distance
+            }
         }
         guard let split=empty,
               let leading=image.cropping(to:CGRect(x:0,y:0,width:split,height:height)),
