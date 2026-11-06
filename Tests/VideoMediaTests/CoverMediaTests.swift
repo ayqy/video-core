@@ -118,6 +118,7 @@ final class CoverMediaTests:XCTestCase {
     }
     func testOnlyTitleUsesOfflineFontHighlightAndFitsBothPreviewCrops()throws {
         XCTAssertEqual(CTFontCopyPostScriptName(try CoverTypeface.font(size:40)) as String,CoverTypeface.postScriptName)
+        XCTAssertEqual(CTFontCopyPostScriptName(try CoverTypeface.displayFont(size:40)) as String,CoverTypeface.displayPostScriptName)
         for aspect in [Aspect.landscape,.portrait] {
             for style in CoverStyle.allCases where style != .automatic {
                 var value=try revision(aspect:aspect)
@@ -130,7 +131,7 @@ final class CoverMediaTests:XCTestCase {
                     for run in CTLineGetGlyphRuns(line) as! [CTRun] {
                         let attributes=CTRunGetAttributes(run) as NSDictionary
                         if let font=attributes[kCTFontAttributeName] as! CTFont? {
-                            XCTAssertEqual(CTFontCopyPostScriptName(font) as String,CoverTypeface.postScriptName)
+                            XCTAssertEqual(CTFontCopyPostScriptName(font) as String,CoverTypeface.displayPostScriptName)
                             sizes.insert(Int((CTFontGetSize(font)*100).rounded()))
                         }
                         if let color=attributes[kCTForegroundColorAttributeName] as! CGColor? {inkColors.insert(String(describing:color.components))}
@@ -141,7 +142,7 @@ final class CoverMediaTests:XCTestCase {
                 let side=CGFloat(min(aspect.width,aspect.height)),w=CGFloat(aspect.width),h=CGFloat(aspect.height)
                 let square=CGRect(x:(w-side)/2,y:(h-side)/2,width:side,height:side)
                 let ww=min(w,h*16/9),hh=min(h,w*9/16),wide=CGRect(x:(w-ww)/2,y:(h-hh)/2,width:ww,height:hh)
-                for bound in composition.bounds+composition.highlights {
+                for bound in composition.bounds+composition.highlights+composition.effects {
                     XCTAssertTrue(square.contains(bound));XCTAssertTrue(wide.contains(bound));XCTAssertTrue(composition.safeRect.contains(bound))
                 }
                 XCTAssertEqual(composition.visibleBounds.midY,h/2,accuracy:0.01)
@@ -199,8 +200,60 @@ final class CoverMediaTests:XCTestCase {
             XCTAssertTrue(minRed<minBlue-5 || maxRed>maxBlue+5,"真实透明角色须有像素越过原景下边缘，不能只贴在照片里")
             let composition=try CoverPainter.composeTitle(cover:CoverRules.resolved(revision:value),width:1280,height:720)
             let square=CGRect(x:280,y:0,width:720,height:720),variant=template == .editorial ? 1:(template == .contrast ? 2:0)
-            XCTAssertFalse(CoverPainter.auxiliaryRect(square:square,variant:variant).intersects(composition.visibleBounds),"小IP不可遮中心标题")
+            let layout=CoverPainter.gameDepthLayout(square:square,canvas:CGRect(x:0,y:0,width:1280,height:720),variant:variant,titleBounds:composition.visibleBounds)
+            XCTAssertFalse(layout.hero.intersects(composition.visibleBounds),"小IP不可遮中心标题")
+            let x=Int(red.map(\.x).reduce(0,+)/CGFloat(red.count))
+            var foregroundPixelsBetweenBody=0
+            for y in Int(minRed)...Int(maxRed) {
+                let offset=(y*image.width+x)*4
+                if abs(Int(raw[offset])-113)<3 && abs(Int(raw[offset+1])-173)<3 && abs(Int(raw[offset+2])-145)<3 {foregroundPixelsBetweenBody+=1}
+            }
+            XCTAssertGreaterThan(foregroundPixelsBetweenBody,3,"前景框沿须真实遮挡身体局部，不能只有整个人贴在照片前面")
         }
+    }
+    func testPresenterGestureMirrorsActualPixelsTowardCenteredTitle()throws {
+        try assertRGBAFixture()
+        let c=try XCTUnwrap(CGContext(data:nil,width:120,height:200,bitsPerComponent:8,bytesPerRow:480,space:CGColorSpace(name:CGColorSpace.sRGB)!,bitmapInfo:CGImageAlphaInfo.premultipliedLast.rawValue))
+        c.clear(CGRect(x:0,y:0,width:120,height:200))
+        c.setFillColor(CGColor(colorSpace:CGColorSpace(name:CGColorSpace.sRGB)!,components:[1,0,0,1])!);c.fill(CGRect(x:5,y:20,width:45,height:160))
+        c.setFillColor(CGColor(colorSpace:CGColorSpace(name:CGColorSpace.sRGB)!,components:[0,0,1,1])!);c.fill(CGRect(x:70,y:20,width:45,height:160))
+        let hero=try XCTUnwrap(c.makeImage())
+        for aspect in [Aspect.landscape,.portrait] {
+            for template in [CoverTemplate.spotlight,.editorial,.contrast] {
+                var value=try revision(aspect:aspect)
+                value.coverPresentation=CoverPresentation(style:.presenter,template:template,title:"豆子姐讲「囚徒困境」",hero:CoverImage(assetID:"pointing-right",pointing:.right),emphasis:["囚徒困境"])
+                let title=try CoverPainter.composeTitle(cover:CoverRules.resolved(revision:value),width:CGFloat(aspect.width),height:CGFloat(aspect.height))
+                let d=CGFloat(min(aspect.width,aspect.height)),square=CGRect(x:(CGFloat(aspect.width)-d)/2,y:(CGFloat(aspect.height)-d)/2,width:d,height:d)
+                let variant=template == .editorial ? 1:(template == .contrast ? 2:0)
+                let placement=CoverPainter.presenterPlacement(square:square,variant:variant,titleBounds:title.visibleBounds,pointing:.right)
+                XCTAssertEqual(placement.renderedDirection(.right),placement.target)
+                XCTAssertFalse(placement.rect.intersects(title.visibleBounds))
+                let output=try CoverPainter.image(revision:value,source:bitmap(width:aspect.width,height:aspect.height),images:["pointing-right":hero]),raw=try pixels(output)
+                var redX=0.0,blueX=0.0,redCount=0,blueCount=0
+                for offset in stride(from:0,to:raw.count,by:4) {
+                    let x=Double((offset/4)%aspect.width)
+                    if raw[offset]>250 && raw[offset+1]<5 && raw[offset+2]<5 {redX+=x;redCount+=1}
+                    if raw[offset]<5 && raw[offset+1]<5 && raw[offset+2]>250 {blueX+=x;blueCount+=1}
+                }
+                XCTAssertGreaterThan(redCount,100);XCTAssertGreaterThan(blueCount,100)
+                if redCount>0 && blueCount>0 {
+                    let pointsRight=blueX/Double(blueCount)>redX/Double(redCount)
+                    XCTAssertEqual(pointsRight,placement.target == .right,"按放置侧真正翻转原图像素，不只改方向标签")
+                }
+            }
+        }
+    }
+    func testChartCoverUsesActualDeclaredValuesInsteadOfInventedBars()throws {
+        var value=try revision()
+        value.coverPresentation=CoverPresentation(style:.chart,template:.editorial,title:"合作的代价")
+        var layer=SceneLayer(kind:.chart,endFrame:30)
+        let first=DataSeries(id:"a",label:"合作",color:"6386D9",keyframes:[DataValueKeyframe(frame:0,value:2)])
+        let second=DataSeries(id:"b",label:"背叛",color:"BDF176",keyframes:[DataValueKeyframe(frame:0,value:8)])
+        layer.dataPresentation=DataPresentation(chart:DataChart(title:"结果",axisLabel:"代价",minimum:0,maximum:10,series:[first,second]))
+        value.scenes[0].layers=[layer]
+        let source=try bitmap(width:1280,height:720),original=try ScenePainter.png(CoverPainter.image(revision:value,source:source))
+        value.scenes[0].layers?[0].dataPresentation?.chart?.series[0].keyframes[0].value=9
+        XCTAssertNotEqual(original,try ScenePainter.png(CoverPainter.image(revision:value,source:source)),"实际业务数值变化应影响可见封面图形")
     }
     func testTransparentHeroKeepsIndependentSmallLayoutInBothAspects()throws {
         try assertRGBAFixture()

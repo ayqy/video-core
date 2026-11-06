@@ -39,6 +39,30 @@ final class CoverPresentationTests:XCTestCase {
         XCTAssertEqual(value,decoded);XCTAssertFalse(String(decoding:encoded,as:UTF8.self).contains("emphasis"))
         XCTAssertEqual(try Codec.data(decoded),encoded)
     }
+    func testGestureDirectionIsOptionalStrictAndPartOfNormalCoverEdit()throws {
+        let old=Data(#"{"assetID":"pose"}"#.utf8)
+        let legacy=try Codec.decoder().decode(CoverImage.self,from:old)
+        XCTAssertNil(legacy.pointing)
+        XCTAssertEqual(String(decoding:try Codec.data(legacy),as:UTF8.self),String(decoding:old,as:UTF8.self),"旧图片引用不得因可选朝向增加wire或改变摘要")
+        for invalid in [#"{"assetID":"pose","pointing":"up"}"#,
+                        #"{"assetID":"pose","pointing":true}"#,
+                        #"{"assetID":"pose","pointing":"left","mirrorSecret":true}"#] {
+            XCTAssertThrowsError(try Codec.decoder().decode(CoverImage.self,from:Data(invalid.utf8)))
+        }
+        var value=try revision()
+        let pose=CoverPose(id:"shock",image:CoverImage(assetID:"pose",pointing:.right),expression:"震惊",action:"指向主题",keywords:["囚徒困境"])
+        value.coverPresentation=CoverPresentation(style:.presenter,poses:[pose])
+        XCTAssertEqual(try CoverRules.resolved(revision:value).hero?.pointing,.right)
+        var cover=try XCTUnwrap(value.coverPresentation);cover.poses?[0].image.pointing = .left
+        let project=Project(workspaceID:"w",name:"囚徒困境",revision:value)
+        let edited=try Editor.apply([.coverPresentation(cover)],to:project,baseRevision:value.id,assets:[asset()],message:"修正原手势朝向")
+        XCTAssertNotEqual(try edited.current.contentDigest(),try value.contentDigest())
+        XCTAssertEqual(edited.current.scenes,value.scenes)
+        XCTAssertEqual(try CoverRules.resolved(revision:edited.current).hero?.pointing,.left)
+        let encoded=try Codec.data(edited.current)
+        let decoded = try Codec.decoder().decode(Revision.self,from:encoded)
+        XCTAssertEqual(try Codec.data(decoded),encoded)
+    }
     func testEmphasisIsBoundedActualNonOverlappingTitleText()throws {
         var value=try revision()
         value.coverPresentation=CoverPresentation(template:.contrast,title:"合作还是背叛？合作有代价",emphasis:["合作","背叛"])
@@ -140,6 +164,8 @@ final class CoverPresentationTests:XCTestCase {
         XCTAssertEqual(definitions["CoverImage"]?.object?["additionalProperties"],.boolean(false))
         XCTAssertEqual(definitions["CoverPose"]?.object?["additionalProperties"],.boolean(false))
         XCTAssertNotNil(definitions["CoverPresentation"]?.object?["properties"]?.object?["emphasis"])
+        XCTAssertNotNil(definitions["CoverImage"]?.object?["properties"]?.object?["pointing"])
+        XCTAssertEqual(definitions["CoverPointing"]?.object?["enum"],.array([.string("left"),.string("right")]))
         XCTAssertTrue(String(decoding:try Codec.data(definitions["CoverTemplate"]),as:UTF8.self).contains("contrast"))
         XCTAssertTrue(String(decoding:try Codec.data(definitions),as:UTF8.self).contains("coverPresentation"))
     }

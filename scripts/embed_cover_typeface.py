@@ -17,18 +17,24 @@ ROOT = Path(__file__).resolve().parents[1]
 ORIGINAL = ROOT / "ThirdParty/Fonts/SmileySans/SmileySans-Oblique.ttf"
 LICENSE = ROOT / "ThirdParty/Fonts/SmileySans/LICENSE"
 OUTPUT = ROOT / "Sources/VideoMedia/CoverTypeface.swift"
+DISPLAY_ORIGINAL = ROOT / "ThirdParty/Fonts/ZCOOLKuaiLe/ZCOOLKuaiLe-Regular.ttf"
+DISPLAY_LICENSE = ROOT / "ThirdParty/Fonts/ZCOOLKuaiLe/LICENSE"
+DISPLAY_OUTPUT = ROOT / "Sources/VideoMedia/CoverDisplayTypeface.swift"
 FONT_BYTES = 2_629_764
 FONT_SHA256 = "b447d7e781f08bc95c4c9f23ba71ed2b8ebb639aa7184485c71c4ca5afcd25c4"
 LICENSE_SHA256 = "9401f4050f1b66c26b6ccdc8b0e14a3c1cc37aac122eda84386f25854a9bec72"
 
 
-def render() -> bytes:
-    font = ORIGINAL.read_bytes()
-    license_data = LICENSE.read_bytes()
-    if len(font) != FONT_BYTES or hashlib.sha256(font).hexdigest() != FONT_SHA256:
-        raise ValueError("fixed official Smiley Sans TTF has changed")
-    if hashlib.sha256(license_data).hexdigest() != LICENSE_SHA256:
-        raise ValueError("fixed official Smiley Sans copyright/license has changed")
+def render(*, display=False) -> bytes:
+    font = (DISPLAY_ORIGINAL if display else ORIGINAL).read_bytes()
+    license_data = (DISPLAY_LICENSE if display else LICENSE).read_bytes()
+    font_bytes = 1_514_968 if display else FONT_BYTES
+    font_sha = "812a6fc1fe54b6d73a419245c32dfeba8aa33104d5be90d1cf6af082007cb71d" if display else FONT_SHA256
+    license_sha = "538078469839b4a2e7ad22bef4ebe41681a4e53749bb2a072144024f1d6d703d" if display else LICENSE_SHA256
+    if len(font) != font_bytes or hashlib.sha256(font).hexdigest() != font_sha:
+        raise ValueError("fixed official cover TTF has changed")
+    if hashlib.sha256(license_data).hexdigest() != license_sha:
+        raise ValueError("fixed official cover copyright/license has changed")
     compressed = zlib.compress(font, level=9)
     if zlib.decompress(compressed) != font:
         raise ValueError("font compression round trip failed")
@@ -115,28 +121,45 @@ __PAYLOAD__
 '''
     replacements = {
         "__LICENSE_COMMENT__": license_comment,
-        "__FONT_BYTES__": str(FONT_BYTES),
-        "__FONT_SHA__": FONT_SHA256,
+        "__FONT_BYTES__": str(font_bytes),
+        "__FONT_SHA__": font_sha,
         "__COMPRESSED_BYTES__": str(len(compressed)),
         "__COMPRESSED_SHA__": compressed_sha,
         "__PAYLOAD__": payload,
     }
     for key, value in replacements.items():
         text = text.replace(key, value)
+    if display:
+        text = text.replace("// Smiley Sans v2.0.1 TTF.", "// ZCOOL KuaiLe TTF.")
+        text = text.replace("https://github.com/atelier-anchor/smiley-sans/tree/67e3821f4b06cbd7155fa6fa69daff4b6f311b76",
+            "https://github.com/google/fonts/tree/6d49995f5d8f1c7d476760a580ffb89ce1e52c5d/ofl/zcoolkuaile")
+        text = text.replace("ThirdParty/Fonts/SmileySans/", "ThirdParty/Fonts/ZCOOLKuaiLe/")
+        text = text.replace("public enum CoverTypeface {", "public enum CoverDisplayTypeface {")
+        text = text.replace('postScriptName = "SmileySans-Oblique"', 'postScriptName = "ZCOOLKuaiLe-Regular"')
+        text += '''
+public extension CoverTypeface {
+    static let displayPostScriptName = CoverDisplayTypeface.postScriptName
+    static func displayFont(size: CGFloat) throws -> CTFont {
+        try CoverDisplayTypeface.font(size: size)
+    }
+}
+'''
     return text.encode("utf-8")
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--check", action="store_true", help="verify the checked-in Swift source is reproducible")
+    parser.add_argument("--display", action="store_true", help="build the fixed ZCOOL KuaiLe display face; legacy remains unchanged")
     options = parser.parse_args()
-    result = render()
+    result = render(display=options.display)
+    output = DISPLAY_OUTPUT if options.display else OUTPUT
     if options.check:
-        if OUTPUT.read_bytes() != result:
-            raise ValueError("CoverTypeface.swift differs from the pinned original and generator")
+        if output.read_bytes() != result:
+            raise ValueError("cover typeface differs from the pinned original and generator")
     else:
-        OUTPUT.write_bytes(result)
-    print(("checked" if options.check else "wrote"), OUTPUT.relative_to(ROOT), len(result), hashlib.sha256(result).hexdigest())
+        output.write_bytes(result)
+    print(("checked" if options.check else "wrote"), output.relative_to(ROOT), len(result), hashlib.sha256(result).hexdigest())
 
 
 if __name__ == "__main__":

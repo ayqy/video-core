@@ -8,15 +8,22 @@ public enum CoverStyle: String, Codable, CaseIterable, Sendable {
 public enum CoverTemplate: String, Codable, CaseIterable, Sendable {
     case automatic, spotlight, editorial, contrast
 }
+/// Direction of the actual source gesture, before layout mirroring. This is
+/// author-checked image metadata, not inferred from expression names.
+public enum CoverPointing: String, Codable, CaseIterable, Sendable { case left, right }
 public struct CoverImage: Codable, Equatable, Sendable {
     public var assetID: String
     public var sourceRect: MediaFraming?
-    public init(assetID: String, sourceRect: MediaFraming? = nil) { self.assetID=assetID; self.sourceRect=sourceRect }
-    private enum CodingKeys:String,CodingKey {case assetID,sourceRect}
+    public var pointing: CoverPointing?
+    public init(assetID: String, sourceRect: MediaFraming? = nil, pointing: CoverPointing? = nil) {
+        self.assetID=assetID;self.sourceRect=sourceRect;self.pointing=pointing
+    }
+    private enum CodingKeys:String,CodingKey {case assetID,sourceRect,pointing}
     public init(from decoder:Decoder)throws {
-        try CoverRules.keys(decoder,required:["assetID"],optional:["sourceRect"])
+        try CoverRules.keys(decoder,required:["assetID"],optional:["sourceRect","pointing"])
         let c=try decoder.container(keyedBy:CodingKeys.self)
         assetID=try c.decode(String.self,forKey:.assetID);sourceRect=try c.decodeIfPresent(MediaFraming.self,forKey:.sourceRect)
+        pointing=try c.decodeIfPresent(CoverPointing.self,forKey:.pointing)
         guard CoverRules.text(assetID,maximum:200) else{throw VideoError.invalid("封面图片引用无效")}
         try sourceRect?.validate()
     }
