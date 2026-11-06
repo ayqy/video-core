@@ -5,6 +5,12 @@ import Foundation
 public struct ModelVector3: Codable, Hashable, Sendable {
     public var x: Double; public var y: Double; public var z: Double
     public init(x: Double = 0, y: Double = 0, z: Double = 0) { self.x=x; self.y=y; self.z=z }
+    private enum CodingKeys: String, CodingKey { case x,y,z }
+    public init(from decoder: Decoder) throws {
+        try ModelStoryDecoding3D.keys(decoder,required:["x","y","z"])
+        let c=try decoder.container(keyedBy:CodingKeys.self)
+        x=try c.decode(Double.self,forKey:.x);y=try c.decode(Double.self,forKey:.y);z=try c.decode(Double.self,forKey:.z)
+    }
     fileprivate var bounded: Bool { [x,y,z].allSatisfy { $0.isFinite && abs($0)<=1_000_000 } }
     fileprivate static func mix(_ a: Self, _ b: Self, _ t: Double) -> Self { .init(x:a.x+(b.x-a.x)*t,y:a.y+(b.y-a.y)*t,z:a.z+(b.z-a.z)*t) }
 }
@@ -133,16 +139,102 @@ public struct ModelJointTrack: Codable, Equatable, Sendable {
     public var instanceID: String; public var jointName: String; public var keyframes: [ModelTransformKeyframe]
     public init(instanceID: String, jointName: String, keyframes: [ModelTransformKeyframe]) { self.instanceID=instanceID; self.jointName=jointName; self.keyframes=keyframes }
 }
+/// A complete authored camera pose at an integer source frame. The parent
+/// camera supplies the fixed up vector and clipping planes for the whole take.
+public struct ModelCameraKeyframe3D: Codable, Equatable, Sendable {
+    public var frame: Int
+    public var position: ModelVector3; public var target: ModelVector3
+    public var verticalFieldOfViewDegrees: Double
+    public init(frame: Int, position: ModelVector3, target: ModelVector3, verticalFieldOfViewDegrees: Double) {
+        self.frame=frame;self.position=position;self.target=target;self.verticalFieldOfViewDegrees=verticalFieldOfViewDegrees
+    }
+    private enum CodingKeys: String, CodingKey { case frame,position,target,verticalFieldOfViewDegrees }
+    public init(from decoder: Decoder) throws {
+        try ModelStoryDecoding3D.keys(decoder,required:["frame","position","target","verticalFieldOfViewDegrees"])
+        let c=try decoder.container(keyedBy:CodingKeys.self)
+        frame=try c.decode(Int.self,forKey:.frame);position=try c.decode(ModelVector3.self,forKey:.position)
+        target=try c.decode(ModelVector3.self,forKey:.target);verticalFieldOfViewDegrees=try c.decode(Double.self,forKey:.verticalFieldOfViewDegrees)
+    }
+}
 public struct ModelCamera3D: Codable, Equatable, Sendable {
     public var position: ModelVector3; public var target: ModelVector3; public var up: ModelVector3
     public var verticalFieldOfViewDegrees: Double; public var near: Double; public var far: Double
-    public init(position: ModelVector3, target: ModelVector3, up: ModelVector3 = .init(x:0,y:1,z:0), verticalFieldOfViewDegrees: Double = 45, near: Double = 0.01, far: Double = 1000) { self.position=position; self.target=target; self.up=up; self.verticalFieldOfViewDegrees=verticalFieldOfViewDegrees; self.near=near; self.far=far }
-    fileprivate func validate() throws {
+    /// Nil keeps legacy bytes and a stationary camera. Explicit keys require
+    /// game13; keys outside the first/last authored pose hold that endpoint.
+    public var keyframes: [ModelCameraKeyframe3D]?
+    public init(position: ModelVector3, target: ModelVector3, up: ModelVector3 = .init(x:0,y:1,z:0), verticalFieldOfViewDegrees: Double = 45, near: Double = 0.01, far: Double = 1000, keyframes: [ModelCameraKeyframe3D]? = nil) { self.position=position; self.target=target; self.up=up; self.verticalFieldOfViewDegrees=verticalFieldOfViewDegrees; self.near=near; self.far=far;self.keyframes=keyframes }
+    private enum CodingKeys: String, CodingKey { case position,target,up,verticalFieldOfViewDegrees,near,far,keyframes }
+    public init(from decoder: Decoder) throws {
+        try ModelStoryDecoding3D.keys(decoder,required:["position","target","up","verticalFieldOfViewDegrees","near","far"],optional:["keyframes"])
+        let c=try decoder.container(keyedBy:CodingKeys.self)
+        position=try c.decode(ModelVector3.self,forKey:.position);target=try c.decode(ModelVector3.self,forKey:.target);up=try c.decode(ModelVector3.self,forKey:.up)
+        verticalFieldOfViewDegrees=try c.decode(Double.self,forKey:.verticalFieldOfViewDegrees);near=try c.decode(Double.self,forKey:.near);far=try c.decode(Double.self,forKey:.far)
+        if c.contains(.keyframes) { keyframes=try c.decode([ModelCameraKeyframe3D].self,forKey:.keyframes) }
+    }
+    fileprivate func pose(_ key: ModelCameraKeyframe3D) -> Self {
+        .init(position:key.position,target:key.target,up:up,verticalFieldOfViewDegrees:key.verticalFieldOfViewDegrees,near:near,far:far)
+    }
+    fileprivate func validatePose() throws {
         let dx=target.x-position.x,dy=target.y-position.y,dz=target.z-position.z
         let length=dx*dx+dy*dy+dz*dz,upLength=up.x*up.x+up.y*up.y+up.z*up.z
         let cross=(dy*up.z-dz*up.y)*(dy*up.z-dz*up.y)+(dz*up.x-dx*up.z)*(dz*up.x-dx*up.z)+(dx*up.y-dy*up.x)*(dx*up.y-dy*up.x)
         guard position.bounded,target.bounded,up.bounded,length>0.00000001,abs(upLength-1)<=0.000001,cross/length>0.00000001,
               verticalFieldOfViewDegrees.isFinite,(1...175).contains(verticalFieldOfViewDegrees),near.isFinite,far.isFinite,near>=0.0001,far>near,far<=1_000_000 else { throw VideoError.invalid("三维相机视向、上方向、透视或裁切范围无效") }
+    }
+    fileprivate func validate(durationFrames: Int) throws {
+        try validatePose()
+        guard let keys=keyframes else { return }
+        guard !keys.isEmpty else { throw VideoError.invalid("镜头关键帧须非空；静态镜头请省略keyframes") }
+        var previous = -1
+        for key in keys {
+            guard key.frame>previous,key.frame<durationFrames else { throw VideoError.invalid("镜头关键帧须按有效源帧严格递增") }
+            try pose(key).validatePose();previous=key.frame
+        }
+        // Valid endpoints alone do not rule out crossing through the target or
+        // a view parallel to up. Both squared tests are quadratics; check their
+        // exact minima over each continuous segment, without sampling a few
+        // convenient frames or requiring a particular camera direction.
+        func delta(_ a:ModelVector3,_ b:ModelVector3)->ModelVector3 { .init(x:b.x-a.x,y:b.y-a.y,z:b.z-a.z) }
+        func dot(_ a:ModelVector3,_ b:ModelVector3)->Double { a.x*b.x+a.y*b.y+a.z*b.z }
+        func cross(_ a:ModelVector3,_ b:ModelVector3)->ModelVector3 { .init(x:a.y*b.z-a.z*b.y,y:a.z*b.x-a.x*b.z,z:a.x*b.y-a.y*b.x) }
+        for (left,right) in zip(keys,keys.dropFirst()) {
+            let a=delta(left.position,left.target),b=delta(right.position,right.target),change=delta(a,b)
+            let c=cross(a,up),dc=cross(change,up),epsilon=0.00000001
+            func positiveMinimum(_ quadratic:Double,_ linear:Double,_ evaluate:(Double)->Double)->Bool {
+                var points=[0.0,1.0]
+                if quadratic>0 { let point = -linear/(2*quadratic);if point>0 && point<1 { points.append(point) } }
+                return points.allSatisfy { let value=evaluate($0);return value.isFinite && value>0 }
+            }
+            let distanceSafe=positiveMinimum(dot(change,change),2*dot(a,change)) { t in
+                let d=ModelVector3.mix(a,b,t);return dot(d,d)-epsilon
+            }
+            let upSafe=positiveMinimum(dot(dc,dc)-epsilon*dot(change,change),2*(dot(c,dc)-epsilon*dot(a,change))) { t in
+                let d=ModelVector3.mix(a,b,t),v=cross(d,up);return dot(v,v)-epsilon*dot(d,d)
+            }
+            guard distanceSafe,upSafe else { throw VideoError.invalid("镜头插值内段的视向不能消失或与上方向平行") }
+        }
+    }
+}
+/// Validated immutable source-frame sampler. It has no wall-clock state and
+/// shares the existing vector interpolation with original model transforms.
+public struct ModelCameraTimeline3D: Sendable {
+    private let camera: ModelCamera3D
+    private let durationFrames: Int
+    public init(camera: ModelCamera3D, durationFrames: Int) throws {
+        guard (1...54000).contains(durationFrames) else { throw VideoError.invalid("镜头采样须使用有效场景源帧区间") }
+        try camera.validate(durationFrames:durationFrames);self.camera=camera;self.durationFrames=durationFrames
+    }
+    public func value(at sourceFrame: Int) throws -> ModelCamera3D {
+        guard (0..<durationFrames).contains(sourceFrame) else { throw VideoError.invalid("镜头采样帧不在当前场景源帧区间") }
+        guard let keys=camera.keyframes,let first=keys.first else { return camera }
+        if sourceFrame<=first.frame { return camera.pose(first) }
+        var low=0,high=keys.count
+        while low<high { let middle=low+(high-low)/2;if keys[middle].frame<sourceFrame {low=middle+1}else{high=middle} }
+        guard low<keys.count else { return camera.pose(keys[keys.count-1]) }
+        let a=keys[low-1],b=keys[low],t=Double(sourceFrame-a.frame)/Double(b.frame-a.frame)
+        return .init(position:.mix(a.position,b.position,t),target:.mix(a.target,b.target,t),up:camera.up,
+                     verticalFieldOfViewDegrees:a.verticalFieldOfViewDegrees+(b.verticalFieldOfViewDegrees-a.verticalFieldOfViewDegrees)*t,
+                     near:camera.near,far:camera.far)
     }
 }
 public enum ModelLightKind: String, Codable, Sendable { case ambient, directional, omni }
@@ -182,7 +274,7 @@ public struct ModelScene3D: Codable, Equatable, Sendable {
     public func validate(durationFrames: Int, assets: [Asset]? = nil) throws {
         guard ((version==1 && actions==nil) || (version==2 && !(actions?.isEmpty ?? true))),(1...54000).contains(durationFrames),(1...128).contains(instances.count),(1...16).contains(lights.count),transformTracks.count<=128,jointTracks.count<=4096,
               Set(instances.map(\.id)).count==instances.count,Set(lights.map(\.id)).count==lights.count,Set(instances.map(\.id)).isDisjoint(with:Set(lights.map(\.id))) else { throw VideoError.invalid("三维场景版本、实例、灯光数量或标识无效") }
-        try camera.validate()
+        try camera.validate(durationFrames:durationFrames)
         var bindings: [String:ModelAssetReference]=[:],variantFrames=0,variantNodes=0
         for instance in instances {
             guard PluginProtocolRules.text(instance.id,maximum:160),PluginProtocolRules.text(instance.name,maximum:160) else { throw VideoError.invalid("三维实例须有明确标识和名称") }
@@ -235,7 +327,7 @@ public struct ModelScene3D: Codable, Equatable, Sendable {
             try light.transform.validate()
         }
         guard variantNodes<=8192 else {throw VideoError.invalid("三维互斥节点总数超过8192")}
-        var targets=Set<String>(), jointTargets=Set<String>(), totalFrames=variantFrames
+        var targets=Set<String>(), jointTargets=Set<String>(), totalFrames=variantFrames+(camera.keyframes?.count ?? 0)
         for track in transformTracks {
             guard instances.contains(where:{$0.id==track.instanceID}),targets.insert(track.instanceID).inserted else { throw VideoError.invalid("三维位置轨道须唯一绑定实际实例") }
             try Self.validate(track.keyframes,durationFrames:durationFrames);totalFrames+=track.keyframes.count
@@ -325,5 +417,12 @@ public enum ModelScene3DSchema {
 public enum ModelAlphaCutoutSchema {
     public static let records:[String:String] = [
         "ModelMaterialInterpretation":"vertexColors:ModelVertexColorUsage normalEncoding:ModelNormalTextureEncoding opaqueDiffuseMaterialIDs?:[s] alphaCutoutMaterialIDs?:[s]"
+    ]
+}
+/// Additive Host/game13 camera motion. Game9–12 camera records stay exact.
+public enum ModelCameraMotionSchema {
+    public static let records:[String:String] = [
+        "ModelCameraKeyframe3D":"frame:i position:ModelVector3 target:ModelVector3 verticalFieldOfViewDegrees:n",
+        "ModelCamera3D":"position:ModelVector3 target:ModelVector3 up:ModelVector3 verticalFieldOfViewDegrees:n near:n far:n keyframes?:[ModelCameraKeyframe3D]"
     ]
 }

@@ -137,9 +137,9 @@ final class PluginProtocolTests:XCTestCase {
         XCTAssertEqual(descriptor.inputSchema.object?["$defs"]?.object?["KnowledgePayoffMatrix"], current["KnowledgePayoffMatrix"])
     }
     func testPublicationSchemaSelectionUsesCurrentDefaultsAndRetainsExplicitLegacyRequests() throws {
-        XCTAssertEqual(try PluginInputCompatibility.publicationSchema(pluginID: "video.game"), 12)
+        XCTAssertEqual(try PluginInputCompatibility.publicationSchema(pluginID: "video.game"), 13)
         XCTAssertEqual(try PluginInputCompatibility.publicationSchema(pluginID: "video.cartoon"), 8)
-        for version in [1, 2, 3, 5, 6, 7, 8, 9, 10, 11, 12] {
+        for version in [1, 2, 3, 5, 6, 7, 8, 9, 10, 11, 12, 13] {
             XCTAssertEqual(try PluginInputCompatibility.publicationSchema(pluginID: "video.game", requested: String(version)), version)
         }
         for version in [1, 4, 5, 6, 7, 8] {
@@ -154,8 +154,31 @@ final class PluginProtocolTests:XCTestCase {
         XCTAssertThrowsError(try PluginInputCompatibility.publicationSchema(pluginID: "video.cartoon", requested: "3"))
         XCTAssertThrowsError(try PluginInputCompatibility.publicationSchema(pluginID: "video.cartoon", requested: "9"))
         XCTAssertThrowsError(try PluginInputCompatibility.publicationSchema(pluginID: "video.cartoon", requested: "10"))
-        XCTAssertThrowsError(try PluginInputCompatibility.publicationSchema(pluginID: "video.game", requested: "13"))
+        XCTAssertThrowsError(try PluginInputCompatibility.publicationSchema(pluginID: "video.game", requested: "14"))
         XCTAssertThrowsError(try PluginInputCompatibility.publicationSchema(pluginID: "video.cartoon", requested: "12"))
+    }
+    func testGameThirteenDiscoversCameraMotionWithoutChangingEarlierCameraSchemas() throws {
+        let frozen=try Codec.decoder().decode(AgentValue.self,from:Data(##"{"type":"object","properties":{"position":{"$ref":"#/$defs/ModelVector3"},"target":{"$ref":"#/$defs/ModelVector3"},"up":{"$ref":"#/$defs/ModelVector3"},"verticalFieldOfViewDegrees":{"type":"number"},"near":{"type":"number"},"far":{"type":"number"}},"required":["position","target","up","verticalFieldOfViewDegrees","near","far"],"additionalProperties":false}"##.utf8))
+        for version in [9,10,11,12] {
+            let definitions=PluginRPCSchemas.definitions(inputSchemaVersion:version,pluginID:"video.game")
+            XCTAssertEqual(try Codec.data(XCTUnwrap(definitions["ModelCamera3D"])),try Codec.data(frozen),"旧game\(version)镜头schema须保持精确字节")
+            XCTAssertNil(definitions["ModelCameraKeyframe3D"])
+        }
+        let current=PluginRPCSchemas.definitions(inputSchemaVersion:13,pluginID:"video.game"),host=AgentSchemas.definitions()
+        XCTAssertEqual(current["ModelCamera3D"],host["ModelCamera3D"])
+        XCTAssertEqual(current["ModelCameraKeyframe3D"],host["ModelCameraKeyframe3D"])
+        let keys=try XCTUnwrap(current["ModelCamera3D"]?.object?["properties"]?.object?["keyframes"]?.object)
+        XCTAssertEqual(keys["type"],.string("array"));XCTAssertEqual(keys["minItems"],.number(1));XCTAssertEqual(keys["maxItems"],.number(54000))
+        XCTAssertNil(keys["anyOf"],"显式null不能被发现协议宣称为合法静态镜头")
+        XCTAssertEqual(current["ModelCameraKeyframe3D"]?.object?["required"],.array(["frame","position","target","verticalFieldOfViewDegrees"].map(AgentValue.string)))
+        XCTAssertEqual(current["ModelCameraKeyframe3D"]?.object?["additionalProperties"],.boolean(false))
+        XCTAssertNotNil(current["ModelMaterialInterpretation"]?.object?["properties"]?.object?["alphaCutoutMaterialIDs"])
+        XCTAssertNotNil(current["ModelInstance3D"]?.object?["properties"]?.object?["nodeVariants"])
+        XCTAssertNotNil(current["ModelScene3D"]?.object?["properties"]?.object?["actions"])
+        XCTAssertNil(PluginRPCSchemas.definitions(inputSchemaVersion:8,pluginID:"video.cartoon")["ModelCameraKeyframe3D"])
+        let descriptor=PluginDescription(pluginID:"video.game",capabilityID:"game.simulate",version:"1.7.0",inputSchemaVersion:13)
+        XCTAssertFalse(descriptor.filesystemAccess);XCTAssertFalse(descriptor.networkAccess)
+        XCTAssertNotNil(descriptor.inputSchema.object?["properties"]?.object?["modelBankOperation"])
     }
     func testGameTwelveDiscoversBoundedAlphaCutoutWithoutChangingEarlierMaterialSchemas()throws {
         let frozen=try Codec.decoder().decode(AgentValue.self,from:Data(##"{"type":"object","properties":{"vertexColors":{"$ref":"#/$defs/ModelVertexColorUsage"},"normalEncoding":{"$ref":"#/$defs/ModelNormalTextureEncoding"},"opaqueDiffuseMaterialIDs":{"type":"array","items":{"type":"string"}}},"required":["vertexColors","normalEncoding"],"additionalProperties":false}"##.utf8))

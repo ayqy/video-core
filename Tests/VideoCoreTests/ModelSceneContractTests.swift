@@ -46,6 +46,89 @@ final class ModelSceneContractTests: XCTestCase {
     private func input(_ project: Project, edits: [Edit]) throws -> Data {
         try Codec.data(AgentValue.object(["workspace_id":.string(project.workspaceID),"project_id":.string(project.id),"base_revision":.string(project.current.id),"edits":try Codec.decoder().decode(AgentValue.self,from:Codec.data(edits))]))
     }
+    func testCameraMotionKeepsLegacyBytesAndDeterministicEndpointHolds() throws {
+        let legacy=Data(#"{"far":1000,"near":0.01,"position":{"x":0,"y":2,"z":5},"target":{"x":0,"y":0,"z":0},"up":{"x":0,"y":1,"z":0},"verticalFieldOfViewDegrees":45}"#.utf8)
+        var camera=try Codec.decoder().decode(ModelCamera3D.self,from:legacy)
+        XCTAssertNil(camera.keyframes);XCTAssertEqual(try Codec.data(camera),legacy)
+        let still=try ModelCameraTimeline3D(camera:camera,durationFrames:21)
+        XCTAssertEqual(try still.value(at:20),camera);XCTAssertEqual(try still.value(at:0),camera)
+        let first=ModelCameraKeyframe3D(frame:4,position:camera.position,target:camera.target,verticalFieldOfViewDegrees:45)
+        let last=ModelCameraKeyframe3D(frame:16,position:.init(x:3,y:2,z:4),target:.init(x:3),verticalFieldOfViewDegrees:51)
+        camera.keyframes=[first,last]
+        let timeline=try ModelCameraTimeline3D(camera:camera,durationFrames:21)
+        let middle=try timeline.value(at:10)
+        XCTAssertEqual(middle.position,.init(x:1.5,y:2,z:4.5));XCTAssertEqual(middle.target,.init(x:1.5))
+        XCTAssertEqual(middle.verticalFieldOfViewDegrees,48);XCTAssertNil(middle.keyframes)
+        XCTAssertEqual(middle.up,camera.up);XCTAssertEqual(middle.near,camera.near);XCTAssertEqual(middle.far,camera.far)
+        XCTAssertEqual(try timeline.value(at:0),try timeline.value(at:4),"首个关键帧前明确保持首pose")
+        XCTAssertEqual(try timeline.value(at:20),try timeline.value(at:16),"末个关键帧后明确保持末pose")
+        XCTAssertEqual(try timeline.value(at:10),middle,"末帧后乱序回到中帧不得继承上一镜头")
+        XCTAssertThrowsError(try timeline.value(at:-1));XCTAssertThrowsError(try timeline.value(at:21))
+        XCTAssertEqual(try Codec.decoder().decode(ModelCamera3D.self,from:Codec.data(camera)),camera)
+        // A frame-indexed camera is bounded by the actual scene duration,
+        // rather than an unrelated 4096-key transform-track restriction.
+        camera.keyframes=(0..<5000).map { .init(frame:$0,position:first.position,target:first.target,verticalFieldOfViewDegrees:45) }
+        XCTAssertEqual(try ModelCameraTimeline3D(camera:camera,durationFrames:5000).value(at:4999).position,first.position)
+    }
+    func testCameraMotionRejectsMalformedWireFramesAndContinuousDegeneracy() throws {
+        let base=ModelCamera3D(position:.init(z:4),target:.init())
+        func key(_ frame:Int,_ position:ModelVector3 = .init(z:4),_ target:ModelVector3 = .init(),_ fov:Double = 45)->ModelCameraKeyframe3D {
+            .init(frame:frame,position:position,target:target,verticalFieldOfViewDegrees:fov)
+        }
+        let bad:[[ModelCameraKeyframe3D]]=[[],[key(-1)],[key(21)],[key(3),key(3)],[key(5),key(2)],
+            [key(0,.init())],[key(0,.init(z:.nan))],[key(0,.init(z:4),.init(),.infinity)],
+            [key(0),key(3,.init(z:-4))], // target crossing at fractional frame 1.5
+            [key(0,.init(z:4),.init(y:2)),key(3,.init(z:-4),.init(y:2))]] // view becomes parallel to up
+        for keys in bad {
+            var camera=base;camera.keyframes=keys
+            XCTAssertThrowsError(try ModelCameraTimeline3D(camera:camera,durationFrames:21))
+        }
+        var valid=base;valid.keyframes=[key(0),key(20,.init(x:2,z:4),.init(x:2))]
+        let object=try XCTUnwrap(JSONSerialization.jsonObject(with:Codec.data(valid)) as? [String:Any])
+        for index in 0..<8 {
+            var changed=object
+            var keys=try XCTUnwrap(changed["keyframes"] as? [[String:Any]])
+            switch index {
+            case 0:changed["unknown"]=true
+            case 1:changed["keyframes"]=NSNull()
+            case 2:changed["keyframes"]="not a source-frame track"
+            case 3:keys[0]["unknown"]=true;changed["keyframes"]=keys
+            case 4:keys[0]["target"]=NSNull();changed["keyframes"]=keys
+            case 5:keys[0]["verticalFieldOfViewDegrees"]=NSNull();changed["keyframes"]=keys
+            case 6:keys[0]["position"]=["x":0,"y":0,"z":4,"unknown":1];changed["keyframes"]=keys
+            default:keys[0].removeValue(forKey:"frame");changed["keyframes"]=keys
+            }
+            XCTAssertThrowsError(try Codec.decoder().decode(ModelCamera3D.self,from:JSONSerialization.data(withJSONObject:changed)),"未知/缺失/null镜头数据不能静默降级，case \(index)")
+        }
+        var single=base;single.keyframes=[key(10,.init(x:1,z:4),.init(x:1))]
+        let timeline=try ModelCameraTimeline3D(camera:single,durationFrames:21)
+        XCTAssertEqual(try timeline.value(at:0),try timeline.value(at:20),"单pose也是定义完整的静止取景")
+    }
+    func testCameraMotionNormalEditAndColdRestoreRetainOriginalSources() throws {
+        let f=try fixture();defer{try? FileManager.default.removeItem(at:f.root)}
+        let original=scene(f);var project=project(original,f)
+        project.revisions[0].review.sound=true;project.revisions[0].review.fullPreview=true
+        try f.repository.transaction {$0.projects=[project]}
+        var changed=original
+        let camera=try XCTUnwrap(changed.modelScene3D?.camera)
+        changed.modelScene3D!.camera.keyframes=[
+            .init(frame:0,position:camera.position,target:camera.target,verticalFieldOfViewDegrees:45),
+            .init(frame:20,position:.init(x:2,y:2,z:4),target:.init(x:2),verticalFieldOfViewDegrees:40)]
+        let before=try Codec.data(f.repository.read()),data=try input(project,edits:[.replaceScene(original.id,changed)])
+        _=try AgentMutationExecutor.preview(command:"edit apply",data:data,database:f.repository.read(),principal:"owner",repository:f.repository)
+        XCTAssertEqual(try Codec.data(f.repository.read()),before)
+        _=try f.repository.performAgentMutation(command:"edit apply",data:data,principal:"owner",requestID:"save-camera-motion")
+        let current=try XCTUnwrap(f.repository.read().projects.first?.current),model=try XCTUnwrap(current.scenes[0].modelScene3D)
+        XCTAssertEqual(model.camera,changed.modelScene3D?.camera);XCTAssertEqual(model.instances,f.model.instances)
+        XCTAssertEqual(model.transformTracks,f.model.transformTracks);XCTAssertEqual(model.jointTracks,f.model.jointTracks)
+        XCTAssertEqual(try PluginModelBankManifest(scene:model,durationFrames:21),try PluginModelBankManifest(scene:f.model,durationFrames:21))
+        XCTAssertNotEqual(try model.contentDigest(durationFrames:21),try f.model.contentDigest(durationFrames:21))
+        XCTAssertFalse(current.review.sound);XCTAssertFalse(current.review.fullPreview)
+        let cold=try Repository.restore(f.repository.backup(),to:f.root.appendingPathComponent("camera-motion-cold"))
+        XCTAssertEqual(try cold.read().projects.first?.current.contentDigest(),try current.contentDigest())
+        XCTAssertEqual(try cold.read().projects.first?.current.scenes[0].modelScene3D,model)
+        for asset in f.assets {XCTAssertEqual(try Data(contentsOf:cold.assetURL(asset)),try Data(contentsOf:f.repository.assetURL(asset)))}
+    }
     func testAlphaCutoutUsesExplicitBoundedOriginalIDsAndKeepsLegacyBytes()throws {
         let f=try fixture();defer{try? FileManager.default.removeItem(at:f.root)}
         let legacy=Data(#"{"normalEncoding":"rgb","opaqueDiffuseMaterialIDs":["bodyMaterial"],"vertexColors":"source"}"#.utf8)

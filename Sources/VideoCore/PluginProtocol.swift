@@ -2,7 +2,7 @@ import Foundation
 
 public enum PluginInputCompatibility {
     public static func supports(pluginID: String, version: Int) -> Bool {
-        version == 1 || (pluginID == "video.game" && [2,3,5,6,7,8,9,10,11,12].contains(version)) || (pluginID == "video.cartoon" && [4,5,6,7,8].contains(version))
+        version == 1 || (pluginID == "video.game" && [2,3,5,6,7,8,9,10,11,12,13].contains(version)) || (pluginID == "video.cartoon" && [4,5,6,7,8].contains(version))
     }
     /// Publisher defaults match the current endpoints. Prior schemas remain
     /// explicitly selectable, before any signing identity or output transaction.
@@ -10,7 +10,7 @@ public enum PluginInputCompatibility {
         guard ["video.game", "video.cartoon"].contains(pluginID) else {
             throw VideoError.invalid("发行协议选择需要明确的游戏或卡通模块；未访问发行身份")
         }
-        guard let requested else { return pluginID == "video.game" ? 12:8 }
+        guard let requested else { return pluginID == "video.game" ? 13:8 }
         guard requested.range(of: "^[1-9][0-9]{0,2}$", options: .regularExpression) != nil,
               let version = Int(requested), supports(pluginID: pluginID, version: version) else {
             throw VideoError.invalid("发行输入协议版本不受此模块支持；未访问发行身份")
@@ -18,19 +18,20 @@ public enum PluginInputCompatibility {
         return version
     }
     public static func supportsModelBank(pluginID:String,inputSchema:Int)->Bool {
-        pluginID == "video.game" && [9,10,11,12].contains(inputSchema)
+        pluginID == "video.game" && [9,10,11,12,13].contains(inputSchema)
     }
     /// A new endpoint may read the unchanged v1 model, but v2 actions must never
     /// be sent to game9 or silently reduced to its transform-only contract.
     public static func requireModelSupport(_ model:ModelScene3D?,pluginID:String,inputSchema:Int)throws {
         guard let model else{return}
         let compatible = supportsModelBank(pluginID:pluginID,inputSchema:inputSchema) &&
-            (!model.instances.contains(where:{$0.nodeVariants != nil}) || [11,12].contains(inputSchema)) &&
-            (!model.instances.contains(where:{$0.materialInterpretation?.alphaCutoutMaterialIDs != nil}) || inputSchema==12) &&
+            (!model.instances.contains(where:{$0.nodeVariants != nil}) || [11,12,13].contains(inputSchema)) &&
+            (!model.instances.contains(where:{$0.materialInterpretation?.alphaCutoutMaterialIDs != nil}) || [12,13].contains(inputSchema)) &&
+            (model.camera.keyframes==nil || inputSchema==13) &&
             ((model.version==1 && model.actions==nil) ||
-             ([10,11,12].contains(inputSchema) && model.version==2 && !(model.actions?.isEmpty ?? true)))
+             ([10,11,12,13].contains(inputSchema) && model.version==2 && !(model.actions?.isEmpty ?? true)))
         guard compatible else {
-            throw VideoError.unavailable("三维模型v1需要schema9/10/11/12；原生动作v2需要schema10/11/12；显式节点互斥切换需要schema11/12；透明裁切需要schema12受信游戏模块，旧模块不能忽略新解释、状态或动作")
+            throw VideoError.unavailable("三维模型v1需要schema9至13；原生动作v2需要schema10至13；显式节点互斥切换需要schema11至13；透明裁切需要schema12/13；源帧镜头关键帧需要schema13受信游戏模块，旧模块不能忽略新解释、状态、动作或镜头")
         }
     }
     public static func requireKnowledgeSupport(_ simulation: Simulation, pluginID: String, inputSchema: Int, appearances: [KnowledgeParticipantAppearance]? = nil) throws {
@@ -228,7 +229,7 @@ public enum PluginProtocolRules {
     public static func validate(_ request:PluginRPCRequest,pluginID:String,inputSchemaVersion:Int,now:Date=Date())throws {
         guard request.protocolMajor==1,text(request.requestID) else {throw VideoError.invalid("插件请求协议或标识无效")}
         if let operation=request.modelBankOperation {
-            guard PluginInputCompatibility.supportsModelBank(pluginID:pluginID,inputSchema:inputSchemaVersion),request.method == .validate,request.input==nil,request.invocation==nil,request.taskID==nil else {throw VideoError.invalid("模型银行仅用于game9/game10/game11/game12 validate且不能混普通帧或调用字段")}
+            guard PluginInputCompatibility.supportsModelBank(pluginID:pluginID,inputSchema:inputSchemaVersion),request.method == .validate,request.input==nil,request.invocation==nil,request.taskID==nil else {throw VideoError.invalid("模型银行仅用于game9至13 validate且不能混普通帧或调用字段")}
             try operation.validate(now:now)
         }
     }
@@ -246,7 +247,7 @@ public enum PluginProtocolRules {
         if let model=p.modelScene3D {
             try PluginInputCompatibility.requireModelSupport(model,pluginID:capabilityID=="game.simulate" ? "video.game":"video.cartoon",inputSchema:inputSchemaVersion)
             guard model.version != 2 || p.simulation.knowledge==nil else {throw VideoError.invalid("三维v2只接受原生视觉动作，知识规则本体保留在Host")}
-            guard capabilityID=="game.simulate",p.kind == .simulation,p.artwork==nil,!p.artworkRequired,p.gameWorld==nil,p.cartoonRig==nil,p.storyActions==nil,p.cartoonPerformance==nil,p.cartoonPresenter==nil,p.voiceBinding==nil,p.layers==nil,input.assets.isEmpty,input.sourceFrame<p.durationFrames else {throw VideoError.invalid("真实三维输入只用于game9/game10/game11/game12，不能混旧图集、地图、表演或图片银行")}
+            guard capabilityID=="game.simulate",p.kind == .simulation,p.artwork==nil,!p.artworkRequired,p.gameWorld==nil,p.cartoonRig==nil,p.storyActions==nil,p.cartoonPerformance==nil,p.cartoonPresenter==nil,p.voiceBinding==nil,p.layers==nil,input.assets.isEmpty,input.sourceFrame<p.durationFrames else {throw VideoError.invalid("真实三维输入只用于game9至13，不能混旧图集、地图、表演或图片银行")}
             try model.validate(durationFrames:p.durationFrames);_=try input.dependencyFingerprints();return
         }
         guard input.modelBankReference==nil else {throw VideoError.invalid("非三维帧不能携带模型银行引用")}
@@ -374,9 +375,20 @@ public enum PluginRPCSchemas {
         value["properties"] = .object(properties);result["ModelMaterialInterpretation"] = .object(value)
         return result
     }
+    public static func modelCameraMotionDefinitions()->[String:AgentValue] {
+        var result=ModelCameraMotionSchema.records.mapValues(record)
+        var camera=result["ModelCamera3D"]!.object!,properties=camera["properties"]!.object!
+        properties["keyframes"] = .object(["type":.string("array"),"minItems":.number(1),"maxItems":.number(54000),"items":shape("ModelCameraKeyframe3D"),"description":.string("Strictly increasing source-frame poses. Linear position/target/FOV interpolation; hold first and last poses outside their keys. Parent up/near/far stay fixed. No wall-clock or implicit target following.")])
+        camera["properties"] = .object(properties);result["ModelCamera3D"] = .object(camera)
+        var key=result["ModelCameraKeyframe3D"]!.object!,keyProperties=key["properties"]!.object!
+        keyProperties["frame"] = .object(["type":.string("integer"),"minimum":.number(0),"maximum":.number(53999)])
+        keyProperties["verticalFieldOfViewDegrees"] = .object(["type":.string("number"),"minimum":.number(1),"maximum":.number(175)])
+        key["properties"] = .object(keyProperties);result["ModelCameraKeyframe3D"] = .object(key)
+        return result
+    }
     public static func definitions(inputSchemaVersion: Int = 2,pluginID:String?=nil)->[String:AgentValue] {
         let story=inputSchemaVersion>=7 || (pluginID=="video.cartoon" && inputSchemaVersion>=5)
-        let model=pluginID=="video.game" && [9,10,11,12].contains(inputSchemaVersion)
+        let model=pluginID=="video.game" && [9,10,11,12,13].contains(inputSchemaVersion)
         let declarations:[String:String]=[
             "PluginInvocation":"workspaceID:s projectID:s revisionID:s revisionDigest:s jobID?:s invocationID:s budgetReference:s currency:s budgetLimit:n deadlineUnixTime:n",
             "PluginRect":"x:n y:n width:n height:n",
@@ -398,9 +410,10 @@ public enum PluginRPCSchemas {
         var result=declarations.mapValues(record)
         if model {
             for (key,declaration) in ModelScene3DSchema.records {result[key]=record(declaration)}
-            if [10,11,12].contains(inputSchemaVersion) {result.merge(modelStoryDefinitions(),uniquingKeysWith:{$1})}
-            if [11,12].contains(inputSchemaVersion) {result.merge(modelNodeVariantDefinitions(),uniquingKeysWith:{$1})}
-            if inputSchemaVersion==12 {result.merge(modelAlphaCutoutDefinitions(),uniquingKeysWith:{$1})}
+            if [10,11,12,13].contains(inputSchemaVersion) {result.merge(modelStoryDefinitions(),uniquingKeysWith:{$1})}
+            if [11,12,13].contains(inputSchemaVersion) {result.merge(modelNodeVariantDefinitions(),uniquingKeysWith:{$1})}
+            if [12,13].contains(inputSchemaVersion) {result.merge(modelAlphaCutoutDefinitions(),uniquingKeysWith:{$1})}
+            if inputSchemaVersion==13 {result.merge(modelCameraMotionDefinitions(),uniquingKeysWith:{$1})}
             result["ModelLightKind"] = .object(["type":.string("string"),"enum":.array(["ambient","directional","omni"].map(AgentValue.string))])
             result["ModelVertexColorUsage"] = .object(["type":.string("string"),"enum":.array(ModelVertexColorUsage.allCases.map{.string($0.rawValue)})])
             result["ModelNormalTextureEncoding"] = .object(["type":.string("string"),"enum":.array(ModelNormalTextureEncoding.allCases.map{.string($0.rawValue)})])
@@ -426,7 +439,7 @@ public enum PluginRPCSchemas {
             var frame=result["PluginFrameInput"]!.object!
             let mixed=AgentValue.object(["anyOf":.array(["artwork","gameWorld","cartoonRig","storyActions","cartoonPerformance","cartoonPresenter","voiceBinding","layers"].map { .object(["required":.array([.string($0)])]) })])
             var modelPropsRecord:[String:AgentValue]=["required":.array([.string("modelScene3D")]),"properties":.object(["kind":.object(["const":.string(SceneKind.simulation.rawValue)]),"artworkRequired":.object(["const":.boolean(false)])]),"not":mixed]
-            if [10,11,12].contains(inputSchemaVersion) {
+            if [10,11,12,13].contains(inputSchemaVersion) {
                 modelPropsRecord["if"] = .object(["properties":.object(["modelScene3D":.object(["properties":.object(["version":.object(["const":.number(2)])])])])])
                 modelPropsRecord["then"] = .object(["properties":.object(["simulation":.object(["not":.object(["required":.array([.string("knowledge")])])])])])
             }
@@ -496,7 +509,7 @@ public enum PluginRPCSchemas {
         result["Schema"] = .object(["type":.string("object")]);return result
     }
     public static func request(inputSchemaVersion: Int = 2,pluginID:String?=nil)->AgentValue {
-        let model=pluginID=="video.game" && [9,10,11,12].contains(inputSchemaVersion)
+        let model=pluginID=="video.game" && [9,10,11,12,13].contains(inputSchemaVersion)
         var schema=record("protocolMajor:i requestID:s method:PluginMethod input?:PluginFrameInput invocation?:PluginInvocation taskID?:s"+(model ? " modelBankOperation?:PluginModelBankOperation":"")).object!
         if model {
             let forbidden=AgentValue.object(["anyOf":.array(["input","invocation","taskID"].map { .object(["required":.array([.string($0)])]) })])
@@ -506,12 +519,12 @@ public enum PluginRPCSchemas {
             ])
         }
         schema["$defs"] = .object(definitions(inputSchemaVersion: inputSchemaVersion,pluginID:pluginID));schema["$schema"] = .string("https://json-schema.org/draft/2020-12/schema")
-        let modelDescription=inputSchemaVersion==12 ? " game12 adds explicit original-material alphaOne transparent cutout at fixed 0.5; model v1/v2, node selections and the bounded model bank remain supported without filesystem/network access.":inputSchemaVersion==11 ? " game11 adds explicit mutually exclusive original-node selections and source-frame step changes; model v1/v2 and the bounded model bank remain supported without filesystem/network access.":inputSchemaVersion==10 ? " game10 validate alternatively accepts a mutually exclusive bounded in-memory modelBankOperation; model v2 actions are visual-only, while complete causal sources remain in the Host. It never grants filesystem/network access.":" game9 validate alternatively accepts a mutually exclusive bounded in-memory modelBankOperation; it never grants filesystem/network access."
+        let modelDescription=inputSchemaVersion==13 ? " game13 adds explicit source-frame camera keyframes with deterministic linear sampling and endpoint holds. Prior model v1/v2, node selections, alpha cutouts and the bounded model bank remain supported without filesystem/network access.":inputSchemaVersion==12 ? " game12 adds explicit original-material alphaOne transparent cutout at fixed 0.5; model v1/v2, node selections and the bounded model bank remain supported without filesystem/network access.":inputSchemaVersion==11 ? " game11 adds explicit mutually exclusive original-node selections and source-frame step changes; model v1/v2 and the bounded model bank remain supported without filesystem/network access.":inputSchemaVersion==10 ? " game10 validate alternatively accepts a mutually exclusive bounded in-memory modelBankOperation; model v2 actions are visual-only, while complete causal sources remain in the Host. It never grants filesystem/network access.":" game9 validate alternatively accepts a mutually exclusive bounded in-memory modelBankOperation; it never grants filesystem/network access."
         schema["description"] = .string("protocolMajor=1. validate/estimate/execute require input. progress/cancel require the complete matching invocation; progress also requires taskID. cancel without taskID closes the whole invocation and exits the service."+(model ? modelDescription:""))
         return .object(schema)
     }
     public static func response(inputSchemaVersion: Int = 2,pluginID:String?=nil)->AgentValue {
-        var schema=record("protocolMajor:i requestID:s ok:b state:s descriptor?:PluginDescription inputDigest?:s task?:PluginTaskSnapshot cost?:PluginCost error?:PluginRPCError"+(pluginID=="video.game" && [9,10,11,12].contains(inputSchemaVersion) ? " modelBankReceipt?:PluginModelBankReceipt":"")).object!
+        var schema=record("protocolMajor:i requestID:s ok:b state:s descriptor?:PluginDescription inputDigest?:s task?:PluginTaskSnapshot cost?:PluginCost error?:PluginRPCError"+(pluginID=="video.game" && [9,10,11,12,13].contains(inputSchemaVersion) ? " modelBankReceipt?:PluginModelBankReceipt":"")).object!
         schema["$defs"] = .object(definitions(inputSchemaVersion: inputSchemaVersion,pluginID:pluginID));schema["$schema"] = .string("https://json-schema.org/draft/2020-12/schema");return .object(schema)
     }
 }

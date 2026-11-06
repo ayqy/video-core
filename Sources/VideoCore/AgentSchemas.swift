@@ -95,6 +95,7 @@ public enum AgentSchemas {
         for (name,declaration) in ModelAlphaCutoutSchema.records {
             var schema=entity(declaration).object!;schema["additionalProperties"] = .boolean(false);result[name] = .object(schema)
         }
+        result.merge(PluginRPCSchemas.modelCameraMotionDefinitions(),uniquingKeysWith:{$1})
         result["ModelLightKind"] = .object(["type":.string("string"),"enum":.array(["ambient","directional","omni"].map(AgentValue.string))])
         result["ModelVertexColorUsage"] = .object(["type":.string("string"),"enum":.array(ModelVertexColorUsage.allCases.map { .string($0.rawValue) })])
         result["ModelNormalTextureEncoding"] = .object(["type":.string("string"),"enum":.array(ModelNormalTextureEncoding.allCases.map { .string($0.rawValue) })])
