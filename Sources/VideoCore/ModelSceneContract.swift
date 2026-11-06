@@ -251,10 +251,13 @@ public struct ModelScene3D: Codable, Equatable, Sendable {
     /// These are operations on actual native instances and original joints,
     /// never two-dimensional stand-ins for a rule event.
     public var actions: [ModelStoryAction3D]?
-    public init(version: Int = 1, instances: [ModelInstance3D], camera: ModelCamera3D, lights: [ModelLight3D], transformTracks: [ModelTransformTrack] = [], jointTracks: [ModelJointTrack] = [], actions: [ModelStoryAction3D]? = nil) { self.version=version; self.instances=instances; self.camera=camera; self.lights=lights; self.transformTracks=transformTracks; self.jointTracks=jointTracks; self.actions=actions }
-    private enum CodingKeys: String, CodingKey { case version,instances,camera,lights,transformTracks,jointTracks,actions }
+    /// Explicit author-declared bodies to avoid during dialogue, including
+    /// independent clothing. Nil preserves the prior wire and action-based set.
+    public var dialogueObstacleInstanceIDs: [String]?
+    public init(version: Int = 1, instances: [ModelInstance3D], camera: ModelCamera3D, lights: [ModelLight3D], transformTracks: [ModelTransformTrack] = [], jointTracks: [ModelJointTrack] = [], actions: [ModelStoryAction3D]? = nil, dialogueObstacleInstanceIDs: [String]? = nil) { self.version=version; self.instances=instances; self.camera=camera; self.lights=lights; self.transformTracks=transformTracks; self.jointTracks=jointTracks; self.actions=actions; self.dialogueObstacleInstanceIDs=dialogueObstacleInstanceIDs }
+    private enum CodingKeys: String, CodingKey { case version,instances,camera,lights,transformTracks,jointTracks,actions,dialogueObstacleInstanceIDs }
     public init(from decoder: Decoder) throws {
-        try ModelStoryDecoding3D.keys(decoder,required:["version","instances","camera","lights","transformTracks","jointTracks"],optional:["actions"])
+        try ModelStoryDecoding3D.keys(decoder,required:["version","instances","camera","lights","transformTracks","jointTracks"],optional:["actions","dialogueObstacleInstanceIDs"])
         let c=try decoder.container(keyedBy:CodingKeys.self)
         version=try c.decode(Int.self,forKey:.version);instances=try c.decode([ModelInstance3D].self,forKey:.instances)
         camera=try c.decode(ModelCamera3D.self,forKey:.camera);lights=try c.decode([ModelLight3D].self,forKey:.lights)
@@ -267,6 +270,10 @@ public struct ModelScene3D: Codable, Equatable, Sendable {
             guard version==1 else {throw VideoError.invalid("三维v2必须声明实际原生动作；未知版本不会降级")}
             actions=nil
         }
+        if c.contains(.dialogueObstacleInstanceIDs) {
+            guard !(try c.decodeNil(forKey:.dialogueObstacleInstanceIDs)) else {throw VideoError.invalid("显式对白避让名单不能为null；旧行为须省略字段")}
+            dialogueObstacleInstanceIDs=try c.decode([String].self,forKey:.dialogueObstacleInstanceIDs)
+        } else {dialogueObstacleInstanceIDs=nil}
     }
     public var assetIDs: Set<String> { instances.reduce(into:Set<String>()) { $0.formUnion($1.resource.assetIDs) } }
     private struct DigestInput: Encodable { let scene: ModelScene3D; let durationFrames: Int }
@@ -275,6 +282,13 @@ public struct ModelScene3D: Codable, Equatable, Sendable {
         guard ((version==1 && actions==nil) || (version==2 && !(actions?.isEmpty ?? true))),(1...54000).contains(durationFrames),(1...128).contains(instances.count),(1...16).contains(lights.count),transformTracks.count<=128,jointTracks.count<=4096,
               Set(instances.map(\.id)).count==instances.count,Set(lights.map(\.id)).count==lights.count,Set(instances.map(\.id)).isDisjoint(with:Set(lights.map(\.id))) else { throw VideoError.invalid("三维场景版本、实例、灯光数量或标识无效") }
         try camera.validate(durationFrames:durationFrames)
+        if let ids=dialogueObstacleInstanceIDs {
+            let instanceIDs=Set(instances.map(\.id)),speakers=Set((actions ?? []).filter{$0.kind == .speak}.map(\.instanceID))
+            guard (1...128).contains(ids.count),Set(ids).count==ids.count,speakers.isSubset(of:Set(ids)),
+                  ids.allSatisfy({PluginProtocolRules.text($0,maximum:160) && $0==$0.trimmingCharacters(in:.whitespacesAndNewlines) && instanceIDs.contains($0)}) else {
+                throw VideoError.invalid("对白避让须明确指定1至128个不重复的实际实例并覆盖全部发言者")
+            }
+        }
         var bindings: [String:ModelAssetReference]=[:],variantFrames=0,variantNodes=0
         for instance in instances {
             guard PluginProtocolRules.text(instance.id,maximum:160),PluginProtocolRules.text(instance.name,maximum:160) else { throw VideoError.invalid("三维实例须有明确标识和名称") }

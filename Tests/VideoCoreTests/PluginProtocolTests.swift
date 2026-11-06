@@ -137,9 +137,9 @@ final class PluginProtocolTests:XCTestCase {
         XCTAssertEqual(descriptor.inputSchema.object?["$defs"]?.object?["KnowledgePayoffMatrix"], current["KnowledgePayoffMatrix"])
     }
     func testPublicationSchemaSelectionUsesCurrentDefaultsAndRetainsExplicitLegacyRequests() throws {
-        XCTAssertEqual(try PluginInputCompatibility.publicationSchema(pluginID: "video.game"), 13)
+        XCTAssertEqual(try PluginInputCompatibility.publicationSchema(pluginID: "video.game"), 14)
         XCTAssertEqual(try PluginInputCompatibility.publicationSchema(pluginID: "video.cartoon"), 8)
-        for version in [1, 2, 3, 5, 6, 7, 8, 9, 10, 11, 12, 13] {
+        for version in [1, 2, 3, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14] {
             XCTAssertEqual(try PluginInputCompatibility.publicationSchema(pluginID: "video.game", requested: String(version)), version)
         }
         for version in [1, 4, 5, 6, 7, 8] {
@@ -154,8 +154,26 @@ final class PluginProtocolTests:XCTestCase {
         XCTAssertThrowsError(try PluginInputCompatibility.publicationSchema(pluginID: "video.cartoon", requested: "3"))
         XCTAssertThrowsError(try PluginInputCompatibility.publicationSchema(pluginID: "video.cartoon", requested: "9"))
         XCTAssertThrowsError(try PluginInputCompatibility.publicationSchema(pluginID: "video.cartoon", requested: "10"))
-        XCTAssertThrowsError(try PluginInputCompatibility.publicationSchema(pluginID: "video.game", requested: "14"))
+        XCTAssertThrowsError(try PluginInputCompatibility.publicationSchema(pluginID: "video.game", requested: "15"))
         XCTAssertThrowsError(try PluginInputCompatibility.publicationSchema(pluginID: "video.cartoon", requested: "12"))
+    }
+    func testGameFourteenDiscoversExplicitDialogueObstaclesWithoutChangingLegacySchemas() throws {
+        let current=PluginRPCSchemas.definitions(inputSchemaVersion:14,pluginID:"video.game"),host=AgentSchemas.definitions()
+        let field=try XCTUnwrap(current["ModelScene3D"]?.object?["properties"]?.object?["dialogueObstacleInstanceIDs"])
+        XCTAssertEqual(field,host["ModelScene3D"]?.object?["properties"]?.object?["dialogueObstacleInstanceIDs"])
+        XCTAssertEqual(field.object?["type"],.string("array"));XCTAssertEqual(field.object?["minItems"],.number(1))
+        XCTAssertEqual(field.object?["maxItems"],.number(128));XCTAssertEqual(field.object?["uniqueItems"],.boolean(true))
+        XCTAssertNil(field.object?["anyOf"],"显式null不能被发现协议宣称合法")
+        var model=try XCTUnwrap(current["ModelScene3D"]?.object),props=try XCTUnwrap(model["properties"]?.object)
+        props.removeValue(forKey:"dialogueObstacleInstanceIDs");model["properties"] = .object(props)
+        XCTAssertEqual(AgentValue.object(model),PluginRPCSchemas.definitions(inputSchemaVersion:13,pluginID:"video.game")["ModelScene3D"])
+        for schema in 1...13 {
+            XCTAssertNil(PluginRPCSchemas.definitions(inputSchemaVersion:schema,pluginID:"video.game")["ModelScene3D"]?.object?["properties"]?.object?["dialogueObstacleInstanceIDs"])
+        }
+        for schema in [1,4,5,6,7,8] {XCTAssertNil(PluginRPCSchemas.definitions(inputSchemaVersion:schema,pluginID:"video.cartoon")["ModelScene3D"])}
+        let descriptor=PluginDescription(pluginID:"video.game",capabilityID:"game.simulate",version:"1.8.0",inputSchemaVersion:14)
+        XCTAssertFalse(descriptor.filesystemAccess);XCTAssertFalse(descriptor.networkAccess)
+        XCTAssertNotNil(current["ModelCameraKeyframe3D"]);XCTAssertNotNil(current["PluginModelBankOperation"])
     }
     func testGameThirteenDiscoversCameraMotionWithoutChangingEarlierCameraSchemas() throws {
         let frozen=try Codec.decoder().decode(AgentValue.self,from:Data(##"{"type":"object","properties":{"position":{"$ref":"#/$defs/ModelVector3"},"target":{"$ref":"#/$defs/ModelVector3"},"up":{"$ref":"#/$defs/ModelVector3"},"verticalFieldOfViewDegrees":{"type":"number"},"near":{"type":"number"},"far":{"type":"number"}},"required":["position","target","up","verticalFieldOfViewDegrees","near","far"],"additionalProperties":false}"##.utf8))

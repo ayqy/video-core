@@ -490,6 +490,45 @@ final class ModelSceneContractTests: XCTestCase {
         XCTAssertThrowsError(try f.repository.transaction{_ in},"每次保存都重核物理文件，不复用上次通过的解析结果或跟随链接")
         XCTAssertThrowsError(try AgentPreview.evaluate(command:"edit apply",data:validInput,database:f.repository.read(),principal:"owner",repository:f.repository))
     }
+    func testExplicitDialogueObstaclesValidateAllSpeakersAndRejectAmbiguousLists() throws {
+        let f=try fixture();defer{try? FileManager.default.removeItem(at:f.root)}
+        var valid=nativeModel(f)
+        valid.instances.append(.init(id:"independent-clothing",name:"独立衣服",resource:f.model.instances[0].resource))
+        valid.dialogueObstacleInstanceIDs=["actor","independent-clothing"]
+        XCTAssertNoThrow(try valid.validate(durationFrames:21,assets:f.assets))
+        XCTAssertEqual(valid,try Codec.decoder().decode(ModelScene3D.self,from:Codec.data(valid)))
+        XCTAssertEqual(valid.assetIDs,f.model.assetIDs,"作者角色元数据不得增改任何模型字节依赖")
+        let invalid:[[String]]=[[],["actor","actor"],["missing"],["independent-clothing"],["actor"," missing"],Array(repeating:"actor",count:129)]
+        for ids in invalid {
+            var wrong=valid;wrong.dialogueObstacleInstanceIDs=ids
+            XCTAssertThrowsError(try wrong.validate(durationFrames:21),"缺少发言者、未知、重复或无界名单均须拒收")
+        }
+        var another=valid
+        another.actions!.append(.init(id:"late-speaker",kind:.speak,instanceID:"independent-clothing",startFrame:18,endFrame:20,anchor:.init(y:1),text:"另一个时窗。"))
+        another.dialogueObstacleInstanceIDs=["actor"]
+        XCTAssertThrowsError(try another.validate(durationFrames:21),"名单覆盖全源窗发言者，不能只校当前帧")
+        var wire=try XCTUnwrap(JSONSerialization.jsonObject(with:Codec.data(valid)) as? [String:Any])
+        let malformed:[Any]=[NSNull(),true,"actor",1,["actor",1]]
+        for value in malformed {
+            wire["dialogueObstacleInstanceIDs"]=value
+            XCTAssertThrowsError(try Codec.decoder().decode(ModelScene3D.self,from:JSONSerialization.data(withJSONObject:wire)))
+        }
+    }
+    func testOmittedDialogueObstaclesPreserveExactLegacyV1AndV2WireAndDigest() throws {
+        let f=try fixture();defer{try? FileManager.default.removeItem(at:f.root)}
+        struct Legacy:Encodable {
+            let version:Int;let instances:[ModelInstance3D];let camera:ModelCamera3D;let lights:[ModelLight3D]
+            let transformTracks:[ModelTransformTrack];let jointTracks:[ModelJointTrack];let actions:[ModelStoryAction3D]?
+        }
+        for model in [f.model,nativeModel(f)] {
+            let old=Legacy(version:model.version,instances:model.instances,camera:model.camera,lights:model.lights,transformTracks:model.transformTracks,jointTracks:model.jointTracks,actions:model.actions)
+            XCTAssertNil(model.dialogueObstacleInstanceIDs)
+            XCTAssertEqual(try Codec.data(model),try Codec.data(old))
+            XCTAssertEqual(model,try Codec.decoder().decode(ModelScene3D.self,from:Codec.data(old)))
+            var explicit=model;explicit.dialogueObstacleInstanceIDs=["actor"]
+            XCTAssertNotEqual(try model.contentDigest(durationFrames:21),try explicit.contentDigest(durationFrames:21))
+        }
+    }
     private func nativeModel(_ f:Fixture)->ModelScene3D {
         var model=f.model;model.version=2
         model.actions=[
@@ -595,7 +634,7 @@ final class ModelSceneContractTests: XCTestCase {
         let f=try fixture();defer{try? FileManager.default.removeItem(at:f.root)}
         var original=scene(f);original.modelScene3D=nil
         let p=project(original,f);try f.repository.transaction{$0.projects=[p]}
-        var native=scene(f);native.modelScene3D=nativeModel(f)
+        var native=scene(f);native.modelScene3D=nativeModel(f);native.modelScene3D!.dialogueObstacleInstanceIDs=["actor"]
         let data=try input(p,edits:[.replaceScene(original.id,native)]),before=try Codec.data(f.repository.read())
         _=try AgentMutationExecutor.preview(command:"edit apply",data:data,database:f.repository.read(),principal:"owner",repository:f.repository)
         XCTAssertEqual(try Codec.data(f.repository.read()),before)
