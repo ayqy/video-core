@@ -31,6 +31,38 @@ final class CoverPresentationTests:XCTestCase {
         value.scenes[0].kind = .simulation;XCTAssertEqual(CoverRules.inferredStyle(revision:value),.game)
         value.scenes[0].kind = .cartoon;XCTAssertEqual(CoverRules.inferredStyle(revision:value),.cartoon)
     }
+    func testLegacyCoverWireKeepsSubtitleAndOmitsAbsentEmphasis()throws {
+        let raw=Data(#"{"version":1,"style":"pencil","template":"editorial","title":"合作的代价","subtitle":"旧副标题原文"}"#.utf8)
+        let value=try Codec.decoder().decode(CoverPresentation.self,from:raw)
+        XCTAssertNil(value.emphasis);XCTAssertEqual(value.subtitle,"旧副标题原文")
+        let encoded=try Codec.data(value),decoded=try Codec.decoder().decode(CoverPresentation.self,from:encoded)
+        XCTAssertEqual(value,decoded);XCTAssertFalse(String(decoding:encoded,as:UTF8.self).contains("emphasis"))
+        XCTAssertEqual(try Codec.data(decoded),encoded)
+    }
+    func testEmphasisIsBoundedActualNonOverlappingTitleText()throws {
+        var value=try revision()
+        value.coverPresentation=CoverPresentation(template:.contrast,title:"合作还是背叛？合作有代价",emphasis:["合作","背叛"])
+        XCTAssertEqual(try CoverRules.resolved(revision:value).emphasis,["合作","背叛"])
+        XCTAssertEqual(try CoverRules.resolved(revision:value).template,.contrast)
+        for invalid in [[],["合作","合作"],["不存在"],["合作还是","合作"],["合作","背叛","代价","还是"],[" "]] {
+            value.coverPresentation?.emphasis=invalid
+            XCTAssertThrowsError(try CoverRules.resolved(revision:value),"主题词只强调实际标题，不新增文案：\(invalid)")
+        }
+        value.coverPresentation=CoverPresentation(emphasis:["不在默认主题里"])
+        XCTAssertThrowsError(try CoverRules.resolved(revision:value))
+    }
+    func testEmphasisOnlyEditIsVersionedAndKeepsIndependentMedia()throws {
+        var value=try revision()
+        value.coverPresentation=CoverPresentation(title:"合作还是背叛？",emphasis:["合作"])
+        let previous=Project(workspaceID:"w",name:"囚徒困境",revision:value)
+        var cover=try XCTUnwrap(value.coverPresentation);cover.emphasis=["背叛"]
+        let changed=try Editor.apply([.coverPresentation(cover)],to:previous,baseRevision:value.id,assets:[],message:"调整标题重点")
+        XCTAssertEqual(changed.current.scenes,value.scenes)
+        XCTAssertNotEqual(changed.current.id,value.id)
+        XCTAssertNotEqual(try changed.current.contentDigest(),try value.contentDigest())
+        XCTAssertTrue(RevisionDifference.compare(value,changed.current).contains{$0.id=="cover"})
+        XCTAssertFalse(changed.current.review.complete)
+    }
     func testNicknameOnlyAppliesToIdentifiedDoubaoPresenter()throws {
         var value=try revision()
         value.scenes[0].cartoonPresenter=CartoonPresenter(id:"host",masterRole:"neutral",x:0.5,y:0.5,width:0.2,height:0.4,clips:[],cues:[])
@@ -107,6 +139,8 @@ final class CoverPresentationTests:XCTestCase {
         XCTAssertEqual(definitions["CoverPresentation"]?.object?["additionalProperties"],.boolean(false))
         XCTAssertEqual(definitions["CoverImage"]?.object?["additionalProperties"],.boolean(false))
         XCTAssertEqual(definitions["CoverPose"]?.object?["additionalProperties"],.boolean(false))
+        XCTAssertNotNil(definitions["CoverPresentation"]?.object?["properties"]?.object?["emphasis"])
+        XCTAssertTrue(String(decoding:try Codec.data(definitions["CoverTemplate"]),as:UTF8.self).contains("contrast"))
         XCTAssertTrue(String(decoding:try Codec.data(definitions),as:UTF8.self).contains("coverPresentation"))
     }
     func testOnlyCoverParentChainRetainsIndependentDeclarationsAndNeverFilmReview()throws {

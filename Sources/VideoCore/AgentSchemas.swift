@@ -101,7 +101,7 @@ public enum AgentSchemas {
         result["MediaConfirmationMethod"] = .object(["type":.string("string"),"enum":.array(["manual","approved_original","reliable_timestamps"].map(AgentValue.string))])
         for name in ["MediaConfirmationRequest","MediaConfirmationBinding","MediaVoiceBinding"] {var shape=result[name]!.object!;shape["additionalProperties"] = .boolean(false);result[name] = .object(shape)}
         let dataRecords:[String:String] = [
-            "CoverPresentation":"version:i style:CoverStyle template:CoverTemplate title?:s subtitle?:s hero?:CoverImage background?:CoverImage poses?:[CoverPose]",
+            "CoverPresentation":"version:i style:CoverStyle template:CoverTemplate title?:s subtitle?:s hero?:CoverImage background?:CoverImage poses?:[CoverPose] emphasis?:[s]",
             "CoverImage":"assetID:s sourceRect?:MediaFraming",
             "CoverPose":"id:s image:CoverImage expression:s action:s keywords:[s]",
             "MediaPresentation":"version:i layout:MediaLayout backgroundColor:s",
@@ -136,6 +136,7 @@ public enum AgentSchemas {
         constraint("CoverPresentation","title",["minLength":.number(1),"maxLength":.number(160)])
         constraint("CoverPresentation","subtitle",["minLength":.number(1),"maxLength":.number(100)])
         constraint("CoverPresentation","poses",["minItems":.number(1),"maxItems":.number(24)])
+        constraint("CoverPresentation","emphasis",["minItems":.number(1),"maxItems":.number(3),"uniqueItems":.boolean(true),"items":.object(["type":.string("string"),"minLength":.number(1),"maxLength":.number(40)]),"description":.string("Actual non-overlapping title substrings; highlighted without adding text. Legacy subtitle is preserved but not painted.")])
         constraint("CoverImage","assetID",["minLength":.number(1),"maxLength":.number(200)])
         constraint("CoverPose","keywords",["maxItems":.number(16),"uniqueItems":.boolean(true)])
         constraint("DataPresentation","version",["const":.number(1)])

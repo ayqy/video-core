@@ -6,7 +6,7 @@ public enum CoverStyle: String, Codable, CaseIterable, Sendable {
     case automatic, explanation, pencil, presenter, game, cartoon, media, chart, code
 }
 public enum CoverTemplate: String, Codable, CaseIterable, Sendable {
-    case automatic, spotlight, editorial
+    case automatic, spotlight, editorial, contrast
 }
 public struct CoverImage: Codable, Equatable, Sendable {
     public var assetID: String
@@ -47,15 +47,18 @@ public struct CoverPresentation: Codable, Equatable, Sendable {
     public var template: CoverTemplate
     public var title: String?
     public var subtitle: String?
+    /// Exact title substrings, never extra cover copy. Missing in legacy JSON.
+    public var emphasis: [String]?
     public var hero: CoverImage?
     public var background: CoverImage?
     public var poses: [CoverPose]?
     public init(style: CoverStyle = .automatic, template: CoverTemplate = .automatic, title: String? = nil,
-                subtitle: String? = nil, hero: CoverImage? = nil, background: CoverImage? = nil, poses: [CoverPose]? = nil) {
+                subtitle: String? = nil, hero: CoverImage? = nil, background: CoverImage? = nil, poses: [CoverPose]? = nil,
+                emphasis: [String]? = nil) {
         self.style=style;self.template=template;self.title=title;self.subtitle=subtitle
-        self.hero=hero;self.background=background;self.poses=poses
+        self.hero=hero;self.background=background;self.poses=poses;self.emphasis=emphasis
     }
-    private enum CodingKeys: String, CodingKey, CaseIterable { case version,style,template,title,subtitle,hero,background,poses }
+    private enum CodingKeys: String, CodingKey, CaseIterable { case version,style,template,title,subtitle,hero,background,poses,emphasis }
     public init(from decoder: Decoder) throws {
         let actual=Set(try decoder.container(keyedBy: CoverKey.self).allKeys.map(\.stringValue))
         guard actual.isSubset(of:Set(CodingKeys.allCases.map(\.rawValue))) else { throw VideoError.invalid("封面设置包含未知字段") }
@@ -64,6 +67,7 @@ public struct CoverPresentation: Codable, Equatable, Sendable {
         template=try c.decode(CoverTemplate.self,forKey:.template);title=try c.decodeIfPresent(String.self,forKey:.title)
         subtitle=try c.decodeIfPresent(String.self,forKey:.subtitle);hero=try c.decodeIfPresent(CoverImage.self,forKey:.hero)
         background=try c.decodeIfPresent(CoverImage.self,forKey:.background);poses=try c.decodeIfPresent([CoverPose].self,forKey:.poses)
+        emphasis=try c.decodeIfPresent([String].self,forKey:.emphasis)
         try validate()
     }
     public var images: [CoverImage] { [hero,background].compactMap{$0}+(poses ?? []).map(\.image) }
@@ -76,6 +80,13 @@ public struct CoverPresentation: Codable, Equatable, Sendable {
         for image in images {
             guard CoverRules.text(image.assetID,maximum:200) else {throw VideoError.invalid("封面图片须引用已导入素材")}
             try image.sourceRect?.validate()
+        }
+        if let emphasis {
+            guard (1...3).contains(emphasis.count),Set(emphasis).count==emphasis.count,
+                  emphasis.allSatisfy({CoverRules.text($0,maximum:40) && !$0.contains("\n")}) else {
+                throw VideoError.invalid("封面主题词须为一至三个不重复的标题片段")
+            }
+            if let title {try CoverRules.validateEmphasis(emphasis,title:title)}
         }
         for pose in poses ?? [] {
             guard CoverRules.text(pose.id,maximum:100),CoverRules.text(pose.expression,maximum:80),
@@ -95,6 +106,7 @@ public struct ResolvedCover: Equatable, Sendable {
     public var hero: CoverImage?
     public var background: CoverImage?
     public var poseID: String?
+    public var emphasis: [String]
 }
 public enum CoverRules {
     static func keys(_ decoder:Decoder,required:Set<String>,optional:Set<String> = [])throws {
@@ -104,6 +116,22 @@ public enum CoverRules {
     static func text(_ value:String,maximum:Int)->Bool {
         !value.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty && value.count<=maximum &&
         !value.unicodeScalars.contains{CharacterSet.controlCharacters.contains($0) && $0 != "\n"}
+    }
+    static func validateEmphasis(_ emphasis:[String],title:String)throws {
+        var occupied=Set<Int>()
+        let string=title as NSString
+        for keyword in emphasis {
+            var search=NSRange(location:0,length:string.length),found=false
+            while search.length>0 {
+                let range=string.range(of:keyword,options:[],range:search)
+                if range.location==NSNotFound {break}
+                let indices=Set(range.location..<(range.location+range.length))
+                guard occupied.isDisjoint(with:indices) else {throw VideoError.invalid("封面主题词不可互相覆盖")}
+                occupied.formUnion(indices);found=true
+                search=NSRange(location:range.location+range.length,length:string.length-range.location-range.length)
+            }
+            guard found else {throw VideoError.invalid("封面主题词必须是实际标题中的文字")}
+        }
     }
     public static func inferredStyle(revision:Revision)->CoverStyle {
         let scenes=revision.scenes
@@ -120,7 +148,7 @@ public enum CoverRules {
         let value=revision.coverPresentation ?? CoverPresentation()
         try value.validate()
         let style=value.style == .automatic ? inferredStyle(revision:revision):value.style
-        // A stable title-based choice gives new topics a second layout without
+        // A stable title-based choice gives new topics three layouts without
         // randomness, wall-clock dependencies or a paid image-generation call.
         let topic=revision.contentName.trimmingCharacters(in:.whitespacesAndNewlines)
         let isDouzijie=revision.scenes.contains {scene in
@@ -129,7 +157,10 @@ public enum CoverRules {
             (scene.classicArtwork?.sources.contains{$0.license.contains("豆包")} ?? false))
         }
         let title=value.title ?? (style == .presenter && isDouzijie ? "豆子姐讲「"+topic+"」":topic)
-        let template=value.template == .automatic ? (topic.utf8.reduce(0,{$0+Int($1)})%2==0 ? .spotlight:.editorial):value.template
+        let templates:[CoverTemplate]=[.spotlight,.editorial,.contrast]
+        let template=value.template == .automatic ? templates[topic.utf8.reduce(0,{$0+Int($1)})%templates.count]:value.template
+        let emphasis=value.emphasis ?? (title.contains(topic) && !topic.isEmpty ? [topic]:[])
+        try validateEmphasis(emphasis,title:title)
         let search=([title]+revision.scenes.map{$0.title+" "+$0.narration}).joined(separator:" ").lowercased()
         let selected=(value.poses ?? []).enumerated().sorted { left,right in
             func score(_ pose:CoverPose)->Int {pose.keywords.filter{search.contains($0.lowercased())}.reduce(0,{$0+$1.count})}
@@ -145,7 +176,7 @@ public enum CoverRules {
            let sprite=scene.classicArtwork?.sprites.first(where:{$0.role==role}) {
             hero=CoverImage(assetID:sprite.assetID,sourceRect:MediaFraming(x:sprite.x,y:sprite.y,width:sprite.width,height:sprite.height))
         }
-        return ResolvedCover(style:style,template:template,title:title,subtitle:value.subtitle ?? "",hero:hero,background:value.background,poseID:value.hero == nil ? selected?.id:nil)
+        return ResolvedCover(style:style,template:template,title:title,subtitle:value.subtitle ?? "",hero:hero,background:value.background,poseID:value.hero == nil ? selected?.id:nil,emphasis:emphasis)
     }
     public static func validate(revision:Revision,assets:[Asset])throws {
         let cover=try resolved(revision:revision)

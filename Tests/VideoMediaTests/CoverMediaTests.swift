@@ -1,6 +1,7 @@
 import XCTest
 import CoreGraphics
 import ImageIO
+import CoreText
 import VideoCore
 @testable import VideoMedia
 
@@ -29,7 +30,7 @@ final class CoverMediaTests:XCTestCase {
         let image=try XCTUnwrap(CGImage(width:4,height:1,bitsPerComponent:8,bitsPerPixel:32,bytesPerRow:16,space:CGColorSpace(name:CGColorSpace.sRGB)!,bitmapInfo:CGBitmapInfo(rawValue:CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue),provider:provider,decode:nil,shouldInterpolate:false,intent:.defaultIntent))
         XCTAssertEqual(try pixels(image),expected,"先验证固定RGBA与半透明像素的实际读回，禁止用错误通道解释内容丢失")
     }
-    func testEveryStyleHasTwoDistinctDeterministicReadableTemplatesInBothAspects()throws {
+    func testEveryStyleHasThreeDeterministicLayoutsInBothAspects()throws {
         XCTAssertEqual(CoverPainter.displayTitle("豆子姐讲「囚徒困境」",style:.presenter),"豆子姐讲\n「囚徒困境」")
         XCTAssertEqual(CoverPainter.displayTitle("豆子姐讲「囚徒困境」",style:.pencil),"豆子姐讲「囚徒困境」")
         for aspect in [Aspect.landscape,.portrait] {
@@ -37,7 +38,7 @@ final class CoverMediaTests:XCTestCase {
             var styleHashes=Set<String>()
             for style in CoverStyle.allCases where style != .automatic {
                 var hashes=Set<String>()
-                for template in [CoverTemplate.spotlight,.editorial] {
+                for template in [CoverTemplate.spotlight,.editorial,.contrast] {
                     var value=try revision(aspect:aspect)
                     value.coverPresentation=CoverPresentation(style:style,template:template,title:style == .presenter ? "豆子姐讲「囚徒困境」":"合作还是背叛？",subtitle:"每一次选择，都有代价")
                     let image=try CoverPainter.image(revision:value,source:source)
@@ -48,9 +49,9 @@ final class CoverMediaTests:XCTestCase {
                     XCTAssertNotEqual(bytes,try ScenePainter.png(source))
                     hashes.insert(Codec.hash(bytes));styleHashes.insert(Codec.hash(bytes))
                 }
-                XCTAssertEqual(hashes.count,2,"同类型的两个模板必须有真实像素差异")
+                XCTAssertEqual(hashes.count,3,"同类型三个模板须有真实结构差异；不代表艺术效果已审")
             }
-            XCTAssertEqual(styleHashes.count,16,"八种风格的模板应保各自配色、布局或设计标识")
+            XCTAssertEqual(styleHashes.count,24,"八种风格各三个确定性模板，不借规则检查声称视觉通过")
         }
     }
     func testCroppedImportedBitmapChangesCoverAndMissingImageCannotFallback()throws {
@@ -60,7 +61,7 @@ final class CoverMediaTests:XCTestCase {
         XCTAssertThrowsError(try CoverPainter.image(revision:value,source:source))
         let composed=try CoverPainter.image(revision:value,source:source,images:["ip":atlas])
         let alternate=try bitmap(width:1280,height:720,red:0.8,green:0.1,blue:0.9)
-        for template in [CoverTemplate.spotlight,.editorial] {
+        for template in [CoverTemplate.spotlight,.editorial,.contrast] {
             value.coverPresentation?.template=template
             let clean=try ScenePainter.png(CoverPainter.image(revision:value,source:source,images:["ip":atlas]))
             XCTAssertEqual(clean,try ScenePainter.png(CoverPainter.image(revision:value,source:alternate,images:["ip":atlas])),"独立IP无显式背景时不能残留视频里的旧脸或字幕")
@@ -73,84 +74,135 @@ final class CoverMediaTests:XCTestCase {
         XCTAssertNotEqual(try ScenePainter.png(composed),try ScenePainter.png(CoverPainter.image(revision:value,source:source)))
         XCTAssertThrowsError(try CoverPainter.image(revision:value,source:atlas))
     }
-    func testWideFrameKeepsCornerLabelsAndContentWithoutRepeatedEditorialBackground()throws {
+    func testArtworkHasTypeSpecificScaleAndMediaFillsTheCanvas()throws {
         try assertRGBAFixture()
-        func marked(_ width:Int,_ height:Int)throws->CGImage {
+        func solid(_ components:[CGFloat])throws->CGImage {
             let space=CGColorSpace(name:CGColorSpace.sRGB)!
-            let c=try XCTUnwrap(CGContext(data:nil,width:width,height:height,bitsPerComponent:8,bytesPerRow:width*4,space:space,bitmapInfo:CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue))
-            c.setFillColor(try XCTUnwrap(CGColor(colorSpace:space,components:[1,1,1,1])));c.fill(CGRect(x:0,y:0,width:width,height:height))
-            let components:[[CGFloat]]=[[1,0,0,1],[0,1,0,1],[0,0,1,1],[1,0,1,1]]
-            let colors=try components.map{try XCTUnwrap(CGColor(colorSpace:space,components:$0))}
-            for (index,point) in [CGPoint(x:0,y:0),CGPoint(x:width-64,y:0),CGPoint(x:0,y:height-64),CGPoint(x:width-64,y:height-64)].enumerated() {
-                c.setFillColor(colors[index]);c.fill(CGRect(origin:point,size:CGSize(width:64,height:64)))
-            }
-            c.setFillColor(try XCTUnwrap(CGColor(colorSpace:space,components:[1,1,0,1])));c.fill(CGRect(x:CGFloat(width)*0.2,y:CGFloat(height)*0.45,width:CGFloat(width)*0.6,height:CGFloat(height)*0.1))
+            let c=try XCTUnwrap(CGContext(data:nil,width:900,height:900,bitsPerComponent:8,bytesPerRow:3600,space:space,bitmapInfo:CGImageAlphaInfo.premultipliedLast.rawValue))
+            c.setFillColor(try XCTUnwrap(CGColor(colorSpace:space,components:components)));c.fill(CGRect(x:0,y:0,width:900,height:900))
             return try XCTUnwrap(c.makeImage())
         }
-        let source=try marked(1280,720),background=try marked(2400,600)
-        for style in [CoverStyle.pencil,.code,.media] {
-            for template in [CoverTemplate.spotlight,.editorial] {
-                for explicit in [false,true] {
-                    var value=try revision();value.coverPresentation=CoverPresentation(style:style,template:template,title:"差一枚，路就修不成？",subtitle:"完整画面保留标题、图例与字幕",background:explicit ? CoverImage(assetID:"wide"):nil)
-                    let image=try CoverPainter.image(revision:value,source:source,images:["wide":background]),raw=try pixels(image)
-                    var marks=Array(repeating:[CGPoint](),count:5)
-                    for offset in stride(from:0,to:raw.count,by:4) {
-                        let r=raw[offset],g=raw[offset+1],b=raw[offset+2]
-                        let index:Int?
-                        if r>240 && g<15 && b<15 {index=0}
-                        else if r<15 && g>240 && b<15 {index=1}
-                        else if r<15 && g<15 && b>240 {index=2}
-                        else if r>240 && g<15 && b>240 {index=3}
-                        else if r>240 && g>240 && b<15 {index=4}
-                        else {index=nil}
-                        if let index {marks[index].append(CGPoint(x:(offset/4)%image.width,y:(offset/4)/image.width))}
-                    }
-                    for (index,mark) in marks.enumerated() {XCTAssertGreaterThan(mark.count,128,"四角标签与中央横向内容均须实际可见：\(index)/\(style)/\(template)/\(explicit)")}
-                    func center(_ index:Int)throws->CGPoint {
-                        let points=marks[index];_ = try XCTUnwrap(points.first,"四角标签和内容均须有实际像素")
-                        return CGPoint(x:points.map(\.x).reduce(0,+)/CGFloat(points.count),y:points.map(\.y).reduce(0,+)/CGFloat(points.count))
-                    }
-                    let a=try center(0),b=try center(1),d=try center(2),e=try center(3),middle=try center(4)
-                    XCTAssertLessThan(a.x,b.x);XCTAssertLessThan(d.x,e.x)
-                    XCTAssertEqual(a.y,b.y,accuracy:2);XCTAssertEqual(d.y,e.y,accuracy:2)
-                    XCTAssertGreaterThan(abs(a.y-d.y),100)
-                    XCTAssertGreaterThan(middle.x,a.x);XCTAssertLessThan(middle.x,b.x)
-                    if style == .media && template == .editorial && !explicit {
-                        let clean=try pixels(CoverPainter.image(revision:value,source:bitmap(width:1280,height:720)))
-                        let offset=(image.height/2*image.width+8)*4
-                        XCTAssertEqual(Array(raw[offset..<offset+4]),Array(clean[offset..<offset+4]),"宽帧只在内容卡出现，页边不得残留重复暗字底图")
-                    }
-                }
+        let magenta=try solid([1,0,1,1]),cyan=try solid([0,1,1,1]),source=try bitmap(width:1280,height:720)
+        var affected:[CoverStyle:Int]=[:]
+        for style in CoverStyle.allCases where style != .automatic {
+            var value=try revision();value.coverPresentation=CoverPresentation(style:style,template:.spotlight,title:"出钱修路",background:CoverImage(assetID:"content"),emphasis:["修路"])
+            let first=try pixels(CoverPainter.image(revision:value,source:source,images:["content":magenta]))
+            let second=try pixels(CoverPainter.image(revision:value,source:source,images:["content":cyan]))
+            var changed=0
+            for offset in stride(from:0,to:first.count,by:4) {
+                if abs(Int(first[offset])-Int(second[offset]))>20 || abs(Int(first[offset+1])-Int(second[offset+1]))>20 {changed+=1}
             }
+            affected[style]=changed
+            XCTAssertGreaterThan(changed,1280*720/25,"真实内容应是构图组成部分，不能缩成邮票：\(style)")
         }
+        XCTAssertGreaterThan(try XCTUnwrap(affected[.media]),1280*720*7/10,"真实影像应大幅铺满；连续遮光不能退化成底部窄图条")
+        XCTAssertGreaterThan(try XCTUnwrap(affected[.pencil]),1280*720*12/100,"彩铅大故事组景应保实际素材可见面积")
+        XCTAssertNotEqual(affected[.media],affected[.code],"类型间内容组织不同，不能只换背景色")
     }
-    func testCodeAndMediaBadgesHaveDarkLegibleLetterPixels()throws {
+    func testArtworkSeparatesOnlyThroughRealTransparencyAndKeepsConnectedImagesWhole()throws {
         try assertRGBAFixture()
-        let source=try bitmap(width:1280,height:720)
-        for (style,accent) in [(CoverStyle.code,[169,228,109]),(.media,[245,198,75])] {
-            // Match production's device/generic CGColor conversion, independently
-            // of the actual badge. The dark-letter rule remains in sRGB pixels.
-            let swatch=try XCTUnwrap(CGContext(data:nil,width:4,height:1,bitsPerComponent:8,bytesPerRow:16,space:CGColorSpace(name:CGColorSpace.sRGB)!,bitmapInfo:CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue))
-            swatch.setFillColor(CGColor(red:CGFloat(accent[0])/255,green:CGFloat(accent[1])/255,blue:CGFloat(accent[2])/255,alpha:1));swatch.fill(CGRect(x:0,y:0,width:4,height:1))
-            let reference=try pixels(XCTUnwrap(swatch.makeImage()))
-            var value=try revision();value.coverPresentation=CoverPresentation(style:style,template:.editorial,title:"差一枚，路就修不成？")
-            let image=try CoverPainter.image(revision:value,source:source),raw=try pixels(image)
-            var dark=0
-            for y in 0..<image.height {
-                let colored=(0..<image.width).filter {x in
-                    let offset=(y*image.width+x)*4
-                    return (0..<3).allSatisfy{abs(Int(raw[offset+$0])-Int(reference[$0]))<3}
+        let space=CGColorSpace(name:CGColorSpace.sRGB)!
+        let c=try XCTUnwrap(CGContext(data:nil,width:200,height:120,bitsPerComponent:8,bytesPerRow:800,space:space,bitmapInfo:CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue))
+        c.clear(CGRect(x:0,y:0,width:200,height:120))
+        c.setFillColor(try XCTUnwrap(CGColor(colorSpace:space,components:[1,0,0,1])));c.fill(CGRect(x:10,y:10,width:108,height:100))
+        c.setFillColor(try XCTUnwrap(CGColor(colorSpace:space,components:[0,0,1,1])));c.fill(CGRect(x:140,y:10,width:50,height:100))
+        let image=try XCTUnwrap(c.makeImage()),pair=try XCTUnwrap(CoverPainter.separatedArtwork(image))
+        XCTAssertGreaterThan(pair.0.width,100,"左物体越过正中线时必须完整保留，不能二等分切下碎片")
+        XCTAssertEqual(pair.0.width+pair.1.width,image.width)
+        let left=try pixels(pair.0),right=try pixels(pair.1)
+        XCTAssertEqual(stride(from:0,to:left.count,by:4).filter{left[$0+2]>240 && left[$0+3]>0}.count,0,"左侧原件不能混入右物体")
+        XCTAssertEqual(stride(from:0,to:right.count,by:4).filter{right[$0]>240 && right[$0+3]>0}.count,0,"右侧原件不能带走左物体碎片")
+        c.setFillColor(try XCTUnwrap(CGColor(colorSpace:space,components:[1,0,0,1])));c.fill(CGRect(x:10,y:0,width:180,height:1))
+        XCTAssertNil(CoverPainter.separatedArtwork(try XCTUnwrap(c.makeImage())),"一条真实像素连接也不可以切断；无透明分隔则保整图")
+        XCTAssertNil(CoverPainter.separatedArtwork(try bitmap(width:200,height:120)),"不透明图片不能猜测语义切成两半")
+    }
+    func testOnlyTitleUsesOfflineFontHighlightAndFitsBothPreviewCrops()throws {
+        XCTAssertEqual(CTFontCopyPostScriptName(try CoverTypeface.font(size:40)) as String,CoverTypeface.postScriptName)
+        for aspect in [Aspect.landscape,.portrait] {
+            for style in CoverStyle.allCases where style != .automatic {
+                var value=try revision(aspect:aspect)
+                value.coverPresentation=CoverPresentation(style:style,title:"豆子姐讲「囚徒困境」",subtitle:"这一行必须只保存而不绘制",emphasis:["囚徒困境"])
+                let resolved=try CoverRules.resolved(revision:value)
+                let composition=try CoverPainter.composeTitle(cover:resolved,width:CGFloat(aspect.width),height:CGFloat(aspect.height))
+                XCTAssertFalse(composition.bounds.isEmpty);XCTAssertFalse(composition.highlights.isEmpty)
+                var sizes=Set<Int>(),inkColors=Set<String>()
+                for line in composition.lines {
+                    for run in CTLineGetGlyphRuns(line) as! [CTRun] {
+                        let attributes=CTRunGetAttributes(run) as NSDictionary
+                        if let font=attributes[kCTFontAttributeName] as! CTFont? {
+                            XCTAssertEqual(CTFontCopyPostScriptName(font) as String,CoverTypeface.postScriptName)
+                            sizes.insert(Int((CTFontGetSize(font)*100).rounded()))
+                        }
+                        if let color=attributes[kCTForegroundColorAttributeName] as! CGColor? {inkColors.insert(String(describing:color.components))}
+                    }
                 }
-                guard let first=colored.first,let last=colored.last,last-first>image.width*35/100 else {continue}
-                for x in (first+24)..<(last-24) {
-                    let offset=(y*image.width+x)*4
-                    if raw[offset]<100 && raw[offset+1]<100 && raw[offset+2]<100 {dark+=1}
+                XCTAssertEqual(sizes.count,2,"主题词与标题其余文字须有真实字级对比")
+                XCTAssertEqual(inkColors.count,2,"主题词与标题其余文字须有真实文字色对比")
+                let side=CGFloat(min(aspect.width,aspect.height)),w=CGFloat(aspect.width),h=CGFloat(aspect.height)
+                let square=CGRect(x:(w-side)/2,y:(h-side)/2,width:side,height:side)
+                let ww=min(w,h*16/9),hh=min(h,w*9/16),wide=CGRect(x:(w-ww)/2,y:(h-hh)/2,width:ww,height:hh)
+                for bound in composition.bounds+composition.highlights {
+                    XCTAssertTrue(square.contains(bound));XCTAssertTrue(wide.contains(bound));XCTAssertTrue(composition.safeRect.contains(bound))
                 }
+                XCTAssertEqual(composition.visibleBounds.midY,h/2,accuracy:0.01)
+                for bound in composition.bounds {XCTAssertEqual(bound.midX,w/2,accuracy:0.01)}
+                let firstImage=try CoverPainter.image(revision:value,source:bitmap(width:aspect.width,height:aspect.height))
+                let first=try ScenePainter.png(firstImage)
+                if style == .cartoon {
+                    let raw=try pixels(firstImage)
+                    var yellow=0
+                    for offset in stride(from:0,to:raw.count,by:4) {
+                        let red=Int(raw[offset]),green=Int(raw[offset+1]),blue=Int(raw[offset+2])
+                        if abs(red-255)<3 && abs(green-229)<3 && abs(blue-109)<3 {yellow+=1}
+                    }
+                    XCTAssertGreaterThan(yellow,1000,"漫画白色爆发框中必须实际可见黄色荧光笔背景，不能白底叠白块")
+                }
+                value.coverPresentation?.subtitle="另一个不应出现在封面的历史副标题"
+                let second=try ScenePainter.png(CoverPainter.image(revision:value,source:bitmap(width:aspect.width,height:aspect.height)))
+                XCTAssertEqual(first,second,"subtitle原文兼容，不得成为额外小字")
+                value.coverPresentation?.emphasis=["豆子姐"]
+                XCTAssertNotEqual(first,try ScenePainter.png(CoverPainter.image(revision:value,source:bitmap(width:aspect.width,height:aspect.height))),"强调主题词须影响实际字级、颜色和荧光笔背景")
             }
-            XCTAssertGreaterThan(dark,100,"浅色标签内部须有深色文字像素，不能用浅字叠浅底：\(style)")
         }
     }
-    func testTransparentHeroKeepsItsExistingIndependentLayoutInBothAspects()throws {
+    func testUnsupportedOrOverlongTitleCannotSilentlyClipOrUseMissingGlyphs()throws {
+        for title in [String(repeating:"知识讲解",count:40),"知识\u{10FFFF}"] {
+            var value=try revision();value.coverPresentation=CoverPresentation(title:title)
+            XCTAssertThrowsError(try CoverPainter.image(revision:value,source:bitmap(width:1280,height:720)))
+        }
+        var value=try revision();value.coverPresentation=CoverPresentation(style:.presenter,title:"豆子姐讲「囚徒困境」",emphasis:["讲「囚徒"])
+        let composition=try CoverPainter.composeTitle(cover:CoverRules.resolved(revision:value),width:1280,height:720)
+        XCTAssertGreaterThanOrEqual(composition.highlights.count,2,"真实标题片段跨排版换行后仍在两行强调")
+    }
+    func testOriginalGameBackgroundAndSmallHeroRemainVisibleAcrossRim()throws {
+        try assertRGBAFixture()
+        let space=CGColorSpace(name:CGColorSpace.sRGB)!
+        let c=try XCTUnwrap(CGContext(data:nil,width:120,height:200,bitsPerComponent:8,bytesPerRow:480,space:space,bitmapInfo:CGImageAlphaInfo.premultipliedLast.rawValue))
+        c.clear(CGRect(x:0,y:0,width:120,height:200));c.setFillColor(try XCTUnwrap(CGColor(colorSpace:space,components:[1,0,0,1])));c.fill(CGRect(x:20,y:0,width:80,height:200))
+        let hero=try XCTUnwrap(c.makeImage())
+        let blue=try XCTUnwrap(CGContext(data:nil,width:1280,height:720,bitsPerComponent:8,bytesPerRow:5120,space:space,bitmapInfo:CGImageAlphaInfo.premultipliedLast.rawValue))
+        blue.setFillColor(try XCTUnwrap(CGColor(colorSpace:space,components:[0,0,1,1])));blue.fill(CGRect(x:0,y:0,width:1280,height:720))
+        let background=try XCTUnwrap(blue.makeImage())
+        for template in [CoverTemplate.spotlight,.editorial,.contrast] {
+            var value=try revision();value.coverPresentation=CoverPresentation(style:.game,template:template,title:"选择与后果",hero:CoverImage(assetID:"hero"),background:CoverImage(assetID:"scene"))
+            let image=try CoverPainter.image(revision:value,source:bitmap(width:1280,height:720),images:["hero":hero,"scene":background]),raw=try pixels(image)
+            var red:[CGPoint]=[],bluePixels:[CGPoint]=[]
+            for offset in stride(from:0,to:raw.count,by:4) {
+                let point=CGPoint(x:(offset/4)%image.width,y:(offset/4)/image.width)
+                if raw[offset]>240 && raw[offset+1]<15 && raw[offset+2]<15 {red.append(point)}
+                if raw[offset]<15 && raw[offset+1]<15 && raw[offset+2]>240 {bluePixels.append(point)}
+            }
+            XCTAssertGreaterThan(red.count,100);XCTAssertGreaterThan(bluePixels.count,1000)
+            XCTAssertLessThan(red.count,image.width*image.height/10,"人物是标题的辅助，小于整图十分之一")
+            let minRed=try XCTUnwrap(red.map(\.y).min()),maxRed=try XCTUnwrap(red.map(\.y).max())
+            let minBlue=try XCTUnwrap(bluePixels.map(\.y).min()),maxBlue=try XCTUnwrap(bluePixels.map(\.y).max())
+            XCTAssertTrue(minRed<minBlue-5 || maxRed>maxBlue+5,"真实透明角色须有像素越过原景下边缘，不能只贴在照片里")
+            let composition=try CoverPainter.composeTitle(cover:CoverRules.resolved(revision:value),width:1280,height:720)
+            let square=CGRect(x:280,y:0,width:720,height:720),variant=template == .editorial ? 1:(template == .contrast ? 2:0)
+            XCTAssertFalse(CoverPainter.auxiliaryRect(square:square,variant:variant).intersects(composition.visibleBounds),"小IP不可遮中心标题")
+        }
+    }
+    func testTransparentHeroKeepsIndependentSmallLayoutInBothAspects()throws {
         try assertRGBAFixture()
         let space=CGColorSpace(name:CGColorSpace.sRGB)!
         let c=try XCTUnwrap(CGContext(data:nil,width:120,height:200,bitsPerComponent:8,bytesPerRow:480,space:space,bitmapInfo:CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue))
@@ -158,7 +210,7 @@ final class CoverMediaTests:XCTestCase {
         let hero=try XCTUnwrap(c.makeImage())
         for aspect in [Aspect.landscape,.portrait] {
             for style in [CoverStyle.presenter,.game] {
-                for template in [CoverTemplate.spotlight,.editorial] {
+                for template in [CoverTemplate.spotlight,.editorial,.contrast] {
                     var value=try revision(aspect:aspect);value.coverPresentation=CoverPresentation(style:style,template:template,title:"选择与后果",hero:CoverImage(assetID:"ip"))
                     let first=try CoverPainter.image(revision:value,source:bitmap(width:aspect.width,height:aspect.height),images:["ip":hero])
                     let second=try CoverPainter.image(revision:value,source:bitmap(width:aspect.width,height:aspect.height,red:1,green:0.5,blue:0),images:["ip":hero])
