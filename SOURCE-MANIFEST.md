@@ -2,10 +2,10 @@
 
 VideoFree source export · package_free.py · version 1
 
-生成时间：2026-11-06 11:25:31 北京时间
+生成时间：2026-11-06 12:45:14 北京时间
 
-- 源码与必要元数据：344个文件；13546075字节（不含本清单）。
-- 整体内容指纹：`900cad6019aeb493c05e66162d9d5279bfaf4bb4591f56c339291972ca18b181`。
+- 源码与必要元数据：344个文件；14025644字节（不含本清单）。
+- 整体内容指纹：`2a6905b6f2c51b7c079ce9840544a1fe33e9f012291d836265b32abb6523f2be`。
 - 来源：受控原始工程中的逐文件白名单；Package.swift、唯一免费制作workflow与README均来自Distribution/Free精确模板。
 - 本包不含.git，不可作为新业务checkout；本清单生成过程不执行构建、设备验收、签名安装或公共上传，各阶段以独立证据为准。
 - 排除：App、VideoGame、VideoCartoon、Premium、高级实现运行时测试、私有仓库地址、凭据、客户数据、缓存、日志及媒体过程产物。
@@ -14,7 +14,7 @@ VideoFree source export · package_free.py · version 1
 
 | SHA-256 | 字节数 | 包内路径 / 原工程来源 |
 |---|---:|---|
-| c83389a7cd87af81e078393105df4809f182bdecfe182dcf34694c91c76d5ac4 | 32343 | .github/workflows/free-production.yml |
+| 92ea2f9f0b124cf94a491eb86e64bc623379459350435fc938aee2eebc8a64d2 | 32316 | .github/workflows/free-production.yml |
 | ac90de9132befb9227282c230671875edb7fd8dc4297999fc39622ea7efe3644 | 52964 | Integrations/README.md |
 | 28833193551aa06befb3bc0fc30b69ef87f74cccae39895f4242af4321d717dd | 15308 | Integrations/actor_motion.py |
 | 39dd8274ff1e6b0649acb63281087a1144e1f4a4e0eed3dc2b92e10df2cbd121 | 28488 | Integrations/asset_reuse.py |
@@ -111,7 +111,7 @@ VideoFree source export · package_free.py · version 1
 | f7efbc951908e8a50820c005fa9c079aec5b14a0786fd0dce7cf3a1508afb795 | 13393 | Integrations/voice_design_tts.md |
 | 17ad61c7529ed2ca6c97eabaf334a5ea4e8d4ece9b9e8f9d97ef1eb4080878d7 | 28332 | Integrations/voice_design_tts.py |
 | cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30 | 11358 | LICENSE |
-| 411a79394ab4b2c8408d57537adddaaa2e6570afe925e0de213ae9a490b65ec5 | 11223 | NOTICE |
+| 46b95614e2dd303855a1768d502a978047fa3551bd40739830a145b4cef4e2fe | 11373 | NOTICE |
 | e3dae895ffcaa4ce4470f1dc9d63eee5071f829d63cfe227360c3dabfbdd0d91 | 1213 | Package.swift |
 | 6b9c36afcee8d18ba209ad38176571ba226348ed0c0b8c6123b6f8f61061f9ca | 20077 | README.md |
 | bbfe59a972a3e8e09e347c04bc22c0eacd2544881af8a4b6068bfc30b38466e8 | 80 | Sources/CSQLite/module.modulemap |
@@ -208,8 +208,8 @@ VideoFree source export · package_free.py · version 1
 | b9e01b60a4e44c94dc5aa068bc455dc2bbfb19d82101bf744c2d4d83f8a4ddec | 11401 | Sources/VideoMedia/ClassicArtworkMedia.swift |
 | 6beff353416b9b4329e20ab3cbd84fcb19d34c8687427feb157b97d00ed63b4d | 10707 | Sources/VideoMedia/ClassicBuiltinAssets.swift |
 | 451de62ae66ce51bc390deb9d210ca46de5ca66e5bb52b4572a6e5e792e141a2 | 4904 | Sources/VideoMedia/CoursePreview.swift |
-| f3c8db522cc0f5a5ba554a6b213d58f86ce137fb80dc56f934c482ffd96eae99 | 1500541 | Sources/VideoMedia/CoverDisplayTypeface.swift |
-| 0e0ae7428d6dbf346c053fc6e8933c2a15d435b9997d6a7220c566a176ef3bd9 | 34738 | Sources/VideoMedia/CoverPainter.swift |
+| 8e2500a885e85ea6f28faa3dd36ce6c860b8d2c216089832cb4616e2e92783b8 | 1564881 | Sources/VideoMedia/CoverDisplayTypeface.swift |
+| 43b17b9f988d16265c4c7a75b37031a5327e5757357f15d903c97f68490b089a | 42107 | Sources/VideoMedia/CoverPainter.swift |
 | cf4f47e54fb55606755e65b1f837697edca6ac3bd8f3a67497ebea9514bfb82d | 2197018 | Sources/VideoMedia/CoverTypeface.swift |
 | 5edf04222491105771fd69d3ad3c47861e1729a14e846babdf82005d8b43fd92 | 8064 | Sources/VideoMedia/DataPresentationPainter.swift |
 | a3c1ff6981dd81b2a97fee7cff2489fc9edb2381904ee46ebad18e9b6562dc91 | 4662 | Sources/VideoMedia/Diagnostics.swift |
@@ -328,7 +328,7 @@ VideoFree source export · package_free.py · version 1
 | 8b96667d09662c958d0b77f10f5265dc0f040de6c2b011609a06e3ce029f7dee | 22056 | Tests/VideoMediaTests/CinemaSubtitleTests.swift |
 | 1b07c5e554da95ea2f6843b3bf9546534dad7eb80a8c8f3a9e01e75afd84f870 | 4960 | Tests/VideoMediaTests/ContentProjectMediaTests.swift |
 | c7b7bf2aa6091f105373becd60c2dc830ed5167fc85db480b9193d60543e1db4 | 3999 | Tests/VideoMediaTests/CoursePreviewTests.swift |
-| 4989bc13d81989f5f06aaefc767dff13aaad22eaa9e33be2e7db6d275b13bc08 | 26169 | Tests/VideoMediaTests/CoverMediaTests.swift |
+| 7caebf6e34872493d8acf53bd4a3e3a9d9fbeb168aa5bc008e82f24669d1a5a0 | 29214 | Tests/VideoMediaTests/CoverMediaTests.swift |
 | 8403a3ae7c587fb1ab19527b175923a13eb13acf36130336169e81141fb2fccb | 30904 | Tests/VideoMediaTests/DataPresentationPainterTests.swift |
 | c97a04ff50f844317e5f9db0f319c1042b15f2bb8fb4ff0bce620fc886ce5f13 | 18530 | Tests/VideoMediaTests/IndependentLicenseRevocationTests.swift |
 | 5951353de83fb06d4eaa3a1ae06b005b7c4efb993ad159c3b52bd3815c978ca8 | 15810 | Tests/VideoMediaTests/LayerImageSequenceMediaTests.swift |
@@ -347,14 +347,14 @@ VideoFree source export · package_free.py · version 1
 | 03edcaf754546e54eee0172e844fd13115c80b1829c720f8c6db3af3ba53282d | 7087 | Tests/VideoMediaTests/SpeechMediaTests.swift |
 | fd14ec3e583f47b0a3bbdfd711bb86a0b08f47b379e1d9f053d9e5e978af19b7 | 9786 | Tests/VideoMediaTests/SpeechProjectProductionTests.swift |
 | dacb5298f19fc86ad384161ab5753edc9ca2810aa0565cbb385687352d2f4bcb | 23782 | Tests/VideoMediaTests/VisualCacheResumeTests.swift |
+| fbecfacdfac33982774e301073a8d357a09c698cd3134bb6ddec0f5bfc268fa1 | 1919404 | ThirdParty/Fonts/DouyinSans/DouyinSansBold.ttf |
+| a6d5700a002ea32bcfbe3310253d603997683dac8ac63777e375d06c07c30ea6 | 4455 | ThirdParty/Fonts/DouyinSans/LICENSE |
+| ecd2bb87b64967ae7b609ccf7c75862175082685cfb8d601cb88127db1fc80c9 | 2244 | ThirdParty/Fonts/DouyinSans/README.md |
 | 9401f4050f1b66c26b6ccdc8b0e14a3c1cc37aac122eda84386f25854a9bec72 | 4422 | ThirdParty/Fonts/SmileySans/LICENSE |
 | ea2764705c1d9ad489d13fdad786ac7ea5b2c3436e812f675882bcbc3e013d79 | 2853 | ThirdParty/Fonts/SmileySans/README.md |
 | b447d7e781f08bc95c4c9f23ba71ed2b8ebb639aa7184485c71c4ca5afcd25c4 | 2629764 | ThirdParty/Fonts/SmileySans/SmileySans-Oblique.ttf |
-| 538078469839b4a2e7ad22bef4ebe41681a4e53749bb2a072144024f1d6d703d | 4398 | ThirdParty/Fonts/ZCOOLKuaiLe/LICENSE |
-| 7ee383ebef39524e092dd1f0ceaf82c5e010933a3e8c3249dfbe48aefedbb41e | 2049 | ThirdParty/Fonts/ZCOOLKuaiLe/README.md |
-| 812a6fc1fe54b6d73a419245c32dfeba8aa33104d5be90d1cf6af082007cb71d | 1514968 | ThirdParty/Fonts/ZCOOLKuaiLe/ZCOOLKuaiLe-Regular.ttf |
 | 57d021b53ab176ba287ee0e32abe3a31df86a2449715bf437789cf9779cc1d4e | 486 | ThirdParty/GameAssets/voiceover/AUTHOR-LICENSE.txt |
 | 1ba6aa2cb3710fd7c6e021622b4ef0428a0107c8f2db2e0dda8de8bcbdb56fd3 | 8283 | ThirdParty/GameAssets/voiceover/go.ogg |
 | 4a49258fab1f84b00d0060e1535218b22a3b4bba61ef4d989b82e4cab15d69b3 | 7313 | ThirdParty/GameAssets/voiceover/ready.ogg |
 | 18907e24f8cbd0751831eed8d2dd1c2501ed587da6a7451404edf0876aa56150 | 10736 | ThirdParty/GameAssets/voiceover/you_win.ogg |
-| b7d47a30bf867217805247015246139b1e37034ef21fc04115b3fe794236edb4 | 8012 | scripts/embed_cover_typeface.py |
+| ec283661e9adda1ee3d068550e958424bba0ac04b6f240d3504aa554e4c474cd | 8016 | scripts/embed_cover_typeface.py |

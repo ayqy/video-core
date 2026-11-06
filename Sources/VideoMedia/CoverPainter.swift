@@ -73,13 +73,13 @@ public enum CoverPainter {
         let placement=presenterPlacement(square:square,variant:variant,titleBounds:composition.visibleBounds,pointing:cover.hero?.pointing)
         c.setFillColor(color(p.paper));c.fill(canvas)
         switch cover.style {
-        case .pencil:pencil(background,hero:hero,square:square,canvas:canvas,variant:variant,p:p,c:c)
+        case .pencil:pencil(background,hero:hero,square:square,canvas:canvas,variant:variant,titleBounds:composition.visibleBounds,p:p,c:c)
         case .presenter:presenter(background,hero:hero,placement:placement,square:square,canvas:canvas,variant:variant,p:p,c:c)
         case .game:game(background,hero:hero,square:square,canvas:canvas,variant:variant,titleBounds:composition.visibleBounds,p:p,c:c)
         case .cartoon:cartoon(background,hero:hero,square:square,canvas:canvas,variant:variant,p:p,c:c)
         case .media:media(background,hero:hero,square:square,canvas:canvas,variant:variant,p:p,c:c)
         case .chart:try chart(background,hero:hero,square:square,canvas:canvas,variant:variant,revision:revision,p:p,c:c)
-        case .code:code(background,hero:hero,square:square,canvas:canvas,variant:variant,p:p,c:c)
+        case .code:try code(background,hero:hero,square:square,canvas:canvas,variant:variant,revision:revision,p:p,c:c)
         default:explanation(background,hero:hero,square:square,canvas:canvas,variant:variant,p:p,c:c)
         }
         // No label, ribbon, subtitle, timestamp or explanation is painted.
@@ -114,20 +114,30 @@ public enum CoverPainter {
         let depth=side*(relief[cover.style] ?? 0.003),outline=side*(cover.style == .pencil ? 0.001:0.003)
         let margin=depth+outline
         let kern=side*(cover.style == .presenter || cover.style == .cartoon ? -0.0015:0.0003)
-        var size=side*0.090
+        let arrangements=titleArrangements(value,emphasis:ranges)
+        var size=side*0.112
         while size>=side*0.042 {
-            let normal=try CoverTypeface.displayFont(size:size),emphasized=try CoverTypeface.displayFont(size:size*1.28)
+            let normal=try CoverTypeface.displayFont(size:size),emphasized=try CoverTypeface.displayFont(size:size*1.17)
             let title=NSMutableAttributedString(string:value,attributes:[.init(kCTFontAttributeName as String):normal,.init(kCTKernAttributeName as String):kern,.init(kCTForegroundColorAttributeName as String):color(p.ink)])
             let keywordInk=(cover.style == .code || cover.style == .media || cover.style == .presenter) ? p.paper:(cover.style == .game ? "1E5C3F":"7F2040")
             for range in ranges {title.addAttributes([.init(kCTFontAttributeName as String):emphasized,.init(kCTForegroundColorAttributeName as String):color(keywordInk)],range:range)}
-            let setter=CTFramesetterCreateWithAttributedString(title),frame=CTFramesetterCreateFrame(setter,CFRange(location:0,length:0),CGPath(rect:CGRect(x:0,y:0,width:safe.width-margin*2,height:safe.height-margin*2),transform:nil),nil)
-            let lines=CTFrameGetLines(frame) as! [CTLine]
-            if !lines.isEmpty,lines.count<=3,CTFrameGetVisibleStringRange(frame).length==title.length,TextGlyphInspection.hasSupportedGlyphs(frame) {
+            let typesetter=CTTypesetterCreateWithAttributedString(title)
+            var candidates:[(lines:[CTLine],score:CGFloat)]=[]
+            for arrangement in arrangements {
+                let lines=arrangement.ranges.map{CTTypesetterCreateLine(typesetter,CFRange(location:$0.location,length:$0.length))}
+                let widths=lines.map{CGFloat(CTLineGetTypographicBounds($0,nil,nil,nil))}
+                guard !lines.isEmpty,widths.allSatisfy({$0<=safe.width-margin*2}),supported(lines,requiredFont:CoverTypeface.displayPostScriptName) else {continue}
+                let widest=widths.max() ?? 0,narrowest=widths.min() ?? 0
+                let score=(widest-narrowest)/safe.width+arrangement.penalty
+                candidates.append((lines,score))
+            }
+            for candidate in candidates.sorted(by:{$0.score<$1.score}) {
+                let lines=candidate.lines
                 var origins:[CGPoint]=[],bounds:[CGRect]=[],highlights:[CGRect]=[]
                 for (index,line) in lines.enumerated() {
                     let glyphs=CTLineGetBoundsWithOptions(line,[.useGlyphPathBounds])
                     guard !glyphs.isNull,!glyphs.isInfinite,glyphs.width.isFinite,glyphs.height.isFinite else {throw VideoError.review("封面标题字形无法量测")}
-                    let origin=CGPoint(x:safe.midX-glyphs.midX,y:-CGFloat(index)*size*1.32)
+                    let origin=CGPoint(x:safe.midX-glyphs.midX,y:-CGFloat(index)*size*1.48)
                     origins.append(origin);bounds.append(glyphs.offsetBy(dx:origin.x,dy:origin.y))
                     let range=CTLineGetStringRange(line),lineRange=NSRange(location:range.location,length:range.length)
                     for keyword in ranges {
@@ -145,6 +155,50 @@ public enum CoverPainter {
             size-=2
         }
         throw VideoError.review("封面标题过长、缺字或超出横版和方形共同安全区，请精简标题后重新制作")
+    }
+    /// Keep original UTF16 ranges so emphasis and stored wording never change.
+    /// Punctuation is a strong phrase boundary; negation and keyword interiors
+    /// are never sacrificed just to fill a greedy text column.
+    static func titleArrangements(_ value:String,emphasis:[NSRange]=[])->[(ranges:[NSRange],penalty:CGFloat)] {
+        let text=value as NSString
+        if value.contains("\n") {
+            var at=0,ranges:[NSRange]=[]
+            for paragraph in value.components(separatedBy:"\n") {
+                let count=(paragraph as NSString).length
+                if count>0 {ranges.append(NSRange(location:at,length:count))}
+                at+=count+1
+            }
+            return ranges.count<=3 ? [(ranges,0)]:[]
+        }
+        guard text.length>0 else{return []}
+        var result:[(ranges:[NSRange],penalty:CGFloat)]=[]
+        if text.length>6 {
+            for boundary in 1..<text.length {
+                if text.rangeOfComposedCharacterSequence(at:boundary).location != boundary {continue}
+                let left=text.substring(with:NSRange(location:boundary-1,length:1)),right=text.substring(with:NSRange(location:boundary,length:1))
+                if "不没无别未「『（《【".contains(left) || "，。、？！：；」』）》】".contains(right) {continue}
+                if emphasis.contains(where:{$0.location<boundary && boundary<NSMaxRange($0)}) {continue}
+                func latinWord(_ v:String)->Bool {v.utf16.allSatisfy{(48...57).contains($0) || (65...90).contains($0) || (97...122).contains($0) || $0==95}}
+                if latinWord(left) && latinWord(right) {continue}
+                let punctuation="，、：；。？！".contains(left)
+                result.append(([NSRange(location:0,length:boundary),NSRange(location:boundary,length:text.length-boundary)],punctuation ? -0.60:0))
+            }
+        }
+        result.append(([NSRange(location:0,length:text.length)],text.length>6 ? 0.35:0))
+        return result
+    }
+    private static func supported(_ lines:[CTLine],requiredFont:String?=nil)->Bool {
+        for line in lines {for run in CTLineGetGlyphRuns(line) as! [CTRun] {
+            let attributes=CTRunGetAttributes(run) as NSDictionary
+            guard let font=attributes[kCTFontAttributeName] as! CTFont? else {return false}
+            let name=CTFontCopyPostScriptName(font) as String
+            if name.localizedCaseInsensitiveContains("lastresort") || requiredFont.map({$0 != name}) == true {return false}
+            let count=CTRunGetGlyphCount(run)
+            var glyphs=[CGGlyph](repeating:0,count:count)
+            CTRunGetGlyphs(run,CFRange(location:0,length:0),&glyphs)
+            if glyphs.contains(0) {return false}
+        }}
+        return true
     }
     private static func glyphPath(_ line:CTLine,origin:CGPoint)->CGPath {
         let path=CGMutablePath()
@@ -203,46 +257,51 @@ public enum CoverPainter {
         if variant == 2 {c.setFillColor(color(p.accent,alpha:0.22));c.fillEllipse(in:CGRect(x:canvas.midX-d*0.33,y:s.minY+d*0.77,width:d*0.66,height:d*0.20))}
         auxiliary(hero,square:s,variant:variant,c:c)
     }
-    private static func pencil(_ image:CGImage?,hero:CGImage?,square s:CGRect,canvas:CGRect,variant:Int,p:Palette,c:CGContext) {
-        let d=s.width
-        c.saveGState();c.setShadow(offset:CGSize(width:0,height:-d*0.012),blur:d*0.018,color:color(p.ink,alpha:0.13));c.setFillColor(color("FFFFFF"))
-        let tilt=CGFloat(variant-1)*d*0.025
-        polygon([CGPoint(x:0,y:s.minY+d*0.025),CGPoint(x:canvas.width,y:s.minY+d*0.025),CGPoint(x:canvas.width,y:s.minY+d*0.82+tilt),CGPoint(x:canvas.midX+d*0.16,y:s.minY+d*0.72),CGPoint(x:0,y:s.minY+d*0.88-tilt)],c:c);c.restoreGState()
-        // Actual colored-pencil art supplies the large landscape, while dry
-        // strokes build a tactile paper edge rather than another picture card.
-        material(image,in:CGRect(x:canvas.midX-d*0.74,y:s.minY-d*0.015,width:d*1.48,height:d*0.70),c:c)
-        for index in 0..<11 {
-            let x=CGFloat(index)*canvas.width/10
-            c.setStrokeColor(color(index%2==0 ? p.accent:p.secondary,alpha:0.48));c.setLineWidth(d*0.003)
-            c.move(to:CGPoint(x:x-d*0.04,y:s.minY+d*0.88));c.addLine(to:CGPoint(x:x+d*0.03,y:s.minY+d*0.98));c.strokePath()
+    private static func pencil(_ image:CGImage?,hero:CGImage?,square s:CGRect,canvas:CGRect,variant:Int,titleBounds:CGRect,p:Palette,c:CGContext) {
+        let d=s.width,shift=CGFloat(variant-1)*d*0.04
+        gradient(canvas,colors:[color("F0D0AE"),color("F9EACF"),color("DBE8D4")],locations:[0,0.53,1],c:c)
+        // Broad colored sheets and dry-pencil grain form a paper stage. The
+        // actual illustration is a large subject even when supplied as hero.
+        c.setFillColor(color("D29E7B",alpha:0.45))
+        polygon([CGPoint(x:0,y:0),CGPoint(x:canvas.width,y:0),CGPoint(x:canvas.width,y:s.minY+d*0.22),CGPoint(x:canvas.midX+d*0.28,y:s.minY+d*0.34),CGPoint(x:0,y:s.minY+d*0.16)],c:c)
+        c.setFillColor(color(p.secondary,alpha:0.38))
+        polygon([CGPoint(x:0,y:canvas.height),CGPoint(x:canvas.width,y:canvas.height),CGPoint(x:canvas.width,y:s.minY+d*0.83+shift),CGPoint(x:canvas.midX-d*0.23,y:s.minY+d*0.74),CGPoint(x:0,y:s.minY+d*0.87)],c:c)
+        paperGrain(canvas,ink:p.ink,c:c)
+        let subject=CGRect(x:canvas.midX-d*0.58+shift,y:s.minY-d*0.14,width:d*1.16,height:d*1.14)
+        c.saveGState();c.setShadow(offset:CGSize(width:d*0.025,height:-d*0.025),blur:d*0.024,color:color("74533A",alpha:0.25))
+        material(hero ?? image,in:subject,c:c);c.restoreGState()
+        if hero != nil,let image {
+            c.saveGState();c.setAlpha(0.30);draw(image,in:canvas,fill:true,context:c);c.restoreGState()
         }
-        c.setStrokeColor(color(p.secondary,alpha:0.45));c.setLineWidth(d*0.009)
-        c.move(to:CGPoint(x:canvas.midX-d*0.56,y:s.minY+d*0.13));c.addQuadCurve(to:CGPoint(x:canvas.midX+d*0.55,y:s.minY+d*0.10),control:CGPoint(x:canvas.midX,y:s.minY-d*0.03));c.strokePath()
-        auxiliary(hero,square:s,variant:variant,c:c)
+        // A deckled strip is this style's physical paper foreground. Its shape
+        // follows the centered title instead of becoming a shared opaque card.
+        let top=titleBounds.maxY+d*0.025,bottom=titleBounds.minY-d*0.025
+        c.saveGState();c.setShadow(offset:CGSize(width:0,height:-d*0.008),blur:d*0.008,color:color("6C4F39",alpha:0.17));c.setFillColor(color("FFF9E9",alpha:0.96))
+        polygon([CGPoint(x:0,y:bottom+d*0.035),CGPoint(x:canvas.width*0.23,y:bottom-d*0.008),CGPoint(x:canvas.midX,y:bottom+d*0.004),CGPoint(x:canvas.width*0.76,y:bottom-d*0.020),CGPoint(x:canvas.width,y:bottom+d*0.025),CGPoint(x:canvas.width,y:top-d*0.025),CGPoint(x:canvas.width*0.72,y:top+d*0.010),CGPoint(x:canvas.midX,y:top),CGPoint(x:canvas.width*0.21,y:top+d*0.025),CGPoint(x:0,y:top-d*0.015)],c:c);c.restoreGState()
+        for i in 0..<23 {
+            let x=CGFloat(i)*canvas.width/22
+            c.setStrokeColor(color(i%3==0 ? p.secondary:p.accent,alpha:0.42));c.setLineWidth(d*(i%2==0 ? 0.002:0.001))
+            c.move(to:CGPoint(x:x-d*0.045,y:s.minY+d*0.94+CGFloat(i%4)*d*0.008));c.addLine(to:CGPoint(x:x+d*0.06,y:s.minY+d*0.98));c.strokePath()
+        }
     }
     private static func presenter(_ image:CGImage?,hero:CGImage?,placement:HeroPlacement,square s:CGRect,canvas:CGRect,variant:Int,p:Palette,c:CGContext) {
         let d=s.width
+        gradient(canvas,colors:[color("03091D"),color("172F6A"),color("07112D")],locations:[0,0.55,1],c:c)
+        glow(canvas,center:CGPoint(x:canvas.midX+CGFloat(variant-1)*d*0.19,y:s.minY+d*0.63),radius:d*0.85,ink:"4988D1",alpha:0.35,c:c)
+        c.saveGState();c.setShadow(offset:.zero,blur:d*0.05,color:color("6297D5",alpha:0.18));c.setFillColor(color("27477C",alpha:0.55))
+        c.fillEllipse(in:CGRect(x:canvas.midX-d*0.92,y:s.minY-d*0.28,width:d*1.84,height:d*0.49));c.restoreGState()
         if let image {
-            draw(image,in:canvas,fill:true,context:c)
-            gradient(canvas,colors:[color(p.paper,alpha:0.65),color(p.paper,alpha:0.88),color(p.paper,alpha:0.70)],locations:[0,0.5,1],c:c)
-        } else {
-            gradient(canvas,colors:[color("07112F"),color("223C80"),color("09112D")],locations:[0,0.56,1],c:c)
+            let propX=variant == 1 ? canvas.midX+d*0.16:canvas.midX-d*0.82
+            c.saveGState();c.setShadow(offset:CGSize(width:d*0.018,height:-d*0.018),blur:d*0.022,color:color("000000",alpha:0.70))
+            draw(image,in:CGRect(x:propX,y:s.minY+d*0.035,width:d*0.66,height:d*0.93),fill:false,context:c);c.restoreGState()
         }
-        // Stage light cones, a vanishing floor and the real topic prop build a
-        // small studio. They support the reaction rather than floating badges.
-        let lightX=variant == 1 ? canvas.width*0.82:canvas.width*0.18
-        c.saveGState();c.setFillColor(color(p.secondary,alpha:0.22));c.setShadow(offset:.zero,blur:d*0.07,color:color(p.secondary,alpha:0.55))
-        polygon([CGPoint(x:lightX-d*0.04,y:canvas.height),CGPoint(x:lightX+d*0.04,y:canvas.height),CGPoint(x:canvas.midX+d*0.52,y:s.minY),CGPoint(x:canvas.midX-d*0.52,y:s.minY)],c:c);c.restoreGState()
-        c.setStrokeColor(color("75B0FF",alpha:0.18));c.setLineWidth(d*0.002)
-        for index in 0..<7 {let x=canvas.width*CGFloat(index)/6;c.move(to:CGPoint(x:x,y:0));c.addLine(to:CGPoint(x:canvas.midX+(x-canvas.midX)*0.22,y:s.minY+d*0.30));c.strokePath()}
-        for y in [0.03,0.08,0.15] {c.move(to:CGPoint(x:0,y:s.minY+d*y));c.addLine(to:CGPoint(x:canvas.width,y:s.minY+d*y));c.strokePath()}
-        if variant == 2 {c.setStrokeColor(color(p.accent,alpha:0.35));c.setLineWidth(d*0.004);c.move(to:CGPoint(x:0,y:s.minY+d*0.85));c.addLine(to:CGPoint(x:canvas.width,y:s.minY+d*0.95));c.strokePath()}
+        glow(canvas,center:CGPoint(x:canvas.midX,y:canvas.midY),radius:d*0.53,ink:"0A183C",alpha:0.82,c:c)
         if let hero {c.saveGState();c.setShadow(offset:CGSize(width:d*0.012,height:-d*0.012),blur:d*0.016,color:color("000000",alpha:0.6));draw(hero,in:placement.rect,fill:false,mirrored:placement.mirrored,context:c);c.restoreGState()}
     }
     static func gameDepthLayout(square s:CGRect,canvas:CGRect,variant:Int,titleBounds:CGRect)->GameDepthLayout {
         let d=s.width,available=max(d*0.18,titleBounds.minY-s.minY-d*0.025)
         let height=min(d*0.40,available),heroWidth=d*0.36
-        let aperture=CGRect(x:canvas.midX-d*0.59+CGFloat(variant-1)*d*0.02,y:s.minY+d*0.075,width:d*1.18,height:min(d*(0.25+Double(variant)*0.008),height*0.73))
+        let aperture=CGRect(x:canvas.midX-d*0.85+CGFloat(variant-1)*d*0.012,y:s.minY+d*0.075,width:d*1.70,height:d*0.86)
         let x=variant == 1 ? max(d*0.04,s.minX-d*0.16):min(canvas.width-heroWidth-d*0.04,s.maxX-d*0.18)
         let hero=CGRect(x:x,y:s.minY+d*0.025,width:heroWidth,height:height)
         return GameDepthLayout(aperture:aperture,hero:hero,frontLip:CGRect(x:aperture.minX-d*0.035,y:aperture.minY,width:aperture.width+d*0.07,height:d*0.026))
@@ -250,13 +309,13 @@ public enum CoverPainter {
     private static func game(_ image:CGImage?,hero:CGImage?,square s:CGRect,canvas:CGRect,variant:Int,titleBounds:CGRect,p:Palette,c:CGContext) {
         let d=s.width,layout=gameDepthLayout(square:s,canvas:canvas,variant:variant,titleBounds:titleBounds),a=layout.aperture
         gradient(canvas,colors:[color("B9DAD0"),color(p.paper),color("F6FAE8")],locations:[0,0.54,1],c:c)
-        let inset=d*(variant == 2 ? 0.10:0.065)
+        let inset=d*(variant == 2 ? 0.025:0.012)
         let opening=[CGPoint(x:a.minX,y:a.minY),CGPoint(x:a.maxX,y:a.minY),CGPoint(x:a.maxX-inset,y:a.maxY),CGPoint(x:a.minX+inset,y:a.maxY)]
         c.saveGState();c.setShadow(offset:CGSize(width:0,height:-d*0.022),blur:d*0.025,color:color("254E40",alpha:0.32));c.setFillColor(color("F8F7D8"));polygon(opening,c:c);c.restoreGState()
         // A flat-design aperture contains the real set. The independent original
         // character crosses it; no photographic card or replacement IP is drawn.
         c.saveGState();c.addLines(between:opening);c.closePath();c.clip()
-        if let image {draw(image,in:a,fill:true,context:c)}
+        if let image {draw(image,in:a.insetBy(dx:inset+d*0.012,dy:d*0.012),fill:false,context:c)}
         c.restoreGState()
         c.setStrokeColor(color("FCFFF1"));c.setLineWidth(d*0.012);c.addLines(between:opening);c.closePath();c.strokePath()
         if let hero {
@@ -333,26 +392,59 @@ public enum CoverPainter {
         c.move(to:CGPoint(x:0,y:s.minY+d*0.04));c.addLine(to:CGPoint(x:canvas.width,y:s.minY+d*0.04));c.strokePath()
         auxiliary(hero,square:s,variant:variant,c:c)
     }
-    private static func code(_ image:CGImage?,hero:CGImage?,square s:CGRect,canvas:CGRect,variant:Int,p:Palette,c:CGContext) {
+    private static func code(_ image:CGImage?,hero:CGImage?,square s:CGRect,canvas:CGRect,variant:Int,revision:Revision,p:Palette,c:CGContext)throws {
         let d=s.width
-        gradient(canvas,colors:[color("071E20"),color(p.paper),color("285847")],locations:[0,0.58,1],c:c)
-        // Braces describe the video type; large genuine subject objects describe
-        // its content. No fake editor lines, unexplained nodes or process arrow.
-        c.setStrokeColor(color(p.secondary,alpha:0.55));c.setLineWidth(d*0.024);c.setLineJoin(.round)
-        let y=s.minY+d*0.80,reach=d*(variant == 2 ? 0.18:0.13)
-        for sign in [CGFloat(-1),CGFloat(1)] {
-            let x=canvas.midX+sign*d*0.51
-            c.move(to:CGPoint(x:x-sign*reach,y:y-d*0.12));c.addLine(to:CGPoint(x:x,y:y));c.addLine(to:CGPoint(x:x-sign*reach,y:y+d*0.12));c.strokePath()
-        }
-        let shelf=CGRect(x:canvas.midX-d*0.62,y:s.minY+d*0.025,width:d*1.24,height:d*0.09)
-        c.setFillColor(color(p.secondary,alpha:0.17));polygon([CGPoint(x:shelf.minX,y:shelf.minY),CGPoint(x:shelf.maxX,y:shelf.minY),CGPoint(x:shelf.maxX-d*0.12,y:shelf.maxY),CGPoint(x:shelf.minX+d*0.12,y:shelf.maxY)],c:c)
-        if let image,let hero {
-            material(image,in:CGRect(x:canvas.midX-d*0.65,y:s.minY+d*0.06,width:d*0.53,height:d*0.32),c:c)
-            material(hero,in:CGRect(x:canvas.midX+d*0.12,y:s.minY+d*0.06,width:d*0.53,height:d*0.32),c:c)
+        gradient(canvas,colors:[color("041B1B"),color("123D35"),color("061C24")],locations:[0,0.52,1],c:c)
+        glow(canvas,center:CGPoint(x:canvas.midX+CGFloat(variant-1)*d*0.21,y:s.minY+d*0.70),radius:d*0.83,ink:"286B5D",alpha:0.60,c:c)
+        let stage=CGRect(x:canvas.midX-d*0.75,y:s.minY+d*0.025,width:d*1.50,height:d*0.30)
+        let actual=revision.scenes.flatMap{$0.layers ?? []}.compactMap{$0.dataPresentation?.code}.first
+        if let actual {
+            try actual.validate()
+            let lines=try codeLines(actual,in:stage,maximumSize:d*0.058)
+            let runs=lines.flatMap{CTLineGetGlyphRuns($0) as! [CTRun]}
+            guard let run=runs.first,let font=(CTRunGetAttributes(run) as NSDictionary)[kCTFontAttributeName] as! CTFont? else {throw VideoError.review("实际代码前三行没有可见文字")}
+            let size=CTFontGetSize(font)
+            let step=size*1.65,total=step*CGFloat(lines.count-1)
+            for (index,line) in lines.enumerated() {
+                let width=CGFloat(CTLineGetTypographicBounds(line,nil,nil,nil))
+                c.textMatrix = .identity
+                c.textPosition=CGPoint(x:stage.midX-width/2,y:stage.midY+total/2-size*0.32-CGFloat(index)*step)
+                CTLineDraw(line,c)
+            }
         } else {
-            material(hero ?? image,in:CGRect(x:canvas.midX-d*0.65,y:s.minY+d*0.035,width:d*1.30,height:d*0.34),c:c)
+            // An actual subject image remains the single content object. The
+            // multiply blend removes its white-document appearance without
+            // inventing code, UI controls, arrows or a second source window.
+            c.setFillColor(color("BDE0C2"))
+            polygon([CGPoint(x:0,y:0),CGPoint(x:canvas.width,y:0),CGPoint(x:canvas.width,y:stage.maxY-d*0.045),CGPoint(x:canvas.midX+d*0.36,y:stage.maxY+d*0.015),CGPoint(x:0,y:stage.maxY-d*0.010)],c:c)
+            c.saveGState();c.setBlendMode(.multiply);material(hero ?? image,in:stage,c:c);c.restoreGState()
+            if image != nil,hero != nil {
+                c.saveGState();c.setAlpha(0.22);c.setBlendMode(.multiply);material(image,in:stage,c:c);c.restoreGState()
+            }
         }
-        if variant == 1 {c.setFillColor(color(p.accent,alpha:0.35));c.fill(CGRect(x:canvas.midX-d*0.36,y:s.minY+d*0.01,width:d*0.72,height:d*0.008))}
+    }
+    static func codeLines(_ actual:CodePresentation,in rect:CGRect,maximumSize:CGFloat)throws->[CTLine] {
+        try actual.validate()
+        let values=Array(actual.lines.prefix(3))
+        guard values.contains(where:{!$0.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty}) else {throw VideoError.review("实际代码前三行没有可见文字")}
+        var size=maximumSize
+        while size>=12 {
+            let font=CTFontCreateWithName("Menlo-Bold" as CFString,size,nil)
+            guard CTFontCopyPostScriptName(font) as String == "Menlo-Bold" else {throw VideoError.review("代码封面需要实际等宽字体")}
+            var lines:[CTLine]=[]
+            for value in values {
+                let text=NSMutableAttributedString(string:value,attributes:[.init(kCTFontAttributeName as String):font,.init(kCTForegroundColorAttributeName as String):color("E2F6E9")])
+                let patterns=[("(?<![A-Za-z0-9_])(if|else|elif|for|while|return|def|let|var|func|true|false|True|False|None|in)(?![A-Za-z0-9_])","FFB884"),("[0-9]+(?:\\.[0-9]+)?","FFE88E"),("\"[^\"]*\"|'[^']*'","9DE2C5")]
+                for (pattern,ink) in patterns {
+                    let regex=try NSRegularExpression(pattern:pattern)
+                    for match in regex.matches(in:value,range:NSRange(location:0,length:(value as NSString).length)) {text.addAttribute(.init(kCTForegroundColorAttributeName as String),value:color(ink),range:match.range)}
+                }
+                lines.append(CTLineCreateWithAttributedString(text))
+            }
+            if supported(lines),lines.allSatisfy({CGFloat(CTLineGetTypographicBounds($0,nil,nil,nil))<=rect.width}),size*1.65*CGFloat(lines.count)<=rect.height {return lines}
+            size-=1
+        }
+        throw VideoError.review("实际代码前三行无法完整放入封面，请选择更简短的真实代码素材")
     }
     static func presenterPlacement(square s:CGRect,variant:Int,titleBounds:CGRect,pointing:CoverPointing?)->HeroPlacement {
         let d=s.width,canvasWidth=d+s.minX*2,width=d*0.40
@@ -406,6 +498,20 @@ public enum CoverPainter {
     private static func gradient(_ rect:CGRect,colors:[CGColor],locations:[CGFloat],c:CGContext) {
         guard let gradient=CGGradient(colorsSpace:CGColorSpace(name:CGColorSpace.sRGB),colors:colors as CFArray,locations:locations) else{return}
         c.saveGState();c.clip(to:rect);c.drawLinearGradient(gradient,start:CGPoint(x:rect.midX,y:rect.minY),end:CGPoint(x:rect.midX,y:rect.maxY),options:[]);c.restoreGState()
+    }
+    private static func glow(_ rect:CGRect,center:CGPoint,radius:CGFloat,ink:String,alpha:CGFloat,c:CGContext) {
+        guard let gradient=CGGradient(colorsSpace:CGColorSpace(name:CGColorSpace.sRGB),colors:[color(ink,alpha:alpha),color(ink,alpha:0)] as CFArray,locations:[0,1]) else{return}
+        c.saveGState();c.clip(to:rect);c.drawRadialGradient(gradient,startCenter:center,startRadius:0,endCenter:center,endRadius:radius,options:[]);c.restoreGState()
+    }
+    private static func paperGrain(_ rect:CGRect,ink:String,c:CGContext) {
+        c.saveGState();c.setStrokeColor(color(ink,alpha:0.055));c.setLineWidth(0.6)
+        for row in 0..<33 {for column in 0..<49 {
+            let seed=(row*37+column*19)%23
+            let x=rect.minX+CGFloat(column)*rect.width/48+CGFloat(seed%5)-2
+            let y=rect.minY+CGFloat(row)*rect.height/32+CGFloat(seed%7)-3
+            c.move(to:CGPoint(x:x,y:y));c.addLine(to:CGPoint(x:x+CGFloat(2+seed%7),y:y+CGFloat(seed%3)-1));c.strokePath()
+        }}
+        c.restoreGState()
     }
     private static func material(_ image:CGImage?,in rect:CGRect,c:CGContext) {if let image {draw(image,in:rect,fill:false,context:c)}}
     private static func polygon(_ points:[CGPoint],c:CGContext) {guard let first=points.first else{return};c.move(to:first);for point in points.dropFirst(){c.addLine(to:point)};c.closePath();c.fillPath()}

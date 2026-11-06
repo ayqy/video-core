@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Rebuild the fixed offline cover font from the checked-in, unmodified original.
 
-Usage: python3 scripts/embed_cover_typeface.py [--check]
+Usage: python3 scripts/embed_cover_typeface.py [--display] [--check]
 No network, font registration, archive, or runtime resource bundle is involved.
 """
 from __future__ import annotations
@@ -17,8 +17,8 @@ ROOT = Path(__file__).resolve().parents[1]
 ORIGINAL = ROOT / "ThirdParty/Fonts/SmileySans/SmileySans-Oblique.ttf"
 LICENSE = ROOT / "ThirdParty/Fonts/SmileySans/LICENSE"
 OUTPUT = ROOT / "Sources/VideoMedia/CoverTypeface.swift"
-DISPLAY_ORIGINAL = ROOT / "ThirdParty/Fonts/ZCOOLKuaiLe/ZCOOLKuaiLe-Regular.ttf"
-DISPLAY_LICENSE = ROOT / "ThirdParty/Fonts/ZCOOLKuaiLe/LICENSE"
+DISPLAY_ORIGINAL = ROOT / "ThirdParty/Fonts/DouyinSans/DouyinSansBold.ttf"
+DISPLAY_LICENSE = ROOT / "ThirdParty/Fonts/DouyinSans/LICENSE"
 DISPLAY_OUTPUT = ROOT / "Sources/VideoMedia/CoverDisplayTypeface.swift"
 FONT_BYTES = 2_629_764
 FONT_SHA256 = "b447d7e781f08bc95c4c9f23ba71ed2b8ebb639aa7184485c71c4ca5afcd25c4"
@@ -28,9 +28,9 @@ LICENSE_SHA256 = "9401f4050f1b66c26b6ccdc8b0e14a3c1cc37aac122eda84386f25854a9bec
 def render(*, display=False) -> bytes:
     font = (DISPLAY_ORIGINAL if display else ORIGINAL).read_bytes()
     license_data = (DISPLAY_LICENSE if display else LICENSE).read_bytes()
-    font_bytes = 1_514_968 if display else FONT_BYTES
-    font_sha = "812a6fc1fe54b6d73a419245c32dfeba8aa33104d5be90d1cf6af082007cb71d" if display else FONT_SHA256
-    license_sha = "538078469839b4a2e7ad22bef4ebe41681a4e53749bb2a072144024f1d6d703d" if display else LICENSE_SHA256
+    font_bytes = 1_919_404 if display else FONT_BYTES
+    font_sha = "fbecfacdfac33982774e301073a8d357a09c698cd3134bb6ddec0f5bfc268fa1" if display else FONT_SHA256
+    license_sha = "a6d5700a002ea32bcfbe3310253d603997683dac8ac63777e375d06c07c30ea6" if display else LICENSE_SHA256
     if len(font) != font_bytes or hashlib.sha256(font).hexdigest() != font_sha:
         raise ValueError("fixed official cover TTF has changed")
     if hashlib.sha256(license_data).hexdigest() != license_sha:
@@ -130,12 +130,12 @@ __PAYLOAD__
     for key, value in replacements.items():
         text = text.replace(key, value)
     if display:
-        text = text.replace("// Smiley Sans v2.0.1 TTF.", "// ZCOOL KuaiLe TTF.")
+        text = text.replace("// Smiley Sans v2.0.1 TTF.", "// DouyinSansBold TTF.")
         text = text.replace("https://github.com/atelier-anchor/smiley-sans/tree/67e3821f4b06cbd7155fa6fa69daff4b6f311b76",
-            "https://github.com/google/fonts/tree/6d49995f5d8f1c7d476760a580ffb89ce1e52c5d/ofl/zcoolkuaile")
-        text = text.replace("ThirdParty/Fonts/SmileySans/", "ThirdParty/Fonts/ZCOOLKuaiLe/")
+            "https://github.com/bytedance/fonts/tree/327565b61501d7a6d4902ed6ce417a7bd2ae54e6/DouyinSans")
+        text = text.replace("ThirdParty/Fonts/SmileySans/", "ThirdParty/Fonts/DouyinSans/")
         text = text.replace("public enum CoverTypeface {", "public enum CoverDisplayTypeface {")
-        text = text.replace('postScriptName = "SmileySans-Oblique"', 'postScriptName = "ZCOOLKuaiLe-Regular"')
+        text = text.replace('postScriptName = "SmileySans-Oblique"', 'postScriptName = "DOUYINSANSBOLD-GB"')
         text += '''
 public extension CoverTypeface {
     static let displayPostScriptName = CoverDisplayTypeface.postScriptName
@@ -150,7 +150,7 @@ public extension CoverTypeface {
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--check", action="store_true", help="verify the checked-in Swift source is reproducible")
-    parser.add_argument("--display", action="store_true", help="build the fixed ZCOOL KuaiLe display face; legacy remains unchanged")
+    parser.add_argument("--display", action="store_true", help="build the fixed DouyinSansBold display face; legacy remains unchanged")
     options = parser.parse_args()
     result = render(display=options.display)
     output = DISPLAY_OUTPUT if options.display else OUTPUT

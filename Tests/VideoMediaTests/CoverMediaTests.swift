@@ -33,6 +33,17 @@ final class CoverMediaTests:XCTestCase {
     func testEveryStyleHasThreeDeterministicLayoutsInBothAspects()throws {
         XCTAssertEqual(CoverPainter.displayTitle("豆子姐讲「囚徒困境」",style:.presenter),"豆子姐讲\n「囚徒困境」")
         XCTAssertEqual(CoverPainter.displayTitle("豆子姐讲「囚徒困境」",style:.pencil),"豆子姐讲「囚徒困境」")
+        let phrase="人人都想省钱，路就修不成？",phraseText=phrase as NSString
+        let forbidden=phraseText.range(of:"不成").location+1
+        XCTAssertFalse(CoverPainter.titleArrangements(phrase).contains{$0.ranges.dropLast().contains{NSMaxRange($0)==forbidden}},"否定短语不能在不字后断开")
+        for aspect in [Aspect.landscape,.portrait] {
+            var value=try revision(aspect:aspect)
+            value.coverPresentation=CoverPresentation(style:.code,title:phrase,emphasis:["不成"])
+            let title=try CoverPainter.composeTitle(cover:CoverRules.resolved(revision:value),width:CGFloat(aspect.width),height:CGFloat(aspect.height))
+            let lines=title.lines.map{line -> String in let r=CTLineGetStringRange(line);return phraseText.substring(with:NSRange(location:r.location,length:r.length))}
+            XCTAssertEqual(lines,["人人都想省钱，","路就修不成？"],"先按真实中文逗号分短语，再均衡字号，不能只贪心填满行宽")
+            XCTAssertTrue(title.safeRect.contains(title.visibleBounds))
+        }
         for aspect in [Aspect.landscape,.portrait] {
             let source=try bitmap(width:aspect.width,height:aspect.height)
             var styleHashes=Set<String>()
@@ -117,6 +128,9 @@ final class CoverMediaTests:XCTestCase {
         XCTAssertNil(CoverPainter.separatedArtwork(try bitmap(width:200,height:120)),"不透明图片不能猜测语义切成两半")
     }
     func testOnlyTitleUsesOfflineFontHighlightAndFitsBothPreviewCrops()throws {
+        XCTAssertEqual(CoverTypeface.displayPostScriptName,"DOUYINSANSBOLD-GB")
+        XCTAssertEqual(CoverDisplayTypeface.sourceBytes,1919404)
+        XCTAssertEqual(CoverDisplayTypeface.sourceSHA256,"fbecfacdfac33982774e301073a8d357a09c698cd3134bb6ddec0f5bfc268fa1")
         XCTAssertEqual(CTFontCopyPostScriptName(try CoverTypeface.font(size:40)) as String,CoverTypeface.postScriptName)
         XCTAssertEqual(CTFontCopyPostScriptName(try CoverTypeface.displayFont(size:40)) as String,CoverTypeface.displayPostScriptName)
         for aspect in [Aspect.landscape,.portrait] {
@@ -254,6 +268,22 @@ final class CoverMediaTests:XCTestCase {
         let source=try bitmap(width:1280,height:720),original=try ScenePainter.png(CoverPainter.image(revision:value,source:source))
         value.scenes[0].layers?[0].dataPresentation?.chart?.series[0].keyframes[0].value=9
         XCTAssertNotEqual(original,try ScenePainter.png(CoverPainter.image(revision:value,source:source)),"实际业务数值变化应影响可见封面图形")
+        // Code has the same source-truth boundary: actual first three lines,
+        // never decorative pseudo code, editor controls or an invented arrow.
+        value.coverPresentation=CoverPresentation(style:.code,title:"人人都想省钱，路就修不成？",emphasis:["不成"])
+        let code=CodePresentation(title:"不应成为额外封面小字",lines:["if sum(contributions) >= threshold:","    build_road()","else: keep_waiting()","# outside the selected first three lines"])
+        var codeLayer=SceneLayer(kind:.code,endFrame:30)
+        codeLayer.dataPresentation=DataPresentation(code:code)
+        value.scenes[0].layers=[codeLayer]
+        let codeImage=try ScenePainter.png(CoverPainter.image(revision:value,source:source))
+        let realLines=try CoverPainter.codeLines(code,in:CGRect(x:0,y:0,width:1080,height:216),maximumSize:42)
+        XCTAssertEqual(realLines.count,3)
+        for (actual,expected) in zip(realLines,code.lines.prefix(3)) {XCTAssertEqual(CTLineGetStringRange(actual).length,(expected as NSString).length)}
+        value.scenes[0].layers?[0].dataPresentation?.code?.title="另一个不应画的代码标题"
+        value.scenes[0].layers?[0].dataPresentation?.code?.lines[3]="# changed outside selection"
+        XCTAssertEqual(codeImage,try ScenePainter.png(CoverPainter.image(revision:value,source:source)),"额外元数据和未选第四行不能混进封面")
+        value.scenes[0].layers?[0].dataPresentation?.code?.lines[1]="    wait_for_contributions()"
+        XCTAssertNotEqual(codeImage,try ScenePainter.png(CoverPainter.image(revision:value,source:source)),"真实被选代码行变化必须改变实际封面内容")
     }
     func testTransparentHeroKeepsIndependentSmallLayoutInBothAspects()throws {
         try assertRGBAFixture()
