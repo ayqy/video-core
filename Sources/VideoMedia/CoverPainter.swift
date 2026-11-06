@@ -11,14 +11,14 @@ public enum CoverPainter {
         let paper:String;let ink:String;let accent:String;let secondary:String
         init(_ style:CoverStyle) {
             switch style {
-            case .presenter:(paper,ink,accent,secondary)=("101C43","FFF9E9","FFDF42","4278F3")
-            case .pencil:(paper,ink,accent,secondary)=("FFF9ED","294D43","F6BD8A","82AF91")
-            case .game:(paper,ink,accent,secondary)=("DDEFE0","173C34","FFE27B","71AD91")
-            case .cartoon:(paper,ink,accent,secondary)=("F9DA5A","38274F","FFE56D","ED6393")
-            case .media:(paper,ink,accent,secondary)=("101B28","FFFFFF","F5D75E","417F8B")
-            case .chart:(paper,ink,accent,secondary)=("F1F3FE","21305B","BDF176","6386D9")
-            case .code:(paper,ink,accent,secondary)=("142823","ECFAEF","C4FA80","46A897")
-            default:(paper,ink,accent,secondary)=("F6F3EF","24384F","F7C251","EB755B")
+            case .presenter:(paper,ink,accent,secondary)=("082A78","FFFFFF","FF985D","1678EC")
+            case .pencil:(paper,ink,accent,secondary)=("C52654","FFFFFF","63F0E4","F76788")
+            case .game:(paper,ink,accent,secondary)=("FFFBE8","555448","008E9B","EB83B1")
+            case .cartoon:(paper,ink,accent,secondary)=("F2E9FF","38274F","C63B67","A6E8E1")
+            case .media:(paper,ink,accent,secondary)=("101B28","FFFFFF","F7A56F","417F8B")
+            case .chart:(paper,ink,accent,secondary)=("F1F3FE","21305B","6B3EB5","6386D9")
+            case .code:(paper,ink,accent,secondary)=("071A47","FFFFFF","50E3DA","1681EE")
+            default:(paper,ink,accent,secondary)=("F6F3EF","24384F","BB4024","EB755B")
             }
         }
     }
@@ -63,7 +63,11 @@ public enum CoverPainter {
             guard let original=images[reference.assetID] else {throw VideoError.notFound("封面模板引用的实际图片未加载")}
             return try MediaFramingRenderer.crop(original,framing:reference.sourceRect)
         }
-        let hero=try selected(cover.hero),explicitBackground=try selected(cover.background)
+        let hero=try selected(cover.hero).map { image in
+            let visible=try visibleArtwork(image)
+            return cover.style == .presenter ? try presenterArtwork(visible):visible
+        }
+        let explicitBackground=try selected(cover.background)
         // A dedicated IP never reveals an unrelated face or movie subtitles.
         let background=explicitBackground ?? (hero == nil ? source:nil)
         let canvas=CGRect(x:0,y:0,width:w,height:h),p=Palette(cover.style),side=CGFloat(min(w,h))
@@ -94,33 +98,31 @@ public enum CoverPainter {
     }
     static func composeTitle(cover:ResolvedCover,width:CGFloat,height:CGFloat)throws->TitleComposition {
         let safe=titleSafeRect(width:width,height:height),side=min(width,height),p=Palette(cover.style)
-        let value=displayTitle(cover.title,style:cover.style),string=value as NSString,original=cover.title as NSString
-        let oldQuote=original.range(of:"「").location,newQuote=string.range(of:"「").location
-        func displayIndex(_ index:Int)->Int {
-            guard value != cover.title,oldQuote != NSNotFound,newQuote != NSNotFound else{return index}
-            return index>=oldQuote ? index+newQuote-oldQuote:min(index,newQuote-1)
-        }
+        let display=titleDisplay(cover.title,style:cover.style),value=display.text,original=cover.title as NSString
         var ranges:[NSRange]=[]
         for keyword in cover.emphasis {
             var search=NSRange(location:0,length:original.length)
             while search.length>0 {
                 let range=original.range(of:keyword,options:[],range:search);if range.location==NSNotFound {break}
-                let start=displayIndex(range.location),end=displayIndex(range.location+range.length)
+                let start=display.indices[range.location],end=display.indices[range.location+range.length]
                 if end>start {ranges.append(NSRange(location:start,length:end-start))}
                 search=NSRange(location:range.location+range.length,length:original.length-range.location-range.length)
             }
         }
-        let relief:[CoverStyle:CGFloat]=[.presenter:0.007,.game:0.006,.cartoon:0.005,.code:0.003,.chart:0.002,.media:0.002,.pencil:0.001,.explanation:0.003]
-        let depth=side*(relief[cover.style] ?? 0.003),outline=side*(cover.style == .pencil ? 0.001:0.003)
-        let margin=depth+outline
-        let kern=side*(cover.style == .presenter || cover.style == .cartoon ? -0.0015:0.0003)
-        let arrangements=titleArrangements(value,emphasis:ranges)
-        var size=side*0.112
+        // A bold source font already supplies its intended strokes. Added
+        // inside strokes/extruded copies close the counters of dense Chinese
+        // glyphs such as 境, especially in a channel's reduced thumbnail.
+        let depth:CGFloat=0,outline:CGFloat=0,margin=side*0.004
+        let kern=side*0.001
+        let shortGameTitle=cover.style == .game && value.count<=9 && !value.contains("\n")
+            && value.rangeOfCharacter(from:CharacterSet(charactersIn:"，,、：:；;。")) == nil
+        var arrangements=titleArrangements(value,emphasis:ranges)
+        if shortGameTitle {arrangements=[([NSRange(location:0,length:(value as NSString).length)],0)]}
+        var size=side*(shortGameTitle ? 0.09:0.112)
         while size>=side*0.042 {
             let normal=try CoverTypeface.displayFont(size:size),emphasized=try CoverTypeface.displayFont(size:size*1.17)
             let title=NSMutableAttributedString(string:value,attributes:[.init(kCTFontAttributeName as String):normal,.init(kCTKernAttributeName as String):kern,.init(kCTForegroundColorAttributeName as String):color(p.ink)])
-            let keywordInk=(cover.style == .code || cover.style == .media || cover.style == .presenter) ? p.paper:(cover.style == .game ? "1E5C3F":"7F2040")
-            for range in ranges {title.addAttributes([.init(kCTFontAttributeName as String):emphasized,.init(kCTForegroundColorAttributeName as String):color(keywordInk)],range:range)}
+            for range in ranges {title.addAttributes([.init(kCTFontAttributeName as String):emphasized,.init(kCTForegroundColorAttributeName as String):color(p.accent)],range:range)}
             let typesetter=CTTypesetterCreateWithAttributedString(title)
             var candidates:[(lines:[CTLine],score:CGFloat)]=[]
             for arrangement in arrangements {
@@ -200,133 +202,100 @@ public enum CoverPainter {
         }}
         return true
     }
-    private static func glyphPath(_ line:CTLine,origin:CGPoint)->CGPath {
-        let path=CGMutablePath()
-        for run in CTLineGetGlyphRuns(line) as! [CTRun] {
-            let attributes=CTRunGetAttributes(run) as NSDictionary
-            guard let font=attributes[kCTFontAttributeName] as! CTFont? else {continue}
-            let count=CTRunGetGlyphCount(run)
-            var glyphs=[CGGlyph](repeating:0,count:count),positions=[CGPoint](repeating:.zero,count:count)
-            CTRunGetGlyphs(run,CFRange(location:0,length:0),&glyphs);CTRunGetPositions(run,CFRange(location:0,length:0),&positions)
-            for index in 0..<count {
-                guard let glyph=CTFontCreatePathForGlyph(font,glyphs[index],nil) else {continue}
-                path.addPath(glyph,transform:CGAffineTransform(translationX:origin.x+positions[index].x,y:origin.y+positions[index].y))
-            }
-        }
-        return path
-    }
     private static func paintTitle(_ value:TitleComposition,style:CoverStyle,p:Palette,c:CGContext) {
-        c.saveGState();c.setLineJoin(.round)
-        // The topic marker is attached to actual glyphs, never a blank panel.
-        for rect in value.highlights {
-            c.saveGState();c.setShadow(offset:CGSize(width:value.depth,height:-value.depth),blur:0,color:color(p.ink,alpha:0.30));c.setFillColor(color(p.accent))
-            if style == .pencil {polygon([CGPoint(x:rect.minX-1,y:rect.minY+2),CGPoint(x:rect.maxX,y:rect.minY),CGPoint(x:rect.maxX+1,y:rect.maxY-2),CGPoint(x:rect.minX,y:rect.maxY)],c:c)}
-            else if style == .game {c.addPath(CGPath(roundedRect:rect,cornerWidth:rect.height*0.15,cornerHeight:rect.height*0.15,transform:nil));c.fillPath()}
-            else {c.fill(rect)}
-            c.restoreGState()
-        }
-        let edge=(style == .presenter || style == .media || style == .code) ? "071025":"FFFFFF"
+        c.saveGState();c.setShouldAntialias(true)
+        // Contrast belongs to the actual topic glyphs. No yellow/black marker
+        // block or secondary copy competes with the white/orange/cyan title.
         for (line,origin) in zip(value.lines,value.origins) {
-            let path=glyphPath(line,origin:origin)
-            for step in stride(from:3,through:1,by:-1) {
-                let distance=value.depth*CGFloat(step)/3
-                c.saveGState();c.translateBy(x:distance,y:-distance);c.addPath(path);c.setFillColor(color(edge));c.fillPath();c.restoreGState()
-            }
-            c.addPath(path);c.setStrokeColor(color(edge));c.setLineWidth(value.outline*2);c.strokePath()
             c.textMatrix = .identity;c.textPosition=origin;CTLineDraw(line,c)
         }
         c.restoreGState()
     }
     static func displayTitle(_ value:String,style:CoverStyle)->String {
-        guard style == .presenter,value.hasPrefix("豆子姐讲"),let quote=value.firstIndex(of:"「") else{return value}
-        return value[..<quote].trimmingCharacters(in:.whitespacesAndNewlines)+"\n"+String(value[quote...])
+        titleDisplay(value,style:style).text
+    }
+    private static func titleDisplay(_ value:String,style:CoverStyle)->(text:String,indices:[Int]) {
+        let prefix="豆子姐讲",prefixLength=(prefix as NSString).length
+        let separate=style == .presenter && value.hasPrefix(prefix) && !value.hasPrefix(prefix+"\n")
+        var text="",indices=[Int](repeating:0,count:(value as NSString).length+1),original=0,displayed=0,didSeparate=false
+        for character in value {
+            if separate,!didSeparate,original>=prefixLength {
+                text+="\n";displayed+=1;didSeparate=true
+            }
+            let scalar=String(character),length=(scalar as NSString).length
+            for index in original..<(original+length) {indices[index]=displayed}
+            if !"「」『』".contains(character) {text+=scalar;displayed+=(scalar as NSString).length}
+            original+=length;indices[original]=displayed
+        }
+        return(text,indices)
     }
     private static func explanation(_ image:CGImage?,hero:CGImage?,square s:CGRect,canvas:CGRect,variant:Int,p:Palette,c:CGContext) {
         let d=s.width,shift=CGFloat(variant-1)*d*0.035
-        // Two broad folded leaves reveal real subject matter around the title.
-        // Their hinge is a page fold, not an unexplained causal arrow.
-        c.setFillColor(color(p.accent,alpha:0.30))
-        polygon([CGPoint(x:0,y:0),CGPoint(x:canvas.midX-d*0.10,y:0),CGPoint(x:canvas.midX-d*0.32,y:s.minY+d*0.43),CGPoint(x:0,y:s.minY+d*0.83)],c:c)
-        c.setFillColor(color(p.secondary,alpha:0.16))
-        polygon([CGPoint(x:canvas.width,y:canvas.height),CGPoint(x:canvas.midX+d*0.09,y:canvas.height),CGPoint(x:canvas.midX+d*0.32,y:s.minY+d*0.62),CGPoint(x:canvas.width,y:s.minY+d*0.18)],c:c)
+        // Large opposing color fields and real objects form an explanatory
+        // poster. There is no paper fold, floating window or decorative arrow.
+        c.setFillColor(color(p.accent,alpha:0.60))
+        c.fillEllipse(in:CGRect(x:-d*0.40,y:s.minY-d*0.28,width:d*1.30,height:d*1.30))
+        c.setFillColor(color(p.secondary,alpha:0.50))
+        c.fillEllipse(in:CGRect(x:canvas.width-d*0.78,y:s.minY+d*0.34,width:d*1.10,height:d*1.10))
         let left=CGRect(x:max(8,s.minX-d*0.35),y:s.minY+d*0.025+shift,width:min(d*0.65,canvas.width*0.46),height:d*0.49)
         let right=CGRect(x:min(canvas.width-d*0.62-8,s.maxX-d*0.24),y:s.minY+d*0.52-shift,width:d*0.62,height:d*0.47)
         pairedArtwork(image,leading:left,trailing:right,c:c)
-        c.setStrokeColor(color(p.ink,alpha:0.16));c.setLineWidth(d*0.003)
-        c.move(to:CGPoint(x:0,y:s.minY+d*0.83));c.addLine(to:CGPoint(x:canvas.midX-d*0.32,y:s.minY+d*0.43));c.strokePath()
         if variant == 2 {c.setFillColor(color(p.accent,alpha:0.22));c.fillEllipse(in:CGRect(x:canvas.midX-d*0.33,y:s.minY+d*0.77,width:d*0.66,height:d*0.20))}
         auxiliary(hero,square:s,variant:variant,c:c)
     }
     private static func pencil(_ image:CGImage?,hero:CGImage?,square s:CGRect,canvas:CGRect,variant:Int,titleBounds:CGRect,p:Palette,c:CGContext) {
-        let d=s.width,shift=CGFloat(variant-1)*d*0.04
-        gradient(canvas,colors:[color("F0D0AE"),color("F9EACF"),color("DBE8D4")],locations:[0,0.53,1],c:c)
-        // Broad colored sheets and dry-pencil grain form a paper stage. The
-        // actual illustration is a large subject even when supplied as hero.
-        c.setFillColor(color("D29E7B",alpha:0.45))
-        polygon([CGPoint(x:0,y:0),CGPoint(x:canvas.width,y:0),CGPoint(x:canvas.width,y:s.minY+d*0.22),CGPoint(x:canvas.midX+d*0.28,y:s.minY+d*0.34),CGPoint(x:0,y:s.minY+d*0.16)],c:c)
-        c.setFillColor(color(p.secondary,alpha:0.38))
-        polygon([CGPoint(x:0,y:canvas.height),CGPoint(x:canvas.width,y:canvas.height),CGPoint(x:canvas.width,y:s.minY+d*0.83+shift),CGPoint(x:canvas.midX-d*0.23,y:s.minY+d*0.74),CGPoint(x:0,y:s.minY+d*0.87)],c:c)
-        paperGrain(canvas,ink:p.ink,c:c)
-        let subject=CGRect(x:canvas.midX-d*0.58+shift,y:s.minY-d*0.14,width:d*1.16,height:d*1.14)
-        c.saveGState();c.setShadow(offset:CGSize(width:d*0.025,height:-d*0.025),blur:d*0.024,color:color("74533A",alpha:0.25))
+        let d=s.width,shift=CGFloat(variant-1)*d*0.055
+        gradient(canvas,colors:[color("3A103C"),color(p.paper),color("F14D76")],locations:[0,0.56,1],c:c)
+        c.setFillColor(color(p.secondary,alpha:0.72));c.fillEllipse(in:CGRect(x:canvas.midX-d*0.86+shift,y:s.minY-d*0.22,width:d*1.42,height:d*1.42))
+        c.setFillColor(color(p.secondary,alpha:0.70));c.fillEllipse(in:CGRect(x:canvas.midX+d*0.32-shift,y:s.minY+d*0.55,width:d*0.92,height:d*0.92))
+        let subject=CGRect(x:canvas.midX-d*0.63+shift,y:s.minY+d*0.03,width:d*0.82,height:d*0.94)
+        c.saveGState();c.setShadow(offset:CGSize(width:d*0.02,height:-d*0.02),blur:d*0.018,color:color("381029",alpha:0.35))
         material(hero ?? image,in:subject,c:c);c.restoreGState()
         if hero != nil,let image {
-            c.saveGState();c.setAlpha(0.30);draw(image,in:canvas,fill:true,context:c);c.restoreGState()
+            c.saveGState();c.setAlpha(0.18);draw(image,in:canvas,fill:true,context:c);c.restoreGState()
         }
-        // A deckled strip is this style's physical paper foreground. Its shape
-        // follows the centered title instead of becoming a shared opaque card.
-        let top=titleBounds.maxY+d*0.025,bottom=titleBounds.minY-d*0.025
-        c.saveGState();c.setShadow(offset:CGSize(width:0,height:-d*0.008),blur:d*0.008,color:color("6C4F39",alpha:0.17));c.setFillColor(color("FFF9E9",alpha:0.96))
-        polygon([CGPoint(x:0,y:bottom+d*0.035),CGPoint(x:canvas.width*0.23,y:bottom-d*0.008),CGPoint(x:canvas.midX,y:bottom+d*0.004),CGPoint(x:canvas.width*0.76,y:bottom-d*0.020),CGPoint(x:canvas.width,y:bottom+d*0.025),CGPoint(x:canvas.width,y:top-d*0.025),CGPoint(x:canvas.width*0.72,y:top+d*0.010),CGPoint(x:canvas.midX,y:top),CGPoint(x:canvas.width*0.21,y:top+d*0.025),CGPoint(x:0,y:top-d*0.015)],c:c);c.restoreGState()
-        for i in 0..<23 {
-            let x=CGFloat(i)*canvas.width/22
-            c.setStrokeColor(color(i%3==0 ? p.secondary:p.accent,alpha:0.42));c.setLineWidth(d*(i%2==0 ? 0.002:0.001))
-            c.move(to:CGPoint(x:x-d*0.045,y:s.minY+d*0.94+CGFloat(i%4)*d*0.008));c.addLine(to:CGPoint(x:x+d*0.06,y:s.minY+d*0.98));c.strokePath()
-        }
+        glow(canvas,center:CGPoint(x:titleBounds.midX,y:titleBounds.midY),radius:d*0.62,ink:"23132D",alpha:0.86,c:c)
     }
     private static func presenter(_ image:CGImage?,hero:CGImage?,placement:HeroPlacement,square s:CGRect,canvas:CGRect,variant:Int,p:Palette,c:CGContext) {
         let d=s.width
-        gradient(canvas,colors:[color("03091D"),color("172F6A"),color("07112D")],locations:[0,0.55,1],c:c)
-        glow(canvas,center:CGPoint(x:canvas.midX+CGFloat(variant-1)*d*0.19,y:s.minY+d*0.63),radius:d*0.85,ink:"4988D1",alpha:0.35,c:c)
+        gradient(canvas,colors:[color("03113E"),color(p.paper),color("125EC3")],locations:[0,0.55,1],c:c)
+        glow(canvas,center:CGPoint(x:canvas.midX+CGFloat(variant-1)*d*0.19,y:s.minY+d*0.63),radius:d*0.85,ink:"2589EF",alpha:0.58,c:c)
         c.saveGState();c.setShadow(offset:.zero,blur:d*0.05,color:color("6297D5",alpha:0.18));c.setFillColor(color("27477C",alpha:0.55))
         c.fillEllipse(in:CGRect(x:canvas.midX-d*0.92,y:s.minY-d*0.28,width:d*1.84,height:d*0.49));c.restoreGState()
         if let image {
-            let propX=variant == 1 ? canvas.midX+d*0.16:canvas.midX-d*0.82
-            c.saveGState();c.setShadow(offset:CGSize(width:d*0.018,height:-d*0.018),blur:d*0.022,color:color("000000",alpha:0.70))
-            draw(image,in:CGRect(x:propX,y:s.minY+d*0.035,width:d*0.66,height:d*0.93),fill:false,context:c);c.restoreGState()
+            let propX=variant == 1 ? canvas.midX+d*0.30:canvas.midX-d*0.65
+            c.saveGState();c.setAlpha(0.42);c.setShadow(offset:CGSize(width:d*0.018,height:-d*0.018),blur:d*0.022,color:color("000000",alpha:0.70))
+            draw(image,in:CGRect(x:propX,y:s.minY+d*0.10,width:d*0.35,height:d*0.52),fill:false,context:c);c.restoreGState()
         }
         glow(canvas,center:CGPoint(x:canvas.midX,y:canvas.midY),radius:d*0.53,ink:"0A183C",alpha:0.82,c:c)
         if let hero {c.saveGState();c.setShadow(offset:CGSize(width:d*0.012,height:-d*0.012),blur:d*0.016,color:color("000000",alpha:0.6));draw(hero,in:placement.rect,fill:false,mirrored:placement.mirrored,context:c);c.restoreGState()}
     }
     static func gameDepthLayout(square s:CGRect,canvas:CGRect,variant:Int,titleBounds:CGRect)->GameDepthLayout {
-        let d=s.width,available=max(d*0.18,titleBounds.minY-s.minY-d*0.025)
-        let height=min(d*0.40,available),heroWidth=d*0.36
-        let aperture=CGRect(x:canvas.midX-d*0.85+CGFloat(variant-1)*d*0.012,y:s.minY+d*0.075,width:d*1.70,height:d*0.86)
-        let x=variant == 1 ? max(d*0.04,s.minX-d*0.16):min(canvas.width-heroWidth-d*0.04,s.maxX-d*0.18)
-        let hero=CGRect(x:x,y:s.minY+d*0.025,width:heroWidth,height:height)
-        return GameDepthLayout(aperture:aperture,hero:hero,frontLip:CGRect(x:aperture.minX-d*0.035,y:aperture.minY,width:aperture.width+d*0.07,height:d*0.026))
+        let d=s.width,width=d*0.48,height=d*0.64
+        let x=variant == 1 ? max(d*0.025,s.minX-width*0.56):min(canvas.width-width-d*0.025,s.maxX-width*0.10)
+        return GameDepthLayout(aperture:canvas,hero:CGRect(x:x,y:s.minY+d*0.04,width:width,height:height),frontLip:.zero)
+    }
+    static func gameDialogueBubble(square s:CGRect,canvas:CGRect,variant:Int,titleBounds:CGRect)->CGRect {
+        let width=min(canvas.width-s.width*0.04,titleBounds.width+s.width*(variant == 2 ? 0.14:0.10))
+        let height=titleBounds.height+s.width*(variant == 2 ? 0.05:0.035)
+        return CGRect(x:canvas.midX-width/2,y:titleBounds.midY-height/2,width:width,height:height)
     }
     private static func game(_ image:CGImage?,hero:CGImage?,square s:CGRect,canvas:CGRect,variant:Int,titleBounds:CGRect,p:Palette,c:CGContext) {
-        let d=s.width,layout=gameDepthLayout(square:s,canvas:canvas,variant:variant,titleBounds:titleBounds),a=layout.aperture
-        gradient(canvas,colors:[color("B9DAD0"),color(p.paper),color("F6FAE8")],locations:[0,0.54,1],c:c)
-        let inset=d*(variant == 2 ? 0.025:0.012)
-        let opening=[CGPoint(x:a.minX,y:a.minY),CGPoint(x:a.maxX,y:a.minY),CGPoint(x:a.maxX-inset,y:a.maxY),CGPoint(x:a.minX+inset,y:a.maxY)]
-        c.saveGState();c.setShadow(offset:CGSize(width:0,height:-d*0.022),blur:d*0.025,color:color("254E40",alpha:0.32));c.setFillColor(color("F8F7D8"));polygon(opening,c:c);c.restoreGState()
-        // A flat-design aperture contains the real set. The independent original
-        // character crosses it; no photographic card or replacement IP is drawn.
-        c.saveGState();c.addLines(between:opening);c.closePath();c.clip()
-        if let image {draw(image,in:a.insetBy(dx:inset+d*0.012,dy:d*0.012),fill:false,context:c)}
-        c.restoreGState()
-        c.setStrokeColor(color("FCFFF1"));c.setLineWidth(d*0.012);c.addLines(between:opening);c.closePath();c.strokePath()
+        let d=s.width,layout=gameDepthLayout(square:s,canvas:canvas,variant:variant,titleBounds:titleBounds)
+        // The actual set is the whole cover, as in a normal game screenshot.
+        // Volume comes from its original scene/materials/characters, not a
+        // second photograph standing in a fabricated portal or paper frame.
+        if let image {draw(image,in:canvas,fill:true,context:c)}
+        else {gradient(canvas,colors:[color("BEE3AC"),color("6BAF72")],locations:[0,1],c:c)}
         if let hero {
-            c.setFillColor(color("173C34",alpha:0.25));c.fillEllipse(in:CGRect(x:layout.hero.midX-d*0.18,y:s.minY+d*0.005,width:d*0.36,height:d*0.055))
-            c.saveGState();c.setShadow(offset:CGSize(width:d*0.015,height:-d*0.015),blur:d*0.012,color:color("173C34",alpha:0.24));draw(hero,in:layout.hero,fill:false,context:c);c.restoreGState()
+            c.saveGState();c.setShadow(offset:CGSize(width:d*0.012,height:-d*0.012),blur:d*0.018,color:color("173C34",alpha:0.22));draw(hero,in:layout.hero,fill:false,context:c);c.restoreGState()
         }
-        // This foreground lip is intentionally painted AFTER the actor. One
-        // body part comes forward while another passes behind a real plane.
-        c.setFillColor(color(p.secondary));c.fill(layout.frontLip)
-        c.setFillColor(color("E7F3CC"));polygon([CGPoint(x:layout.frontLip.minX,y:layout.frontLip.maxY),CGPoint(x:layout.frontLip.maxX,y:layout.frontLip.maxY),CGPoint(x:layout.frontLip.maxX-d*0.035,y:layout.frontLip.maxY+d*0.014),CGPoint(x:layout.frontLip.minX+d*0.035,y:layout.frontLip.maxY+d*0.014)],c:c)
-        if variant == 2 {c.setStrokeColor(color("FFFFFF",alpha:0.60));c.setLineWidth(d*0.003);c.strokeEllipse(in:layout.frontLip.insetBy(dx:-d*0.06,dy:-d*0.045))}
+        // A broad cream dialogue shape carries ONLY the topic, with native
+        // dark lettering and colored keywords. No game-name label is added.
+        let bubble=gameDialogueBubble(square:s,canvas:canvas,variant:variant,titleBounds:titleBounds)
+        let radius=bubble.height*(variant == 1 ? 0.12:(variant == 2 ? 0.30:0.22))
+        c.saveGState();c.setShadow(offset:CGSize(width:0,height:-d*0.006),blur:d*0.010,color:color("364F32",alpha:0.16));c.setFillColor(color(p.paper))
+        c.addPath(CGPath(roundedRect:bubble,cornerWidth:radius,cornerHeight:radius,transform:nil));c.fillPath();c.restoreGState()
     }
     private static func cartoon(_ image:CGImage?,hero:CGImage?,square s:CGRect,canvas:CGRect,variant:Int,p:Palette,c:CGContext) {
         let d=s.width
@@ -393,66 +362,91 @@ public enum CoverPainter {
         auxiliary(hero,square:s,variant:variant,c:c)
     }
     private static func code(_ image:CGImage?,hero:CGImage?,square s:CGRect,canvas:CGRect,variant:Int,revision:Revision,p:Palette,c:CGContext)throws {
-        let d=s.width
-        gradient(canvas,colors:[color("041B1B"),color("123D35"),color("061C24")],locations:[0,0.52,1],c:c)
-        glow(canvas,center:CGPoint(x:canvas.midX+CGFloat(variant-1)*d*0.21,y:s.minY+d*0.70),radius:d*0.83,ink:"286B5D",alpha:0.60,c:c)
-        let stage=CGRect(x:canvas.midX-d*0.75,y:s.minY+d*0.025,width:d*1.50,height:d*0.30)
-        let actual=revision.scenes.flatMap{$0.layers ?? []}.compactMap{$0.dataPresentation?.code}.first
-        if let actual {
-            try actual.validate()
-            let lines=try codeLines(actual,in:stage,maximumSize:d*0.058)
-            let runs=lines.flatMap{CTLineGetGlyphRuns($0) as! [CTRun]}
-            guard let run=runs.first,let font=(CTRunGetAttributes(run) as NSDictionary)[kCTFontAttributeName] as! CTFont? else {throw VideoError.review("实际代码前三行没有可见文字")}
-            let size=CTFontGetSize(font)
-            let step=size*1.65,total=step*CGFloat(lines.count-1)
-            for (index,line) in lines.enumerated() {
-                let width=CGFloat(CTLineGetTypographicBounds(line,nil,nil,nil))
-                c.textMatrix = .identity
-                c.textPosition=CGPoint(x:stage.midX-width/2,y:stage.midY+total/2-size*0.32-CGFloat(index)*step)
-                CTLineDraw(line,c)
-            }
-        } else {
-            // An actual subject image remains the single content object. The
-            // multiply blend removes its white-document appearance without
-            // inventing code, UI controls, arrows or a second source window.
-            c.setFillColor(color("BDE0C2"))
-            polygon([CGPoint(x:0,y:0),CGPoint(x:canvas.width,y:0),CGPoint(x:canvas.width,y:stage.maxY-d*0.045),CGPoint(x:canvas.midX+d*0.36,y:stage.maxY+d*0.015),CGPoint(x:0,y:stage.maxY-d*0.010)],c:c)
-            c.saveGState();c.setBlendMode(.multiply);material(hero ?? image,in:stage,c:c);c.restoreGState()
-            if image != nil,hero != nil {
-                c.saveGState();c.setAlpha(0.22);c.setBlendMode(.multiply);material(image,in:stage,c:c);c.restoreGState()
-            }
+        let d=s.width,shift=CGFloat(variant-1)*d*0.035
+        gradient(canvas,colors:[color("03061E"),color(p.paper),color("103D83")],locations:[0,0.52,1],c:c)
+        // Input art may influence the broad color mood, but no spatial source
+        // pixels, code lines, editor controls or document text enter the cover.
+        if let image=hero ?? image,let wash=paletteColor(image),let translucent=wash.copy(alpha:0.16) {c.setFillColor(translucent);c.fill(canvas)}
+        glow(canvas,center:CGPoint(x:canvas.midX+d*0.50,y:s.minY+d*0.74),radius:d*0.82,ink:"176AA5",alpha:0.62,c:c)
+        // A pair of large source-code braces is a graphic programming symbol,
+        // not fabricated source text, UI windows or unexplained flow wiring.
+        // Position limits can consume the horizontal shift in a portrait
+        // canvas. Real symbol proportions still distinguish all templates.
+        let symbolWidth=d*(variant == 2 ? 0.27:0.24)
+        let symbolHeight=d*(variant == 1 ? 0.76:0.84)
+        let symbolY=s.midY-symbolHeight/2
+        let left=CGRect(x:max(d*0.07,s.minX-d*0.28+shift),y:symbolY,width:symbolWidth,height:symbolHeight)
+        let right=CGRect(x:min(canvas.width-symbolWidth-d*0.06,s.maxX+d*0.10+shift),y:symbolY,width:symbolWidth,height:symbolHeight)
+        for (index,rect) in [left,right].enumerated() {
+            let path=codeBrace(in:rect,opening:index==0)
+            c.saveGState();c.setLineCap(.round);c.setLineJoin(.round);c.setLineWidth(d*0.065)
+            c.setShadow(offset:CGSize(width:d*0.016,height:-d*0.014),blur:d*0.018,color:color("000000",alpha:0.65))
+            c.setStrokeColor(color(index == 0 ? "177A90":"A04C2F"));c.addPath(path);c.strokePath()
+            c.translateBy(x:-d*0.009,y:d*0.009)
+            c.setStrokeColor(color(index == 0 ? "50E3DA":"FF985D"));c.addPath(path);c.strokePath();c.restoreGState()
         }
+        glow(canvas,center:CGPoint(x:canvas.midX,y:canvas.midY),radius:d*0.57,ink:"060E30",alpha:0.78,c:c)
     }
-    static func codeLines(_ actual:CodePresentation,in rect:CGRect,maximumSize:CGFloat)throws->[CTLine] {
-        try actual.validate()
-        let values=Array(actual.lines.prefix(3))
-        guard values.contains(where:{!$0.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty}) else {throw VideoError.review("实际代码前三行没有可见文字")}
-        var size=maximumSize
-        while size>=12 {
-            let font=CTFontCreateWithName("Menlo-Bold" as CFString,size,nil)
-            guard CTFontCopyPostScriptName(font) as String == "Menlo-Bold" else {throw VideoError.review("代码封面需要实际等宽字体")}
-            var lines:[CTLine]=[]
-            for value in values {
-                let text=NSMutableAttributedString(string:value,attributes:[.init(kCTFontAttributeName as String):font,.init(kCTForegroundColorAttributeName as String):color("E2F6E9")])
-                let patterns=[("(?<![A-Za-z0-9_])(if|else|elif|for|while|return|def|let|var|func|true|false|True|False|None|in)(?![A-Za-z0-9_])","FFB884"),("[0-9]+(?:\\.[0-9]+)?","FFE88E"),("\"[^\"]*\"|'[^']*'","9DE2C5")]
-                for (pattern,ink) in patterns {
-                    let regex=try NSRegularExpression(pattern:pattern)
-                    for match in regex.matches(in:value,range:NSRange(location:0,length:(value as NSString).length)) {text.addAttribute(.init(kCTForegroundColorAttributeName as String),value:color(ink),range:match.range)}
-                }
-                lines.append(CTLineCreateWithAttributedString(text))
-            }
-            if supported(lines),lines.allSatisfy({CGFloat(CTLineGetTypographicBounds($0,nil,nil,nil))<=rect.width}),size*1.65*CGFloat(lines.count)<=rect.height {return lines}
-            size-=1
+    private static func codeBrace(in rect:CGRect,opening:Bool)->CGPath {
+        func point(_ x:CGFloat,_ y:CGFloat)->CGPoint {
+            CGPoint(x:rect.minX+(opening ? x:1-x)*rect.width,y:rect.minY+y*rect.height)
         }
-        throw VideoError.review("实际代码前三行无法完整放入封面，请选择更简短的真实代码素材")
+        let path=CGMutablePath();path.move(to:point(0.90,1))
+        path.addCurve(to:point(0.40,0.82),control1:point(0.43,1),control2:point(0.40,0.97))
+        path.addCurve(to:point(0.04,0.50),control1:point(0.40,0.62),control2:point(0.34,0.54))
+        path.addCurve(to:point(0.40,0.18),control1:point(0.34,0.46),control2:point(0.40,0.38))
+        path.addCurve(to:point(0.90,0),control1:point(0.40,0.03),control2:point(0.43,0))
+        return path
+    }
+    private static func paletteColor(_ image:CGImage)->CGColor? {
+        guard let context=CGContext(data:nil,width:1,height:1,bitsPerComponent:8,bytesPerRow:4,
+            space:CGColorSpace(name:CGColorSpace.sRGB)!,bitmapInfo:CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue),
+            let bytes=context.data?.assumingMemoryBound(to:UInt8.self) else{return nil}
+        context.interpolationQuality = .high;context.draw(image,in:CGRect(x:0,y:0,width:1,height:1));context.flush()
+        guard bytes[3]>0 else{return nil}
+        let alpha=CGFloat(bytes[3])/255
+        return CGColor(colorSpace:CGColorSpace(name:CGColorSpace.sRGB)!,components:[CGFloat(bytes[0])/255/alpha,CGFloat(bytes[1])/255/alpha,CGFloat(bytes[2])/255/alpha,1])
     }
     static func presenterPlacement(square s:CGRect,variant:Int,titleBounds:CGRect,pointing:CoverPointing?)->HeroPlacement {
-        let d=s.width,canvasWidth=d+s.minX*2,width=d*0.40
-        let height=min(d*0.42,max(d*0.18,titleBounds.minY-s.minY-d*0.035))
-        let x=variant == 1 ? max(d*0.025,s.minX-d*0.24):min(canvasWidth-width-d*0.025,s.maxX-d*0.16)
-        let rect=CGRect(x:x,y:s.minY+d*0.01,width:width,height:height)
+        let d=s.width,canvasWidth=d+s.minX*2,width=d*0.74,height=d*0.98
+        // The IP can share background space with the title; the title itself
+        // is painted last. Never shrink a person to the empty strip below it.
+        let left=max(d*0.02,titleBounds.minX-width+d*0.06)
+        let right=min(canvasWidth-width-d*0.02,titleBounds.maxX-d*0.06)
+        let rect=CGRect(x:variant == 1 ? left:right,y:s.minY+d*0.005,width:width,height:height)
         let target:CoverPointing=rect.midX<titleBounds.midX ? .right:.left
         return HeroPlacement(rect:rect,target:target,mirrored:pointing.map{$0 != target} ?? false)
+    }
+    /// Fit the actual silhouette, not the transparent generation canvas. This
+    /// is an in-memory composition crop; source bytes and CAS identity stay
+    /// untouched, and every nonzero-alpha pixel remains included.
+    static func visibleArtwork(_ image:CGImage)throws->CGImage {
+        let width=image.width,height=image.height
+        guard width>0,height>0,width*height<=64*1024*1024,
+              let context=CGContext(data:nil,width:width,height:height,bitsPerComponent:8,bytesPerRow:width*4,
+                space:CGColorSpace(name:CGColorSpace.sRGB)!,bitmapInfo:CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue),
+              let bytes=context.data?.assumingMemoryBound(to:UInt8.self) else {throw VideoError.review("封面人物透明轮廓无法读取")}
+        context.setBlendMode(.copy);context.interpolationQuality = .none
+        context.draw(image,in:CGRect(x:0,y:0,width:width,height:height));context.flush()
+        var left=width,right = -1,top=height,bottom = -1
+        for y in 0..<height {for x in 0..<width where bytes[y*context.bytesPerRow+x*4+3]>0 {
+            left=min(left,x);right=max(right,x);top=min(top,y);bottom=max(bottom,y)
+        }}
+        guard right>=left,bottom>=top else {throw VideoError.review("封面人物原图完全透明，不能作为可见IP")}
+        if left==0,right==width-1,top==0,bottom==height-1 {return image}
+        guard let canonical=context.makeImage(),let cropped=canonical.cropping(to:CGRect(x:left,y:top,width:right-left+1,height:bottom-top+1)) else {throw VideoError.review("封面人物透明边界裁区无效")}
+        return cropped
+    }
+    /// Keep the authored head, comparison hands and upper body prominent.
+    /// Only portrait standing poses use this composition crop; wide actions
+    /// remain complete. Original source bytes and authored direction stay exact.
+    static func presenterArtwork(_ image:CGImage)throws->CGImage {
+        guard image.height>image.width else{return image}
+        let height=max(1,Int((CGFloat(image.height)*0.72).rounded(.up)))
+        guard let upper=image.cropping(to:CGRect(x:0,y:0,width:image.width,height:height)) else {
+            throw VideoError.review("封面解说员上半身构图无法读取")
+        }
+        return try visibleArtwork(upper)
     }
     static func auxiliaryRect(square s:CGRect,variant:Int)->CGRect {
         let width=s.width*0.34,canvasWidth=s.width+s.minX*2
@@ -502,16 +496,6 @@ public enum CoverPainter {
     private static func glow(_ rect:CGRect,center:CGPoint,radius:CGFloat,ink:String,alpha:CGFloat,c:CGContext) {
         guard let gradient=CGGradient(colorsSpace:CGColorSpace(name:CGColorSpace.sRGB),colors:[color(ink,alpha:alpha),color(ink,alpha:0)] as CFArray,locations:[0,1]) else{return}
         c.saveGState();c.clip(to:rect);c.drawRadialGradient(gradient,startCenter:center,startRadius:0,endCenter:center,endRadius:radius,options:[]);c.restoreGState()
-    }
-    private static func paperGrain(_ rect:CGRect,ink:String,c:CGContext) {
-        c.saveGState();c.setStrokeColor(color(ink,alpha:0.055));c.setLineWidth(0.6)
-        for row in 0..<33 {for column in 0..<49 {
-            let seed=(row*37+column*19)%23
-            let x=rect.minX+CGFloat(column)*rect.width/48+CGFloat(seed%5)-2
-            let y=rect.minY+CGFloat(row)*rect.height/32+CGFloat(seed%7)-3
-            c.move(to:CGPoint(x:x,y:y));c.addLine(to:CGPoint(x:x+CGFloat(2+seed%7),y:y+CGFloat(seed%3)-1));c.strokePath()
-        }}
-        c.restoreGState()
     }
     private static func material(_ image:CGImage?,in rect:CGRect,c:CGContext) {if let image {draw(image,in:rect,fill:false,context:c)}}
     private static func polygon(_ points:[CGPoint],c:CGContext) {guard let first=points.first else{return};c.move(to:first);for point in points.dropFirst(){c.addLine(to:point)};c.closePath();c.fillPath()}

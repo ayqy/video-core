@@ -103,9 +103,17 @@ final class CoverPresentationTests:XCTestCase {
         value.coverPresentation=CoverPresentation(poses:[curious,choice])
         XCTAssertEqual(try CoverRules.resolved(revision:value).hero?.assetID,"choice")
         XCTAssertEqual(try CoverRules.resolved(revision:value).poseID,"choice")
+        let shock=CoverPose(id:"shock",image:CoverImage(assetID:"shock"),expression:"震惊",action:"惊掉椅子",keywords:["意外","反转","吃亏"])
+        value.scenes[0].narration="故事出现意外、反转与吃亏，主题仍是囚徒的选择。"
+        value.coverPresentation?.poses=[shock,curious,choice]
+        XCTAssertEqual(try CoverRules.resolved(revision:value).poseID,"choice","主题命中必须优先于旁白里更多的泛化情绪词")
         value.coverPresentation?.hero=CoverImage(assetID:"manual")
         XCTAssertEqual(try CoverRules.resolved(revision:value).hero?.assetID,"manual")
         XCTAssertNil(try CoverRules.resolved(revision:value).poseID)
+        value.coverPresentation?.hero=nil
+        value.coverPresentation?.poses=[CoverPose(id:"unrelated-shock",image:CoverImage(assetID:"shock"),expression:"震惊",action:"跌坐",keywords:["新闻突发"])]
+        XCTAssertNil(try CoverRules.resolved(revision:value).poseID,"零主题/语境命中不得默取数组首张震惊图")
+        XCTAssertNil(try CoverRules.resolved(revision:value).hero)
     }
     func testUnknownFieldsVersionInvalidCropAndEmptyTitlesAreRejected()throws {
         for raw in [#"{"version":1,"style":"pencil","template":"spotlight","execute":"never"}"#,

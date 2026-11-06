@@ -168,12 +168,22 @@ public enum CoverRules {
         let template=value.template == .automatic ? templates[topic.utf8.reduce(0,{$0+Int($1)})%templates.count]:value.template
         let emphasis=value.emphasis ?? (title.contains(topic) && !topic.isEmpty ? [topic]:[])
         try validateEmphasis(emphasis,title:title)
-        let search=([title]+revision.scenes.map{$0.title+" "+$0.narration}).joined(separator:" ").lowercased()
-        let selected=(value.poses ?? []).enumerated().sorted { left,right in
-            func score(_ pose:CoverPose)->Int {pose.keywords.filter{search.contains($0.lowercased())}.reduce(0,{$0+$1.count})}
-            let a=score(left.element),b=score(right.element)
-            return a==b ? left.offset<right.offset:a>b
-        }.first?.element
+        // Authored keywords are the serialized theme rule. The actual cover
+        // title outranks incidental story words; an unmatched first pose is
+        // never a universal expression for unrelated topics.
+        let titleSearch=(title+" "+topic).lowercased()
+        let context=revision.scenes.map{$0.title+" "+$0.narration}.joined(separator:" ").lowercased()
+        func score(_ pose:CoverPose,in text:String)->Int {
+            pose.keywords.filter{text.contains($0.lowercased())}.reduce(0,{$0+$1.count})
+        }
+        let ranked=(value.poses ?? []).enumerated().map { index,pose in
+            (index:index,pose:pose,title:score(pose,in:titleSearch),context:score(pose,in:context))
+        }.filter{$0.title>0 || $0.context>0}.sorted { left,right in
+            if left.title != right.title {return left.title>right.title}
+            if left.context != right.context {return left.context>right.context}
+            return left.index<right.index
+        }
+        let selected=ranked.first?.pose
         var hero=value.hero ?? selected?.image
         // The already imported master keeps legacy presenter projects useful;
         // a new pose set is optional, never a geometric substitute for the IP.
