@@ -2,10 +2,10 @@
 
 VideoFree source export · package_free.py · version 1
 
-生成时间：2026-11-06 20:01:39 北京时间
+生成时间：2026-11-06 20:28:45 北京时间
 
-- 源码与必要元数据：344个文件；14060936字节（不含本清单）。
-- 整体内容指纹：`53eab0d22a96c0b778a3b89ca2979872322416735ac09da3b92a6aac52624fa8`。
+- 源码与必要元数据：344个文件；14061798字节（不含本清单）。
+- 整体内容指纹：`13c1d5abb63ec4c212a4a4f62041d0be31df8343bca59a30153b964d3bde948d`。
 - 来源：受控原始工程中的逐文件白名单；Package.swift、唯一免费制作workflow与README均来自Distribution/Free精确模板。
 - 本包不含.git，不可作为新业务checkout；本清单生成过程不执行构建、设备验收、签名安装或公共上传，各阶段以独立证据为准。
 - 排除：App、VideoGame、VideoCartoon、Premium、高级实现运行时测试、私有仓库地址、凭据、客户数据、缓存、日志及媒体过程产物。
@@ -14,7 +14,7 @@ VideoFree source export · package_free.py · version 1
 
 | SHA-256 | 字节数 | 包内路径 / 原工程来源 |
 |---|---:|---|
-| 998c76e176a6789d717454079c14860ae14ee3aec34bcc9860453454f1938c3d | 43815 | .github/workflows/free-production.yml |
+| 21c6e28bd11d4a813bd7e6a73b5d62424fef0c506e7aeabe1c8e959b6fbc69e2 | 44565 | .github/workflows/free-production.yml |
 | ac90de9132befb9227282c230671875edb7fd8dc4297999fc39622ea7efe3644 | 52964 | Integrations/README.md |
 | 28833193551aa06befb3bc0fc30b69ef87f74cccae39895f4242af4321d717dd | 15308 | Integrations/actor_motion.py |
 | 39dd8274ff1e6b0649acb63281087a1144e1f4a4e0eed3dc2b92e10df2cbd121 | 28488 | Integrations/asset_reuse.py |
@@ -302,7 +302,7 @@ VideoFree source export · package_free.py · version 1
 | d26f07a55e80838b66d1b04d5068b0c15a1f8e63a4e3175274c64a91d583cc27 | 9288 | Tests/VideoCoreTests/PaperExplanationQualityTests.swift |
 | 4d41f8e713398ca89bd5dcb901e40305fce2999c66ab452510cbe67e45ee4f2e | 7837 | Tests/VideoCoreTests/PaperPresentationTests.swift |
 | 441cb77c454824e06b8596405112351781da73984f1df4d706657009ee5c1849 | 38767 | Tests/VideoCoreTests/PluginModelBankTests.swift |
-| 632be37cbb3a967dd032071457611352ed4b891a8d09ecd8c531bd92f76e7202 | 21415 | Tests/VideoCoreTests/PluginPackageTests.swift |
+| c2c960364baa0371f41a451922b40be23edc70f4312091e076a67c7db8d50f9b | 21527 | Tests/VideoCoreTests/PluginPackageTests.swift |
 | 1dfaa501054026339180777d2d051d687b5bbe2b6698e002e245e03f836ef582 | 32760 | Tests/VideoCoreTests/PluginProtocolTests.swift |
 | 460d275a8be608c0a64bf3ba5476d34073eb872a08bbf4b82a8da7c33c13482f | 12968 | Tests/VideoCoreTests/ProductionDeliveryTests.swift |
 | 24378165715475fb450c41dfe1b7f22e5d5a0ffbc35c9cd63a2c700a3301bbe3 | 25144 | Tests/VideoCoreTests/ProductionExportTests.swift |

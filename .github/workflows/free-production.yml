@@ -35,7 +35,7 @@ jobs:
           import hashlib, os, re, subprocess
           root=Path(os.environ['GITHUB_WORKSPACE'])
           BASE='ed1cac3aa1ebe213749426ddbe3bca25a1344e6f'
-          REVIEWED=set(['.github/workflows/free-production.yml', 'Sources/VideoCore/AgentSchemas.swift', 'Sources/VideoCore/ModelSceneContract.swift', 'Sources/VideoCore/PluginProtocol.swift', 'Sources/VideoCore/VendorFreeModuleTrust.swift', 'Tests/VideoCoreTests/AgentSchemasTests.swift', 'Tests/VideoCoreTests/ModelSceneContractTests.swift', 'Tests/VideoCoreTests/PluginModelBankTests.swift', 'Tests/VideoCoreTests/PluginProtocolTests.swift', 'Tests/VideoCoreTests/VendorFreeModuleTrustTests.swift'])
+          REVIEWED=set(['.github/workflows/free-production.yml', 'Sources/VideoCore/AgentSchemas.swift', 'Sources/VideoCore/ModelSceneContract.swift', 'Sources/VideoCore/PluginProtocol.swift', 'Sources/VideoCore/VendorFreeModuleTrust.swift', 'Tests/VideoCoreTests/AgentSchemasTests.swift', 'Tests/VideoCoreTests/ModelSceneContractTests.swift', 'Tests/VideoCoreTests/PluginModelBankTests.swift', 'Tests/VideoCoreTests/PluginPackageTests.swift', 'Tests/VideoCoreTests/PluginProtocolTests.swift', 'Tests/VideoCoreTests/VendorFreeModuleTrustTests.swift'])
           METADATA=set(['.gitignore', 'docs/.nojekyll', 'docs/index.html', 'docs/privacy.html', 'docs/site.css', 'docs/support.html', 'docs/terms.html'])
           FONT_FILES={'Sources/VideoMedia/CoverTypeface.swift': (2197018, 'cf4f47e54fb55606755e65b1f837697edca6ac3bd8f3a67497ebea9514bfb82d'), 'ThirdParty/Fonts/SmileySans/SmileySans-Oblique.ttf': (2629764, 'b447d7e781f08bc95c4c9f23ba71ed2b8ebb639aa7184485c71c4ca5afcd25c4'), 'Sources/VideoMedia/CoverDisplayTypeface.swift': (1564881, '8e2500a885e85ea6f28faa3dd36ce6c860b8d2c216089832cb4616e2e92783b8'), 'ThirdParty/Fonts/DouyinSans/DouyinSansBold.ttf': (1919404, 'fbecfacdfac33982774e301073a8d357a09c698cd3134bb6ddec0f5bfc268fa1')}
           FONT_LICENSES={'ThirdParty/Fonts/SmileySans/LICENSE': (4422, '9401f4050f1b66c26b6ccdc8b0e14a3c1cc37aac122eda84386f25854a9bec72'), 'ThirdParty/Fonts/DouyinSans/LICENSE': (4455, 'a6d5700a002ea32bcfbe3310253d603997683dac8ac63777e375d06c07c30ea6')}
@@ -77,7 +77,7 @@ jobs:
           assert set(current)==set(baseline)
           assert {name for name in baseline if current[name]!=baseline[name]}==REVIEWED
           unchanged={name:item for name,item in baseline.items() if name not in REVIEWED}
-          assert len(unchanged)==334 and fingerprint(unchanged)=='6f9d08601a770f4d73ad27c198c6a35dda394e6b5ee22ba0cd2b049aa205c0f3'
+          assert len(unchanged)==333 and fingerprint(unchanged)=='10945f87f11023c904562c6318c5f6f2724e8ca28346b8dbf5cbc754b9e77a9c'
           assert all(current[name]==item for name,item in unchanged.items())
           assert all((root/name).read_bytes()==subprocess.check_output(['git','show',BASE+':'+name],cwd=root) for name in METADATA)
           assert '整体内容指纹：`'+fingerprint(current)+'`' in manifest
@@ -123,6 +123,12 @@ jobs:
                   print(captured[-9000:].decode('utf-8',errors='replace'),file=sys.stderr);raise
               assert len(result.stdout.encode())<=16*1024*1024
               if result.returncode:
+                  failure_lines=[line for line in result.stdout.splitlines() if re.search(r"(?:\berror:|Test (?:Case|Suite) '[^\r\n]*' failed\b)",line)]
+                  diagnostic='\n'.join(failure_lines).encode('utf-8',errors='replace')
+                  diagnostic_limit=256*1024
+                  print('public_failure_diagnostics_begin label='+label+' matched_lines='+str(len(failure_lines))+' bytes='+str(len(diagnostic))+' truncated='+str(len(diagnostic)>diagnostic_limit).lower(),file=sys.stderr)
+                  print(diagnostic[:diagnostic_limit].decode('utf-8',errors='replace'),file=sys.stderr)
+                  print('public_failure_diagnostics_end',file=sys.stderr)
                   print(result.stdout.encode('utf-8',errors='replace')[-9000:].decode('utf-8',errors='replace'),file=sys.stderr)
                   raise RuntimeError(label+' failed')
               print(label+'_passed=true elapsed_seconds='+format(time.monotonic()-started,'.3f'))
@@ -161,7 +167,7 @@ jobs:
           execute([sys.executable,'-B',str(root/'scripts/embed_cover_typeface.py'),'--check'],30,'public_embedded_font_reproduction')
           execute([sys.executable,'-B',str(root/'scripts/embed_cover_typeface.py'),'--display','--check'],30,'public_display_font_reproduction')
           text=('当前公开源码实际执行旧110个保留方法、5个相机合同方法及3个受影响AgentSchemas方法，共118个唯一Native方法，started/passed各一次，无失败或跳过；Release CLI与正常公开配方四件、完整解码和含源冷恢复通过。\n\n'
-                '完整344个payload按ed1cac3不可变清单校验，只更新9个相机及受影响schema合同/测试路径与本workflow，其余334个原字节保留；Python实现、普通生产配方、Package、双字体及网站不变。\n\n'
+                '完整344个payload按ed1cac3不可变清单校验，只更新10个相机及受影响schema/插件package合同和测试路径与本workflow，其余333个原字节保留；Python实现、普通生产配方、Package、双字体及网站不变。\n\n'
                 '公开包只有可编辑合同与普通SDK，不包含私有三维绘制器、动森模型/原纹理、豆子姐IP或已签高级二进制；本CI不授新动森近景运镜、场景视觉、声音字幕及整片审核。\n')
           with open(os.environ['GITHUB_STEP_SUMMARY'],'a') as stream:stream.write(text)
           print('current_native_rules='+str(len(expected))+' retained_native_rules=110 current_camera_rules=5 affected_schema_rules=3 current_python_rules=0 current_release_cli_builds=1 ordinary_public_production_smoke=true embedded_font_reproduced=true display_font_reproduced=true camera_media_accepted=false acnh_media_accepted=false listening_accepted=false review=false')
