@@ -148,7 +148,7 @@ final class PluginPackageTests:XCTestCase {
     func testCurrentServiceSchemasUseMatchingPublicationDefaultsAndKeepExplicitLegacySelection()throws {
         XCTAssertEqual(try PluginInputCompatibility.publicationSchema(pluginID:"video.game",requested:"12"),12)
         XCTAssertEqual(try PluginInputCompatibility.publicationSchema(pluginID:"video.game",requested:"13"),13)
-        for (id,schema,legacy) in [("video.game",14,2),("video.cartoon",8,1)] {
+        for (id,schema,legacy) in [("video.game",16,2),("video.cartoon",8,1)] {
             let (manifest,requests,description)=try currentProbe(id,schema)
             let transcript=try probeTranscript(requests,description)
             var defaultManifest=manifest

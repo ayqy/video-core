@@ -129,6 +129,149 @@ final class ModelSceneContractTests: XCTestCase {
         XCTAssertEqual(try cold.read().projects.first?.current.scenes[0].modelScene3D,model)
         for asset in f.assets {XCTAssertEqual(try Data(contentsOf:cold.assetURL(asset)),try Data(contentsOf:f.repository.assetURL(asset)))}
     }
+    func testWaterSurfaceUsesExplicitBoundedOriginalIDsAndPreservesLegacyBytes() throws {
+        let f=try fixture();defer{try? FileManager.default.removeItem(at:f.root)}
+        let legacy=Data(#"{"normalEncoding":"redGreenPositiveZ","normalIntensityByMaterialID":{"bodyMaterial":0.35},"vertexColors":"source"}"#.utf8)
+        let old=try Codec.decoder().decode(ModelMaterialInterpretation.self,from:legacy)
+        XCTAssertNil(old.waterSurfaceByMaterialID);XCTAssertEqual(try Codec.data(old),legacy)
+        var model=f.model;model.instances[0].materialInterpretation=old
+        let oldDigest=try model.contentDigest(durationFrames:21),bank=try PluginModelBankManifest(scene:model,durationFrames:21)
+        let water=ModelWaterSurface(baseColor:"#47AAA9",reflectionColor:"#C1E8E4",wavelength:0.8,flowSpeed:0.035)
+        model.instances[0].materialInterpretation!.waterSurfaceByMaterialID=["bodyMaterial":water]
+        XCTAssertNoThrow(try model.validate(durationFrames:21,assets:f.assets))
+        XCTAssertNotEqual(try model.contentDigest(durationFrames:21),oldDigest)
+        XCTAssertEqual(try PluginModelBankManifest(scene:model,durationFrames:21),bank)
+        XCTAssertEqual(try Codec.decoder().decode(ModelScene3D.self,from:Codec.data(model)),model)
+        for (length,speed) in [(0.05,0.0),(20.0,2.0)] {
+            var changed=model;changed.instances[0].materialInterpretation!.waterSurfaceByMaterialID!["bodyMaterial"] = .init(baseColor:"#abcdef",reflectionColor:"#012345",wavelength:length,flowSpeed:speed)
+            XCTAssertNoThrow(try changed.validate(durationFrames:21,assets:f.assets))
+        }
+        for field in ["baseColor","reflectionColor","wavelength","flowSpeed","missing","spaced","empty","rgb","cutout"] {
+            var changed=model
+            switch field {
+            case "baseColor":changed.instances[0].materialInterpretation!.waterSurfaceByMaterialID!["bodyMaterial"]!.baseColor="47AAA9"
+            case "reflectionColor":changed.instances[0].materialInterpretation!.waterSurfaceByMaterialID!["bodyMaterial"]!.reflectionColor="#C1E8EG"
+            case "wavelength":changed.instances[0].materialInterpretation!.waterSurfaceByMaterialID!["bodyMaterial"]!.wavelength=0.049
+            case "flowSpeed":changed.instances[0].materialInterpretation!.waterSurfaceByMaterialID!["bodyMaterial"]!.flowSpeed=2.001
+            case "missing":changed.instances[0].materialInterpretation!.waterSurfaceByMaterialID=["guessed":water]
+            case "spaced":changed.instances[0].materialInterpretation!.waterSurfaceByMaterialID=[" bodyMaterial":water]
+            case "empty":changed.instances[0].materialInterpretation!.waterSurfaceByMaterialID=[:]
+            case "rgb":changed.instances[0].materialInterpretation!.normalEncoding = .rgb
+            default:changed.instances[0].materialInterpretation!.alphaCutoutMaterialIDs=["bodyMaterial"]
+            }
+            XCTAssertThrowsError(try changed.validate(durationFrames:21,assets:f.assets),field)
+        }
+        for number in [-Double.infinity,Double.nan,Double.infinity,-1.0,20.01] {
+            var invalid=water;invalid.wavelength=number;XCTAssertThrowsError(try invalid.validate())
+        }
+        for number in [-Double.infinity,Double.nan,Double.infinity,-0.01,2.01] {
+            var invalid=water;invalid.flowSpeed=number;XCTAssertThrowsError(try invalid.validate())
+        }
+        for invalid in [
+            ##"{"baseColor":"#47AAA9","reflectionColor":"#C1E8E4","wavelength":0.8}"##,
+            ##"{"baseColor":"#47AAA9","reflectionColor":"#C1E8E4","wavelength":0.8,"flowSpeed":0,"strength":0.35}"##,
+            ##"{"baseColor":"#47AAA9","reflectionColor":"#C1E8E4","wavelength":null,"flowSpeed":0}"##,
+            ##"{"baseColor":"#47AAA9","reflectionColor":"#C1E8E4","wavelength":"0.8","flowSpeed":0}"##,
+            ##"{"baseColor":"#47AAA9","reflectionColor":"#C1E8E4","wavelength":0.01,"flowSpeed":0}"##] {
+            XCTAssertThrowsError(try Codec.decoder().decode(ModelWaterSurface.self,from:Data(invalid.utf8)))
+        }
+        XCTAssertThrowsError(try Codec.decoder().decode(ModelMaterialInterpretation.self,from:Data(#"{"vertexColors":"source","normalEncoding":"redGreenPositiveZ","waterSurfaceByMaterialID":null}"#.utf8)))
+        var bounded=f.model;bounded.instances[0].resource.inspection.materials=(0..<129).map{.init(id:"material\($0)",effectID:"surfaceEffect")}
+        bounded.instances[0].materialInterpretation = .init(normalEncoding:.redGreenPositiveZ,waterSurfaceByMaterialID:Dictionary(uniqueKeysWithValues:(0..<128).map{("material\($0)",water)}))
+        XCTAssertNoThrow(try bounded.validate(durationFrames:21,assets:f.assets))
+        bounded.instances[0].materialInterpretation!.waterSurfaceByMaterialID!["material128"]=water
+        XCTAssertThrowsError(try bounded.validate(durationFrames:21,assets:f.assets))
+    }
+    func testWaterSurfaceCASLocksAndColdRestorePreserveAllOriginalAssets() throws {
+        let f=try fixture();defer{try? FileManager.default.removeItem(at:f.root)}
+        let original=scene(f);var project=project(original,f)
+        project.revisions[0].review.sound=true;project.revisions[0].review.fullPreview=true
+        try f.repository.transaction{$0.projects=[project]}
+        var changed=original
+        let water=ModelWaterSurface(baseColor:"#47AAA9",reflectionColor:"#C1E8E4",wavelength:0.8,flowSpeed:0.035)
+        changed.modelScene3D!.instances[0].materialInterpretation = .init(normalEncoding:.redGreenPositiveZ,normalIntensityByMaterialID:["bodyMaterial":0.35],waterSurfaceByMaterialID:["bodyMaterial":water])
+        let before=try Codec.data(f.repository.read())
+        var invalid=changed;invalid.modelScene3D!.instances[0].materialInterpretation!.waterSurfaceByMaterialID=["missing":water]
+        XCTAssertThrowsError(try f.repository.performAgentMutation(command:"edit apply",data:input(project,edits:[.replaceScene(original.id,invalid)]),principal:"owner",requestID:Codec.id()))
+        XCTAssertEqual(try Codec.data(f.repository.read()),before)
+        let data=try input(project,edits:[.replaceScene(original.id,changed)])
+        _=try AgentMutationExecutor.preview(command:"edit apply",data:data,database:f.repository.read(),principal:"owner",repository:f.repository)
+        XCTAssertEqual(try Codec.data(f.repository.read()),before)
+        let answer=try f.repository.performAgentMutation(command:"edit apply",data:data,principal:"owner",requestID:"water-surface-save")
+        XCTAssertEqual(answer,try f.repository.performAgentMutation(command:"edit apply",data:data,principal:"owner",requestID:"water-surface-save"))
+        let current=try XCTUnwrap(f.repository.read().projects.first?.current)
+        XCTAssertEqual(current.scenes[0].modelScene3D,changed.modelScene3D)
+        XCTAssertFalse(current.review.sound);XCTAssertFalse(current.review.fullPreview)
+        XCTAssertEqual(Set((current.dependencies?.records ?? []).filter{$0.kind == .asset}.map{$0.asset!.id}),f.model.assetIDs)
+        let locked=try Editor.apply([.lockModelInstance(original.id,"actor",true)],to:project,baseRevision:project.current.id,assets:f.assets,message:"锁定原实例")
+        var lockedChange=locked.current.scenes[0];lockedChange.modelScene3D!.instances[0].materialInterpretation=changed.modelScene3D!.instances[0].materialInterpretation
+        XCTAssertThrowsError(try Editor.apply([.replaceScene(original.id,lockedChange)],to:locked,baseRevision:locked.current.id,assets:f.assets,message:"锁定时不能改变水面解释"))
+        let restored=try Repository.restore(f.repository.backup(),to:f.root.appendingPathComponent("water-surface-cold"))
+        let cold=try XCTUnwrap(restored.read().projects.first?.current)
+        XCTAssertEqual(try cold.contentDigest(),try current.contentDigest());XCTAssertEqual(cold.scenes[0].modelScene3D,changed.modelScene3D)
+        for asset in f.assets {XCTAssertEqual(try Data(contentsOf:restored.assetURL(asset)),try Data(contentsOf:f.repository.assetURL(asset)))}
+    }
+    func testNormalIntensityUsesBoundedOriginalIDsAndPreservesLegacySourceBytes() throws {
+        let f=try fixture();defer{try? FileManager.default.removeItem(at:f.root)}
+        let legacy=Data(#"{"normalEncoding":"rgb","opaqueDiffuseMaterialIDs":["bodyMaterial"],"vertexColors":"source"}"#.utf8)
+        let old=try Codec.decoder().decode(ModelMaterialInterpretation.self,from:legacy)
+        XCTAssertNil(old.normalIntensityByMaterialID);XCTAssertEqual(try Codec.data(old),legacy)
+        var model=f.model;model.instances[0].materialInterpretation=old
+        let oldDigest=try model.contentDigest(durationFrames:21),bank=try PluginModelBankManifest(scene:model,durationFrames:21)
+        for intensity in [0.0,0.25,1.0] {
+            model.instances[0].materialInterpretation!.normalIntensityByMaterialID=["bodyMaterial":intensity]
+            XCTAssertNoThrow(try model.validate(durationFrames:21,assets:f.assets))
+            XCTAssertNotEqual(try model.contentDigest(durationFrames:21),oldDigest)
+            XCTAssertEqual(try PluginModelBankManifest(scene:model,durationFrames:21),bank)
+            XCTAssertEqual(try Codec.decoder().decode(ModelScene3D.self,from:Codec.data(model)),model)
+        }
+        let invalidMaps:[[String:Double]]=[[:],["missing":0.5],[" bodyMaterial":0.5],["bodyMaterial\n":0.5],
+            [String(repeating:"x",count:161):0.5],["bodyMaterial":-0.01],["bodyMaterial":1.01],
+            ["bodyMaterial":.nan],["bodyMaterial":.infinity],["bodyMaterial":-Double.infinity]]
+        for values in invalidMaps {
+            var invalid=model;invalid.instances[0].materialInterpretation!.normalIntensityByMaterialID=values
+            XCTAssertThrowsError(try invalid.validate(durationFrames:21,assets:f.assets))
+        }
+        for invalid in [#"{"normalEncoding":"rgb","vertexColors":"source","normalIntensityByMaterialID":null}"#,
+            #"{"normalEncoding":"rgb","vertexColors":"source","normalIntensityByMaterialID":{"bodyMaterial":"0.5"}}"#,
+            #"{"normalEncoding":"rgb","vertexColors":"source","normalIntensity":0.5}"#] {
+            XCTAssertThrowsError(try Codec.decoder().decode(ModelMaterialInterpretation.self,from:Data(invalid.utf8)))
+        }
+        var bounded=f.model
+        bounded.instances[0].resource.inspection.materials=(0..<129).map{.init(id:"material\($0)",effectID:"surfaceEffect")}
+        bounded.instances[0].materialInterpretation = .init(normalIntensityByMaterialID:Dictionary(uniqueKeysWithValues:(0..<128).map{("material\($0)",0.25)}))
+        XCTAssertNoThrow(try bounded.validate(durationFrames:21,assets:f.assets))
+        bounded.instances[0].materialInterpretation!.normalIntensityByMaterialID!["material128"]=0.25
+        XCTAssertThrowsError(try bounded.validate(durationFrames:21,assets:f.assets))
+    }
+    func testNormalIntensityCASLocksAndColdRestorePreserveAllOriginalAssets() throws {
+        let f=try fixture();defer{try? FileManager.default.removeItem(at:f.root)}
+        let original=scene(f);var project=project(original,f)
+        project.revisions[0].review.sound=true;project.revisions[0].review.fullPreview=true
+        try f.repository.transaction{$0.projects=[project]}
+        var changed=original
+        changed.modelScene3D!.instances[0].materialInterpretation = .init(normalIntensityByMaterialID:["bodyMaterial":0.25])
+        let before=try Codec.data(f.repository.read())
+        var invalid=changed;invalid.modelScene3D!.instances[0].materialInterpretation!.normalIntensityByMaterialID=["missing":0.25]
+        XCTAssertThrowsError(try f.repository.performAgentMutation(command:"edit apply",data:input(project,edits:[.replaceScene(original.id,invalid)]),principal:"owner",requestID:Codec.id()))
+        XCTAssertEqual(try Codec.data(f.repository.read()),before)
+        let data=try input(project,edits:[.replaceScene(original.id,changed)])
+        _=try AgentMutationExecutor.preview(command:"edit apply",data:data,database:f.repository.read(),principal:"owner",repository:f.repository)
+        XCTAssertEqual(try Codec.data(f.repository.read()),before)
+        let answer=try f.repository.performAgentMutation(command:"edit apply",data:data,principal:"owner",requestID:"normal-intensity-save")
+        XCTAssertEqual(answer,try f.repository.performAgentMutation(command:"edit apply",data:data,principal:"owner",requestID:"normal-intensity-save"))
+        let current=try XCTUnwrap(f.repository.read().projects.first?.current)
+        XCTAssertEqual(current.scenes[0].modelScene3D,changed.modelScene3D)
+        XCTAssertFalse(current.review.sound);XCTAssertFalse(current.review.fullPreview)
+        XCTAssertEqual(Set((current.dependencies?.records ?? []).filter{$0.kind == .asset}.map{$0.asset!.id}),f.model.assetIDs)
+        let locked=try Editor.apply([.lockModelInstance(original.id,"actor",true)],to:project,baseRevision:project.current.id,assets:f.assets,message:"锁定原实例")
+        var lockedChange=locked.current.scenes[0];lockedChange.modelScene3D!.instances[0].materialInterpretation=changed.modelScene3D!.instances[0].materialInterpretation
+        XCTAssertThrowsError(try Editor.apply([.replaceScene(original.id,lockedChange)],to:locked,baseRevision:locked.current.id,assets:f.assets,message:"锁定时不能改变法线强度"))
+        let restored=try Repository.restore(f.repository.backup(),to:f.root.appendingPathComponent("normal-intensity-cold"))
+        let cold=try XCTUnwrap(restored.read().projects.first?.current)
+        XCTAssertEqual(try cold.contentDigest(),try current.contentDigest());XCTAssertEqual(cold.scenes[0].modelScene3D,changed.modelScene3D)
+        for asset in f.assets {XCTAssertEqual(try Data(contentsOf:restored.assetURL(asset)),try Data(contentsOf:f.repository.assetURL(asset)))}
+    }
     func testAlphaCutoutUsesExplicitBoundedOriginalIDsAndKeepsLegacyBytes()throws {
         let f=try fixture();defer{try? FileManager.default.removeItem(at:f.root)}
         let legacy=Data(#"{"normalEncoding":"rgb","opaqueDiffuseMaterialIDs":["bodyMaterial"],"vertexColors":"source"}"#.utf8)

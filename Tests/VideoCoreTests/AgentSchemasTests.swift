@@ -34,6 +34,18 @@ final class AgentSchemasTests:XCTestCase {
         XCTAssertEqual(try AgentContract.describe("backup create").idempotency,"filesystem_export_non_atomic_no_request_replay")
         XCTAssertEqual(try AgentContract.describe("script create").idempotency,"atomic_database_request_receipt")
     }
+    func testWaterSurfaceDiscoveryBindsRequiredColorsWorldUnitsAndStrictMap() throws {
+        let defs=AgentSchemas.definitions(),plugin=PluginRPCSchemas.modelWaterSurfaceDefinitions()
+        let water=try XCTUnwrap(defs["ModelWaterSurface"])
+        XCTAssertEqual(water,plugin["ModelWaterSurface"])
+        let map=try XCTUnwrap(defs["ModelMaterialInterpretation"]?.object?["properties"]?.object?["waterSurfaceByMaterialID"])
+        XCTAssertEqual(map,plugin["ModelMaterialInterpretation"]?.object?["properties"]?.object?["waterSurfaceByMaterialID"])
+        XCTAssertNil(map.object?["anyOf"]);XCTAssertEqual(map.object?["minProperties"],.number(1));XCTAssertEqual(map.object?["maxProperties"],.number(128))
+        XCTAssertEqual(water.object?["required"],.array(["baseColor","reflectionColor","wavelength","flowSpeed"].map(AgentValue.string)))
+        XCTAssertEqual(water.object?["additionalProperties"],.boolean(false));XCTAssertNil(water.object?["properties"]?.object?["strength"])
+        let value=ModelWaterSurface(baseColor:"#47AAA9",reflectionColor:"#C1E8E4",wavelength:0.8,flowSpeed:0.035)
+        try verify(try self.value(value),schema:AgentSchemas.shape("ModelWaterSurface"),defs:defs)
+    }
     private func value<T:Encodable>(_ value:T)throws->AgentValue {try Codec.decoder().decode(AgentValue.self,from:Codec.data(value))}
     private func verify(_ value:AgentValue,schema:AgentValue,defs:[String:AgentValue])throws {
         guard let shape=schema.object else{return XCTFail("schema not object")}

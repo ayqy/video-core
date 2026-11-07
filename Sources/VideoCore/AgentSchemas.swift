@@ -97,6 +97,15 @@ public enum AgentSchemas {
         }
         result.merge(PluginRPCSchemas.modelCameraMotionDefinitions(),uniquingKeysWith:{$1})
         result.merge(PluginRPCSchemas.modelDialogueObstacleDefinitions(),uniquingKeysWith:{$1})
+        // Extend the Host's existing nullable legacy fields without replacing
+        // their record with the stricter plugin wire declaration.
+        var material=result["ModelMaterialInterpretation"]!.object!,materialProperties=material["properties"]!.object!
+        materialProperties["normalIntensityByMaterialID"] = PluginRPCSchemas.modelNormalIntensityDefinitions()["ModelMaterialInterpretation"]!.object!["properties"]!.object!["normalIntensityByMaterialID"]
+        let waterDefinitions=PluginRPCSchemas.modelWaterSurfaceDefinitions()
+        materialProperties["waterSurfaceByMaterialID"] = waterDefinitions["ModelMaterialInterpretation"]!.object!["properties"]!.object!["waterSurfaceByMaterialID"]
+        material["allOf"] = waterDefinitions["ModelMaterialInterpretation"]!.object!["allOf"]
+        result["ModelWaterSurface"] = waterDefinitions["ModelWaterSurface"]
+        material["properties"] = .object(materialProperties);result["ModelMaterialInterpretation"] = .object(material)
         result["ModelLightKind"] = .object(["type":.string("string"),"enum":.array(["ambient","directional","omni"].map(AgentValue.string))])
         result["ModelVertexColorUsage"] = .object(["type":.string("string"),"enum":.array(ModelVertexColorUsage.allCases.map { .string($0.rawValue) })])
         result["ModelNormalTextureEncoding"] = .object(["type":.string("string"),"enum":.array(ModelNormalTextureEncoding.allCases.map { .string($0.rawValue) })])

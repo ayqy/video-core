@@ -47,6 +47,33 @@ public struct ModelTransform3D: Codable, Hashable, Sendable {
 /// a game name, inventory entry, texture filename or sampled pixel values.
 public enum ModelVertexColorUsage: String, Codable, Hashable, CaseIterable, Sendable { case source, ignored }
 public enum ModelNormalTextureEncoding: String, Codable, Hashable, CaseIterable, Sendable { case rgb, redGreenPositiveZ }
+/// Explicit water presentation over the selected original normal texture. Colors
+/// are sRGB; wavelength and flow speed use world metres and source-frame seconds.
+/// This adapter does not claim to reconstruct an absent original game shader.
+public struct ModelWaterSurface: Codable, Hashable, Sendable {
+    public var baseColor: String
+    public var reflectionColor: String
+    public var wavelength: Double
+    public var flowSpeed: Double
+    public init(baseColor:String, reflectionColor:String, wavelength:Double, flowSpeed:Double) {
+        self.baseColor=baseColor;self.reflectionColor=reflectionColor;self.wavelength=wavelength;self.flowSpeed=flowSpeed
+    }
+    private enum CodingKeys:String,CodingKey {case baseColor,reflectionColor,wavelength,flowSpeed}
+    public init(from decoder:Decoder)throws {
+        try ModelStoryDecoding3D.keys(decoder,required:["baseColor","reflectionColor","wavelength","flowSpeed"])
+        let c=try decoder.container(keyedBy:CodingKeys.self)
+        baseColor=try c.decode(String.self,forKey:.baseColor);reflectionColor=try c.decode(String.self,forKey:.reflectionColor)
+        wavelength=try c.decode(Double.self,forKey:.wavelength);flowSpeed=try c.decode(Double.self,forKey:.flowSpeed)
+        try validate()
+    }
+    public func validate() throws {
+        let colors=[baseColor,reflectionColor]
+        guard colors.allSatisfy({$0.utf8.count==7 && $0.range(of:"^#[A-Fa-f0-9]{6}$",options:.regularExpression) != nil}),
+              wavelength.isFinite,(0.05...20).contains(wavelength),flowSpeed.isFinite,(0...2).contains(flowSpeed) else {
+            throw VideoError.invalid("水面须明确指定#RRGGBB sRGB颜色、0.05至20米波长及0至2米每秒的有限流速")
+        }
+    }
+}
 public struct ModelMaterialInterpretation: Codable, Hashable, Sendable {
     public var vertexColors: ModelVertexColorUsage
     public var normalEncoding: ModelNormalTextureEncoding
@@ -57,16 +84,25 @@ public struct ModelMaterialInterpretation: Codable, Hashable, Sendable {
     /// cut out below 0.5. May overlap opaque diffuse IDs; nil retains source behavior.
     /// This visual interpretation requires game12 and never rewrites source bytes.
     public var alphaCutoutMaterialIDs: [String]?
-    public init(vertexColors: ModelVertexColorUsage = .source, normalEncoding: ModelNormalTextureEncoding = .rgb, opaqueDiffuseMaterialIDs: [String]? = nil, alphaCutoutMaterialIDs: [String]? = nil) {
-        self.vertexColors=vertexColors;self.normalEncoding=normalEncoding;self.opaqueDiffuseMaterialIDs=opaqueDiffuseMaterialIDs;self.alphaCutoutMaterialIDs=alphaCutoutMaterialIDs
+    /// Explicit original material IDs and bounded native normal intensity. Nil
+    /// retains each source material's intensity and never rewrites source pixels.
+    /// New declarations require game15; older endpoints must reject them.
+    public var normalIntensityByMaterialID: [String: Double]?
+    /// Explicit original material IDs for source-frame deterministic water.
+    /// Nil retains the exact old path; new declarations require game16.
+    public var waterSurfaceByMaterialID: [String: ModelWaterSurface]?
+    public init(vertexColors: ModelVertexColorUsage = .source, normalEncoding: ModelNormalTextureEncoding = .rgb, opaqueDiffuseMaterialIDs: [String]? = nil, alphaCutoutMaterialIDs: [String]? = nil, normalIntensityByMaterialID: [String: Double]? = nil, waterSurfaceByMaterialID: [String:ModelWaterSurface]? = nil) {
+        self.vertexColors=vertexColors;self.normalEncoding=normalEncoding;self.opaqueDiffuseMaterialIDs=opaqueDiffuseMaterialIDs;self.alphaCutoutMaterialIDs=alphaCutoutMaterialIDs;self.normalIntensityByMaterialID=normalIntensityByMaterialID;self.waterSurfaceByMaterialID=waterSurfaceByMaterialID
     }
-    private enum CodingKeys:String,CodingKey {case vertexColors,normalEncoding,opaqueDiffuseMaterialIDs,alphaCutoutMaterialIDs}
+    private enum CodingKeys:String,CodingKey {case vertexColors,normalEncoding,opaqueDiffuseMaterialIDs,alphaCutoutMaterialIDs,normalIntensityByMaterialID,waterSurfaceByMaterialID}
     public init(from decoder:Decoder)throws {
-        try ModelStoryDecoding3D.keys(decoder,required:["vertexColors","normalEncoding"],optional:["opaqueDiffuseMaterialIDs","alphaCutoutMaterialIDs"])
+        try ModelStoryDecoding3D.keys(decoder,required:["vertexColors","normalEncoding"],optional:["opaqueDiffuseMaterialIDs","alphaCutoutMaterialIDs","normalIntensityByMaterialID","waterSurfaceByMaterialID"])
         let c=try decoder.container(keyedBy:CodingKeys.self)
         vertexColors=try c.decode(ModelVertexColorUsage.self,forKey:.vertexColors);normalEncoding=try c.decode(ModelNormalTextureEncoding.self,forKey:.normalEncoding)
         opaqueDiffuseMaterialIDs=try c.decodeIfPresent([String].self,forKey:.opaqueDiffuseMaterialIDs)
         alphaCutoutMaterialIDs=try c.decodeIfPresent([String].self,forKey:.alphaCutoutMaterialIDs)
+        normalIntensityByMaterialID=c.contains(.normalIntensityByMaterialID) ? try c.decode([String:Double].self,forKey:.normalIntensityByMaterialID):nil
+        waterSurfaceByMaterialID=c.contains(.waterSurfaceByMaterialID) ? try c.decode([String:ModelWaterSurface].self,forKey:.waterSurfaceByMaterialID):nil
     }
 }
 /// An explicit step change between mutually exclusive original DAE nodes.
@@ -330,6 +366,23 @@ public struct ModelScene3D: Codable, Equatable, Sendable {
                     guard let asset=assets.first(where:{$0.id==texture.assetID}),asset.mediaType=="image" || asset.mediaType.hasPrefix("image/") else { throw VideoError.invalid("三维纹理须绑定已入库图片") }
                 }
             }
+            if let intensities=instance.materialInterpretation?.normalIntensityByMaterialID {
+                let sourceIDs=Set(instance.resource.inspection.materials.map(\.id))
+                guard (1...128).contains(intensities.count),intensities.allSatisfy({ id,value in
+                    PluginProtocolRules.text(id,maximum:160) && id==id.trimmingCharacters(in:.whitespacesAndNewlines)
+                    && sourceIDs.contains(id) && value.isFinite && (0...1).contains(value)
+                }) else {throw VideoError.invalid("法线强度须指定1至128个实际原材质标识，每项为0至1的有限数")}
+            }
+            if let surfaces=instance.materialInterpretation?.waterSurfaceByMaterialID {
+                let sourceIDs=Set(instance.resource.inspection.materials.map(\.id))
+                let cutouts=Set(instance.materialInterpretation?.alphaCutoutMaterialIDs ?? [])
+                guard instance.materialInterpretation?.normalEncoding == .redGreenPositiveZ,
+                      (1...128).contains(surfaces.count),surfaces.keys.allSatisfy({id in
+                          PluginProtocolRules.text(id,maximum:160) && id==id.trimmingCharacters(in:.whitespacesAndNewlines)
+                          && sourceIDs.contains(id) && !cutouts.contains(id)
+                      }) else {throw VideoError.invalid("水面须使用RG正Z法线并指定1至128个实际原材质，不能与同材质透明裁切混用")}
+                for surface in surfaces.values {try surface.validate()}
+            }
             for reference in [instance.resource.model]+Array(instance.resource.textures.values) {
                 guard bindings[reference.assetID]==nil || bindings[reference.assetID]==reference else { throw VideoError.invalid("同一模型场景不能为同一素材声明不同字节") }
                 bindings[reference.assetID]=reference
@@ -431,6 +484,19 @@ public enum ModelScene3DSchema {
 public enum ModelAlphaCutoutSchema {
     public static let records:[String:String] = [
         "ModelMaterialInterpretation":"vertexColors:ModelVertexColorUsage normalEncoding:ModelNormalTextureEncoding opaqueDiffuseMaterialIDs?:[s] alphaCutoutMaterialIDs?:[s]"
+    ]
+}
+/// Additive Host/game15 only. Keep game9–14 material records unchanged.
+public enum ModelNormalIntensitySchema {
+    public static let records:[String:String] = [
+        "ModelMaterialInterpretation":"vertexColors:ModelVertexColorUsage normalEncoding:ModelNormalTextureEncoding opaqueDiffuseMaterialIDs?:[s] alphaCutoutMaterialIDs?:[s] normalIntensityByMaterialID?:{n}"
+    ]
+}
+/// Additive Host/game16 only. All game9–15 records remain frozen.
+public enum ModelWaterSurfaceSchema {
+    public static let records:[String:String] = [
+        "ModelWaterSurface":"baseColor:s reflectionColor:s wavelength:n flowSpeed:n",
+        "ModelMaterialInterpretation":"vertexColors:ModelVertexColorUsage normalEncoding:ModelNormalTextureEncoding opaqueDiffuseMaterialIDs?:[s] alphaCutoutMaterialIDs?:[s] normalIntensityByMaterialID?:{n} waterSurfaceByMaterialID?:{ModelWaterSurface}"
     ]
 }
 /// Additive Host/game13 camera motion. Game9–12 camera records stay exact.

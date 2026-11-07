@@ -137,9 +137,9 @@ final class PluginProtocolTests:XCTestCase {
         XCTAssertEqual(descriptor.inputSchema.object?["$defs"]?.object?["KnowledgePayoffMatrix"], current["KnowledgePayoffMatrix"])
     }
     func testPublicationSchemaSelectionUsesCurrentDefaultsAndRetainsExplicitLegacyRequests() throws {
-        XCTAssertEqual(try PluginInputCompatibility.publicationSchema(pluginID: "video.game"), 14)
+        XCTAssertEqual(try PluginInputCompatibility.publicationSchema(pluginID: "video.game"), 16)
         XCTAssertEqual(try PluginInputCompatibility.publicationSchema(pluginID: "video.cartoon"), 8)
-        for version in [1, 2, 3, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14] {
+        for version in [1, 2, 3, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16] {
             XCTAssertEqual(try PluginInputCompatibility.publicationSchema(pluginID: "video.game", requested: String(version)), version)
         }
         for version in [1, 4, 5, 6, 7, 8] {
@@ -154,8 +154,59 @@ final class PluginProtocolTests:XCTestCase {
         XCTAssertThrowsError(try PluginInputCompatibility.publicationSchema(pluginID: "video.cartoon", requested: "3"))
         XCTAssertThrowsError(try PluginInputCompatibility.publicationSchema(pluginID: "video.cartoon", requested: "9"))
         XCTAssertThrowsError(try PluginInputCompatibility.publicationSchema(pluginID: "video.cartoon", requested: "10"))
-        XCTAssertThrowsError(try PluginInputCompatibility.publicationSchema(pluginID: "video.game", requested: "15"))
+        XCTAssertThrowsError(try PluginInputCompatibility.publicationSchema(pluginID: "video.game", requested: "17"))
         XCTAssertThrowsError(try PluginInputCompatibility.publicationSchema(pluginID: "video.cartoon", requested: "12"))
+    }
+    func testGameSixteenAddsExplicitWaterSurfaceAndPreservesEveryGameFifteenDefinition() throws {
+        var current=PluginRPCSchemas.definitions(inputSchemaVersion:16,pluginID:"video.game")
+        let previous=PluginRPCSchemas.definitions(inputSchemaVersion:15,pluginID:"video.game"),host=AgentSchemas.definitions()
+        let field=try XCTUnwrap(current["ModelMaterialInterpretation"]?.object?["properties"]?.object?["waterSurfaceByMaterialID"])
+        XCTAssertEqual(field,host["ModelMaterialInterpretation"]?.object?["properties"]?.object?["waterSurfaceByMaterialID"])
+        XCTAssertEqual(field.object?["type"],.string("object"));XCTAssertEqual(field.object?["minProperties"],.number(1));XCTAssertEqual(field.object?["maxProperties"],.number(128))
+        XCTAssertEqual(field.object?["additionalProperties"]?.object?["$ref"],.string("#/$defs/ModelWaterSurface"));XCTAssertNil(field.object?["anyOf"])
+        let water=try XCTUnwrap(current["ModelWaterSurface"]?.object),properties=try XCTUnwrap(water["properties"]?.object)
+        XCTAssertEqual(current["ModelWaterSurface"],host["ModelWaterSurface"])
+        XCTAssertEqual(water["required"],.array(["baseColor","reflectionColor","wavelength","flowSpeed"].map(AgentValue.string)))
+        XCTAssertEqual(water["additionalProperties"],.boolean(false))
+        for color in ["baseColor","reflectionColor"] {XCTAssertEqual(properties[color]?.object?["pattern"],.string("^#[A-Fa-f0-9]{6}$"))}
+        XCTAssertEqual(properties["wavelength"]?.object?["minimum"],.number(Decimal(string:"0.05")!));XCTAssertEqual(properties["wavelength"]?.object?["maximum"],.number(20))
+        XCTAssertEqual(properties["flowSpeed"]?.object?["minimum"],.number(0));XCTAssertEqual(properties["flowSpeed"]?.object?["maximum"],.number(2))
+        XCTAssertNotNil(current["ModelMaterialInterpretation"]?.object?["allOf"])
+        var material=try XCTUnwrap(current["ModelMaterialInterpretation"]?.object),fields=try XCTUnwrap(material["properties"]?.object)
+        fields.removeValue(forKey:"waterSurfaceByMaterialID");material["properties"] = .object(fields);material.removeValue(forKey:"allOf")
+        current["ModelMaterialInterpretation"] = .object(material);current.removeValue(forKey:"ModelWaterSurface")
+        XCTAssertEqual(try Codec.data(current),try Codec.data(previous),"game16仅增加显式水面，不改变任何game15发现定义")
+        for schema in 1...15 {
+            let old=PluginRPCSchemas.definitions(inputSchemaVersion:schema,pluginID:"video.game")
+            XCTAssertNil(old["ModelWaterSurface"]);XCTAssertNil(old["ModelMaterialInterpretation"]?.object?["properties"]?.object?["waterSurfaceByMaterialID"])
+        }
+        let cartoon=PluginRPCSchemas.definitions(inputSchemaVersion:8,pluginID:"video.cartoon")
+        XCTAssertNil(cartoon["ModelWaterSurface"]);XCTAssertNil(cartoon["ModelScene3D"])
+        let descriptor=PluginDescription(pluginID:"video.game",capabilityID:"game.simulate",version:"1.10.0",inputSchemaVersion:16)
+        XCTAssertFalse(descriptor.filesystemAccess);XCTAssertFalse(descriptor.networkAccess)
+        XCTAssertNotNil(descriptor.inputSchema.object?["properties"]?.object?["modelBankOperation"])
+        XCTAssertTrue(PluginInputCompatibility.supportsModelBank(pluginID:"video.game",inputSchema:16))
+    }
+    func testGameFifteenAddsOnlyBoundedNormalIntensityAndPreservesAllGameFourteenDefinitions() throws {
+        let old=PluginRPCSchemas.definitions(inputSchemaVersion:14,pluginID:"video.game"),host=AgentSchemas.definitions()
+        var current=PluginRPCSchemas.definitions(inputSchemaVersion:15,pluginID:"video.game")
+        let field=try XCTUnwrap(current["ModelMaterialInterpretation"]?.object?["properties"]?.object?["normalIntensityByMaterialID"])
+        XCTAssertEqual(field,host["ModelMaterialInterpretation"]?.object?["properties"]?.object?["normalIntensityByMaterialID"])
+        XCTAssertEqual(field.object?["type"],.string("object"));XCTAssertEqual(field.object?["minProperties"],.number(1));XCTAssertEqual(field.object?["maxProperties"],.number(128))
+        XCTAssertEqual(field.object?["additionalProperties"]?.object?["minimum"],.number(0));XCTAssertEqual(field.object?["additionalProperties"]?.object?["maximum"],.number(1))
+        XCTAssertEqual(field.object?["propertyNames"]?.object?["maxLength"],.number(160));XCTAssertNil(field.object?["anyOf"])
+        var record=try XCTUnwrap(current["ModelMaterialInterpretation"]?.object),properties=try XCTUnwrap(record["properties"]?.object)
+        properties.removeValue(forKey:"normalIntensityByMaterialID");record["properties"] = .object(properties);current["ModelMaterialInterpretation"] = .object(record)
+        XCTAssertEqual(try Codec.data(current),try Codec.data(old),"game15除唯一新增可选法线字段外继承game14全部发现字节")
+        for version in 9...14 {
+            let definitions=PluginRPCSchemas.definitions(inputSchemaVersion:version,pluginID:"video.game")
+            XCTAssertNil(definitions["ModelMaterialInterpretation"]?.object?["properties"]?.object?["normalIntensityByMaterialID"])
+            if version>=12 {XCTAssertEqual(try Codec.data(XCTUnwrap(definitions["ModelMaterialInterpretation"])),try Codec.data(XCTUnwrap(old["ModelMaterialInterpretation"])),"game12至14原材质schema保持字节")}
+        }
+        let descriptor=PluginDescription(pluginID:"video.game",capabilityID:"game.simulate",version:"1.9.0",inputSchemaVersion:15)
+        XCTAssertFalse(descriptor.filesystemAccess);XCTAssertFalse(descriptor.networkAccess)
+        XCTAssertNotNil(descriptor.inputSchema.object?["properties"]?.object?["modelBankOperation"])
+        XCTAssertTrue(PluginInputCompatibility.supportsModelBank(pluginID:"video.game",inputSchema:15))
     }
     func testGameFourteenDiscoversExplicitDialogueObstaclesWithoutChangingLegacySchemas() throws {
         let current=PluginRPCSchemas.definitions(inputSchemaVersion:14,pluginID:"video.game"),host=AgentSchemas.definitions()
