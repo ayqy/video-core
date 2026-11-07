@@ -293,8 +293,8 @@ public final class Repository: @unchecked Sendable {
     private func verifyArtifactFile(_ artifact:Artifact,components:[String],budget:inout Int,includeData:Bool=false)throws->Data {
         try verifyStoredFile(components:components,bytes:artifact.bytes,sha256:artifact.sha256,budget:&budget,includeData:includeData)
     }
-    private func verifyStoredFile(components:[String],bytes:Int,sha256:String,budget:inout Int,includeData:Bool=false)throws->Data {
-        guard bytes>=0,bytes<=budget,!components.isEmpty,components.allSatisfy({!$0.isEmpty && $0 != "." && $0 != ".." && !$0.contains("/") && !$0.contains("\\")}) else{throw VideoError.review("工作区文件路径或本次读取上限无效，原记录保留")}
+    private func verifyStoredFile(components:[String],bytes:Int?,sha256:String?,budget:inout Int,includeData:Bool=false,maximumBytes:Int?=nil)throws->Data {
+        guard budget>=0,bytes.map({$0>=0 && $0<=budget}) ?? true,!components.isEmpty,components.allSatisfy({!$0.isEmpty && $0 != "." && $0 != ".." && !$0.contains("/") && !$0.contains("\\")}) else{throw VideoError.review("工作区文件路径或本次读取上限无效，原记录保留")}
         // Opening each component relative to the previous descriptor prevents
         // both final-file and parent-directory symlinks, including internal ones.
         let base=open(root.path,O_RDONLY|O_DIRECTORY|O_NOFOLLOW)
@@ -305,27 +305,47 @@ public final class Repository: @unchecked Sendable {
         let file=openat(directory,components.last!,O_RDONLY|O_NOFOLLOW|O_NONBLOCK)
         guard file>=0 else{throw VideoError.review("工作区文件缺失或为链接")};defer{close(file)}
         var before=stat()
-        guard fstat(file,&before)==0,(before.st_mode & S_IFMT)==S_IFREG,before.st_nlink==1,before.st_size==Int64(bytes) else{throw VideoError.review("工作区文件类型、链接数或大小不符")}
-        budget -= bytes
+        guard fstat(file,&before)==0,(before.st_mode & S_IFMT)==S_IFREG,before.st_nlink==1,
+              before.st_size>=0,before.st_size<=Int64(budget),bytes.map({before.st_size==Int64($0)}) ?? true,
+              maximumBytes.map({before.st_size<=Int64($0)}) ?? true else{throw VideoError.review("工作区文件类型、链接数或大小不符")}
+        let actualBytes=Int(before.st_size)
+        budget -= actualBytes
         var digest=SHA256(),buffer=[UInt8](repeating:0,count:1024*1024),total=0,data=Data()
         while true {
             try Task.checkCancellation()
             let count=buffer.withUnsafeMutableBytes{Darwin.read(file,$0.baseAddress,$0.count)}
             guard count>=0 else{throw VideoError.review("工作区文件读取失败")}
             if count==0{break}
-            guard count<=bytes-total else{throw VideoError.review("工作区文件在校验中变化")}
+            guard count<=actualBytes-total else{throw VideoError.review("工作区文件在校验中变化")}
             total += count;let block=Data(buffer[0..<count]);digest.update(data:block);if includeData{data.append(block)}
         }
+        let actualDigest=digest.finalize().map({String(format:"%02x",$0)}).joined()
         var after=stat(),located=stat()
         guard fstat(file,&after)==0,fstatat(directory,components.last!,&located,AT_SYMLINK_NOFOLLOW)==0,
               (located.st_mode & S_IFMT)==S_IFREG,located.st_dev==before.st_dev,located.st_ino==before.st_ino,
-              after.st_dev==before.st_dev,after.st_ino==before.st_ino,after.st_nlink==1,total==bytes,after.st_size==before.st_size,
+              after.st_dev==before.st_dev,after.st_ino==before.st_ino,after.st_nlink==1,total==actualBytes,after.st_size==before.st_size,
               after.st_mtimespec.tv_sec==before.st_mtimespec.tv_sec,after.st_mtimespec.tv_nsec==before.st_mtimespec.tv_nsec,
               after.st_ctimespec.tv_sec==before.st_ctimespec.tv_sec,after.st_ctimespec.tv_nsec==before.st_ctimespec.tv_nsec,
-              digest.finalize().map({String(format:"%02x",$0)}).joined()==sha256 else{throw VideoError.review("工作区文件缺失、变化或摘要不符")}
+              sha256.map({actualDigest==$0}) ?? true else{throw VideoError.review("工作区文件缺失、变化或摘要不符")}
         return data
     }
-    public struct Backup: Codable { public var version: Int; public var snapshot: Data; public var digest: String; public var assets: [String: Data]; public var exports: [String:Data]? }
+    public struct Backup: Codable { public var version: Int; public var snapshot: Data; public var digest: String; public var assets: [String: Data]; public var exports: [String:Data]?; public var visualCache:[String:Data]?=nil }
+    private func backupVisualCache(availableBytes:Int)throws->[String:Data]? {
+        var files:[String:Data]=[:],remaining=min(availableBytes,VisualCacheBackup.maximumBytes)
+        guard remaining>0 else{return nil}
+        let names=(try? FileManager.default.contentsOfDirectory(atPath:root.appendingPathComponent("cache/visuals").path)) ?? []
+        for name in names.sorted() where name.hasSuffix(".plist") {
+            let key=String(name.dropLast(6));guard VisualCacheBackup.key(key)else{continue}
+            do {
+                var pairBudget=remaining
+                let metadata=try verifyStoredFile(components:["cache","visuals",name],bytes:nil,sha256:nil,budget:&pairBudget,includeData:true,maximumBytes:VisualCacheBackup.maximumManifestBytes)
+                let entry=try VisualCacheBackup.manifest(metadata,key:key)
+                let clipName=key+".mp4",clip=try verifyStoredFile(components:["cache","visuals",clipName],bytes:entry.bytes,sha256:entry.sha256,budget:&pairBudget,includeData:true)
+                files[name]=metadata;files[clipName]=clip;remaining=pairBudget
+            }catch is CancellationError{throw CancellationError()}catch{continue} // Hints never displace required source or exports.
+        }
+        return files.isEmpty ? nil:files
+    }
     public func backup() throws -> Data {
         let state = try read(); try verifyAssets(state); var clean = state; clean.providers = []
         var assets: [String: Data] = [:]; var bytes = 0; var exports:[String:Data]=[:]
@@ -342,7 +362,8 @@ public final class Repository: @unchecked Sendable {
             clean.jobs[j].artifacts[a].path=relative
         }}
         let data=try Codec.data(clean)
-        return try PropertyListEncoder().encode(Backup(version: 2, snapshot: data, digest: Codec.hash(data), assets: assets,exports:exports))
+        let visualCache=try backupVisualCache(availableBytes:300*1024*1024-bytes)
+        return try PropertyListEncoder().encode(Backup(version: 2, snapshot: data, digest: Codec.hash(data), assets: assets,exports:exports,visualCache:visualCache))
     }
     public static func restore(_ data: Data, to root: URL) throws -> Repository {
         guard data.count <= 350 * 1024 * 1024 else { throw VideoError.invalid("备份过大") }
@@ -356,6 +377,11 @@ public final class Repository: @unchecked Sendable {
         guard Set(b.assets.keys)==expectedAssets,Set((b.exports ?? [:]).keys)==expectedExports else {
             throw VideoError.invalid("备份文件集合与源素材或历史产物引用不一致；请从原工程重新准备完整备份，未写入恢复目录")
         }
+        var storedBytes=0
+        for file in Array(b.assets.values)+Array((b.exports ?? [:]).values) {
+            guard file.count<=300*1024*1024-storedBytes else{throw VideoError.invalid("备份源文件与历史导出超过300MiB")};storedBytes+=file.count
+        }
+        let visualCache=try VisualCacheBackup.validate(b.visualCache,availableBytes:300*1024*1024-storedBytes)
         for a in state.assets { guard let d = b.assets[a.relativePath], Codec.hash(d) == a.hash, d.count == a.bytes, a.relativePath == "assets/\(Codec.hash(d)).\(a.ext)", a.ext.range(of: "^[a-z0-9]{1,12}$", options: .regularExpression) != nil else { throw VideoError.invalid("备份缺少源文件或摘要不符") } }
         try Self.verifyModelSceneSources(in:state) {asset in
             guard let bytes=b.assets[asset.relativePath] else {throw VideoError.invalid("含源备份缺少实际模型原件")};return bytes
@@ -365,7 +391,7 @@ public final class Repository: @unchecked Sendable {
             for a in state.jobs[j].artifacts.indices {let artifact=state.jobs[j].artifacts[a];guard Self.validExportPath(artifact.path),let d=b.exports?[artifact.path],d.count==artifact.bytes,Codec.hash(d)==artifact.sha256 else{throw VideoError.invalid("备份缺少历史导出或摘要不符")};state.jobs[j].artifacts[a].path=root.appendingPathComponent(artifact.path).path}
         }
         let repo = try Repository(root: root)
-        do { for a in state.assets { let u = repo.assetURL(a); try FileManager.default.createDirectory(at: u.deletingLastPathComponent(), withIntermediateDirectories: true); try b.assets[a.relativePath]!.write(to: u, options: .atomic) };for (relative,d) in b.exports ?? [:]{guard Self.validExportPath(relative)else{throw VideoError.invalid("备份导出路径越界")};let u=root.appendingPathComponent(relative);try FileManager.default.createDirectory(at:u.deletingLastPathComponent(),withIntermediateDirectories:true);try d.write(to:u,options:.atomic)}; try repo.transaction { $0 = state }; return repo }
+        do { for a in state.assets { let u = repo.assetURL(a); try FileManager.default.createDirectory(at: u.deletingLastPathComponent(), withIntermediateDirectories: true); try b.assets[a.relativePath]!.write(to: u, options: .atomic) };for (relative,d) in b.exports ?? [:]{guard Self.validExportPath(relative)else{throw VideoError.invalid("备份导出路径越界")};let u=root.appendingPathComponent(relative);try FileManager.default.createDirectory(at:u.deletingLastPathComponent(),withIntermediateDirectories:true);try d.write(to:u,options:.atomic)};for (name,d) in visualCache{let u=root.appendingPathComponent("cache/visuals").appendingPathComponent(name);try FileManager.default.createDirectory(at:u.deletingLastPathComponent(),withIntermediateDirectories:true);try d.write(to:u,options:.atomic)}; try repo.transaction { $0 = state }; return repo }
         catch { try? FileManager.default.removeItem(at: root); throw error }
     }
     private static func validExportPath(_ path:String)->Bool{path.range(of:"^(exports/[a-z0-9-]+/[A-Za-z0-9._-]+|drafts/[a-z0-9-]+\\.txt)$",options:.regularExpression) != nil && !path.contains("..")}

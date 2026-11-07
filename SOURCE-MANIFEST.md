@@ -2,10 +2,10 @@
 
 VideoFree source export · package_free.py · version 1
 
-生成时间：2026-11-07 11:48:40 北京时间
+生成时间：2026-11-07 16:02:38 北京时间
 
-- 源码与必要元数据：344个文件；14145705字节（不含本清单）。
-- 整体内容指纹：`7741db86c521045ab961255cbf7ce29ff87c010c9fd6be2709fe763664ff781e`。
+- 源码与必要元数据：347个文件；14184061字节（不含本清单）。
+- 整体内容指纹：`006dbb4b878913bb06a6a687ca5dcc4191a9907ea055342d3acd7ec463b9fef6`。
 - 来源：受控原始工程中的逐文件白名单；Package.swift、唯一免费制作workflow与README均来自Distribution/Free精确模板。
 - 本包不含.git，不可作为新业务checkout；本清单生成过程不执行构建、设备验收、签名安装或公共上传，各阶段以独立证据为准。
 - 排除：App、VideoGame、VideoCartoon、Premium、高级实现运行时测试、私有仓库地址、凭据、客户数据、缓存、日志及媒体过程产物。
@@ -14,7 +14,7 @@ VideoFree source export · package_free.py · version 1
 
 | SHA-256 | 字节数 | 包内路径 / 原工程来源 |
 |---|---:|---|
-| cd3a6bf481c3f9f9036020aae28bab24521c9b7a4de546a0cba7b9c42a1db93c | 52204 | .github/workflows/free-production.yml |
+| bd715e713dba9faad128913aad149418c4a3ff3c095d88b16ae2c765d1310225 | 62178 | .github/workflows/free-production.yml |
 | ac90de9132befb9227282c230671875edb7fd8dc4297999fc39622ea7efe3644 | 52964 | Integrations/README.md |
 | 28833193551aa06befb3bc0fc30b69ef87f74cccae39895f4242af4321d717dd | 15308 | Integrations/actor_motion.py |
 | 39dd8274ff1e6b0649acb63281087a1144e1f4a4e0eed3dc2b92e10df2cbd121 | 28488 | Integrations/asset_reuse.py |
@@ -191,7 +191,7 @@ VideoFree source export · package_free.py · version 1
 | 994e9705dd6b41d6833eb1b2c1aad353a4cc08a1416aa252544706ee3da7a446 | 3754 | Sources/VideoCore/SimulationPresentation.swift |
 | 9289ff4ce41227576f9fcfd5149a4923a467a0514153add3f400b1fa393d9bbc | 24224 | Sources/VideoCore/Speech.swift |
 | 27594a4693ac6cf45f32d9f13b1c4ca834ac31d03375685c1a91fd337187ffbd | 9125 | Sources/VideoCore/SpeechProjectRules.swift |
-| b835a101c2ae552dd65256b0d01922da546b9bb5c2a2ea8dbac5b308a233f998 | 34871 | Sources/VideoCore/Storage.swift |
+| 911ac2446d5b296c214d64bb970698e885865af7254067dabbf2ca27bc62c6db | 37260 | Sources/VideoCore/Storage.swift |
 | 406ca0a7a657bbede85f3b0949f7d0e0138eb22948eece61e0f758883debf4f4 | 23590 | Sources/VideoCore/StoryActions.swift |
 | 2528993c6502d06b9348fccbc7cfa79f29312ab45855a063cd2211786538f461 | 31256 | Sources/VideoCore/StoryCausalSources.swift |
 | 92dfe39cc68c46b23be5d2427f4fad63d96e7ef50aed0692da622c973725350d | 27958 | Sources/VideoCore/Teaching.swift |
@@ -199,6 +199,7 @@ VideoFree source export · package_free.py · version 1
 | 885941b4110599e791b034ef8b9dd46b7e72ad22f66f62f511d3bff965a75d4a | 3233 | Sources/VideoCore/TexturedPath.swift |
 | 28f9f3fcbdb6e579e61520dc3fa94a00db772a899ed5da05b4963bbec36e3e5c | 10843 | Sources/VideoCore/UpstreamLicense.swift |
 | 0e940f54e4586197fa8035288b0592ab1b5cdadb50035770af3111da9e77e5a2 | 8170 | Sources/VideoCore/VendorFreeModuleTrust.swift |
+| 7a4b5eb88aeb41e36efacf9cf75df2839827d0c6cf074243dde860d325d0b244 | 4214 | Sources/VideoCore/VisualCacheBackup.swift |
 | 7121ad27352879f52316887ec87d9b806024faf64d2352017a459210363375a1 | 26694 | Sources/VideoCore/WorkspaceAccess.swift |
 | a7575f09eb1aba47284faa25f1badb84897150f6ec22c036b100bcfb06d4ab50 | 10624 | Sources/VideoInstall/VideoInstall.swift |
 | e015b785e0464ee350c19afedd976a1ec5c3f5d13761179b204ac89c8660b500 | 19785 | Sources/VideoMedia/BaiduVideoProvider.swift |
@@ -321,6 +322,7 @@ VideoFree source export · package_free.py · version 1
 | aea15ba734c2536753d15b739b26c8f68284c69294d586372a2f885bff1b706b | 17112 | Tests/VideoCoreTests/TeachingTests.swift |
 | fa21976b33dfc558041a027f2077a16d4229d4ee8327ec3f9290bb3094141f2e | 15333 | Tests/VideoCoreTests/UpstreamLicenseTests.swift |
 | 2991411e4fbb65bcfd1560e8f94834e18eda2fcc744b21b0a0a298299852b39a | 17655 | Tests/VideoCoreTests/VendorFreeModuleTrustTests.swift |
+| 411110db6767cdd6f25a13e442a70208ccd192879ecd2cd9d2da90c67f543f1b | 10663 | Tests/VideoCoreTests/VisualCacheBackupCoreTests.swift |
 | 7ba0ca151fe677d9a3e081af45a3e9c0cbc725c82549e6b7b8193ef2cfbb8a3e | 24793 | Tests/VideoCoreTests/WorkspaceAccessTests.swift |
 | 70e24e2690c3a01d92dcc07d2207c17f63da03b3819028d0f6406d6c24142cb1 | 49597 | Tests/VideoMediaTests/AudioMixMediaTests.swift |
 | 62b9061ca8a337e06dfbb2482a68097d2a586ccb667a9075f8ce1c8845301ad4 | 45012 | Tests/VideoMediaTests/BaiduVideoProviderTests.swift |
@@ -346,6 +348,7 @@ VideoFree source export · package_free.py · version 1
 | f1fa3952a70af45cf3adca99715c3bab89aee643deadcdc25f76e59575e9dcf2 | 45627 | Tests/VideoMediaTests/ScriptJobsTests.swift |
 | 03edcaf754546e54eee0172e844fd13115c80b1829c720f8c6db3af3ba53282d | 7087 | Tests/VideoMediaTests/SpeechMediaTests.swift |
 | fd14ec3e583f47b0a3bbdfd711bb86a0b08f47b379e1d9f053d9e5e978af19b7 | 9786 | Tests/VideoMediaTests/SpeechProjectProductionTests.swift |
+| 0ff10ac28a9dc3006b562d4faae0b6e8e1ebd55d1a0a71ec13fb662f17da5ebe | 11116 | Tests/VideoMediaTests/VisualCacheBackupTests.swift |
 | d2cd55cc5a2010606873beb0a87c2c1664084bb416c6324a1a34e5d7252f7c18 | 35496 | Tests/VideoMediaTests/VisualCacheResumeTests.swift |
 | fbecfacdfac33982774e301073a8d357a09c698cd3134bb6ddec0f5bfc268fa1 | 1919404 | ThirdParty/Fonts/DouyinSans/DouyinSansBold.ttf |
 | a6d5700a002ea32bcfbe3310253d603997683dac8ac63777e375d06c07c30ea6 | 4455 | ThirdParty/Fonts/DouyinSans/LICENSE |
