@@ -115,9 +115,36 @@ public enum LocalJobExecutor {
     }
     private static func render(repository:Repository,jobID:String,revision:Revision,token:String,modules:RenderModuleRegistry?,videoEncoder:NativeEncoderSelection,invocation:RenderInvocation,progress:@escaping @Sendable(Double)->Void) async throws -> RenderResult {
         let result=try await MediaRenderer(modules:modules,videoEncoder:videoEncoder).render(revision:revision,repository:repository,output:repository.root.appendingPathComponent("exports/"+jobID),invocation:invocation) { value in
-                try repository.transaction { db in guard let i=db.jobs.firstIndex(where:{$0.id==jobID}) else {throw VideoError.notFound("原任务不存在")};db.jobs[i]=try JobOperations.heartbeat(db.jobs[i],token:token,progress:value) }
-                progress(value)
+                try reportProgress(value,repository:repository,jobID:jobID,token:token,invocation:invocation,progress:progress)
             }
         return result
+    }
+
+    /// Replaying an already sealed interval still checks the live scope and
+    /// reports its raw progress. Only a new persisted high-water mark needs a
+    /// full snapshot write; the independent keepalive owns silent renewal.
+    static func reportProgress(_ value:Double,repository:Repository,jobID:String,token:String,invocation:RenderInvocation,progress:@Sendable(Double)->Void) throws {
+        try invocation.check()
+        guard invocation.jobID==jobID else {throw VideoError.permission("制作进度不属于原任务范围")}
+        try ManagedInstallRules.authorizeWrite(repositoryRoot:repository.root)
+        let database=try repository.read()
+        guard let current=database.jobs.first(where:{$0.id==jobID}) else {throw VideoError.notFound("原任务不存在")}
+        // Keep the original token/state/expiry and finite-range guards even
+        // when no write is needed. Never use a renderer-local progress cache.
+        _ = try JobOperations.heartbeat(current,token:token,progress:value)
+        if value>current.progress {
+            try repository.transaction { db in
+                try invocation.check()
+                guard let i=db.jobs.firstIndex(where:{$0.id==jobID}) else {throw VideoError.notFound("原任务不存在")}
+                db.jobs[i]=try JobOperations.heartbeat(db.jobs[i],token:token,progress:value)
+            }
+        }
+        try invocation.check()
+        try ManagedInstallRules.authorizeWrite(repositoryRoot:repository.root)
+        progress(value)
+        // A caller may cancel or revoke this scope from its callback. Do not
+        // let the no-write branch hide that failure from the renderer.
+        try invocation.check()
+        try ManagedInstallRules.authorizeWrite(repositoryRoot:repository.root)
     }
 }
