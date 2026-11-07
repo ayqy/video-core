@@ -334,11 +334,125 @@ enum PluginPipeOutput {
     }
 }
 
+/// A model frame may finish after the ordinary transport response window, but
+/// polling cannot extend its one fixed task deadline or cross its identity.
+/// This is local transport state, not an authorization or protocol change.
+struct PluginResponseDeadline {
+    private struct ModelTask {
+        let requestID: String
+        let digest: String
+        let invocation: PluginInvocation
+        let deadline: Date
+        var taskID: String?
+        var terminal = false
+    }
+    private let shortSeconds: TimeInterval
+    private let modelSeconds: TimeInterval
+    private var model: ModelTask?
+
+    init() { shortSeconds = 10; modelSeconds = PluginProtocolRules.maximumTaskSeconds }
+    // Rules may shorten both windows without sleeping for production limits.
+    // No caller can increase either existing finite protocol ceiling.
+    init(shortSeconds: TimeInterval, modelSeconds: TimeInterval) throws {
+        guard shortSeconds.isFinite, modelSeconds.isFinite, shortSeconds > 0,
+              shortSeconds <= 10, modelSeconds >= shortSeconds,
+              modelSeconds <= PluginProtocolRules.maximumTaskSeconds else {
+            throw VideoError.invalid("插件响应窗口超过既有有限期限")
+        }
+        self.shortSeconds = shortSeconds; self.modelSeconds = modelSeconds
+    }
+
+    mutating func deadline(for request: PluginRPCRequest, invocation: PluginInvocation,
+                           now: Date = Date()) throws -> Date {
+        let limit = Date(timeIntervalSince1970: invocation.deadlineUnixTime)
+        if request.method == .execute, let input = request.input, input.props.modelScene3D != nil {
+            guard input.invocation == invocation else { throw VideoError.permission("三维响应窗口不属于当前完整调用") }
+            let digest = try input.contentDigest()
+            if let current = model {
+                if current.requestID == request.requestID {
+                    guard current.digest == digest, current.invocation == invocation else {
+                        throw VideoError.permission("原三维执行标识不能续接不同输入或调用")
+                    }
+                    return current.deadline
+                }
+                guard current.terminal else { throw VideoError.unavailable("原三维响应任务尚未结束，不重置单帧截止") }
+            }
+            let deadline = min(limit, now.addingTimeInterval(modelSeconds))
+            model = ModelTask(requestID: request.requestID, digest: digest, invocation: invocation, deadline: deadline)
+            return deadline
+        }
+        if request.method == .progress, let current = model {
+            guard let id = current.taskID, request.taskID == id, current.invocation == invocation else {
+                throw VideoError.permission("三维进度响应窗口只能续接原任务与完整调用")
+            }
+            return current.deadline
+        }
+        if request.method == .execute, model?.terminal == true { model = nil }
+        return min(limit, now.addingTimeInterval(shortSeconds))
+    }
+
+    mutating func accept(_ response: PluginRPCResponse, for request: PluginRPCRequest,
+                         deadline: Date, now: Date = Date()) throws {
+        guard now < deadline else { throw VideoError.unavailable("插件响应超过固定截止，未接受晚到结果") }
+        let modelExecute = request.method == .execute && request.input?.props.modelScene3D != nil
+        guard modelExecute || (request.method == .progress && model != nil) else { return }
+        guard var current = model, current.deadline == deadline,
+              let task = response.task, PluginProtocolRules.text(task.taskID),
+              task.invocation == current.invocation, task.inputDigest == current.digest,
+              response.inputDigest == current.digest, task.progress.isFinite, (0...1).contains(task.progress),
+              current.taskID == nil || current.taskID == task.taskID,
+              (modelExecute ? request.requestID == current.requestID : request.taskID == task.taskID) else {
+            throw VideoError.permission("三维响应任务、冻结输入或完整调用与原截止不符")
+        }
+        current.taskID = task.taskID; current.terminal = task.state != .running
+        model = current
+    }
+}
+
+/// The same nonblocking reader serves production responses and finite pipe
+/// rules. Scope checks run before accepting buffered bytes as well as while
+/// waiting; a slow check must never turn an expired response into success.
+struct PluginPipeResponseReader {
+    private var buffer = PluginJSONLBuffer()
+    private(set) var stderrBytes = 0
+    private var stderrOpen = true
+
+    mutating func next(output: Int32, errors: Int32, until: Date,
+                       check: () throws -> Void = {}) throws -> Data {
+        while true {
+            try check()
+            guard Date() < until else { throw VideoError.unavailable("插件响应或终止超过明确截止") }
+            guard buffer.count <= PluginProtocolRules.maximumResponseBytes + 2048, stderrBytes <= 1024 * 1024 else {
+                throw VideoError.unavailable("插件管道输出超出有界长度")
+            }
+            if let line = buffer.popLine() { return line }
+            var descriptors = [pollfd(fd: output, events: Int16(POLLIN | POLLHUP), revents: 0),
+                               pollfd(fd: stderrOpen ? errors : -1, events: Int16(POLLIN | POLLHUP), revents: 0)]
+            let milliseconds = Int32(max(1, min(25, ceil(until.timeIntervalSinceNow * 1000))))
+            let status = poll(&descriptors, 2, milliseconds)
+            guard status >= 0 || errno == EINTR else { throw VideoError.unavailable("插件管道未能继续读取") }
+            for index in 0..<2 where descriptors[index].revents != 0 {
+                var bytes = [UInt8](repeating: 0, count: 65536)
+                let count = read(descriptors[index].fd, &bytes, bytes.count)
+                if count > 0 {
+                    if index == 0 { buffer.append(contentsOf: bytes.prefix(count)) } else { stderrBytes += count }
+                } else if count == 0 {
+                    if index == 0 { throw VideoError.unavailable("插件桥提前关闭，缺少完整退出或响应回执") }
+                    stderrOpen = false
+                } else if errno != EINTR && errno != EAGAIN && errno != EWOULDBLOCK {
+                    throw VideoError.unavailable("插件管道未能继续读取")
+                }
+            }
+        }
+    }
+}
+
 /// One exact render invocation owns one headless bridge and one isolated XPC process.
 final class PluginProcessClient {
     let process=Process(),input=Pipe(),output=Pipe(),errors=Pipe();let invocation:PluginInvocation
     private let closeLock=NSLock();private var closeRequested=false
-    var buffer=PluginJSONLBuffer();var stderrBytes=0;var stderrOpen=true;var peer:pid_t?;var termination:Result<Void,VideoError>?
+    private var responses=PluginPipeResponseReader();private var responseDeadlines=PluginResponseDeadline()
+    var peer:pid_t?;var termination:Result<Void,VideoError>?
     init(package:VerifiedPluginPackage,scope:RenderInvocation)throws {
         try scope.check();try PluginPackageRules.verifyFiles(package.manifest,root:package.rootURL);try PluginNativeCode.verify(root:package.rootURL,execution:package.execution)
         invocation=PluginInvocation(workspaceID:scope.workspaceID,projectID:scope.projectID,revisionID:scope.revisionID,revisionDigest:scope.revisionDigest,jobID:scope.jobID,invocationID:scope.id,budgetReference:scope.budgetReference,currency:scope.currency,budgetLimit:scope.budgetLimit.amount,deadlineUnixTime:scope.deadline.timeIntervalSince1970)
@@ -352,21 +466,7 @@ final class PluginProcessClient {
     func requestClose(){closeLock.lock();closeRequested=true;closeLock.unlock()}
     private func check(_ scope:RenderInvocation)throws{try scope.check();closeLock.lock();let closing=closeRequested;closeLock.unlock();if closing{throw CancellationError()}}
     private func next(until:Date,check:()throws->Void={})throws->Data {
-        while Date()<until {
-            try check()
-            if let line=buffer.popLine(){return line}
-            var descriptors=[pollfd(fd:output.fileHandleForReading.fileDescriptor,events:Int16(POLLIN|POLLHUP),revents:0),pollfd(fd:stderrOpen ? errors.fileHandleForReading.fileDescriptor:-1,events:Int16(POLLIN|POLLHUP),revents:0)]
-            let status=poll(&descriptors,2,25);guard status>=0 || errno==EINTR else{throw VideoError.unavailable("插件管道未能继续读取")}
-            for index in 0..<2 where descriptors[index].revents != 0 {
-                var bytes=[UInt8](repeating:0,count:65536);let count=read(descriptors[index].fd,&bytes,bytes.count)
-                if count>0 {if index==0{buffer.append(contentsOf:bytes.prefix(count))}else{stderrBytes+=count}}
-                if count==0,index==1{stderrOpen=false}
-                // popLine above found no complete line; an EOF read appended no bytes.
-                if count==0,index==0{throw VideoError.unavailable("插件桥提前关闭，缺少完整退出或响应回执")}
-            }
-            guard buffer.count<=PluginProtocolRules.maximumResponseBytes+2048,stderrBytes<=1024*1024 else{throw VideoError.unavailable("插件管道输出超出有界长度")}
-        }
-        throw VideoError.unavailable("插件响应或终止超过明确截止")
+        try responses.next(output:output.fileHandleForReading.fileDescriptor,errors:errors.fileHandleForReading.fileDescriptor,until:until,check:check)
     }
     func exchange(_ request:PluginRPCRequest,scope:RenderInvocation)throws->PluginRPCResponse {
         try check(scope);guard request.invocation==invocation || request.input?.invocation==invocation || request.modelBankOperation?.invocation==invocation else{throw VideoError.permission("插件请求不属于原完整调用")}
@@ -374,13 +474,15 @@ final class PluginProcessClient {
             guard request.method == .validate,request.input==nil,request.invocation==nil,request.taskID==nil,operation.invocation==invocation else{throw VideoError.permission("三维字节操作必须独立绑定原完整调用")}
             try operation.validate()
         }
+        let responseDeadline=try responseDeadlines.deadline(for:request,invocation:invocation)
         var data=try Codec.data(request);guard data.count<=PluginProtocolRules.maximumRequestBytes else{throw VideoError.invalid("插件请求超过有界长度")};data.append(10)
         try PluginPipeOutput.write(data,descriptor:input.fileHandleForWriting.fileDescriptor,until:scope.deadline){try self.check(scope)}
-        let answer=try next(until:min(scope.deadline,Date().addingTimeInterval(10))){try self.check(scope)};try check(scope)
+        let answer=try next(until:responseDeadline){try self.check(scope)};try check(scope)
         let(event,pid)=try PluginBridgeWire.parse(answer)
         guard event=="response",peer==nil || peer==pid else{throw VideoError.permission("插件响应来自其他进程或不是方法回执")};peer=pid
         let value=try Codec.decoder().decode(PluginRPCResponse.self,from:answer)
         guard value.protocolMajor==1,value.requestID==request.requestID,value.ok,value.error==nil else{throw VideoError.unavailable("独立插件拒绝请求或协议回执不符；未发表部分帧")}
+        try responseDeadlines.accept(value,for:request,deadline:responseDeadline)
         return value
     }
     func close()throws {
@@ -395,7 +497,7 @@ final class PluginProcessClient {
                 if event=="peer_exited"{exited=true}else if event=="transport_failed"{throw VideoError.unavailable("插件实际进程终止未确认")}
             }
             while process.isRunning,Date()<deadline{Thread.sleep(forTimeInterval:0.01)}
-            guard !process.isRunning,process.terminationReason == .exit,process.terminationStatus==0,stderrBytes==0 else{throw VideoError.unavailable("插件peer已退出但公开桥清理未通过")}
+            guard !process.isRunning,process.terminationReason == .exit,process.terminationStatus==0,responses.stderrBytes==0 else{throw VideoError.unavailable("插件peer已退出但公开桥清理未通过")}
             termination = .success(())
         }catch{
             let failure=error as? VideoError ?? .unavailable("插件终止或管道回收失败")

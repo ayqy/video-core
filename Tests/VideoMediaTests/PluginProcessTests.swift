@@ -51,7 +51,7 @@ final class PluginProcessTests:XCTestCase {
         init(_ manifest:PluginManifest){self.manifest=manifest}
         func draw(scene:VideoCore.Scene,localFrame:Int,fps:Int,rect:CGRect,context:CGContext)throws{draws+=1;XCTFail("三维输入不能落到普通非scoped绘制")}
     }
-    private func verifyModelRegistryScope()throws {
+    private func modelResource()throws->(ModelDAEResource,Data) {
         let xml="""
         <COLLADA xmlns="http://www.collada.org/2005/11/COLLADASchema" version="1.4.1">
         <asset><created>2026-11-05T00:00:00Z</created><modified>2026-11-05T00:00:00Z</modified><unit name="meter" meter="1"/><up_axis>Y_UP</up_axis></asset>
@@ -60,7 +60,11 @@ final class PluginProcessTests:XCTestCase {
         """
         let bytes=Data(xml.utf8),inspection=try DAEInspector.inspect(bytes)
         let reference=ModelAssetReference(assetID:"authored-model",sha256:Codec.hash(bytes),bytes:bytes.count,fileExtension:"dae")
-        let model=ModelScene3D(instances:[.init(id:"mesh",name:"隔离协议夹具",resource:.init(model:reference,inspection:inspection,textures:[:]))],camera:.init(position:.init(z:4),target:.init()),lights:[.init(id:"sun",kind:.directional)])
+        return(.init(model:reference,inspection:inspection,textures:[:]),bytes)
+    }
+    private func verifyModelRegistryScope()throws {
+        let(resource,bytes)=try modelResource(),reference=resource.model
+        let model=ModelScene3D(instances:[.init(id:"mesh",name:"隔离协议夹具",resource:resource)],camera:.init(position:.init(z:4),target:.init()),lights:[.init(id:"sun",kind:.directional)])
         var scene=Scene(kind:.simulation,title:"",body:"",durationFrames:90);scene.modelScene3D=model
         let bank=try RenderModelBank(scene:model,durationFrames:90,assets:[reference.assetID:bytes])
         let resources=RenderResources.empty.bindingModelBank(bank)
@@ -239,6 +243,133 @@ final class PluginProcessTests:XCTestCase {
         try closed.fileHandleForReading.close()
         XCTAssertThrowsError(try PluginPipeOutput.write(pending,descriptor:closed.fileHandleForWriting.fileDescriptor,until:Date().addingTimeInterval(1),check:{}))
         XCTAssertThrowsError(try PluginPipeOutput.write(pending,descriptor:-1,until:Date().addingTimeInterval(1),check:{}))
+    }
+    private func modelResponseFixture()throws->(PluginInvocation,PluginRPCRequest) {
+        let(resource,_)=try modelResource()
+        let model=ModelScene3D(instances:[.init(id:"mesh",name:"response rule",resource:resource)],
+            camera:.init(position:.init(z:4),target:.init()),lights:[.init(id:"sun",kind:.directional)])
+        var scene=Scene(kind:.simulation,title:"",body:"",narration:"",durationFrames:90);scene.modelScene3D=model
+        let invocation=PluginInvocation(workspaceID:"w",projectID:"p",revisionID:"r",revisionDigest:String(repeating:"a",count:64),
+            invocationID:"response-rule",budgetReference:"quote",currency:"CNY",deadlineUnixTime:Date().addingTimeInterval(5).timeIntervalSince1970)
+        let manifest=try PluginModelBankManifest(scene:model,durationFrames:90)
+        let bank=PluginModelBankReference(bankID:"response-bank",manifestDigest:try manifest.contentDigest(),invocationDigest:try Codec.digest(invocation))
+        let input=PluginFrameInput(invocation:invocation,props:PluginVisualProps(scene:scene),sourceFrame:0,fps:30,
+            canvasWidth:32,canvasHeight:32,rect:.init(x:0,y:0,width:32,height:32),assets:[],modelBankReference:bank)
+        try PluginProtocolRules.validate(input,capabilityID:"game.simulate",inputSchemaVersion:16)
+        return(invocation,PluginRPCRequest(requestID:"execute-model",method:.execute,input:input,invocation:invocation))
+    }
+    private func response(_ request:PluginRPCRequest,input:PluginFrameInput,taskID:String="model-task",state:PluginTaskState = .running)throws->PluginRPCResponse {
+        let digest=try input.contentDigest()
+        return PluginRPCResponse(requestID:request.requestID,ok:true,state:state.rawValue,inputDigest:digest,
+            task:.init(taskID:taskID,inputDigest:digest,invocation:input.invocation,state:state))
+    }
+    private func responsePipes()throws->(Pipe,Pipe) {
+        let output=Pipe(),errors=Pipe()
+        for pipe in [output,errors] {
+            XCTAssertEqual(fcntl(pipe.fileHandleForReading.fileDescriptor,F_SETFL,O_NONBLOCK),0)
+            XCTAssertEqual(fcntl(pipe.fileHandleForWriting.fileDescriptor,F_SETNOSIGPIPE,1),0)
+        }
+        addTeardownBlock {
+            for pipe in [output,errors] {try? pipe.fileHandleForWriting.close();try? pipe.fileHandleForReading.close()}
+        }
+        return(output,errors)
+    }
+    private func delayedResponse(_ bytes:Data,to pipe:Pipe,after seconds:TimeInterval)->DispatchSemaphore {
+        let done=DispatchSemaphore(value:0),written=ChunkResult()
+        DispatchQueue.global().asyncAfter(deadline:.now()+seconds) {
+            defer{done.signal()}
+            do{try pipe.fileHandleForWriting.write(contentsOf:bytes);written.set(Data([1]))}catch{written.set(Data([0]))}
+        }
+        // Every finite writer must finish before responsePipes closes its handles.
+        addTeardownBlock {XCTAssertEqual(done.wait(timeout:.now()+1),.success);XCTAssertEqual(written.get(),Data([1]))}
+        return done
+    }
+    func test_model_response_receives_a_real_delayed_pipe_reply_after_the_short_window()throws {
+        let(invocation,request)=try modelResponseFixture(),value=try response(request,input:XCTUnwrap(request.input))
+        var windows=try PluginResponseDeadline(shortSeconds:0.02,modelSeconds:0.5),reader=PluginPipeResponseReader()
+        let started=Date(),deadline=try windows.deadline(for:request,invocation:invocation,now:started)
+        let(output,errors)=try responsePipes();var wire=try Codec.data(value);wire.append(10)
+        _=delayedResponse(wire,to:output,after:0.06)
+        var checks=0
+        let received=try reader.next(output:output.fileHandleForReading.fileDescriptor,errors:errors.fileHandleForReading.fileDescriptor,until:deadline){checks+=1}
+        let actual=try Codec.decoder().decode(PluginRPCResponse.self,from:received)
+        try windows.accept(actual,for:request,deadline:deadline)
+        XCTAssertEqual(actual.requestID,value.requestID);XCTAssertEqual(actual.task,value.task)
+        XCTAssertGreaterThanOrEqual(Date().timeIntervalSince(started),0.02);XCTAssertGreaterThan(checks,1)
+    }
+    func test_model_progress_and_execute_replays_keep_one_deadline_and_require_the_original_task()throws {
+        let(invocation,execute)=try modelResponseFixture(),input=try XCTUnwrap(execute.input),started=Date()
+        var windows=try PluginResponseDeadline(shortSeconds:0.02,modelSeconds:0.5)
+        let deadline=try windows.deadline(for:execute,invocation:invocation,now:started)
+        try windows.accept(response(execute,input:input),for:execute,deadline:deadline,now:started)
+        let progress=PluginRPCRequest(requestID:"progress",method:.progress,invocation:invocation,taskID:"model-task")
+        for offset in [0.1,0.2] {XCTAssertEqual(try windows.deadline(for:progress,invocation:invocation,now:started.addingTimeInterval(offset)),deadline)}
+        XCTAssertEqual(try windows.deadline(for:execute,invocation:invocation,now:started.addingTimeInterval(0.3)),deadline)
+        let wrong=PluginRPCRequest(requestID:"wrong-task",method:.progress,invocation:invocation,taskID:"other-task")
+        XCTAssertThrowsError(try windows.deadline(for:wrong,invocation:invocation))
+        let(output,errors)=try responsePipes();var wire=try Codec.data(response(progress,input:input,taskID:"other-task"));wire.append(10)
+        try output.fileHandleForWriting.write(contentsOf:wire)
+        var reader=PluginPipeResponseReader()
+        let bytes=try reader.next(output:output.fileHandleForReading.fileDescriptor,errors:errors.fileHandleForReading.fileDescriptor,until:deadline)
+        let actual=try Codec.decoder().decode(PluginRPCResponse.self,from:bytes)
+        XCTAssertThrowsError(try windows.accept(actual,for:progress,deadline:deadline))
+    }
+    func test_model_response_window_clamps_to_invocation_and_preserves_short_control_rpcs()throws {
+        let(original,request)=try modelResponseFixture(),now=Date()
+        var windows=try PluginResponseDeadline(shortSeconds:0.02,modelSeconds:0.5)
+        for method in [PluginMethod.handshake,.describe,.health,.cancel,.validate,.estimate] {
+            let control=PluginRPCRequest(requestID:"control",method:method,invocation:original)
+            XCTAssertEqual(try windows.deadline(for:control,invocation:original,now:now),now.addingTimeInterval(0.02))
+        }
+        var invocation=original;invocation.deadlineUnixTime=now.addingTimeInterval(0.1).timeIntervalSince1970
+        var limited=request;limited.invocation=invocation;limited.input?.invocation=invocation
+        XCTAssertEqual(try windows.deadline(for:limited,invocation:invocation,now:now),Date(timeIntervalSince1970:invocation.deadlineUnixTime))
+        for pair in [(0.0,0.5),(0.02,0.01),(11.0,12.0),(0.02,121.0),(Double.nan,0.5),(0.02,Double.infinity)] {
+            XCTAssertThrowsError(try PluginResponseDeadline(shortSeconds:pair.0,modelSeconds:pair.1))
+        }
+    }
+    func test_model_response_pipe_rechecks_live_revocation_before_accepting_a_reply()throws {
+        let(output,errors)=try responsePipes();_=delayedResponse(Data("must not be accepted\n".utf8),to:output,after:0.08)
+        var reader=PluginPipeResponseReader(),checks=0
+        XCTAssertThrowsError(try reader.next(output:output.fileHandleForReading.fileDescriptor,errors:errors.fileHandleForReading.fileDescriptor,until:Date().addingTimeInterval(0.5)){
+            checks+=1;if checks==2{throw VideoError.permission("fixture live grant revoked")}
+        }){XCTAssertEqual($0 as? VideoError,.permission("fixture live grant revoked"))}
+        XCTAssertEqual(checks,2)
+    }
+    func test_model_response_pipe_rejects_expired_partial_and_late_complete_lines()throws {
+        for kind in ["expired","partial","late"] {
+            let(output,errors)=try responsePipes();var reader=PluginPipeResponseReader()
+            let deadline=Date().addingTimeInterval(kind=="expired" ? -0.01:0.04)
+            if kind=="late" {_=delayedResponse(Data("late\n".utf8),to:output,after:0.08)}
+            else {try output.fileHandleForWriting.write(contentsOf:Data((kind=="partial" ? "no-newline":"already buffered\n").utf8))}
+            XCTAssertThrowsError(try reader.next(output:output.fileHandleForReading.fileDescriptor,errors:errors.fileHandleForReading.fileDescriptor,until:deadline))
+        }
+    }
+    func test_model_response_pipe_rechecks_deadline_after_a_slow_live_check()throws {
+        let(output,errors)=try responsePipes();try output.fileHandleForWriting.write(contentsOf:Data("late-after-check\n".utf8))
+        let release=DispatchSemaphore(value:0);DispatchQueue.global().asyncAfter(deadline:.now()+0.06){release.signal()}
+        var reader=PluginPipeResponseReader(),checks=0
+        XCTAssertThrowsError(try reader.next(output:output.fileHandleForReading.fileDescriptor,errors:errors.fileHandleForReading.fileDescriptor,until:Date().addingTimeInterval(0.02)){
+            checks+=1;guard release.wait(timeout:.now()+1) == .success else{throw VideoError.unavailable("fixture check release")}
+        })
+        XCTAssertEqual(checks,1)
+    }
+    func test_model_response_rejects_changed_scope_digest_and_late_acceptance_then_allows_a_new_finished_frame()throws {
+        let(invocation,execute)=try modelResponseFixture(),input=try XCTUnwrap(execute.input),now=Date()
+        var windows=try PluginResponseDeadline(shortSeconds:0.02,modelSeconds:0.5)
+        let deadline=try windows.deadline(for:execute,invocation:invocation,now:now)
+        let valid=try response(execute,input:input)
+        for change in ["scope","digest"] {
+            var wrong=valid
+            if change=="scope" {wrong.task?.invocation.revisionID="other-revision"}else{wrong.task?.inputDigest=String(repeating:"b",count:64)}
+            XCTAssertThrowsError(try windows.accept(wrong,for:execute,deadline:deadline,now:now))
+        }
+        XCTAssertThrowsError(try windows.accept(valid,for:execute,deadline:deadline,now:deadline))
+        try windows.accept(valid,for:execute,deadline:deadline,now:now)
+        var next=execute;next.requestID="next-frame";next.input?.sourceFrame=1
+        XCTAssertThrowsError(try windows.deadline(for:next,invocation:invocation,now:now))
+        try windows.accept(response(execute,input:input,state:.succeeded),for:execute,deadline:deadline,now:now)
+        XCTAssertEqual(try windows.deadline(for:next,invocation:invocation,now:now.addingTimeInterval(0.1)).timeIntervalSince(now),0.6,accuracy:0.000001)
     }
     func test_live_bridge_input_returns_a_short_request_before_stdin_eof()throws {
         let pipe=Pipe(),done=DispatchSemaphore(value:0),result=ChunkResult()

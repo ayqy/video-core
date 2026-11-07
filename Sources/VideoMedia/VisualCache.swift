@@ -90,6 +90,7 @@ enum VisualClipCache {
     // Checkpoint packaging does not change drawing semantics or the existing
     // complete-scene fingerprint. A completed legacy scene always wins.
     static let intervalFrames=120
+    static let modelIntervalFrames=30
     struct Interval: Codable, Equatable {
         var version="native-scene-interval-1"
         var sceneKey:String
@@ -168,9 +169,13 @@ enum VisualClipCache {
                 continue
             }
             var reusedScene=true
-            for lower in stride(from:0,to:scene.timelineFrames,by:intervalFrames) {
+            // Native model frames are substantially slower than ordinary
+            // panels. Publish a smaller complete unit without changing their
+            // source clock, encoding, or full-scene cache identity.
+            let checkpointFrames=scene.modelScene3D == nil ? intervalFrames:modelIntervalFrames
+            for lower in stride(from:0,to:scene.timelineFrames,by:checkpointFrames) {
                 try Task.checkCancellation();try invocation?.check()
-                let interval=Interval(sceneKey:key,lowerBound:lower,upperBound:min(lower+intervalFrames,scene.timelineFrames))
+                let interval=Interval(sceneKey:key,lowerBound:lower,upperBound:min(lower+checkpointFrames,scene.timelineFrames))
                 let intervalKey=try interval.key
                 let checkpoint=directory.appendingPathComponent(intervalKey+".mp4")
                 let receipt=directory.appendingPathComponent(intervalKey+".plist")
