@@ -46,6 +46,19 @@ final class AgentSchemasTests:XCTestCase {
         let value=ModelWaterSurface(baseColor:"#47AAA9",reflectionColor:"#C1E8E4",wavelength:0.8,flowSpeed:0.035)
         try verify(try self.value(value),schema:AgentSchemas.shape("ModelWaterSurface"),defs:defs)
     }
+    func testShadowStyleDiscoveryRequiresExplicitBoundedOpacityAndRadiusWithoutNull() throws {
+        let defs=AgentSchemas.definitions(),plugin=PluginRPCSchemas.definitions(inputSchemaVersion:17,pluginID:"video.game")
+        let style=try XCTUnwrap(defs["ModelShadowStyle3D"]),properties=try XCTUnwrap(style.object?["properties"]?.object)
+        XCTAssertEqual(style,plugin["ModelShadowStyle3D"])
+        XCTAssertEqual(style.object?["additionalProperties"],.boolean(false))
+        XCTAssertEqual(style.object?["required"],.array([.string("opacity"),.string("radius")]))
+        XCTAssertEqual(properties["opacity"]?.object?["minimum"],.number(0));XCTAssertEqual(properties["opacity"]?.object?["maximum"],.number(1))
+        XCTAssertEqual(properties["radius"]?.object?["minimum"],.number(0));XCTAssertEqual(properties["radius"]?.object?["maximum"],.number(16))
+        let field=try XCTUnwrap(defs["ModelLight3D"]?.object?["properties"]?.object?["shadowStyle"])
+        XCTAssertEqual(field.object?["$ref"],.string("#/$defs/ModelShadowStyle3D"));XCTAssertNil(field.object?["anyOf"])
+        XCTAssertEqual(field,plugin["ModelLight3D"]?.object?["properties"]?.object?["shadowStyle"])
+        try verify(try value(ModelShadowStyle3D(opacity:0.24,radius:3)),schema:AgentSchemas.shape("ModelShadowStyle3D"),defs:defs)
+    }
     private func value<T:Encodable>(_ value:T)throws->AgentValue {try Codec.decoder().decode(AgentValue.self,from:Codec.data(value))}
     private func verify(_ value:AgentValue,schema:AgentValue,defs:[String:AgentValue])throws {
         guard let shape=schema.object else{return XCTFail("schema not object")}

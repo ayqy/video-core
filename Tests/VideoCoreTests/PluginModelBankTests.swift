@@ -207,7 +207,7 @@ final class PluginModelBankTests:XCTestCase {
         input.props.modelScene3D!.dialogueObstacleInstanceIDs=["actor"]
         for schema in 1...13 {XCTAssertThrowsError(try PluginProtocolRules.validate(input,capabilityID:"game.simulate",inputSchemaVersion:schema,now:now))}
         for schema in [1,4,5,6,7,8,14] {XCTAssertThrowsError(try PluginProtocolRules.validate(input,capabilityID:"cartoon.animate",inputSchemaVersion:schema,now:now))}
-        XCTAssertThrowsError(try PluginProtocolRules.validate(input,capabilityID:"game.simulate",inputSchemaVersion:17,now:now))
+        XCTAssertThrowsError(try PluginProtocolRules.validate(input,capabilityID:"game.simulate",inputSchemaVersion:18,now:now))
         XCTAssertNoThrow(try PluginProtocolRules.validate(input,capabilityID:"game.simulate",inputSchemaVersion:14,now:now))
         let model=try XCTUnwrap(input.props.modelScene3D)
         XCTAssertEqual(try PluginModelBankManifest(scene:model,durationFrames:21),f.manifest)
@@ -230,7 +230,7 @@ final class PluginModelBankTests:XCTestCase {
         XCTAssertThrowsError(try PluginProtocolRules.validate(current,capabilityID:"game.simulate",inputSchemaVersion:9,now:now))
         XCTAssertNoThrow(try PluginProtocolRules.validate(current,capabilityID:"game.simulate",inputSchemaVersion:12,now:now))
         XCTAssertNoThrow(try PluginProtocolRules.validate(current,capabilityID:"game.simulate",inputSchemaVersion:13,now:now))
-        XCTAssertThrowsError(try PluginProtocolRules.validate(current,capabilityID:"game.simulate",inputSchemaVersion:17,now:now))
+        XCTAssertThrowsError(try PluginProtocolRules.validate(current,capabilityID:"game.simulate",inputSchemaVersion:18,now:now))
         XCTAssertThrowsError(try PluginProtocolRules.validate(current,capabilityID:"cartoon.animate",inputSchemaVersion:10,now:now))
         XCTAssertEqual(try current.dependencyFingerprints(),try legacy.dependencyFingerprints())
         XCTAssertEqual(try PluginModelBankManifest(scene:model,durationFrames:21),f.manifest)
@@ -253,7 +253,7 @@ final class PluginModelBankTests:XCTestCase {
         let f=try fixture(),operation=operation(.begin,f)
         let request=PluginRPCRequest(requestID:"register-ten",method:.validate,modelBankOperation:operation)
         XCTAssertNoThrow(try PluginProtocolRules.validate(request,pluginID:"video.game",inputSchemaVersion:10,now:now))
-        for schema in [8,17] {XCTAssertThrowsError(try PluginProtocolRules.validate(request,pluginID:"video.game",inputSchemaVersion:schema,now:now))}
+        for schema in [8,18] {XCTAssertThrowsError(try PluginProtocolRules.validate(request,pluginID:"video.game",inputSchemaVersion:schema,now:now))}
         XCTAssertNoThrow(try PluginProtocolRules.validate(request,pluginID:"video.game",inputSchemaVersion:12,now:now))
         XCTAssertNoThrow(try PluginProtocolRules.validate(request,pluginID:"video.game",inputSchemaVersion:16,now:now),"game16继承旧模型银行，不授文件或网络访问")
         XCTAssertThrowsError(try PluginProtocolRules.validate(request,pluginID:"video.cartoon",inputSchemaVersion:10,now:now))
@@ -276,7 +276,7 @@ final class PluginModelBankTests:XCTestCase {
         XCTAssertNoThrow(try PluginProtocolRules.validate(input,capabilityID:"game.simulate",inputSchemaVersion:11,now:now))
         input.props.modelScene3D!.instances[0].nodeVariants=[.init(id:"expression",nodeIDs:["faceA","faceB"],defaultNodeID:"faceA",keyframes:[.init(frame:5,nodeID:"faceB")])]
         let changed=try XCTUnwrap(input.props.modelScene3D)
-        for schema in [8,9,10,17] {XCTAssertThrowsError(try PluginProtocolRules.validate(input,capabilityID:"game.simulate",inputSchemaVersion:schema,now:now))}
+        for schema in [8,9,10,18] {XCTAssertThrowsError(try PluginProtocolRules.validate(input,capabilityID:"game.simulate",inputSchemaVersion:schema,now:now))}
         for schema in [11,12,13,14,15,16] {XCTAssertNoThrow(try PluginProtocolRules.validate(input,capabilityID:"game.simulate",inputSchemaVersion:schema,now:now))}
         input.props.modelScene3D!.version=2;input.props.modelScene3D!.actions=[.init(id:"visible",kind:.show,instanceID:"actor",startFrame:0,endFrame:1)]
         XCTAssertNoThrow(try PluginProtocolRules.validate(input,capabilityID:"game.simulate",inputSchemaVersion:11,now:now))
@@ -306,7 +306,7 @@ final class PluginModelBankTests:XCTestCase {
         let legacy=try XCTUnwrap(input.props.modelScene3D)
         for schema in [9,10,11,12,13,14,15,16] {XCTAssertNoThrow(try PluginProtocolRules.validate(input,capabilityID:"game.simulate",inputSchemaVersion:schema,now:now))}
         input.props.modelScene3D!.instances[0].materialInterpretation = .init(opaqueDiffuseMaterialIDs:["bodyMaterial"],alphaCutoutMaterialIDs:["bodyMaterial"])
-        for schema in [8,9,10,11,17] {XCTAssertThrowsError(try PluginProtocolRules.validate(input,capabilityID:"game.simulate",inputSchemaVersion:schema,now:now))}
+        for schema in [8,9,10,11,18] {XCTAssertThrowsError(try PluginProtocolRules.validate(input,capabilityID:"game.simulate",inputSchemaVersion:schema,now:now))}
         XCTAssertThrowsError(try PluginProtocolRules.validate(input,capabilityID:"cartoon.animate",inputSchemaVersion:8,now:now))
         XCTAssertNoThrow(try PluginProtocolRules.validate(input,capabilityID:"game.simulate",inputSchemaVersion:12,now:now))
         XCTAssertNoThrow(try PluginProtocolRules.validate(input,capabilityID:"game.simulate",inputSchemaVersion:16,now:now),"未声明water时game16保留原透明裁切")
@@ -319,6 +319,25 @@ final class PluginModelBankTests:XCTestCase {
         XCTAssertNotEqual(try changed.contentDigest(durationFrames:21),try legacy.contentDigest(durationFrames:21))
         XCTAssertEqual(try input.dependencyFingerprints(),f.manifest.dependencyFingerprints)
         XCTAssertNoThrow(try PluginProtocolRules.validate(PluginRPCRequest(requestID:"twelve-bank",method:.validate,modelBankOperation:operation(.begin,f)),pluginID:"video.game",inputSchemaVersion:12,now:now))
+    }
+    func testOnlyGameSeventeenAcceptsShadowStyleAndPreservesEveryOriginalBankByte() throws {
+        let f=try fixture(withMaterial:true),store=PluginModelBankStore(),receipt=try upload(store,f)
+        var input=frame(f,reference:receipt.reference)
+        input.props.modelScene3D!.lights.append(.init(id:"key",kind:.directional,intensity:520))
+        let legacy=try XCTUnwrap(input.props.modelScene3D)
+        for schema in 9...17 {XCTAssertNoThrow(try PluginProtocolRules.validate(input,capabilityID:"game.simulate",inputSchemaVersion:schema,now:now))}
+        input.props.modelScene3D!.lights[1].shadowStyle = .init(opacity:0.24,radius:3)
+        for schema in 9...16 {XCTAssertThrowsError(try PluginProtocolRules.validate(input,capabilityID:"game.simulate",inputSchemaVersion:schema,now:now))}
+        XCTAssertThrowsError(try PluginProtocolRules.validate(input,capabilityID:"cartoon.animate",inputSchemaVersion:8,now:now))
+        XCTAssertNoThrow(try PluginProtocolRules.validate(input,capabilityID:"game.simulate",inputSchemaVersion:17,now:now))
+        let changed=try XCTUnwrap(input.props.modelScene3D)
+        XCTAssertEqual(try PluginModelBankManifest(scene:changed,durationFrames:21),f.manifest)
+        XCTAssertEqual(try store.snapshot(reference:receipt.reference,invocation:f.invocation,scene:changed,durationFrames:21,now:now).assets,f.assets)
+        XCTAssertEqual(try input.dependencyFingerprints(),f.manifest.dependencyFingerprints)
+        XCTAssertNotEqual(try changed.contentDigest(durationFrames:21),try legacy.contentDigest(durationFrames:21))
+        XCTAssertNoThrow(try PluginProtocolRules.validate(PluginRPCRequest(requestID:"seventeen-bank",method:.validate,modelBankOperation:operation(.begin,f)),pluginID:"video.game",inputSchemaVersion:17,now:now))
+        input.props.modelScene3D!.lights[0].shadowStyle = .init(opacity:0.24,radius:3)
+        XCTAssertThrowsError(try PluginProtocolRules.validate(input,capabilityID:"game.simulate",inputSchemaVersion:17,now:now),"非实际主投影灯样式必须拒绝")
     }
     func testOnlyGameSixteenAcceptsWaterSurfaceAndPreservesEveryOriginalBankByte() throws {
         let f=try fixture(withMaterial:true),store=PluginModelBankStore(),receipt=try upload(store,f)
@@ -373,7 +392,7 @@ final class PluginModelBankTests:XCTestCase {
         input.props.modelScene3D!.camera.keyframes=[
             .init(frame:0,position:camera.position,target:camera.target,verticalFieldOfViewDegrees:45),
             .init(frame:20,position:.init(x:2,y:2,z:4),target:.init(x:2),verticalFieldOfViewDegrees:40)]
-        for schema in [9,10,11,12,17] {XCTAssertThrowsError(try PluginProtocolRules.validate(input,capabilityID:"game.simulate",inputSchemaVersion:schema,now:now))}
+        for schema in [9,10,11,12,18] {XCTAssertThrowsError(try PluginProtocolRules.validate(input,capabilityID:"game.simulate",inputSchemaVersion:schema,now:now))}
         XCTAssertThrowsError(try PluginProtocolRules.validate(input,capabilityID:"cartoon.animate",inputSchemaVersion:8,now:now))
         XCTAssertNoThrow(try PluginProtocolRules.validate(input,capabilityID:"game.simulate",inputSchemaVersion:13,now:now))
         XCTAssertNoThrow(try PluginProtocolRules.validate(input,capabilityID:"game.simulate",inputSchemaVersion:14,now:now))

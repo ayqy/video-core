@@ -274,9 +274,41 @@ public struct ModelCameraTimeline3D: Sendable {
     }
 }
 public enum ModelLightKind: String, Codable, Sendable { case ambient, directional, omni }
+/// Explicit style for the scene's existing geometry-shadow key. Omission on
+/// the light preserves the prior renderer values; this never changes energy,
+/// materials, source textures or the choice of the shadow-casting light.
+public struct ModelShadowStyle3D: Codable, Equatable, Sendable {
+    public var opacity: Double; public var radius: Double
+    public init(opacity: Double, radius: Double) { self.opacity=opacity;self.radius=radius }
+    private enum CodingKeys: String, CodingKey { case opacity,radius }
+    public init(from decoder: Decoder) throws {
+        try ModelStoryDecoding3D.keys(decoder,required:["opacity","radius"])
+        let c=try decoder.container(keyedBy:CodingKeys.self)
+        opacity=try c.decode(Double.self,forKey:.opacity);radius=try c.decode(Double.self,forKey:.radius)
+        try validate()
+    }
+    public func validate() throws {
+        guard opacity.isFinite,(0...1).contains(opacity),radius.isFinite,(0...16).contains(radius) else {
+            throw VideoError.invalid("投影样式须明确使用0至1的不透明度及0至16的半径，且均为有限数")
+        }
+    }
+}
 public struct ModelLight3D: Codable, Equatable, Identifiable, Sendable {
     public var id: String; public var kind: ModelLightKind; public var color: String; public var intensity: Double; public var transform: ModelTransform3D
-    public init(id: String, kind: ModelLightKind, color: String = "FFFFFF", intensity: Double = 1000, transform: ModelTransform3D = .init()) { self.id=id; self.kind=kind; self.color=color; self.intensity=intensity; self.transform=transform }
+    public var shadowStyle: ModelShadowStyle3D?
+    public init(id: String, kind: ModelLightKind, color: String = "FFFFFF", intensity: Double = 1000, transform: ModelTransform3D = .init(), shadowStyle: ModelShadowStyle3D? = nil) { self.id=id; self.kind=kind; self.color=color; self.intensity=intensity; self.transform=transform;self.shadowStyle=shadowStyle }
+    private enum CodingKeys: String, CodingKey { case id,kind,color,intensity,transform,shadowStyle }
+    public init(from decoder: Decoder) throws {
+        try ModelStoryDecoding3D.keys(decoder,required:["id","kind","color","intensity","transform"],optional:["shadowStyle"])
+        let c=try decoder.container(keyedBy:CodingKeys.self)
+        id=try c.decode(String.self,forKey:.id);kind=try c.decode(ModelLightKind.self,forKey:.kind)
+        color=try c.decode(String.self,forKey:.color);intensity=try c.decode(Double.self,forKey:.intensity)
+        transform=try c.decode(ModelTransform3D.self,forKey:.transform)
+        if c.contains(.shadowStyle) {
+            guard !(try c.decodeNil(forKey:.shadowStyle)) else {throw VideoError.invalid("显式投影样式不能为null；旧行为须省略字段")}
+            shadowStyle=try c.decode(ModelShadowStyle3D.self,forKey:.shadowStyle)
+        } else {shadowStyle=nil}
+    }
 }
 /// Editable source-frame contract only. Saving this data does not assert that a
 /// compatible signed renderer is installed or that any ACNH effect was reviewed.
@@ -312,6 +344,13 @@ public struct ModelScene3D: Codable, Equatable, Sendable {
         } else {dialogueObstacleInstanceIDs=nil}
     }
     public var assetIDs: Set<String> { instances.reduce(into:Set<String>()) { $0.formUnion($1.resource.assetIDs) } }
+    /// Identical to the renderer's original filter/max order, including ties.
+    /// Shared by validation and rendering so an explicit style cannot silently
+    /// target a fill, ambient, zero-energy or black backend-sentinel light.
+    public var shadowLightID: String? {
+        lights.filter { $0.kind == .directional && $0.intensity > 0 && $0.color != "000000" }
+            .max { $0.intensity < $1.intensity }?.id
+    }
     private struct DigestInput: Encodable { let scene: ModelScene3D; let durationFrames: Int }
     public func contentDigest(durationFrames: Int) throws -> String { try validate(durationFrames:durationFrames);return try Codec.digest(DigestInput(scene:self,durationFrames:durationFrames)) }
     public func validate(durationFrames: Int, assets: [Asset]? = nil) throws {
@@ -392,6 +431,10 @@ public struct ModelScene3D: Codable, Equatable, Sendable {
         for light in lights {
             guard PluginProtocolRules.text(light.id,maximum:160),light.color.utf8.count==6,light.color.range(of:"^[A-Fa-f0-9]{6}$",options:.regularExpression) != nil,light.intensity.isFinite,(0...100000).contains(light.intensity) else { throw VideoError.invalid("三维灯光标识、颜色或强度无效") }
             try light.transform.validate()
+            if let style=light.shadowStyle {
+                try style.validate()
+                guard light.id==shadowLightID else {throw VideoError.invalid("投影样式只能绑定当前实际主定向投影灯，不能用于环境、补光、零能量或无主灯场景")}
+            }
         }
         guard variantNodes<=8192 else {throw VideoError.invalid("三维互斥节点总数超过8192")}
         var targets=Set<String>(), jointTargets=Set<String>(), totalFrames=variantFrames+(camera.keyframes?.count ?? 0)
@@ -478,6 +521,13 @@ public enum ModelScene3DSchema {
         "ModelCamera3D":"position:ModelVector3 target:ModelVector3 up:ModelVector3 verticalFieldOfViewDegrees:n near:n far:n",
         "ModelLight3D":"id:s kind:ModelLightKind color:s intensity:n transform:ModelTransform3D",
         "ModelScene3D":"version:i instances:[ModelInstance3D] camera:ModelCamera3D lights:[ModelLight3D] transformTracks:[ModelTransformTrack] jointTracks:[ModelJointTrack]"
+    ]
+}
+/// Additive Host/game17 only. All game9–16 light records remain frozen.
+public enum ModelShadowStyleSchema {
+    public static let records:[String:String] = [
+        "ModelShadowStyle3D":"opacity:n radius:n",
+        "ModelLight3D":"id:s kind:ModelLightKind color:s intensity:n transform:ModelTransform3D shadowStyle?:ModelShadowStyle3D"
     ]
 }
 /// Host/game12 only. Keep game9/10/11 material records byte-for-byte unchanged.

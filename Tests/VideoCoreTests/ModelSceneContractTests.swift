@@ -46,6 +46,86 @@ final class ModelSceneContractTests: XCTestCase {
     private func input(_ project: Project, edits: [Edit]) throws -> Data {
         try Codec.data(AgentValue.object(["workspace_id":.string(project.workspaceID),"project_id":.string(project.id),"base_revision":.string(project.current.id),"edits":try Codec.decoder().decode(AgentValue.self,from:Codec.data(edits))]))
     }
+    func testShadowStylePreservesLegacyWireAndExactOriginalKeySelection() throws {
+        let f=try fixture();defer{try? FileManager.default.removeItem(at:f.root)}
+        struct OldLight:Encodable {let id:String;let kind:ModelLightKind;let color:String;let intensity:Double;let transform:ModelTransform3D}
+        let light=f.model.lights[0],old=OldLight(id:light.id,kind:light.kind,color:light.color,intensity:light.intensity,transform:light.transform)
+        let bytes=try Codec.data(old),decoded=try Codec.decoder().decode(ModelLight3D.self,from:bytes)
+        XCTAssertNil(decoded.shadowStyle);XCTAssertEqual(try Codec.data(decoded),bytes)
+        let choices:[[ModelLight3D]]=[[],[.init(id:"ambient",kind:.ambient)],
+            [.init(id:"zero",kind:.directional,intensity:0),.init(id:"black",kind:.directional,color:"000000")],
+            [.init(id:"fill",kind:.directional,intensity:100),.init(id:"sun",kind:.directional,intensity:200)],
+            [.init(id:"first",kind:.directional,intensity:200),.init(id:"last",kind:.directional,intensity:200)],
+            [.init(id:"last",kind:.directional,intensity:200),.init(id:"first",kind:.directional,intensity:200)],
+            [.init(id:"omni",kind:.omni,intensity:9999),.init(id:"sun",kind:.directional,intensity:2)]]
+        for lights in choices {
+            var model=f.model;model.lights=lights
+            let original=lights.filter{$0.kind == .directional && $0.intensity>0 && $0.color != "000000"}.max{$0.intensity<$1.intensity}?.id
+            XCTAssertEqual(model.shadowLightID,original,"旧过滤、max顺序和相等强度行为不能改变")
+        }
+        for (opacity,radius) in [(0.0,0.0),(1.0,16.0),(0.24,3.0)] {
+            var model=f.model;model.lights[0].shadowStyle = .init(opacity:opacity,radius:radius)
+            XCTAssertNoThrow(try model.validate(durationFrames:21,assets:f.assets))
+            XCTAssertEqual(try Codec.decoder().decode(ModelScene3D.self,from:Codec.data(model)),model)
+        }
+    }
+    func testShadowStyleRejectsNonKeyNonfiniteOutOfRangeAndMalformedWire() throws {
+        let f=try fixture();defer{try? FileManager.default.removeItem(at:f.root)}
+        let style=ModelShadowStyle3D(opacity:0.24,radius:3)
+        for field in ["opacity","radius"] {
+            for number in [Double.nan,Double.infinity,-Double.infinity,-0.001,field=="opacity" ? 1.001:16.001] {
+                var invalid=style
+                if field=="opacity" {invalid.opacity=number}else{invalid.radius=number}
+                XCTAssertThrowsError(try invalid.validate(),field)
+                var model=f.model;model.lights[0].shadowStyle=invalid
+                XCTAssertThrowsError(try model.validate(durationFrames:21),field)
+            }
+        }
+        for rejected in [ModelLight3D(id:"ambient",kind:.ambient),.init(id:"omni",kind:.omni),
+                         .init(id:"zero",kind:.directional,intensity:0),.init(id:"black",kind:.directional,color:"000000"),
+                         .init(id:"fill",kind:.directional,intensity:100)] {
+            var model=f.model,light=rejected;light.shadowStyle=style;model.lights.append(light)
+            XCTAssertThrowsError(try model.validate(durationFrames:21),rejected.id)
+            model.lights=[light]
+            if rejected.id != "fill" {XCTAssertThrowsError(try model.validate(durationFrames:21),"没有实际主投影灯时不可接受样式")}
+        }
+        var light=f.model.lights[0];light.shadowStyle=style
+        let wire=try XCTUnwrap(JSONSerialization.jsonObject(with:Codec.data(light)) as? [String:Any])
+        for index in 0..<7 {
+            var changed=wire,fields=try XCTUnwrap(wire["shadowStyle"] as? [String:Any])
+            switch index {
+            case 0:changed["shadowStyle"]=NSNull()
+            case 1:fields.removeValue(forKey:"radius");changed["shadowStyle"]=fields
+            case 2:fields["opacity"]=NSNull();changed["shadowStyle"]=fields
+            case 3:fields["radius"]="3";changed["shadowStyle"]=fields
+            case 4:fields["unknown"]=1;changed["shadowStyle"]=fields
+            case 5:changed["unknown"]=1
+            default:changed["shadowStyle"]=[:]
+            }
+            XCTAssertThrowsError(try Codec.decoder().decode(ModelLight3D.self,from:JSONSerialization.data(withJSONObject:changed)),"显式样式不可静默忽略未知、缺失或null字段")
+        }
+    }
+    func testShadowStyleNormalEditAndColdRestorePreserveOriginalResourcesAndEnterDigest() throws {
+        let f=try fixture();defer{try? FileManager.default.removeItem(at:f.root)}
+        let original=scene(f);var project=project(original,f)
+        project.revisions[0].review.sound=true;project.revisions[0].review.fullPreview=true
+        try f.repository.transaction{$0.projects=[project]}
+        var changed=original;changed.modelScene3D!.lights[0].shadowStyle = .init(opacity:0.24,radius:3)
+        let before=try Codec.data(f.repository.read()),data=try input(project,edits:[.replaceScene(original.id,changed)])
+        _=try AgentMutationExecutor.preview(command:"edit apply",data:data,database:f.repository.read(),principal:"owner",repository:f.repository)
+        XCTAssertEqual(try Codec.data(f.repository.read()),before)
+        _=try f.repository.performAgentMutation(command:"edit apply",data:data,principal:"owner",requestID:"save-shadow-style")
+        let current=try XCTUnwrap(f.repository.read().projects.first?.current),model=try XCTUnwrap(current.scenes[0].modelScene3D)
+        XCTAssertEqual(model,changed.modelScene3D);XCTAssertEqual(model.instances,f.model.instances)
+        XCTAssertEqual(model.camera,f.model.camera);XCTAssertEqual(model.transformTracks,f.model.transformTracks);XCTAssertEqual(model.jointTracks,f.model.jointTracks)
+        XCTAssertEqual(try PluginModelBankManifest(scene:model,durationFrames:21),try PluginModelBankManifest(scene:f.model,durationFrames:21))
+        XCTAssertNotEqual(try model.contentDigest(durationFrames:21),try f.model.contentDigest(durationFrames:21))
+        XCTAssertFalse(current.review.sound);XCTAssertFalse(current.review.fullPreview)
+        let cold=try Repository.restore(f.repository.backup(),to:f.root.appendingPathComponent("shadow-style-cold"))
+        XCTAssertEqual(try cold.read().projects.first?.current.contentDigest(),try current.contentDigest())
+        XCTAssertEqual(try cold.read().projects.first?.current.scenes[0].modelScene3D,model)
+        for asset in f.assets {XCTAssertEqual(try Data(contentsOf:cold.assetURL(asset)),try Data(contentsOf:f.repository.assetURL(asset)))}
+    }
     func testCameraMotionKeepsLegacyBytesAndDeterministicEndpointHolds() throws {
         let legacy=Data(#"{"far":1000,"near":0.01,"position":{"x":0,"y":2,"z":5},"target":{"x":0,"y":0,"z":0},"up":{"x":0,"y":1,"z":0},"verticalFieldOfViewDegrees":45}"#.utf8)
         var camera=try Codec.decoder().decode(ModelCamera3D.self,from:legacy)

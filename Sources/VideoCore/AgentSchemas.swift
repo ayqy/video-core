@@ -97,6 +97,7 @@ public enum AgentSchemas {
         }
         result.merge(PluginRPCSchemas.modelCameraMotionDefinitions(),uniquingKeysWith:{$1})
         result.merge(PluginRPCSchemas.modelDialogueObstacleDefinitions(),uniquingKeysWith:{$1})
+        result.merge(PluginRPCSchemas.modelShadowStyleDefinitions(),uniquingKeysWith:{$1})
         // Extend the Host's existing nullable legacy fields without replacing
         // their record with the stricter plugin wire declaration.
         var material=result["ModelMaterialInterpretation"]!.object!,materialProperties=material["properties"]!.object!
