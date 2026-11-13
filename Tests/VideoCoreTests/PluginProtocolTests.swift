@@ -137,9 +137,9 @@ final class PluginProtocolTests:XCTestCase {
         XCTAssertEqual(descriptor.inputSchema.object?["$defs"]?.object?["KnowledgePayoffMatrix"], current["KnowledgePayoffMatrix"])
     }
     func testPublicationSchemaSelectionUsesCurrentDefaultsAndRetainsExplicitLegacyRequests() throws {
-        XCTAssertEqual(try PluginInputCompatibility.publicationSchema(pluginID: "video.game"), 17)
+        XCTAssertEqual(try PluginInputCompatibility.publicationSchema(pluginID: "video.game"), 18)
         XCTAssertEqual(try PluginInputCompatibility.publicationSchema(pluginID: "video.cartoon"), 8)
-        for version in [1, 2, 3, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17] {
+        for version in [1, 2, 3, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18] {
             XCTAssertEqual(try PluginInputCompatibility.publicationSchema(pluginID: "video.game", requested: String(version)), version)
         }
         for version in [1, 4, 5, 6, 7, 8] {
@@ -154,7 +154,7 @@ final class PluginProtocolTests:XCTestCase {
         XCTAssertThrowsError(try PluginInputCompatibility.publicationSchema(pluginID: "video.cartoon", requested: "3"))
         XCTAssertThrowsError(try PluginInputCompatibility.publicationSchema(pluginID: "video.cartoon", requested: "9"))
         XCTAssertThrowsError(try PluginInputCompatibility.publicationSchema(pluginID: "video.cartoon", requested: "10"))
-        XCTAssertThrowsError(try PluginInputCompatibility.publicationSchema(pluginID: "video.game", requested: "18"))
+        XCTAssertThrowsError(try PluginInputCompatibility.publicationSchema(pluginID: "video.game", requested: "19"))
         XCTAssertThrowsError(try PluginInputCompatibility.publicationSchema(pluginID: "video.cartoon", requested: "12"))
     }
     func testGameSeventeenAddsOnlyBoundedShadowStyleAndPreservesAllGameSixteenDefinitions() throws {
@@ -183,6 +183,34 @@ final class PluginProtocolTests:XCTestCase {
         XCTAssertTrue(PluginInputCompatibility.supportsModelBank(pluginID:"video.game",inputSchema:17))
         XCTAssertNotNil(descriptor.inputSchema.object?["properties"]?.object?["modelBankOperation"])
         XCTAssertNil(PluginRPCSchemas.definitions(inputSchemaVersion:8,pluginID:"video.cartoon")["ModelShadowStyle3D"])
+    }
+    func testDistanceFogGameEighteenAddsOnlyExplicitScenePropertyAndPreservesGameSeventeenDefinitions() throws {
+        var current=PluginRPCSchemas.definitions(inputSchemaVersion:18,pluginID:"video.game")
+        let previous=PluginRPCSchemas.definitions(inputSchemaVersion:17,pluginID:"video.game"),host=AgentSchemas.definitions()
+        let fog=try XCTUnwrap(current["ModelDistanceFog3D"]),fields=try XCTUnwrap(fog.object?["properties"]?.object)
+        XCTAssertEqual(fog,host["ModelDistanceFog3D"])
+        XCTAssertEqual(fog.object?["required"],.array(["color","startDistance","endDistance"].map(AgentValue.string)))
+        XCTAssertEqual(fog.object?["additionalProperties"],.boolean(false))
+        XCTAssertEqual(fields["color"]?.object?["pattern"],.string("^[A-Fa-f0-9]{6}$"))
+        XCTAssertEqual(fields["startDistance"]?.object?["minimum"],.number(0))
+        XCTAssertEqual(fields["endDistance"]?.object?["exclusiveMinimum"],.number(0))
+        let property=try XCTUnwrap(current["ModelScene3D"]?.object?["properties"]?.object?["distanceFog"])
+        XCTAssertEqual(property,host["ModelScene3D"]?.object?["properties"]?.object?["distanceFog"])
+        XCTAssertEqual(property.object?["$ref"],.string("#/$defs/ModelDistanceFog3D"));XCTAssertNil(property.object?["anyOf"])
+        var model=try XCTUnwrap(current["ModelScene3D"]?.object),properties=try XCTUnwrap(model["properties"]?.object)
+        properties.removeValue(forKey:"distanceFog");model["properties"] = .object(properties);current["ModelScene3D"] = .object(model)
+        current.removeValue(forKey:"ModelDistanceFog3D")
+        XCTAssertEqual(try Codec.data(current),try Codec.data(previous),"game18仅增加显式距离雾，game17及更早协议保持冻结")
+        for schema in 9...17 {
+            let old=PluginRPCSchemas.definitions(inputSchemaVersion:schema,pluginID:"video.game")
+            XCTAssertNil(old["ModelDistanceFog3D"]);XCTAssertNil(old["ModelScene3D"]?.object?["properties"]?.object?["distanceFog"])
+        }
+        let descriptor=PluginDescription(pluginID:"video.game",capabilityID:"game.simulate",version:"1.12.0",inputSchemaVersion:18)
+        XCTAssertFalse(descriptor.filesystemAccess);XCTAssertFalse(descriptor.networkAccess)
+        XCTAssertTrue(PluginInputCompatibility.supportsModelBank(pluginID:"video.game",inputSchema:18))
+        XCTAssertNotNil(descriptor.inputSchema.object?["properties"]?.object?["modelBankOperation"])
+        XCTAssertNil(PluginRPCSchemas.definitions(inputSchemaVersion:8,pluginID:"video.cartoon")["ModelDistanceFog3D"])
+        XCTAssertFalse(PluginInputCompatibility.supports(pluginID:"video.game",version:19))
     }
     func testGameSixteenAddsExplicitWaterSurfaceAndPreservesEveryGameFifteenDefinition() throws {
         var current=PluginRPCSchemas.definitions(inputSchemaVersion:16,pluginID:"video.game")

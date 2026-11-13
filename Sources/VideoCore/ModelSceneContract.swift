@@ -310,6 +310,31 @@ public struct ModelLight3D: Codable, Equatable, Identifiable, Sendable {
         } else {shadowStyle=nil}
     }
 }
+/// Authored linear distance atmosphere; source geometry and materials are intact.
+public struct ModelDistanceFog3D: Codable, Equatable, Sendable {
+    public var color: String
+    public var startDistance: Double
+    public var endDistance: Double
+    public init(color: String, startDistance: Double, endDistance: Double) {
+        self.color=color;self.startDistance=startDistance;self.endDistance=endDistance
+    }
+    private enum CodingKeys: String, CodingKey { case color,startDistance,endDistance }
+    public init(from decoder: Decoder) throws {
+        try ModelStoryDecoding3D.keys(decoder,required:["color","startDistance","endDistance"])
+        let c=try decoder.container(keyedBy:CodingKeys.self)
+        color=try c.decode(String.self,forKey:.color)
+        startDistance=try c.decode(Double.self,forKey:.startDistance)
+        endDistance=try c.decode(Double.self,forKey:.endDistance)
+        try validate()
+    }
+    public func validate() throws {
+        guard color.utf8.count==6,color.range(of:"^[A-Fa-f0-9]{6}$",options:.regularExpression) != nil,
+              startDistance.isFinite,endDistance.isFinite,startDistance>=0,
+              endDistance>startDistance,endDistance<=1_000_000 else {
+            throw VideoError.invalid("距离雾须明确指定六位sRGB颜色、有限非负起点及更大的终点，距离不超过100万米")
+        }
+    }
+}
 /// Editable source-frame contract only. Saving this data does not assert that a
 /// compatible signed renderer is installed or that any ACNH effect was reviewed.
 public struct ModelScene3D: Codable, Equatable, Sendable {
@@ -322,10 +347,13 @@ public struct ModelScene3D: Codable, Equatable, Sendable {
     /// Explicit author-declared bodies to avoid during dialogue, including
     /// independent clothing. Nil preserves the prior wire and action-based set.
     public var dialogueObstacleInstanceIDs: [String]?
-    public init(version: Int = 1, instances: [ModelInstance3D], camera: ModelCamera3D, lights: [ModelLight3D], transformTracks: [ModelTransformTrack] = [], jointTracks: [ModelJointTrack] = [], actions: [ModelStoryAction3D]? = nil, dialogueObstacleInstanceIDs: [String]? = nil) { self.version=version; self.instances=instances; self.camera=camera; self.lights=lights; self.transformTracks=transformTracks; self.jointTracks=jointTracks; self.actions=actions; self.dialogueObstacleInstanceIDs=dialogueObstacleInstanceIDs }
-    private enum CodingKeys: String, CodingKey { case version,instances,camera,lights,transformTracks,jointTracks,actions,dialogueObstacleInstanceIDs }
+    /// Explicit linear camera-distance atmosphere. Omission preserves the old
+    /// transparent scene and exact encoded model; no game-name heuristic applies.
+    public var distanceFog: ModelDistanceFog3D?
+    public init(version: Int = 1, instances: [ModelInstance3D], camera: ModelCamera3D, lights: [ModelLight3D], transformTracks: [ModelTransformTrack] = [], jointTracks: [ModelJointTrack] = [], actions: [ModelStoryAction3D]? = nil, dialogueObstacleInstanceIDs: [String]? = nil, distanceFog: ModelDistanceFog3D? = nil) { self.version=version; self.instances=instances; self.camera=camera; self.lights=lights; self.transformTracks=transformTracks; self.jointTracks=jointTracks; self.actions=actions; self.dialogueObstacleInstanceIDs=dialogueObstacleInstanceIDs;self.distanceFog=distanceFog }
+    private enum CodingKeys: String, CodingKey { case version,instances,camera,lights,transformTracks,jointTracks,actions,dialogueObstacleInstanceIDs,distanceFog }
     public init(from decoder: Decoder) throws {
-        try ModelStoryDecoding3D.keys(decoder,required:["version","instances","camera","lights","transformTracks","jointTracks"],optional:["actions","dialogueObstacleInstanceIDs"])
+        try ModelStoryDecoding3D.keys(decoder,required:["version","instances","camera","lights","transformTracks","jointTracks"],optional:["actions","dialogueObstacleInstanceIDs","distanceFog"])
         let c=try decoder.container(keyedBy:CodingKeys.self)
         version=try c.decode(Int.self,forKey:.version);instances=try c.decode([ModelInstance3D].self,forKey:.instances)
         camera=try c.decode(ModelCamera3D.self,forKey:.camera);lights=try c.decode([ModelLight3D].self,forKey:.lights)
@@ -342,6 +370,11 @@ public struct ModelScene3D: Codable, Equatable, Sendable {
             guard !(try c.decodeNil(forKey:.dialogueObstacleInstanceIDs)) else {throw VideoError.invalid("显式对白避让名单不能为null；旧行为须省略字段")}
             dialogueObstacleInstanceIDs=try c.decode([String].self,forKey:.dialogueObstacleInstanceIDs)
         } else {dialogueObstacleInstanceIDs=nil}
+        if c.contains(.distanceFog) {
+            guard !(try c.decodeNil(forKey:.distanceFog)) else {throw VideoError.invalid("显式距离雾不能为null；旧行为须省略字段")}
+            distanceFog=try c.decode(ModelDistanceFog3D.self,forKey:.distanceFog)
+            try validateDistanceFog()
+        } else {distanceFog=nil}
     }
     public var assetIDs: Set<String> { instances.reduce(into:Set<String>()) { $0.formUnion($1.resource.assetIDs) } }
     /// Identical to the renderer's original filter/max order, including ties.
@@ -353,10 +386,18 @@ public struct ModelScene3D: Codable, Equatable, Sendable {
     }
     private struct DigestInput: Encodable { let scene: ModelScene3D; let durationFrames: Int }
     public func contentDigest(durationFrames: Int) throws -> String { try validate(durationFrames:durationFrames);return try Codec.digest(DigestInput(scene:self,durationFrames:durationFrames)) }
+    private func validateDistanceFog() throws {
+        guard let distanceFog else {return}
+        try distanceFog.validate()
+        guard camera.near.isFinite,camera.far.isFinite,distanceFog.endDistance>camera.near,distanceFog.endDistance<=camera.far else {
+            throw VideoError.invalid("距离雾须在当前相机近裁面之后、远裁面之前或该面上达到终点")
+        }
+    }
     public func validate(durationFrames: Int, assets: [Asset]? = nil) throws {
         guard ((version==1 && actions==nil) || (version==2 && !(actions?.isEmpty ?? true))),(1...54000).contains(durationFrames),(1...128).contains(instances.count),(1...16).contains(lights.count),transformTracks.count<=128,jointTracks.count<=4096,
               Set(instances.map(\.id)).count==instances.count,Set(lights.map(\.id)).count==lights.count,Set(instances.map(\.id)).isDisjoint(with:Set(lights.map(\.id))) else { throw VideoError.invalid("三维场景版本、实例、灯光数量或标识无效") }
         try camera.validate(durationFrames:durationFrames)
+        try validateDistanceFog()
         if let ids=dialogueObstacleInstanceIDs {
             let instanceIDs=Set(instances.map(\.id)),speakers=Set((actions ?? []).filter{$0.kind == .speak}.map(\.instanceID))
             guard (1...128).contains(ids.count),Set(ids).count==ids.count,speakers.isSubset(of:Set(ids)),
@@ -528,6 +569,12 @@ public enum ModelShadowStyleSchema {
     public static let records:[String:String] = [
         "ModelShadowStyle3D":"opacity:n radius:n",
         "ModelLight3D":"id:s kind:ModelLightKind color:s intensity:n transform:ModelTransform3D shadowStyle?:ModelShadowStyle3D"
+    ]
+}
+/// Additive Host/game18 only. Earlier scene declarations remain frozen.
+public enum ModelDistanceFogSchema {
+    public static let records:[String:String] = [
+        "ModelDistanceFog3D":"color:s startDistance:n endDistance:n"
     ]
 }
 /// Host/game12 only. Keep game9/10/11 material records byte-for-byte unchanged.

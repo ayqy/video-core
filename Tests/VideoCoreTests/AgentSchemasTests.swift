@@ -59,6 +59,17 @@ final class AgentSchemasTests:XCTestCase {
         XCTAssertEqual(field,plugin["ModelLight3D"]?.object?["properties"]?.object?["shadowStyle"])
         try verify(try value(ModelShadowStyle3D(opacity:0.24,radius:3)),schema:AgentSchemas.shape("ModelShadowStyle3D"),defs:defs)
     }
+    func testDistanceFogDiscoveryMatchesCurrentPluginWithoutNullableField() throws {
+        let defs=AgentSchemas.definitions(),plugin=PluginRPCSchemas.definitions(inputSchemaVersion:18,pluginID:"video.game")
+        let fog=try XCTUnwrap(defs["ModelDistanceFog3D"])
+        XCTAssertEqual(fog,plugin["ModelDistanceFog3D"])
+        XCTAssertEqual(fog.object?["additionalProperties"],.boolean(false))
+        XCTAssertEqual(fog.object?["required"],.array(["color","startDistance","endDistance"].map(AgentValue.string)))
+        let field=try XCTUnwrap(defs["ModelScene3D"]?.object?["properties"]?.object?["distanceFog"])
+        XCTAssertEqual(field.object?["$ref"],.string("#/$defs/ModelDistanceFog3D"));XCTAssertNil(field.object?["anyOf"])
+        XCTAssertEqual(field,plugin["ModelScene3D"]?.object?["properties"]?.object?["distanceFog"])
+        try verify(try value(ModelDistanceFog3D(color:"B9DFE9",startDistance:35,endDistance:120)),schema:AgentSchemas.shape("ModelDistanceFog3D"),defs:defs)
+    }
     private func value<T:Encodable>(_ value:T)throws->AgentValue {try Codec.decoder().decode(AgentValue.self,from:Codec.data(value))}
     private func verify(_ value:AgentValue,schema:AgentValue,defs:[String:AgentValue])throws {
         guard let shape=schema.object else{return XCTFail("schema not object")}

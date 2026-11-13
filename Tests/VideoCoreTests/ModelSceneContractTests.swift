@@ -69,6 +69,84 @@ final class ModelSceneContractTests: XCTestCase {
             XCTAssertEqual(try Codec.decoder().decode(ModelScene3D.self,from:Codec.data(model)),model)
         }
     }
+    func testDistanceFogKeepsLegacyWireAndValidatesExplicitCameraDistances() throws {
+        let f=try fixture();defer{try? FileManager.default.removeItem(at:f.root)}
+        struct LegacyModel:Encodable {
+            let version:Int;let instances:[ModelInstance3D];let camera:ModelCamera3D;let lights:[ModelLight3D]
+            let transformTracks:[ModelTransformTrack];let jointTracks:[ModelJointTrack]
+        }
+        let m=f.model,old=LegacyModel(version:m.version,instances:m.instances,camera:m.camera,lights:m.lights,transformTracks:m.transformTracks,jointTracks:m.jointTracks)
+        let bytes=try Codec.data(old),decoded=try Codec.decoder().decode(ModelScene3D.self,from:bytes)
+        XCTAssertNil(decoded.distanceFog);XCTAssertEqual(try Codec.data(decoded),bytes)
+        XCTAssertEqual(try decoded.contentDigest(durationFrames:21),try f.model.contentDigest(durationFrames:21))
+        for (start,end) in [(0.0,0.02),(35.0,120.0),(0.0,m.camera.far)] {
+            var model=m;model.distanceFog = .init(color:"B9DFE9",startDistance:start,endDistance:end)
+            XCTAssertNoThrow(try model.validate(durationFrames:21,assets:f.assets))
+            XCTAssertEqual(try Codec.decoder().decode(ModelScene3D.self,from:Codec.data(model)),model)
+        }
+        let fog=ModelDistanceFog3D(color:"B9DFE9",startDistance:35,endDistance:120)
+        for invalid in [ModelDistanceFog3D(color:"#B9DFE9",startDistance:35,endDistance:120),
+                        .init(color:"B9DFEG",startDistance:35,endDistance:120),
+                        .init(color:"B9DFE9\n",startDistance:35,endDistance:120),
+                        .init(color:"B9DFE9",startDistance:-0.01,endDistance:120),
+                        .init(color:"B9DFE9",startDistance:120,endDistance:120),
+                        .init(color:"B9DFE9",startDistance:121,endDistance:120),
+                        .init(color:"B9DFE9",startDistance:.nan,endDistance:120),
+                        .init(color:"B9DFE9",startDistance:35,endDistance:.infinity),
+                        .init(color:"B9DFE9",startDistance:35,endDistance:1_000_001)] {
+            XCTAssertThrowsError(try invalid.validate())
+            var model=m;model.distanceFog=invalid;XCTAssertThrowsError(try model.validate(durationFrames:21))
+        }
+        for end in [m.camera.near,m.camera.far+1] {
+            var model=m;model.distanceFog = .init(color:fog.color,startDistance:0,endDistance:end)
+            XCTAssertThrowsError(try model.validate(durationFrames:21))
+            XCTAssertThrowsError(try Codec.decoder().decode(ModelScene3D.self,from:Codec.data(model)))
+        }
+    }
+    func testDistanceFogRejectsNullUnknownMissingAndMistypedWire() throws {
+        let f=try fixture();defer{try? FileManager.default.removeItem(at:f.root)}
+        var model=f.model;model.distanceFog = .init(color:"B9DFE9",startDistance:35,endDistance:120)
+        let wire=try XCTUnwrap(JSONSerialization.jsonObject(with:Codec.data(model)) as? [String:Any])
+        for index in 0..<12 {
+            var changed=wire,fields=try XCTUnwrap(wire["distanceFog"] as? [String:Any])
+            switch index {
+            case 0:changed["distanceFog"]=NSNull()
+            case 1:fields.removeValue(forKey:"color");changed["distanceFog"]=fields
+            case 2:fields.removeValue(forKey:"startDistance");changed["distanceFog"]=fields
+            case 3:fields.removeValue(forKey:"endDistance");changed["distanceFog"]=fields
+            case 4:fields["color"]=NSNull();changed["distanceFog"]=fields
+            case 5:fields["startDistance"]="35";changed["distanceFog"]=fields
+            case 6:fields["endDistance"]=true;changed["distanceFog"]=fields
+            case 7:fields["densityExponent"]=1;changed["distanceFog"]=fields
+            case 8:changed["distanceFog"]=[:]
+            case 9:changed["unknown"]=1
+            case 10:fields["endDistance"]=34;changed["distanceFog"]=fields
+            default:fields["startDistance"]=NSNull();changed["distanceFog"]=fields
+            }
+            XCTAssertThrowsError(try Codec.decoder().decode(ModelScene3D.self,from:JSONSerialization.data(withJSONObject:changed)))
+        }
+    }
+    func testDistanceFogNormalEditColdRestoreAndDigestPreserveEveryOriginalResource() throws {
+        let f=try fixture();defer{try? FileManager.default.removeItem(at:f.root)}
+        let original=scene(f);var project=project(original,f)
+        project.revisions[0].review.sound=true;project.revisions[0].review.fullPreview=true
+        try f.repository.transaction{$0.projects=[project]}
+        var changed=original;changed.modelScene3D!.distanceFog = .init(color:"B9DFE9",startDistance:35,endDistance:120)
+        let before=try Codec.data(f.repository.read()),data=try input(project,edits:[.replaceScene(original.id,changed)])
+        _=try AgentMutationExecutor.preview(command:"edit apply",data:data,database:f.repository.read(),principal:"owner",repository:f.repository)
+        XCTAssertEqual(try Codec.data(f.repository.read()),before)
+        _=try f.repository.performAgentMutation(command:"edit apply",data:data,principal:"owner",requestID:"save-distance-fog")
+        let current=try XCTUnwrap(f.repository.read().projects.first?.current),model=try XCTUnwrap(current.scenes[0].modelScene3D)
+        XCTAssertEqual(model,changed.modelScene3D)
+        var inverse=model;inverse.distanceFog=nil;XCTAssertEqual(inverse,f.model)
+        XCTAssertEqual(try PluginModelBankManifest(scene:model,durationFrames:21),try PluginModelBankManifest(scene:f.model,durationFrames:21))
+        XCTAssertNotEqual(try model.contentDigest(durationFrames:21),try f.model.contentDigest(durationFrames:21))
+        XCTAssertFalse(current.review.sound);XCTAssertFalse(current.review.fullPreview)
+        let cold=try Repository.restore(f.repository.backup(),to:f.root.appendingPathComponent("distance-fog-cold"))
+        XCTAssertEqual(try cold.read().projects.first?.current.contentDigest(),try current.contentDigest())
+        XCTAssertEqual(try cold.read().projects.first?.current.scenes[0].modelScene3D,model)
+        for asset in f.assets {XCTAssertEqual(try Data(contentsOf:cold.assetURL(asset)),try Data(contentsOf:f.repository.assetURL(asset)))}
+    }
     func testShadowStyleRejectsNonKeyNonfiniteOutOfRangeAndMalformedWire() throws {
         let f=try fixture();defer{try? FileManager.default.removeItem(at:f.root)}
         let style=ModelShadowStyle3D(opacity:0.24,radius:3)

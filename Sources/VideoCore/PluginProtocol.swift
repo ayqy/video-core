@@ -2,7 +2,7 @@ import Foundation
 
 public enum PluginInputCompatibility {
     public static func supports(pluginID: String, version: Int) -> Bool {
-        version == 1 || (pluginID == "video.game" && [2,3,5,6,7,8,9,10,11,12,13,14,15,16,17].contains(version)) || (pluginID == "video.cartoon" && [4,5,6,7,8].contains(version))
+        version == 1 || (pluginID == "video.game" && [2,3,5,6,7,8,9,10,11,12,13,14,15,16,17,18].contains(version)) || (pluginID == "video.cartoon" && [4,5,6,7,8].contains(version))
     }
     /// Publisher defaults match the current endpoints. Prior schemas remain
     /// explicitly selectable, before any signing identity or output transaction.
@@ -10,7 +10,7 @@ public enum PluginInputCompatibility {
         guard ["video.game", "video.cartoon"].contains(pluginID) else {
             throw VideoError.invalid("发行协议选择需要明确的游戏或卡通模块；未访问发行身份")
         }
-        guard let requested else { return pluginID == "video.game" ? 17:8 }
+        guard let requested else { return pluginID == "video.game" ? 18:8 }
         guard requested.range(of: "^[1-9][0-9]{0,2}$", options: .regularExpression) != nil,
               let version = Int(requested), supports(pluginID: pluginID, version: version) else {
             throw VideoError.invalid("发行输入协议版本不受此模块支持；未访问发行身份")
@@ -18,24 +18,25 @@ public enum PluginInputCompatibility {
         return version
     }
     public static func supportsModelBank(pluginID:String,inputSchema:Int)->Bool {
-        pluginID == "video.game" && [9,10,11,12,13,14,15,16,17].contains(inputSchema)
+        pluginID == "video.game" && [9,10,11,12,13,14,15,16,17,18].contains(inputSchema)
     }
     /// A new endpoint may read the unchanged v1 model, but v2 actions must never
     /// be sent to game9 or silently reduced to its transform-only contract.
     public static func requireModelSupport(_ model:ModelScene3D?,pluginID:String,inputSchema:Int)throws {
         guard let model else{return}
         let compatible = supportsModelBank(pluginID:pluginID,inputSchema:inputSchema) &&
-            (!model.instances.contains(where:{$0.nodeVariants != nil}) || [11,12,13,14,15,16,17].contains(inputSchema)) &&
-            (!model.instances.contains(where:{$0.materialInterpretation?.alphaCutoutMaterialIDs != nil}) || [12,13,14,15,16,17].contains(inputSchema)) &&
-            (model.camera.keyframes==nil || [13,14,15,16,17].contains(inputSchema)) &&
-            (model.dialogueObstacleInstanceIDs==nil || [14,15,16,17].contains(inputSchema)) &&
-            (!model.instances.contains(where:{$0.materialInterpretation?.normalIntensityByMaterialID != nil}) || [15,16,17].contains(inputSchema)) &&
-            (!model.instances.contains(where:{$0.materialInterpretation?.waterSurfaceByMaterialID != nil}) || [16,17].contains(inputSchema)) &&
-            (!model.lights.contains(where:{$0.shadowStyle != nil}) || inputSchema==17) &&
+            (!model.instances.contains(where:{$0.nodeVariants != nil}) || [11,12,13,14,15,16,17,18].contains(inputSchema)) &&
+            (!model.instances.contains(where:{$0.materialInterpretation?.alphaCutoutMaterialIDs != nil}) || [12,13,14,15,16,17,18].contains(inputSchema)) &&
+            (model.camera.keyframes==nil || [13,14,15,16,17,18].contains(inputSchema)) &&
+            (model.dialogueObstacleInstanceIDs==nil || [14,15,16,17,18].contains(inputSchema)) &&
+            (!model.instances.contains(where:{$0.materialInterpretation?.normalIntensityByMaterialID != nil}) || [15,16,17,18].contains(inputSchema)) &&
+            (!model.instances.contains(where:{$0.materialInterpretation?.waterSurfaceByMaterialID != nil}) || [16,17,18].contains(inputSchema)) &&
+            (!model.lights.contains(where:{$0.shadowStyle != nil}) || [17,18].contains(inputSchema)) &&
+            (model.distanceFog==nil || inputSchema==18) &&
             ((model.version==1 && model.actions==nil) ||
-             ([10,11,12,13,14,15,16,17].contains(inputSchema) && model.version==2 && !(model.actions?.isEmpty ?? true)))
+             ([10,11,12,13,14,15,16,17,18].contains(inputSchema) && model.version==2 && !(model.actions?.isEmpty ?? true)))
         guard compatible else {
-            throw VideoError.unavailable("三维模型v1需要schema9至17；原生动作v2需要schema10至17；显式节点互斥切换需要schema11至17；透明裁切需要schema12至17；源帧镜头关键帧需要schema13至17；显式对白避让名单需要schema14至17；显式原材质法线强度需要schema15至17；显式水面需要schema16/17；显式投影样式需要schema17受信游戏模块，旧模块不能忽略新输入")
+            throw VideoError.unavailable("三维模型v1需要schema9至18；原生动作v2需要schema10至18；显式节点互斥切换需要schema11至18；透明裁切需要schema12至18；源帧镜头关键帧需要schema13至18；显式对白避让名单需要schema14至18；显式原材质法线强度需要schema15至18；显式水面需要schema16至18；显式投影样式需要schema17/18；显式距离雾需要schema18受信游戏模块，旧模块不能忽略新输入")
         }
     }
     public static func requireKnowledgeSupport(_ simulation: Simulation, pluginID: String, inputSchema: Int, appearances: [KnowledgeParticipantAppearance]? = nil) throws {
@@ -432,6 +433,22 @@ public enum PluginRPCSchemas {
         result["ModelShadowStyle3D"] = .object(style)
         return result
     }
+    /// Additive game18 only. The previous model scene and all other records
+    /// remain byte-for-byte frozen when this optional field is not supported.
+    public static func modelDistanceFogDefinitions()->[String:AgentValue] {
+        var result=ModelDistanceFogSchema.records.mapValues(record)
+        var fog=result["ModelDistanceFog3D"]!.object!,fields=fog["properties"]!.object!
+        fields["color"] = .object(["type":.string("string"),"minLength":.number(6),"maxLength":.number(6),"pattern":.string("^[A-Fa-f0-9]{6}$"),"description":.string("Explicit sRGB fog color; source textures and transparent background remain unchanged.")])
+        fields["startDistance"] = .object(["type":.string("number"),"minimum":.number(0),"maximum":.number(1_000_000)])
+        fields["endDistance"] = .object(["type":.string("number"),"exclusiveMinimum":.number(0),"maximum":.number(1_000_000)])
+        fog["properties"] = .object(fields)
+        fog["description"] = .string("Explicit linear fog in camera-space world distance. Finite start >= 0, end > start, end > camera.near and end <= camera.far are enforced by model validation. Density exponent is fixed at 1. Omission preserves the legacy no-fog path; no source bytes, camera, geometry, lights or material settings are changed.")
+        result["ModelDistanceFog3D"] = .object(fog)
+        var model=modelDialogueObstacleDefinitions()["ModelScene3D"]!.object!,properties=model["properties"]!.object!
+        properties["distanceFog"] = shape("ModelDistanceFog3D")
+        model["properties"] = .object(properties);result["ModelScene3D"] = .object(model)
+        return result
+    }
     public static func modelCameraMotionDefinitions()->[String:AgentValue] {
         var result=ModelCameraMotionSchema.records.mapValues(record)
         var camera=result["ModelCamera3D"]!.object!,properties=camera["properties"]!.object!
@@ -445,7 +462,7 @@ public enum PluginRPCSchemas {
     }
     public static func definitions(inputSchemaVersion: Int = 2,pluginID:String?=nil)->[String:AgentValue] {
         let story=inputSchemaVersion>=7 || (pluginID=="video.cartoon" && inputSchemaVersion>=5)
-        let model=pluginID=="video.game" && [9,10,11,12,13,14,15,16,17].contains(inputSchemaVersion)
+        let model=pluginID=="video.game" && [9,10,11,12,13,14,15,16,17,18].contains(inputSchemaVersion)
         let declarations:[String:String]=[
             "PluginInvocation":"workspaceID:s projectID:s revisionID:s revisionDigest:s jobID?:s invocationID:s budgetReference:s currency:s budgetLimit:n deadlineUnixTime:n",
             "PluginRect":"x:n y:n width:n height:n",
@@ -467,14 +484,15 @@ public enum PluginRPCSchemas {
         var result=declarations.mapValues(record)
         if model {
             for (key,declaration) in ModelScene3DSchema.records {result[key]=record(declaration)}
-            if [10,11,12,13,14,15,16,17].contains(inputSchemaVersion) {result.merge(modelStoryDefinitions(),uniquingKeysWith:{$1})}
-            if [11,12,13,14,15,16,17].contains(inputSchemaVersion) {result.merge(modelNodeVariantDefinitions(),uniquingKeysWith:{$1})}
-            if [12,13,14,15,16,17].contains(inputSchemaVersion) {result.merge(modelAlphaCutoutDefinitions(),uniquingKeysWith:{$1})}
-            if [13,14,15,16,17].contains(inputSchemaVersion) {result.merge(modelCameraMotionDefinitions(),uniquingKeysWith:{$1})}
-            if [14,15,16,17].contains(inputSchemaVersion) {result.merge(modelDialogueObstacleDefinitions(),uniquingKeysWith:{$1})}
-            if [15,16,17].contains(inputSchemaVersion) {result.merge(modelNormalIntensityDefinitions(),uniquingKeysWith:{$1})}
-            if [16,17].contains(inputSchemaVersion) {result.merge(modelWaterSurfaceDefinitions(),uniquingKeysWith:{$1})}
-            if inputSchemaVersion==17 {result.merge(modelShadowStyleDefinitions(),uniquingKeysWith:{$1})}
+            if [10,11,12,13,14,15,16,17,18].contains(inputSchemaVersion) {result.merge(modelStoryDefinitions(),uniquingKeysWith:{$1})}
+            if [11,12,13,14,15,16,17,18].contains(inputSchemaVersion) {result.merge(modelNodeVariantDefinitions(),uniquingKeysWith:{$1})}
+            if [12,13,14,15,16,17,18].contains(inputSchemaVersion) {result.merge(modelAlphaCutoutDefinitions(),uniquingKeysWith:{$1})}
+            if [13,14,15,16,17,18].contains(inputSchemaVersion) {result.merge(modelCameraMotionDefinitions(),uniquingKeysWith:{$1})}
+            if [14,15,16,17,18].contains(inputSchemaVersion) {result.merge(modelDialogueObstacleDefinitions(),uniquingKeysWith:{$1})}
+            if [15,16,17,18].contains(inputSchemaVersion) {result.merge(modelNormalIntensityDefinitions(),uniquingKeysWith:{$1})}
+            if [16,17,18].contains(inputSchemaVersion) {result.merge(modelWaterSurfaceDefinitions(),uniquingKeysWith:{$1})}
+            if [17,18].contains(inputSchemaVersion) {result.merge(modelShadowStyleDefinitions(),uniquingKeysWith:{$1})}
+            if inputSchemaVersion==18 {result.merge(modelDistanceFogDefinitions(),uniquingKeysWith:{$1})}
             result["ModelLightKind"] = .object(["type":.string("string"),"enum":.array(["ambient","directional","omni"].map(AgentValue.string))])
             result["ModelVertexColorUsage"] = .object(["type":.string("string"),"enum":.array(ModelVertexColorUsage.allCases.map{.string($0.rawValue)})])
             result["ModelNormalTextureEncoding"] = .object(["type":.string("string"),"enum":.array(ModelNormalTextureEncoding.allCases.map{.string($0.rawValue)})])
@@ -500,7 +518,7 @@ public enum PluginRPCSchemas {
             var frame=result["PluginFrameInput"]!.object!
             let mixed=AgentValue.object(["anyOf":.array(["artwork","gameWorld","cartoonRig","storyActions","cartoonPerformance","cartoonPresenter","voiceBinding","layers"].map { .object(["required":.array([.string($0)])]) })])
             var modelPropsRecord:[String:AgentValue]=["required":.array([.string("modelScene3D")]),"properties":.object(["kind":.object(["const":.string(SceneKind.simulation.rawValue)]),"artworkRequired":.object(["const":.boolean(false)])]),"not":mixed]
-            if [10,11,12,13,14,15,16,17].contains(inputSchemaVersion) {
+            if [10,11,12,13,14,15,16,17,18].contains(inputSchemaVersion) {
                 modelPropsRecord["if"] = .object(["properties":.object(["modelScene3D":.object(["properties":.object(["version":.object(["const":.number(2)])])])])])
                 modelPropsRecord["then"] = .object(["properties":.object(["simulation":.object(["not":.object(["required":.array([.string("knowledge")])])])])])
             }
@@ -570,7 +588,7 @@ public enum PluginRPCSchemas {
         result["Schema"] = .object(["type":.string("object")]);return result
     }
     public static func request(inputSchemaVersion: Int = 2,pluginID:String?=nil)->AgentValue {
-        let model=pluginID=="video.game" && [9,10,11,12,13,14,15,16,17].contains(inputSchemaVersion)
+        let model=pluginID=="video.game" && [9,10,11,12,13,14,15,16,17,18].contains(inputSchemaVersion)
         var schema=record("protocolMajor:i requestID:s method:PluginMethod input?:PluginFrameInput invocation?:PluginInvocation taskID?:s"+(model ? " modelBankOperation?:PluginModelBankOperation":"")).object!
         if model {
             let forbidden=AgentValue.object(["anyOf":.array(["input","invocation","taskID"].map { .object(["required":.array([.string($0)])]) })])
@@ -580,12 +598,12 @@ public enum PluginRPCSchemas {
             ])
         }
         schema["$defs"] = .object(definitions(inputSchemaVersion: inputSchemaVersion,pluginID:pluginID));schema["$schema"] = .string("https://json-schema.org/draft/2020-12/schema")
-        let modelDescription=inputSchemaVersion==17 ? " game17 adds optional bounded shadowStyle with opacity 0 to 1 and radius 0 to 16 on the existing strongest nonzero nonblack directional shadow key. Omission preserves legacy opacity 0.40/radius 1. Other lights, light energy, material/source texture bytes and shadow configuration are unchanged; all game16 model and bounded bank features remain supported without filesystem/network access.":inputSchemaVersion==16 ? " game16 adds explicit waterSurfaceByMaterialID over exact original material IDs and source normal textures, with sRGB base/reflection colors, bounded world wavelength and source-frame flow speed. Requires redGreenPositiveZ, rejects same-material alpha cutout, and reuses existing normal intensity. Omission retains exact legacy rendering; all game15 model, dialogue, camera and bounded model bank features remain available without filesystem/network access.":inputSchemaVersion==15 ? " game15 adds an explicit normalIntensityByMaterialID map of 1 to 128 original material IDs to finite values between 0 and 1. Omission retains each source material intensity; source texture bytes remain unchanged. All game14 model, dialogue, camera and bounded model bank features remain supported without filesystem/network access.":inputSchemaVersion==14 ? " game14 adds an explicit bounded dialogueObstacleInstanceIDs list covering every speaker; omitted lists preserve legacy action-based avoidance. Rendering keeps every model visible according to its original source-frame presentation and preserves body, tail and subtitle safety checks. All prior model features and the bounded model bank remain supported.":inputSchemaVersion==13 ? " game13 adds explicit source-frame camera keyframes with deterministic linear sampling and endpoint holds. Prior model v1/v2, node selections, alpha cutouts and the bounded model bank remain supported without filesystem/network access.":inputSchemaVersion==12 ? " game12 adds explicit original-material alphaOne transparent cutout at fixed 0.5; model v1/v2, node selections and the bounded model bank remain supported without filesystem/network access.":inputSchemaVersion==11 ? " game11 adds explicit mutually exclusive original-node selections and source-frame step changes; model v1/v2 and the bounded model bank remain supported without filesystem/network access.":inputSchemaVersion==10 ? " game10 validate alternatively accepts a mutually exclusive bounded in-memory modelBankOperation; model v2 actions are visual-only, while complete causal sources remain in the Host. It never grants filesystem/network access.":" game9 validate alternatively accepts a mutually exclusive bounded in-memory modelBankOperation; it never grants filesystem/network access."
+        let modelDescription=inputSchemaVersion==18 ? " game18 adds optional distanceFog with explicit six-digit sRGB color and finite world-distance start/end. Linear fog is complete at or before the camera far plane, after its near plane. Omission preserves the exact old wire and no-fog path. All game17 features and bounded model-bank operations remain supported without filesystem/network access.":inputSchemaVersion==17 ? " game17 adds optional bounded shadowStyle with opacity 0 to 1 and radius 0 to 16 on the existing strongest nonzero nonblack directional shadow key. Omission preserves legacy opacity 0.40/radius 1. Other lights, light energy, material/source texture bytes and shadow configuration are unchanged; all game16 model and bounded bank features remain supported without filesystem/network access.":inputSchemaVersion==16 ? " game16 adds explicit waterSurfaceByMaterialID over exact original material IDs and source normal textures, with sRGB base/reflection colors, bounded world wavelength and source-frame flow speed. Requires redGreenPositiveZ, rejects same-material alpha cutout, and reuses existing normal intensity. Omission retains exact legacy rendering; all game15 model, dialogue, camera and bounded model bank features remain available without filesystem/network access.":inputSchemaVersion==15 ? " game15 adds an explicit normalIntensityByMaterialID map of 1 to 128 original material IDs to finite values between 0 and 1. Omission retains each source material intensity; source texture bytes remain unchanged. All game14 model, dialogue, camera and bounded model bank features remain supported without filesystem/network access.":inputSchemaVersion==14 ? " game14 adds an explicit bounded dialogueObstacleInstanceIDs list covering every speaker; omitted lists preserve legacy action-based avoidance. Rendering keeps every model visible according to its original source-frame presentation and preserves body, tail and subtitle safety checks. All prior model features and the bounded model bank remain supported.":inputSchemaVersion==13 ? " game13 adds explicit source-frame camera keyframes with deterministic linear sampling and endpoint holds. Prior model v1/v2, node selections, alpha cutouts and the bounded model bank remain supported without filesystem/network access.":inputSchemaVersion==12 ? " game12 adds explicit original-material alphaOne transparent cutout at fixed 0.5; model v1/v2, node selections and the bounded model bank remain supported without filesystem/network access.":inputSchemaVersion==11 ? " game11 adds explicit mutually exclusive original-node selections and source-frame step changes; model v1/v2 and the bounded model bank remain supported without filesystem/network access.":inputSchemaVersion==10 ? " game10 validate alternatively accepts a mutually exclusive bounded in-memory modelBankOperation; model v2 actions are visual-only, while complete causal sources remain in the Host. It never grants filesystem/network access.":" game9 validate alternatively accepts a mutually exclusive bounded in-memory modelBankOperation; it never grants filesystem/network access."
         schema["description"] = .string("protocolMajor=1. validate/estimate/execute require input. progress/cancel require the complete matching invocation; progress also requires taskID. cancel without taskID closes the whole invocation and exits the service."+(model ? modelDescription:""))
         return .object(schema)
     }
     public static func response(inputSchemaVersion: Int = 2,pluginID:String?=nil)->AgentValue {
-        var schema=record("protocolMajor:i requestID:s ok:b state:s descriptor?:PluginDescription inputDigest?:s task?:PluginTaskSnapshot cost?:PluginCost error?:PluginRPCError"+(pluginID=="video.game" && [9,10,11,12,13,14,15,16,17].contains(inputSchemaVersion) ? " modelBankReceipt?:PluginModelBankReceipt":"")).object!
+        var schema=record("protocolMajor:i requestID:s ok:b state:s descriptor?:PluginDescription inputDigest?:s task?:PluginTaskSnapshot cost?:PluginCost error?:PluginRPCError"+(pluginID=="video.game" && [9,10,11,12,13,14,15,16,17,18].contains(inputSchemaVersion) ? " modelBankReceipt?:PluginModelBankReceipt":"")).object!
         schema["$defs"] = .object(definitions(inputSchemaVersion: inputSchemaVersion,pluginID:pluginID));schema["$schema"] = .string("https://json-schema.org/draft/2020-12/schema");return .object(schema)
     }
 }
