@@ -59,6 +59,21 @@ final class AgentSchemasTests:XCTestCase {
         XCTAssertEqual(field,plugin["ModelLight3D"]?.object?["properties"]?.object?["shadowStyle"])
         try verify(try value(ModelShadowStyle3D(opacity:0.24,radius:3)),schema:AgentSchemas.shape("ModelShadowStyle3D"),defs:defs)
     }
+    func testLocalHeightOpacityDiscoveryMatchesGameNineteenAndPreservesLegacyHostFields() throws {
+        let defs=AgentSchemas.definitions(),plugin=PluginRPCSchemas.definitions(inputSchemaVersion:19,pluginID:"video.game")
+        let height=try XCTUnwrap(defs["ModelLocalHeightOpacity"])
+        XCTAssertEqual(height,plugin["ModelLocalHeightOpacity"])
+        XCTAssertEqual(height.object?["additionalProperties"],.boolean(false))
+        XCTAssertEqual(height.object?["required"],.array(["lowerY","upperY"].map(AgentValue.string)))
+        let fields=try XCTUnwrap(defs["ModelMaterialInterpretation"]?.object?["properties"]?.object)
+        let property=try XCTUnwrap(fields["localHeightOpacityByMaterialID"])
+        XCTAssertEqual(property,plugin["ModelMaterialInterpretation"]?.object?["properties"]?.object?["localHeightOpacityByMaterialID"])
+        XCTAssertNil(property.object?["anyOf"])
+        XCTAssertNotNil(fields["opaqueDiffuseMaterialIDs"]?.object?["anyOf"],"Host既有nullable字段不能被替换成更严格plugin记录")
+        XCTAssertNotNil(fields["alphaCutoutMaterialIDs"]?.object?["anyOf"])
+        XCTAssertEqual(fields["waterSurfaceByMaterialID"],PluginRPCSchemas.modelWaterSurfaceDefinitions()["ModelMaterialInterpretation"]?.object?["properties"]?.object?["waterSurfaceByMaterialID"])
+        try verify(try value(ModelLocalHeightOpacity(lowerY:-0.5,upperY:0.5)),schema:AgentSchemas.shape("ModelLocalHeightOpacity"),defs:defs)
+    }
     func testDistanceFogDiscoveryMatchesCurrentPluginWithoutNullableField() throws {
         let defs=AgentSchemas.definitions(),plugin=PluginRPCSchemas.definitions(inputSchemaVersion:18,pluginID:"video.game")
         let fog=try XCTUnwrap(defs["ModelDistanceFog3D"])

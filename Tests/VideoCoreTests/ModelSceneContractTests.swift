@@ -46,6 +46,122 @@ final class ModelSceneContractTests: XCTestCase {
     private func input(_ project: Project, edits: [Edit]) throws -> Data {
         try Codec.data(AgentValue.object(["workspace_id":.string(project.workspaceID),"project_id":.string(project.id),"base_revision":.string(project.current.id),"edits":try Codec.decoder().decode(AgentValue.self,from:Codec.data(edits))]))
     }
+    func testLocalHeightOpacityKeepsLegacyWireAndOriginalResourceClosure() throws {
+        let f=try fixture();defer{try? FileManager.default.removeItem(at:f.root)}
+        let legacy=Data(#"{"normalEncoding":"rgb","normalIntensityByMaterialID":{"bodyMaterial":0.25},"vertexColors":"source"}"#.utf8)
+        var old=try Codec.decoder().decode(ModelMaterialInterpretation.self,from:legacy)
+        XCTAssertNil(old.localHeightOpacityByMaterialID);XCTAssertEqual(try Codec.data(old),legacy)
+        old.localHeightOpacityByMaterialID=nil;XCTAssertEqual(try Codec.data(old),legacy)
+        var model=f.model;model.instances[0].materialInterpretation=old
+        let original=model,bank=try PluginModelBankManifest(scene:model,durationFrames:21)
+        for height in [ModelLocalHeightOpacity(lowerY:-1_000_000,upperY:1_000_000),
+                       .init(lowerY:-0.5,upperY:0.5),.init(lowerY:0,upperY:0.25)] {
+            model.instances[0].materialInterpretation!.localHeightOpacityByMaterialID=["bodyMaterial":height]
+            XCTAssertNoThrow(try model.validate(durationFrames:21,assets:f.assets))
+            XCTAssertEqual(try Codec.decoder().decode(ModelScene3D.self,from:Codec.data(model)),model)
+            XCTAssertEqual(try PluginModelBankManifest(scene:model,durationFrames:21),bank)
+            XCTAssertNotEqual(try model.contentDigest(durationFrames:21),try original.contentDigest(durationFrames:21))
+            var inverse=model;inverse.instances[0].materialInterpretation!.localHeightOpacityByMaterialID=nil
+            XCTAssertEqual(inverse,original)
+        }
+    }
+    func testLocalHeightOpacityRejectsInvalidIDsAndCollapsedGPUIntervals() throws {
+        let f=try fixture();defer{try? FileManager.default.removeItem(at:f.root)}
+        let height=ModelLocalHeightOpacity(lowerY:-0.5,upperY:0.5)
+        let invalid=[ModelLocalHeightOpacity(lowerY:0,upperY:0),.init(lowerY:1,upperY:0),
+                     .init(lowerY:.nan,upperY:1),.init(lowerY:0,upperY:.infinity),
+                     .init(lowerY:-Double.infinity,upperY:0),.init(lowerY:-1_000_001,upperY:0),
+                     .init(lowerY:0,upperY:1_000_001),
+                     .init(lowerY:999_999,upperY:999_999.0.nextUp),
+                     .init(lowerY:0,upperY:Double.leastNonzeroMagnitude)]
+        XCTAssertLessThan(999_999.0,999_999.0.nextUp)
+        XCTAssertEqual(Float(999_999),Float(999_999.0.nextUp))
+        for value in invalid {
+            XCTAssertThrowsError(try value.validate())
+            var model=f.model;model.instances[0].materialInterpretation = .init(localHeightOpacityByMaterialID:["bodyMaterial":value])
+            XCTAssertThrowsError(try model.validate(durationFrames:21,assets:f.assets))
+        }
+        let maps:[[String:ModelLocalHeightOpacity]]=[[:],["missing":height],["":height],
+            [" bodyMaterial":height],["bodyMaterial\n":height],[String(repeating:"x",count:161):height]]
+        for values in maps {
+            var model=f.model;model.instances[0].materialInterpretation = .init(localHeightOpacityByMaterialID:values)
+            XCTAssertThrowsError(try model.validate(durationFrames:21,assets:f.assets))
+        }
+        for kind in 0..<3 {
+            var model=f.model
+            var settings=ModelMaterialInterpretation(normalEncoding:.redGreenPositiveZ,localHeightOpacityByMaterialID:["bodyMaterial":height])
+            switch kind {
+            case 0:settings.opaqueDiffuseMaterialIDs=["bodyMaterial"]
+            case 1:settings.alphaCutoutMaterialIDs=["bodyMaterial"]
+            default:settings.waterSurfaceByMaterialID=["bodyMaterial":.init(baseColor:"#47AAA9",reflectionColor:"#C1E8E4",wavelength:0.8,flowSpeed:0.035)]
+            }
+            model.instances[0].materialInterpretation=settings
+            XCTAssertThrowsError(try model.validate(durationFrames:21,assets:f.assets))
+            XCTAssertThrowsError(try Codec.decoder().decode(ModelMaterialInterpretation.self,from:Codec.data(settings)))
+        }
+        var distinct=f.model
+        distinct.instances[0].materialInterpretation = .init(opaqueDiffuseMaterialIDs:["capMaterial"],normalIntensityByMaterialID:["bodyMaterial":0.25],localHeightOpacityByMaterialID:["bodyMaterial":height])
+        XCTAssertNoThrow(try distinct.validate(durationFrames:21,assets:f.assets),"不同材质原解释和同材质法线强度继续保留")
+        var bounded=f.model
+        bounded.instances[0].resource.inspection.materials=(0..<129).map{.init(id:"material\($0)",effectID:"surfaceEffect")}
+        bounded.instances[0].materialInterpretation = .init(localHeightOpacityByMaterialID:Dictionary(uniqueKeysWithValues:(0..<128).map{("material\($0)",height)}))
+        XCTAssertNoThrow(try bounded.validate(durationFrames:21,assets:f.assets))
+        bounded.instances[0].materialInterpretation!.localHeightOpacityByMaterialID!["material128"]=height
+        XCTAssertThrowsError(try bounded.validate(durationFrames:21,assets:f.assets))
+    }
+    func testLocalHeightOpacityStrictWireRejectsNullUnknownMissingAndMistypedValues() throws {
+        let material=ModelMaterialInterpretation(localHeightOpacityByMaterialID:["bodyMaterial":.init(lowerY:-0.5,upperY:0.5)])
+        let wire=try XCTUnwrap(JSONSerialization.jsonObject(with:Codec.data(material)) as? [String:Any])
+        for index in 0..<12 {
+            var changed=wire,map=try XCTUnwrap(wire["localHeightOpacityByMaterialID"] as? [String:Any])
+            var fields=try XCTUnwrap(map["bodyMaterial"] as? [String:Any])
+            switch index {
+            case 0:changed["localHeightOpacityByMaterialID"]=NSNull()
+            case 1:fields.removeValue(forKey:"lowerY");map["bodyMaterial"]=fields;changed["localHeightOpacityByMaterialID"]=map
+            case 2:fields.removeValue(forKey:"upperY");map["bodyMaterial"]=fields;changed["localHeightOpacityByMaterialID"]=map
+            case 3:fields["lowerY"]=NSNull();map["bodyMaterial"]=fields;changed["localHeightOpacityByMaterialID"]=map
+            case 4:fields["upperY"]="0.5";map["bodyMaterial"]=fields;changed["localHeightOpacityByMaterialID"]=map
+            case 5:fields["lowerY"]=true;map["bodyMaterial"]=fields;changed["localHeightOpacityByMaterialID"]=map
+            case 6:fields["exponent"]=2;map["bodyMaterial"]=fields;changed["localHeightOpacityByMaterialID"]=map
+            case 7:map["bodyMaterial"]=NSNull();changed["localHeightOpacityByMaterialID"]=map
+            case 8:changed["localHeightOpacityByMaterialID"]=[]
+            case 9:changed["unknown"]=1
+            case 10:fields["upperY"] = -0.5;map["bodyMaterial"]=fields;changed["localHeightOpacityByMaterialID"]=map
+            default:fields["upperY"]=1_000_001;map["bodyMaterial"]=fields;changed["localHeightOpacityByMaterialID"]=map
+            }
+            XCTAssertThrowsError(try Codec.decoder().decode(ModelMaterialInterpretation.self,from:JSONSerialization.data(withJSONObject:changed)),"wire mutation \(index)")
+        }
+        let collapsed=Data(#"{"lowerY":999999,"upperY":999999.0000000001}"#.utf8)
+        XCTAssertThrowsError(try Codec.decoder().decode(ModelLocalHeightOpacity.self,from:collapsed))
+    }
+    func testLocalHeightOpacityNormalEditCASLocksAndColdRestoreKeepSourceAssets() throws {
+        let f=try fixture();defer{try? FileManager.default.removeItem(at:f.root)}
+        let original=scene(f);var project=project(original,f)
+        project.revisions[0].review.sound=true;project.revisions[0].review.fullPreview=true
+        try f.repository.transaction{$0.projects=[project]}
+        var changed=original
+        changed.modelScene3D!.instances[0].materialInterpretation = .init(localHeightOpacityByMaterialID:["bodyMaterial":.init(lowerY:-0.5,upperY:0.5)])
+        let before=try Codec.data(f.repository.read())
+        var invalid=changed;invalid.modelScene3D!.instances[0].materialInterpretation!.localHeightOpacityByMaterialID=["missing":.init(lowerY:-0.5,upperY:0.5)]
+        XCTAssertThrowsError(try f.repository.performAgentMutation(command:"edit apply",data:input(project,edits:[.replaceScene(original.id,invalid)]),principal:"owner",requestID:Codec.id()))
+        XCTAssertEqual(try Codec.data(f.repository.read()),before)
+        let data=try input(project,edits:[.replaceScene(original.id,changed)])
+        _=try AgentMutationExecutor.preview(command:"edit apply",data:data,database:f.repository.read(),principal:"owner",repository:f.repository)
+        XCTAssertEqual(try Codec.data(f.repository.read()),before)
+        let answer=try f.repository.performAgentMutation(command:"edit apply",data:data,principal:"owner",requestID:"local-height-opacity-save")
+        XCTAssertEqual(answer,try f.repository.performAgentMutation(command:"edit apply",data:data,principal:"owner",requestID:"local-height-opacity-save"))
+        let current=try XCTUnwrap(f.repository.read().projects.first?.current)
+        XCTAssertEqual(current.scenes[0].modelScene3D,changed.modelScene3D)
+        XCTAssertFalse(current.review.sound);XCTAssertFalse(current.review.fullPreview)
+        XCTAssertEqual(Set((current.dependencies?.records ?? []).filter{$0.kind == .asset}.map{$0.asset!.id}),f.model.assetIDs)
+        let locked=try Editor.apply([.lockModelInstance(original.id,"actor",true)],to:project,baseRevision:project.current.id,assets:f.assets,message:"锁定原实例")
+        var lockedChange=locked.current.scenes[0];lockedChange.modelScene3D!.instances[0].materialInterpretation=changed.modelScene3D!.instances[0].materialInterpretation
+        XCTAssertThrowsError(try Editor.apply([.replaceScene(original.id,lockedChange)],to:locked,baseRevision:locked.current.id,assets:f.assets,message:"锁定时不能改变局部透明带"))
+        let restored=try Repository.restore(f.repository.backup(),to:f.root.appendingPathComponent("local-height-opacity-cold"))
+        let cold=try XCTUnwrap(restored.read().projects.first?.current)
+        XCTAssertEqual(try cold.contentDigest(),try current.contentDigest());XCTAssertEqual(cold.scenes[0].modelScene3D,changed.modelScene3D)
+        for asset in f.assets {XCTAssertEqual(try Data(contentsOf:restored.assetURL(asset)),try Data(contentsOf:f.repository.assetURL(asset)))}
+    }
     func testShadowStylePreservesLegacyWireAndExactOriginalKeySelection() throws {
         let f=try fixture();defer{try? FileManager.default.removeItem(at:f.root)}
         struct OldLight:Encodable {let id:String;let kind:ModelLightKind;let color:String;let intensity:Double;let transform:ModelTransform3D}

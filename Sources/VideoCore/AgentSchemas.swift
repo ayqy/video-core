@@ -107,6 +107,9 @@ public enum AgentSchemas {
         materialProperties["waterSurfaceByMaterialID"] = waterDefinitions["ModelMaterialInterpretation"]!.object!["properties"]!.object!["waterSurfaceByMaterialID"]
         material["allOf"] = waterDefinitions["ModelMaterialInterpretation"]!.object!["allOf"]
         result["ModelWaterSurface"] = waterDefinitions["ModelWaterSurface"]
+        let heightDefinitions=PluginRPCSchemas.modelLocalHeightOpacityDefinitions()
+        materialProperties["localHeightOpacityByMaterialID"] = heightDefinitions["ModelMaterialInterpretation"]!.object!["properties"]!.object!["localHeightOpacityByMaterialID"]
+        result["ModelLocalHeightOpacity"] = heightDefinitions["ModelLocalHeightOpacity"]
         material["properties"] = .object(materialProperties);result["ModelMaterialInterpretation"] = .object(material)
         result["ModelLightKind"] = .object(["type":.string("string"),"enum":.array(["ambient","directional","omni"].map(AgentValue.string))])
         result["ModelVertexColorUsage"] = .object(["type":.string("string"),"enum":.array(ModelVertexColorUsage.allCases.map { .string($0.rawValue) })])

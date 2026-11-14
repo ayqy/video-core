@@ -47,6 +47,26 @@ public struct ModelTransform3D: Codable, Hashable, Sendable {
 /// a game name, inventory entry, texture filename or sampled pixel values.
 public enum ModelVertexColorUsage: String, Codable, Hashable, CaseIterable, Sendable { case source, ignored }
 public enum ModelNormalTextureEncoding: String, Codable, Hashable, CaseIterable, Sendable { case rgb, redGreenPositiveZ }
+/// Explicit smoothstep opacity in geometry-local Y metres: zero at or below
+/// lowerY, one at or above upperY. Never inferred from source material names.
+public struct ModelLocalHeightOpacity: Codable, Hashable, Sendable {
+    public var lowerY: Double
+    public var upperY: Double
+    public init(lowerY: Double, upperY: Double) { self.lowerY=lowerY;self.upperY=upperY }
+    private enum CodingKeys:String,CodingKey {case lowerY,upperY}
+    public init(from decoder:Decoder)throws {
+        try ModelStoryDecoding3D.keys(decoder,required:["lowerY","upperY"])
+        let c=try decoder.container(keyedBy:CodingKeys.self)
+        lowerY=try c.decode(Double.self,forKey:.lowerY);upperY=try c.decode(Double.self,forKey:.upperY)
+        try validate()
+    }
+    public func validate() throws {
+        guard lowerY.isFinite,upperY.isFinite,abs(lowerY)<=1_000_000,abs(upperY)<=1_000_000,
+              lowerY<upperY,Float(lowerY).isFinite,Float(upperY).isFinite,Float(lowerY)<Float(upperY) else {
+            throw VideoError.invalid("局部高度透明带须为±1000000米内有限且严格递增的Y，并在GPU Float精度下保持非零带宽")
+        }
+    }
+}
 /// Explicit water presentation over the selected original normal texture. Colors
 /// are sRGB; wavelength and flow speed use world metres and source-frame seconds.
 /// This adapter does not claim to reconstruct an absent original game shader.
@@ -91,18 +111,29 @@ public struct ModelMaterialInterpretation: Codable, Hashable, Sendable {
     /// Explicit original material IDs for source-frame deterministic water.
     /// Nil retains the exact old path; new declarations require game16.
     public var waterSurfaceByMaterialID: [String: ModelWaterSurface]?
-    public init(vertexColors: ModelVertexColorUsage = .source, normalEncoding: ModelNormalTextureEncoding = .rgb, opaqueDiffuseMaterialIDs: [String]? = nil, alphaCutoutMaterialIDs: [String]? = nil, normalIntensityByMaterialID: [String: Double]? = nil, waterSurfaceByMaterialID: [String:ModelWaterSurface]? = nil) {
-        self.vertexColors=vertexColors;self.normalEncoding=normalEncoding;self.opaqueDiffuseMaterialIDs=opaqueDiffuseMaterialIDs;self.alphaCutoutMaterialIDs=alphaCutoutMaterialIDs;self.normalIntensityByMaterialID=normalIntensityByMaterialID;self.waterSurfaceByMaterialID=waterSurfaceByMaterialID
+    /// Explicit original material IDs using geometry-local Y smoothstep opacity.
+    /// Nil preserves the exact prior wire and render path; requires game19.
+    public var localHeightOpacityByMaterialID: [String: ModelLocalHeightOpacity]?
+    public init(vertexColors: ModelVertexColorUsage = .source, normalEncoding: ModelNormalTextureEncoding = .rgb, opaqueDiffuseMaterialIDs: [String]? = nil, alphaCutoutMaterialIDs: [String]? = nil, normalIntensityByMaterialID: [String: Double]? = nil, waterSurfaceByMaterialID: [String:ModelWaterSurface]? = nil, localHeightOpacityByMaterialID: [String:ModelLocalHeightOpacity]? = nil) {
+        self.vertexColors=vertexColors;self.normalEncoding=normalEncoding;self.opaqueDiffuseMaterialIDs=opaqueDiffuseMaterialIDs;self.alphaCutoutMaterialIDs=alphaCutoutMaterialIDs;self.normalIntensityByMaterialID=normalIntensityByMaterialID;self.waterSurfaceByMaterialID=waterSurfaceByMaterialID;self.localHeightOpacityByMaterialID=localHeightOpacityByMaterialID
     }
-    private enum CodingKeys:String,CodingKey {case vertexColors,normalEncoding,opaqueDiffuseMaterialIDs,alphaCutoutMaterialIDs,normalIntensityByMaterialID,waterSurfaceByMaterialID}
+    private enum CodingKeys:String,CodingKey {case vertexColors,normalEncoding,opaqueDiffuseMaterialIDs,alphaCutoutMaterialIDs,normalIntensityByMaterialID,waterSurfaceByMaterialID,localHeightOpacityByMaterialID}
     public init(from decoder:Decoder)throws {
-        try ModelStoryDecoding3D.keys(decoder,required:["vertexColors","normalEncoding"],optional:["opaqueDiffuseMaterialIDs","alphaCutoutMaterialIDs","normalIntensityByMaterialID","waterSurfaceByMaterialID"])
+        try ModelStoryDecoding3D.keys(decoder,required:["vertexColors","normalEncoding"],optional:["opaqueDiffuseMaterialIDs","alphaCutoutMaterialIDs","normalIntensityByMaterialID","waterSurfaceByMaterialID","localHeightOpacityByMaterialID"])
         let c=try decoder.container(keyedBy:CodingKeys.self)
         vertexColors=try c.decode(ModelVertexColorUsage.self,forKey:.vertexColors);normalEncoding=try c.decode(ModelNormalTextureEncoding.self,forKey:.normalEncoding)
         opaqueDiffuseMaterialIDs=try c.decodeIfPresent([String].self,forKey:.opaqueDiffuseMaterialIDs)
         alphaCutoutMaterialIDs=try c.decodeIfPresent([String].self,forKey:.alphaCutoutMaterialIDs)
         normalIntensityByMaterialID=c.contains(.normalIntensityByMaterialID) ? try c.decode([String:Double].self,forKey:.normalIntensityByMaterialID):nil
         waterSurfaceByMaterialID=c.contains(.waterSurfaceByMaterialID) ? try c.decode([String:ModelWaterSurface].self,forKey:.waterSurfaceByMaterialID):nil
+        localHeightOpacityByMaterialID=c.contains(.localHeightOpacityByMaterialID) ? try c.decode([String:ModelLocalHeightOpacity].self,forKey:.localHeightOpacityByMaterialID):nil
+        if let heights=localHeightOpacityByMaterialID {
+            let exclusive=Set((opaqueDiffuseMaterialIDs ?? [])+(alphaCutoutMaterialIDs ?? [])+Array((waterSurfaceByMaterialID ?? [:]).keys))
+            guard (1...128).contains(heights.count),heights.keys.allSatisfy({id in
+                PluginProtocolRules.text(id,maximum:160) && id==id.trimmingCharacters(in:.whitespacesAndNewlines)
+                && !exclusive.contains(id)
+            }) else {throw VideoError.invalid("局部高度透明带须指定1至128个明确材质，且同材质不能与不透明漫反射、透明裁切或水面混用")}
+        }
     }
 }
 /// An explicit step change between mutually exclusive original DAE nodes.
@@ -463,6 +494,16 @@ public struct ModelScene3D: Codable, Equatable, Sendable {
                       }) else {throw VideoError.invalid("水面须使用RG正Z法线并指定1至128个实际原材质，不能与同材质透明裁切混用")}
                 for surface in surfaces.values {try surface.validate()}
             }
+            if let heights=instance.materialInterpretation?.localHeightOpacityByMaterialID {
+                let sourceIDs=Set(instance.resource.inspection.materials.map(\.id))
+                let settings=instance.materialInterpretation!
+                let exclusive=Set((settings.opaqueDiffuseMaterialIDs ?? [])+(settings.alphaCutoutMaterialIDs ?? [])+Array((settings.waterSurfaceByMaterialID ?? [:]).keys))
+                guard (1...128).contains(heights.count),heights.keys.allSatisfy({id in
+                    PluginProtocolRules.text(id,maximum:160) && id==id.trimmingCharacters(in:.whitespacesAndNewlines)
+                    && sourceIDs.contains(id) && !exclusive.contains(id)
+                }) else {throw VideoError.invalid("局部高度透明带须明确指定1至128个实际原DAE材质，且同材质不能与不透明漫反射、透明裁切或水面混用")}
+                for height in heights.values {try height.validate()}
+            }
             for reference in [instance.resource.model]+Array(instance.resource.textures.values) {
                 guard bindings[reference.assetID]==nil || bindings[reference.assetID]==reference else { throw VideoError.invalid("同一模型场景不能为同一素材声明不同字节") }
                 bindings[reference.assetID]=reference
@@ -594,6 +635,12 @@ public enum ModelWaterSurfaceSchema {
     public static let records:[String:String] = [
         "ModelWaterSurface":"baseColor:s reflectionColor:s wavelength:n flowSpeed:n",
         "ModelMaterialInterpretation":"vertexColors:ModelVertexColorUsage normalEncoding:ModelNormalTextureEncoding opaqueDiffuseMaterialIDs?:[s] alphaCutoutMaterialIDs?:[s] normalIntensityByMaterialID?:{n} waterSurfaceByMaterialID?:{ModelWaterSurface}"
+    ]
+}
+/// Additive Host/game19 only. All game9–18 material records remain frozen.
+public enum ModelLocalHeightOpacitySchema {
+    public static let records:[String:String] = [
+        "ModelLocalHeightOpacity":"lowerY:n upperY:n"
     ]
 }
 /// Additive Host/game13 camera motion. Game9–12 camera records stay exact.
