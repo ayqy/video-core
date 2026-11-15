@@ -46,6 +46,85 @@ final class ModelSceneContractTests: XCTestCase {
     private func input(_ project: Project, edits: [Edit]) throws -> Data {
         try Codec.data(AgentValue.object(["workspace_id":.string(project.workspaceID),"project_id":.string(project.id),"base_revision":.string(project.current.id),"edits":try Codec.decoder().decode(AgentValue.self,from:Codec.data(edits))]))
     }
+    func testIndependentAmbientKeepsLegacyWireAndExactOriginalResourceClosure() throws {
+        let f=try fixture();defer{try? FileManager.default.removeItem(at:f.root)}
+        let legacy=Data(#"{"normalEncoding":"rgb","normalIntensityByMaterialID":{"bodyMaterial":0.25},"vertexColors":"source"}"#.utf8)
+        var old=try Codec.decoder().decode(ModelMaterialInterpretation.self,from:legacy)
+        XCTAssertNil(old.independentAmbientMaterialIDs);XCTAssertEqual(try Codec.data(old),legacy)
+        old.independentAmbientMaterialIDs=nil;XCTAssertEqual(try Codec.data(old),legacy)
+        var model=f.model;model.instances[0].materialInterpretation=old
+        let original=model,bank=try PluginModelBankManifest(scene:model,durationFrames:21)
+        for ids in [["bodyMaterial"],["capMaterial"],["capMaterial","bodyMaterial"]] {
+            model.instances[0].materialInterpretation!.independentAmbientMaterialIDs=ids
+            XCTAssertNoThrow(try model.validate(durationFrames:21,assets:f.assets))
+            XCTAssertEqual(try Codec.decoder().decode(ModelScene3D.self,from:Codec.data(model)),model)
+            XCTAssertEqual(try PluginModelBankManifest(scene:model,durationFrames:21),bank)
+            XCTAssertEqual(model.instances[0].resource,original.instances[0].resource)
+            XCTAssertNotEqual(try model.contentDigest(durationFrames:21),try original.contentDigest(durationFrames:21))
+            var inverse=model;inverse.instances[0].materialInterpretation!.independentAmbientMaterialIDs=nil
+            XCTAssertEqual(inverse,original)
+        }
+        model.instances[0].materialInterpretation = .init(opaqueDiffuseMaterialIDs:["bodyMaterial"],alphaCutoutMaterialIDs:["bodyMaterial"],normalIntensityByMaterialID:["bodyMaterial":0.25],independentAmbientMaterialIDs:["bodyMaterial"])
+        XCTAssertNoThrow(try model.validate(durationFrames:21,assets:f.assets),"独立ambient可与同材质opaque/cutout/normal组合")
+    }
+    func testIndependentAmbientRejectsInvalidSelectionsAndAcceptsExactBoundary() throws {
+        let f=try fixture();defer{try? FileManager.default.removeItem(at:f.root)}
+        let invalid:[ [String] ]=[[],["missing"],[""],[" bodyMaterial"],["bodyMaterial "],["bodyMaterial\n"],["bad\nidentity"],["bodyMaterial","bodyMaterial"],[String(repeating:"x",count:161)]]
+        for ids in invalid {
+            var model=f.model;model.instances[0].materialInterpretation = .init(independentAmbientMaterialIDs:ids)
+            XCTAssertThrowsError(try model.validate(durationFrames:21,assets:f.assets))
+            if ids != ["missing"] {
+                XCTAssertThrowsError(try Codec.decoder().decode(ModelMaterialInterpretation.self,from:Codec.data(model.instances[0].materialInterpretation!)))
+            }
+        }
+        var bounded=f.model
+        bounded.instances[0].resource.inspection.materials=(0..<129).map{.init(id:"material\($0)",effectID:"surfaceEffect")}
+        bounded.instances[0].materialInterpretation = .init(independentAmbientMaterialIDs:(0..<128).map{"material\($0)"})
+        XCTAssertNoThrow(try bounded.validate(durationFrames:21,assets:f.assets))
+        XCTAssertNoThrow(try Codec.decoder().decode(ModelScene3D.self,from:Codec.data(bounded)))
+        bounded.instances[0].materialInterpretation!.independentAmbientMaterialIDs!.append("material128")
+        XCTAssertThrowsError(try bounded.validate(durationFrames:21,assets:f.assets))
+        XCTAssertThrowsError(try Codec.decoder().decode(ModelScene3D.self,from:Codec.data(bounded)))
+    }
+    func testIndependentAmbientStrictWireRejectsNullMistypedAndUnknownFields() throws {
+        let settings=ModelMaterialInterpretation(independentAmbientMaterialIDs:["bodyMaterial"])
+        let wire=try XCTUnwrap(JSONSerialization.jsonObject(with:Codec.data(settings)) as? [String:Any])
+        let invalid:[Any]=[NSNull(),"bodyMaterial",["bodyMaterial",NSNull()] as [Any],[true],[1],[:] as [String:Any]]
+        for value in invalid {
+            var changed=wire;changed["independentAmbientMaterialIDs"]=value
+            XCTAssertThrowsError(try Codec.decoder().decode(ModelMaterialInterpretation.self,from:JSONSerialization.data(withJSONObject:changed)))
+        }
+        var unknown=wire;unknown["independentAmbient"]=true
+        XCTAssertThrowsError(try Codec.decoder().decode(ModelMaterialInterpretation.self,from:JSONSerialization.data(withJSONObject:unknown)))
+    }
+    func testIndependentAmbientNormalEditCASLocksAndColdRestorePreserveOriginals() throws {
+        let f=try fixture();defer{try? FileManager.default.removeItem(at:f.root)}
+        let original=scene(f);var project=project(original,f)
+        project.revisions[0].review.sound=true;project.revisions[0].review.fullPreview=true
+        try f.repository.transaction{$0.projects=[project]}
+        var changed=original
+        changed.modelScene3D!.instances[0].materialInterpretation = .init(independentAmbientMaterialIDs:["bodyMaterial"])
+        let before=try Codec.data(f.repository.read())
+        var invalid=changed;invalid.modelScene3D!.instances[0].materialInterpretation!.independentAmbientMaterialIDs=["missing"]
+        XCTAssertThrowsError(try f.repository.performAgentMutation(command:"edit apply",data:input(project,edits:[.replaceScene(original.id,invalid)]),principal:"owner",requestID:Codec.id()))
+        XCTAssertEqual(try Codec.data(f.repository.read()),before)
+        let data=try input(project,edits:[.replaceScene(original.id,changed)])
+        _=try AgentMutationExecutor.preview(command:"edit apply",data:data,database:f.repository.read(),principal:"owner",repository:f.repository)
+        XCTAssertEqual(try Codec.data(f.repository.read()),before)
+        let answer=try f.repository.performAgentMutation(command:"edit apply",data:data,principal:"owner",requestID:"independent-ambient-save")
+        XCTAssertEqual(answer,try f.repository.performAgentMutation(command:"edit apply",data:data,principal:"owner",requestID:"independent-ambient-save"))
+        let current=try XCTUnwrap(f.repository.read().projects.first?.current)
+        XCTAssertEqual(current.scenes[0].modelScene3D,changed.modelScene3D)
+        XCTAssertFalse(current.review.sound);XCTAssertFalse(current.review.fullPreview)
+        XCTAssertEqual(Set((current.dependencies?.records ?? []).filter{$0.kind == .asset}.map{$0.asset!.id}),f.model.assetIDs)
+        let locked=try Editor.apply([.lockModelInstance(original.id,"actor",true)],to:project,baseRevision:project.current.id,assets:f.assets,message:"锁定原实例")
+        var lockedChange=locked.current.scenes[0];lockedChange.modelScene3D!.instances[0].materialInterpretation=changed.modelScene3D!.instances[0].materialInterpretation
+        XCTAssertThrowsError(try Editor.apply([.replaceScene(original.id,lockedChange)],to:locked,baseRevision:locked.current.id,assets:f.assets,message:"锁定时不能改变独立ambient"))
+        let restored=try Repository.restore(f.repository.backup(),to:f.root.appendingPathComponent("independent-ambient-cold"))
+        let cold=try XCTUnwrap(restored.read().projects.first?.current)
+        XCTAssertEqual(try cold.contentDigest(),try current.contentDigest());XCTAssertEqual(cold.scenes[0].modelScene3D,changed.modelScene3D)
+        for asset in f.assets {XCTAssertEqual(try Data(contentsOf:restored.assetURL(asset)),try Data(contentsOf:f.repository.assetURL(asset)))}
+    }
     func testLocalHeightOpacityKeepsLegacyWireAndOriginalResourceClosure() throws {
         let f=try fixture();defer{try? FileManager.default.removeItem(at:f.root)}
         let legacy=Data(#"{"normalEncoding":"rgb","normalIntensityByMaterialID":{"bodyMaterial":0.25},"vertexColors":"source"}"#.utf8)

@@ -149,7 +149,8 @@ final class PluginPackageTests:XCTestCase {
         XCTAssertEqual(try PluginInputCompatibility.publicationSchema(pluginID:"video.game",requested:"12"),12)
         XCTAssertEqual(try PluginInputCompatibility.publicationSchema(pluginID:"video.game",requested:"13"),13)
         XCTAssertEqual(try PluginInputCompatibility.publicationSchema(pluginID:"video.game",requested:"18"),18)
-        for (id,schema,legacy) in [("video.game",19,2),("video.cartoon",8,1)] {
+        XCTAssertEqual(try PluginInputCompatibility.publicationSchema(pluginID:"video.game",requested:"19"),19)
+        for (id,schema,legacy) in [("video.game",20,2),("video.cartoon",8,1)] {
             let (manifest,requests,description)=try currentProbe(id,schema)
             let transcript=try probeTranscript(requests,description)
             var defaultManifest=manifest

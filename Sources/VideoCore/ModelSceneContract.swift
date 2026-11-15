@@ -114,12 +114,15 @@ public struct ModelMaterialInterpretation: Codable, Hashable, Sendable {
     /// Explicit original material IDs using geometry-local Y smoothstep opacity.
     /// Nil preserves the exact prior wire and render path; requires game19.
     public var localHeightOpacityByMaterialID: [String: ModelLocalHeightOpacity]?
-    public init(vertexColors: ModelVertexColorUsage = .source, normalEncoding: ModelNormalTextureEncoding = .rgb, opaqueDiffuseMaterialIDs: [String]? = nil, alphaCutoutMaterialIDs: [String]? = nil, normalIntensityByMaterialID: [String: Double]? = nil, waterSurfaceByMaterialID: [String:ModelWaterSurface]? = nil, localHeightOpacityByMaterialID: [String:ModelLocalHeightOpacity]? = nil) {
-        self.vertexColors=vertexColors;self.normalEncoding=normalEncoding;self.opaqueDiffuseMaterialIDs=opaqueDiffuseMaterialIDs;self.alphaCutoutMaterialIDs=alphaCutoutMaterialIDs;self.normalIntensityByMaterialID=normalIntensityByMaterialID;self.waterSurfaceByMaterialID=waterSurfaceByMaterialID;self.localHeightOpacityByMaterialID=localHeightOpacityByMaterialID
+    /// Explicit original material IDs whose ambient remains independent of diffuse.
+    /// Nil preserves the exact source state and legacy wire; requires game20.
+    public var independentAmbientMaterialIDs: [String]?
+    public init(vertexColors: ModelVertexColorUsage = .source, normalEncoding: ModelNormalTextureEncoding = .rgb, opaqueDiffuseMaterialIDs: [String]? = nil, alphaCutoutMaterialIDs: [String]? = nil, normalIntensityByMaterialID: [String: Double]? = nil, waterSurfaceByMaterialID: [String:ModelWaterSurface]? = nil, localHeightOpacityByMaterialID: [String:ModelLocalHeightOpacity]? = nil, independentAmbientMaterialIDs: [String]? = nil) {
+        self.vertexColors=vertexColors;self.normalEncoding=normalEncoding;self.opaqueDiffuseMaterialIDs=opaqueDiffuseMaterialIDs;self.alphaCutoutMaterialIDs=alphaCutoutMaterialIDs;self.normalIntensityByMaterialID=normalIntensityByMaterialID;self.waterSurfaceByMaterialID=waterSurfaceByMaterialID;self.localHeightOpacityByMaterialID=localHeightOpacityByMaterialID;self.independentAmbientMaterialIDs=independentAmbientMaterialIDs
     }
-    private enum CodingKeys:String,CodingKey {case vertexColors,normalEncoding,opaqueDiffuseMaterialIDs,alphaCutoutMaterialIDs,normalIntensityByMaterialID,waterSurfaceByMaterialID,localHeightOpacityByMaterialID}
+    private enum CodingKeys:String,CodingKey {case vertexColors,normalEncoding,opaqueDiffuseMaterialIDs,alphaCutoutMaterialIDs,normalIntensityByMaterialID,waterSurfaceByMaterialID,localHeightOpacityByMaterialID,independentAmbientMaterialIDs}
     public init(from decoder:Decoder)throws {
-        try ModelStoryDecoding3D.keys(decoder,required:["vertexColors","normalEncoding"],optional:["opaqueDiffuseMaterialIDs","alphaCutoutMaterialIDs","normalIntensityByMaterialID","waterSurfaceByMaterialID","localHeightOpacityByMaterialID"])
+        try ModelStoryDecoding3D.keys(decoder,required:["vertexColors","normalEncoding"],optional:["opaqueDiffuseMaterialIDs","alphaCutoutMaterialIDs","normalIntensityByMaterialID","waterSurfaceByMaterialID","localHeightOpacityByMaterialID","independentAmbientMaterialIDs"])
         let c=try decoder.container(keyedBy:CodingKeys.self)
         vertexColors=try c.decode(ModelVertexColorUsage.self,forKey:.vertexColors);normalEncoding=try c.decode(ModelNormalTextureEncoding.self,forKey:.normalEncoding)
         opaqueDiffuseMaterialIDs=try c.decodeIfPresent([String].self,forKey:.opaqueDiffuseMaterialIDs)
@@ -127,6 +130,13 @@ public struct ModelMaterialInterpretation: Codable, Hashable, Sendable {
         normalIntensityByMaterialID=c.contains(.normalIntensityByMaterialID) ? try c.decode([String:Double].self,forKey:.normalIntensityByMaterialID):nil
         waterSurfaceByMaterialID=c.contains(.waterSurfaceByMaterialID) ? try c.decode([String:ModelWaterSurface].self,forKey:.waterSurfaceByMaterialID):nil
         localHeightOpacityByMaterialID=c.contains(.localHeightOpacityByMaterialID) ? try c.decode([String:ModelLocalHeightOpacity].self,forKey:.localHeightOpacityByMaterialID):nil
+        independentAmbientMaterialIDs=c.contains(.independentAmbientMaterialIDs) ? try c.decode([String].self,forKey:.independentAmbientMaterialIDs):nil
+        if let ids=independentAmbientMaterialIDs {
+            guard (1...128).contains(ids.count),Set(ids).count==ids.count,
+                  ids.allSatisfy({PluginProtocolRules.text($0,maximum:160) && $0==$0.trimmingCharacters(in:.whitespacesAndNewlines)}) else {
+                throw VideoError.invalid("独立环境光须明确指定1至128个不重复、无首尾空白的原DAE材质标识")
+            }
+        }
         if let heights=localHeightOpacityByMaterialID {
             let exclusive=Set((opaqueDiffuseMaterialIDs ?? [])+(alphaCutoutMaterialIDs ?? [])+Array((waterSurfaceByMaterialID ?? [:]).keys))
             guard (1...128).contains(heights.count),heights.keys.allSatisfy({id in
@@ -470,6 +480,13 @@ public struct ModelScene3D: Codable, Equatable, Sendable {
                 let sourceIDs=Set(instance.resource.inspection.materials.map(\.id))
                 guard (1...128).contains(ids.count),Set(ids).count==ids.count,
                       ids.allSatisfy({PluginProtocolRules.text($0,maximum:160) && $0 == $0.trimmingCharacters(in:.whitespacesAndNewlines) && sourceIDs.contains($0)}) else { throw VideoError.invalid("透明裁切须明确指定1至128个不重复的原DAE材质标识") }
+            }
+            if let ids=instance.materialInterpretation?.independentAmbientMaterialIDs {
+                let sourceIDs=Set(instance.resource.inspection.materials.map(\.id))
+                guard (1...128).contains(ids.count),Set(ids).count==ids.count,
+                      ids.allSatisfy({PluginProtocolRules.text($0,maximum:160) && $0==$0.trimmingCharacters(in:.whitespacesAndNewlines) && sourceIDs.contains($0)}) else {
+                    throw VideoError.invalid("独立环境光须明确指定1至128个不重复的实际原DAE材质标识")
+                }
             }
             if let assets {
                 guard assets.first(where:{$0.id==instance.resource.model.assetID})?.mediaType == "model3d" else { throw VideoError.invalid("三维实例须绑定已入库的真实模型类型") }

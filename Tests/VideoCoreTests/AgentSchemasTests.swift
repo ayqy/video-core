@@ -74,6 +74,19 @@ final class AgentSchemasTests:XCTestCase {
         XCTAssertEqual(fields["waterSurfaceByMaterialID"],PluginRPCSchemas.modelWaterSurfaceDefinitions()["ModelMaterialInterpretation"]?.object?["properties"]?.object?["waterSurfaceByMaterialID"])
         try verify(try value(ModelLocalHeightOpacity(lowerY:-0.5,upperY:0.5)),schema:AgentSchemas.shape("ModelLocalHeightOpacity"),defs:defs)
     }
+    func testIndependentAmbientDiscoveryMatchesGameTwentyAndPreservesLegacyHostFields() throws {
+        let defs=AgentSchemas.definitions(),plugin=PluginRPCSchemas.definitions(inputSchemaVersion:20,pluginID:"video.game")
+        let fields=try XCTUnwrap(defs["ModelMaterialInterpretation"]?.object?["properties"]?.object)
+        let property=try XCTUnwrap(fields["independentAmbientMaterialIDs"])
+        XCTAssertEqual(property,plugin["ModelMaterialInterpretation"]?.object?["properties"]?.object?["independentAmbientMaterialIDs"])
+        XCTAssertNil(property.object?["anyOf"]);XCTAssertEqual(property.object?["type"],.string("array"))
+        XCTAssertEqual(property.object?["minItems"],.number(1));XCTAssertEqual(property.object?["maxItems"],.number(128))
+        XCTAssertEqual(property.object?["uniqueItems"],.boolean(true))
+        XCTAssertNotNil(fields["opaqueDiffuseMaterialIDs"]?.object?["anyOf"])
+        XCTAssertNotNil(fields["alphaCutoutMaterialIDs"]?.object?["anyOf"])
+        XCTAssertEqual(fields["localHeightOpacityByMaterialID"],PluginRPCSchemas.modelLocalHeightOpacityDefinitions()["ModelMaterialInterpretation"]?.object?["properties"]?.object?["localHeightOpacityByMaterialID"])
+        try verify(try value(ModelMaterialInterpretation(independentAmbientMaterialIDs:["ActualLeafID"])),schema:AgentSchemas.shape("ModelMaterialInterpretation"),defs:defs)
+    }
     func testDistanceFogDiscoveryMatchesCurrentPluginWithoutNullableField() throws {
         let defs=AgentSchemas.definitions(),plugin=PluginRPCSchemas.definitions(inputSchemaVersion:18,pluginID:"video.game")
         let fog=try XCTUnwrap(defs["ModelDistanceFog3D"])

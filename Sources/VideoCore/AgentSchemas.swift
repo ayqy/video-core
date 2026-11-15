@@ -110,6 +110,7 @@ public enum AgentSchemas {
         let heightDefinitions=PluginRPCSchemas.modelLocalHeightOpacityDefinitions()
         materialProperties["localHeightOpacityByMaterialID"] = heightDefinitions["ModelMaterialInterpretation"]!.object!["properties"]!.object!["localHeightOpacityByMaterialID"]
         result["ModelLocalHeightOpacity"] = heightDefinitions["ModelLocalHeightOpacity"]
+        materialProperties["independentAmbientMaterialIDs"] = PluginRPCSchemas.modelIndependentAmbientDefinitions()["ModelMaterialInterpretation"]!.object!["properties"]!.object!["independentAmbientMaterialIDs"]
         material["properties"] = .object(materialProperties);result["ModelMaterialInterpretation"] = .object(material)
         result["ModelLightKind"] = .object(["type":.string("string"),"enum":.array(["ambient","directional","omni"].map(AgentValue.string))])
         result["ModelVertexColorUsage"] = .object(["type":.string("string"),"enum":.array(ModelVertexColorUsage.allCases.map { .string($0.rawValue) })])

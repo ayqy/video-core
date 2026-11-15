@@ -137,9 +137,9 @@ final class PluginProtocolTests:XCTestCase {
         XCTAssertEqual(descriptor.inputSchema.object?["$defs"]?.object?["KnowledgePayoffMatrix"], current["KnowledgePayoffMatrix"])
     }
     func testPublicationSchemaSelectionUsesCurrentDefaultsAndRetainsExplicitLegacyRequests() throws {
-        XCTAssertEqual(try PluginInputCompatibility.publicationSchema(pluginID: "video.game"), 19)
+        XCTAssertEqual(try PluginInputCompatibility.publicationSchema(pluginID: "video.game"), 20)
         XCTAssertEqual(try PluginInputCompatibility.publicationSchema(pluginID: "video.cartoon"), 8)
-        for version in [1, 2, 3, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19] {
+        for version in [1, 2, 3, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20] {
             XCTAssertEqual(try PluginInputCompatibility.publicationSchema(pluginID: "video.game", requested: String(version)), version)
         }
         for version in [1, 4, 5, 6, 7, 8] {
@@ -154,7 +154,7 @@ final class PluginProtocolTests:XCTestCase {
         XCTAssertThrowsError(try PluginInputCompatibility.publicationSchema(pluginID: "video.cartoon", requested: "3"))
         XCTAssertThrowsError(try PluginInputCompatibility.publicationSchema(pluginID: "video.cartoon", requested: "9"))
         XCTAssertThrowsError(try PluginInputCompatibility.publicationSchema(pluginID: "video.cartoon", requested: "10"))
-        XCTAssertThrowsError(try PluginInputCompatibility.publicationSchema(pluginID: "video.game", requested: "20"))
+        XCTAssertThrowsError(try PluginInputCompatibility.publicationSchema(pluginID: "video.game", requested: "21"))
         XCTAssertThrowsError(try PluginInputCompatibility.publicationSchema(pluginID: "video.cartoon", requested: "12"))
     }
     func testGameSeventeenAddsOnlyBoundedShadowStyleAndPreservesAllGameSixteenDefinitions() throws {
@@ -213,7 +213,7 @@ final class PluginProtocolTests:XCTestCase {
         XCTAssertTrue(PluginInputCompatibility.supportsModelBank(pluginID:"video.game",inputSchema:19))
         XCTAssertNotNil(descriptor.inputSchema.object?["properties"]?.object?["modelBankOperation"])
         XCTAssertNil(PluginRPCSchemas.definitions(inputSchemaVersion:8,pluginID:"video.cartoon")["ModelLocalHeightOpacity"])
-        XCTAssertFalse(PluginInputCompatibility.supports(pluginID:"video.game",version:20))
+        XCTAssertFalse(PluginInputCompatibility.supports(pluginID:"video.game",version:21))
     }
     func testDistanceFogGameEighteenAddsOnlyExplicitScenePropertyAndPreservesGameSeventeenDefinitions() throws {
         var current=PluginRPCSchemas.definitions(inputSchemaVersion:18,pluginID:"video.game")
@@ -241,7 +241,35 @@ final class PluginProtocolTests:XCTestCase {
         XCTAssertTrue(PluginInputCompatibility.supportsModelBank(pluginID:"video.game",inputSchema:18))
         XCTAssertNotNil(descriptor.inputSchema.object?["properties"]?.object?["modelBankOperation"])
         XCTAssertNil(PluginRPCSchemas.definitions(inputSchemaVersion:8,pluginID:"video.cartoon")["ModelDistanceFog3D"])
-        XCTAssertFalse(PluginInputCompatibility.supports(pluginID:"video.game",version:20))
+        XCTAssertFalse(PluginInputCompatibility.supports(pluginID:"video.game",version:21))
+    }
+    func testGameTwentyAddsOnlyIndependentAmbientAndFreezesEarlierDiscovery() throws {
+        var current=PluginRPCSchemas.definitions(inputSchemaVersion:20,pluginID:"video.game")
+        let previous=PluginRPCSchemas.definitions(inputSchemaVersion:19,pluginID:"video.game"),host=AgentSchemas.definitions()
+        let field=try XCTUnwrap(current["ModelMaterialInterpretation"]?.object?["properties"]?.object?["independentAmbientMaterialIDs"])
+        XCTAssertEqual(field,host["ModelMaterialInterpretation"]?.object?["properties"]?.object?["independentAmbientMaterialIDs"])
+        XCTAssertEqual(field.object?["type"],.string("array"));XCTAssertNil(field.object?["anyOf"])
+        XCTAssertEqual(field.object?["minItems"],.number(1));XCTAssertEqual(field.object?["maxItems"],.number(128))
+        XCTAssertEqual(field.object?["uniqueItems"],.boolean(true))
+        XCTAssertEqual(field.object?["items"]?.object?["type"],.string("string"))
+        XCTAssertEqual(field.object?["items"]?.object?["minLength"],.number(1));XCTAssertEqual(field.object?["items"]?.object?["maxLength"],.number(160))
+        XCTAssertEqual(field.object?["items"]?.object?["pattern"],.string("^\\S(?:[\\s\\S]*\\S)?$"))
+        var material=try XCTUnwrap(current["ModelMaterialInterpretation"]?.object),fields=try XCTUnwrap(material["properties"]?.object)
+        fields.removeValue(forKey:"independentAmbientMaterialIDs");material["properties"] = .object(fields)
+        current["ModelMaterialInterpretation"] = .object(material)
+        XCTAssertEqual(try Codec.data(current),try Codec.data(previous),"game20只增可选原材质独立ambient选择，完整继承game19")
+        for schema in 1...19 {
+            let old=PluginRPCSchemas.definitions(inputSchemaVersion:schema,pluginID:"video.game")
+            XCTAssertNil(old["ModelMaterialInterpretation"]?.object?["properties"]?.object?["independentAmbientMaterialIDs"])
+        }
+        let descriptor=PluginDescription(pluginID:"video.game",capabilityID:"game.simulate",version:"1.14.0",inputSchemaVersion:20)
+        XCTAssertFalse(descriptor.filesystemAccess);XCTAssertFalse(descriptor.networkAccess)
+        XCTAssertTrue(PluginInputCompatibility.supports(pluginID:"video.game",version:20))
+        XCTAssertTrue(PluginInputCompatibility.supportsModelBank(pluginID:"video.game",inputSchema:20))
+        XCTAssertNotNil(descriptor.inputSchema.object?["properties"]?.object?["modelBankOperation"])
+        XCTAssertNotNil(descriptor.outputSchema.object?["properties"]?.object?["modelBankReceipt"])
+        XCTAssertNil(PluginRPCSchemas.definitions(inputSchemaVersion:8,pluginID:"video.cartoon")["ModelMaterialInterpretation"])
+        XCTAssertFalse(PluginInputCompatibility.supports(pluginID:"video.game",version:21))
     }
     func testGameSixteenAddsExplicitWaterSurfaceAndPreservesEveryGameFifteenDefinition() throws {
         var current=PluginRPCSchemas.definitions(inputSchemaVersion:16,pluginID:"video.game")
