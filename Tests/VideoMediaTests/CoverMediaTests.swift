@@ -153,6 +153,35 @@ final class CoverMediaTests:XCTestCase {
         XCTAssertGreaterThan(try XCTUnwrap(affected[.pencil]),1280*720*12/100,"彩铅大故事组景应保实际素材可见面积")
         XCTAssertNotEqual(affected[.media],affected[.code],"类型间内容组织不同，不能只换背景色")
     }
+    func testPencilArtworkRemainsVisibleWithoutPassingBehindTheCenteredHeadline()throws {
+        let red=try bitmap(width:300,height:420,red:1,green:0,blue:0)
+        let blue=try bitmap(width:300,height:420,red:0,green:0,blue:1)
+        for aspect in [Aspect.landscape,.portrait] {
+            let source=try bitmap(width:aspect.width,height:aspect.height)
+            for template in [CoverTemplate.spotlight,.editorial,.contrast] {
+                var value=try revision(aspect:aspect)
+                value.coverPresentation=CoverPresentation(style:.pencil,template:template,title:"合作还是背叛？",
+                    hero:CoverImage(assetID:"subject"),emphasis:["背叛"])
+                let title=try CoverPainter.composeTitle(cover:CoverRules.resolved(revision:value),width:CGFloat(aspect.width),height:CGFloat(aspect.height))
+                XCTAssertTrue(title.safeRect.contains(title.visibleBounds))
+                for bounds in title.bounds {XCTAssertEqual(bounds.midX,CGFloat(aspect.width)/2,accuracy:0.01,"主标题须保持视觉居中")}
+                let first=try CoverPainter.image(revision:value,source:source,images:["subject":red])
+                let second=try CoverPainter.image(revision:value,source:source,images:["subject":blue])
+                let crop=CGRect(x:title.visibleBounds.minX,y:CGFloat(aspect.height)-title.visibleBounds.maxY,
+                                width:title.visibleBounds.width,height:title.visibleBounds.height)
+                XCTAssertEqual(try pixels(XCTUnwrap(first.cropping(to:crop))),try pixels(XCTUnwrap(second.cropping(to:crop))),
+                               "替换真实主物不能改变标题区底像素；细节不能再穿过标题")
+                let a=try pixels(first),b=try pixels(second)
+                var changed=0
+                for offset in stride(from:0,to:a.count,by:4) {
+                    let redDifference=abs(Int(a[offset])-Int(b[offset]))
+                    let blueDifference=abs(Int(a[offset+2])-Int(b[offset+2]))
+                    if redDifference>100 || blueDifference>100 {changed+=1}
+                }
+                XCTAssertGreaterThan(changed,aspect.width*aspect.height/10,"标题留净区后真实主物仍须清楚可见，不能缩成邮票")
+            }
+        }
+    }
     func testArtworkSeparatesOnlyThroughRealTransparencyAndKeepsConnectedImagesWhole()throws {
         try assertRGBAFixture()
         let space=CGColorSpace(name:CGColorSpace.sRGB)!

@@ -258,16 +258,40 @@ public enum CoverPainter {
     }
     private static func pencil(_ image:CGImage?,hero:CGImage?,square s:CGRect,canvas:CGRect,variant:Int,titleBounds:CGRect,p:Palette,c:CGContext) {
         let d=s.width,shift=CGFloat(variant-1)*d*0.055
-        gradient(canvas,colors:[color("3A103C"),color(p.paper),color("F14D76")],locations:[0,0.56,1],c:c)
-        c.setFillColor(color(p.secondary,alpha:0.72));c.fillEllipse(in:CGRect(x:canvas.midX-d*0.86+shift,y:s.minY-d*0.22,width:d*1.42,height:d*1.42))
-        c.setFillColor(color(p.secondary,alpha:0.70));c.fillEllipse(in:CGRect(x:canvas.midX+d*0.32-shift,y:s.minY+d*0.55,width:d*0.92,height:d*0.92))
-        let subject=CGRect(x:canvas.midX-d*0.63+shift,y:s.minY+d*0.03,width:d*0.82,height:d*0.94)
-        c.saveGState();c.setShadow(offset:CGSize(width:d*0.02,height:-d*0.02),blur:d*0.018,color:color("381029",alpha:0.35))
-        material(hero ?? image,in:subject,c:c);c.restoreGState()
-        if hero != nil,let image {
-            c.saveGState();c.setAlpha(0.18);draw(image,in:canvas,fill:true,context:c);c.restoreGState()
+        gradient(canvas,colors:[color("291329"),color("64243F"),color("24152F")],locations:[0,0.49,1],c:c)
+        // A lit subject and a quiet headline occupy separate parts of an
+        // advertising composition. Do not leave detailed bars or object edges
+        // behind the centered title, or crop a connected original to clear it.
+        let landscape=canvas.width>=canvas.height
+        c.saveGState()
+        let plane:[CGPoint]=landscape
+            ? [CGPoint(x:0,y:0),CGPoint(x:max(0,titleBounds.minX-d*0.15+shift*0.20),y:0),
+               CGPoint(x:max(0,titleBounds.minX-d*0.035+shift*0.20),y:canvas.height),CGPoint(x:0,y:canvas.height)]
+            : [CGPoint(x:0,y:canvas.height*0.64),CGPoint(x:canvas.width,y:canvas.height*0.77),
+               CGPoint(x:canvas.width,y:canvas.height),CGPoint(x:0,y:canvas.height)]
+        c.addLines(between:plane);c.closePath();c.clip()
+        gradient(canvas,colors:[color("8E3D58"),color("E7A18A"),color("A14B62")],locations:[0,0.64,1],c:c)
+        c.restoreGState()
+        if hero != nil,let image,let wash=paletteColor(image),let translucent=wash.copy(alpha:0.08) {
+            c.setFillColor(translucent);c.fill(canvas)
         }
-        glow(canvas,center:CGPoint(x:titleBounds.midX,y:titleBounds.midY),radius:d*0.62,ink:"23132D",alpha:0.86,c:c)
+        guard let artwork=hero ?? image else{return}
+        let aspect=CGFloat(artwork.width)/CGFloat(artwork.height),gap=d*0.065,edge=d*0.025
+        let width:CGFloat,height:CGFloat,subject:CGRect
+        if landscape {
+            width=min(d*0.66,max(d*0.08,titleBounds.minX-gap-edge),(d*0.92)*aspect)
+            height=width/aspect
+            subject=CGRect(x:max(edge,titleBounds.minX-gap-width),y:s.midY-height/2+shift*0.14,width:width,height:height)
+        } else {
+            height=min(d*0.86,max(d*0.08,canvas.maxY-edge-titleBounds.maxY-gap),(d*0.76)/aspect)
+            width=height*aspect
+            subject=CGRect(x:canvas.midX-width/2+shift*0.30,y:titleBounds.maxY+gap,width:width,height:height)
+        }
+        glow(canvas,center:CGPoint(x:subject.midX,y:subject.midY),radius:max(subject.width,subject.height)*0.72,ink:"F4B7A0",alpha:0.23,c:c)
+        c.setFillColor(color("230C24",alpha:0.38))
+        c.fillEllipse(in:CGRect(x:subject.minX-d*0.025,y:subject.minY-d*0.018,width:subject.width+d*0.05,height:d*0.035))
+        c.saveGState();c.setShadow(offset:CGSize(width:d*0.018,height:-d*0.014),blur:d*0.024,color:color("230C24",alpha:0.55))
+        draw(artwork,in:subject,fill:false,context:c);c.restoreGState()
     }
     private static func presenter(_ image:CGImage?,hero:CGImage?,placement:HeroPlacement,square s:CGRect,canvas:CGRect,variant:Int,p:Palette,c:CGContext) {
         let d=s.width
