@@ -78,7 +78,7 @@ public enum CoverPainter {
         c.setFillColor(color(p.paper));c.fill(canvas)
         switch cover.style {
         case .pencil:pencil(background,hero:hero,square:square,canvas:canvas,variant:variant,titleBounds:composition.visibleBounds,p:p,c:c)
-        case .presenter:presenter(background,hero:hero,placement:placement,square:square,canvas:canvas,variant:variant,p:p,c:c)
+case .presenter:presenter(background,hero:hero,placement:placement,square:square,canvas:canvas,variant:variant,titleBounds:composition.visibleBounds,p:p,c:c)
         case .game:game(background,hero:hero,square:square,canvas:canvas,variant:variant,titleBounds:composition.visibleBounds,p:p,c:c)
         case .cartoon:cartoon(background,hero:hero,square:square,canvas:canvas,variant:variant,p:p,c:c)
         case .media:media(background,hero:hero,square:square,canvas:canvas,variant:variant,p:p,c:c)
@@ -302,7 +302,30 @@ public enum CoverPainter {
         c.saveGState();c.setShadow(offset:CGSize(width:d*0.018,height:-d*0.014),blur:d*0.024,color:color("230C24",alpha:0.55))
         draw(artwork,in:subject,fill:false,context:c);c.restoreGState()
     }
-    private static func presenter(_ image:CGImage?,hero:CGImage?,placement:HeroPlacement,square s:CGRect,canvas:CGRect,variant:Int,p:Palette,c:CGContext) {
+    static func presenterSubjectPlacement(square s:CGRect,canvas:CGRect,variant:Int,titleBounds:CGRect,heroPlacement:HeroPlacement,imageAspect:CGFloat)->CGRect {
+        let d=s.width
+        let propX=variant == 1 ? min(canvas.width-d*0.43,s.maxX+d*0.09):max(d*0.035,s.minX-d*0.27)
+        let original=CGRect(x:propX,y:s.minY+d*0.055,width:d*0.43,height:d*0.65)
+        // Only wide canvases have a useful separate subject corridor. Keep
+        // square/portrait compositions and tight headlines unchanged instead
+        // of shrinking a full original into a new postage-stamp placement.
+        guard canvas.width>=d*1.35,imageAspect.isFinite,imageAspect>0,
+              !titleBounds.isEmpty,!titleBounds.isInfinite else{return original}
+        let edge=d*0.025,gap=d*0.05,heroOnLeft=heroPlacement.rect.midX<canvas.midX
+        let left=heroOnLeft ? max(titleBounds.maxX,heroPlacement.rect.maxX)+gap:canvas.minX+edge
+        let right=heroOnLeft ? canvas.maxX-edge:min(titleBounds.minX,heroPlacement.rect.minX)-gap
+        let width=right-left
+        guard width>0 else{return original}
+        let previousHeight=min(original.height,original.width/imageAspect)
+        let baseline=original.minY+(original.height-previousHeight)/2
+        let height=min(d*0.86,canvas.maxY-edge-baseline,width/imageAspect)
+        guard height>previousHeight+0.5 else{return original}
+        let fittedWidth=height*imageAspect
+        let candidate=CGRect(x:heroOnLeft ? left:right-fittedWidth,y:baseline,width:fittedWidth,height:height)
+        guard canvas.contains(candidate),!candidate.intersects(titleBounds),!candidate.intersects(heroPlacement.rect) else{return original}
+        return candidate
+    }
+    private static func presenter(_ image:CGImage?,hero:CGImage?,placement:HeroPlacement,square s:CGRect,canvas:CGRect,variant:Int,titleBounds:CGRect,p:Palette,c:CGContext) {
         let d=s.width
         gradient(canvas,colors:[color("030A25"),color("10236A"),color("243C8C")],locations:[0,0.58,1],c:c)
         // Broad lit planes are a studio backdrop, with a warm key behind the
@@ -318,9 +341,13 @@ public enum CoverPainter {
         gradient(canvas,colors:[color("9E355C"),color("F17F79"),color("FFBC9D")],locations:[0,0.60,1],c:c)
         c.restoreGState()
         glow(canvas,center:CGPoint(x:placement.rect.midX,y:s.minY+d*0.68),radius:d*0.63,ink:"FC968B",alpha:0.28,c:c)
-        let propX=variant == 1 ? min(canvas.width-d*0.43,s.maxX+d*0.09):max(d*0.035,s.minX-d*0.27)
-        let prop=CGRect(x:propX,y:s.minY+d*0.055,width:d*0.43,height:d*0.65)
-        glow(canvas,center:CGPoint(x:prop.midX,y:prop.midY),radius:d*0.57,ink:"296ADE",alpha:0.78,c:c)
+        let aspect=image.map{CGFloat($0.width)/CGFloat($0.height)} ?? 1
+        let originalProp=presenterSubjectPlacement(square:s,canvas:canvas,variant:variant,titleBounds:.zero,heroPlacement:placement,imageAspect:aspect)
+        let prop=hero == nil ? originalProp
+            :presenterSubjectPlacement(square:s,canvas:canvas,variant:variant,titleBounds:titleBounds,heroPlacement:placement,imageAspect:aspect)
+        // Preserve the original studio fill under the title and teaching IP.
+        // Only the original story pixels and their ground shadow move.
+        glow(canvas,center:CGPoint(x:originalProp.midX,y:originalProp.midY),radius:d*0.57,ink:"296ADE",alpha:0.78,c:c)
         c.setFillColor(color("030A25",alpha:0.66))
         c.fillEllipse(in:CGRect(x:prop.minX-d*0.04,y:prop.minY-d*0.024,width:prop.width+d*0.08,height:d*0.038))
         if let image {

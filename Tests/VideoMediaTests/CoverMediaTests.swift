@@ -6,6 +6,73 @@ import VideoCore
 @testable import VideoMedia
 
 final class CoverMediaTests:XCTestCase {
+    func testPresenterOriginalSubjectUsesWideTitleCorridorWithoutTouchingTopicOrIP()throws {
+        let canvas=CGRect(x:0,y:0,width:1280,height:720),square=CGRect(x:280,y:0,width:720,height:720)
+        let aspect=CGFloat(384)/522
+        for template in [CoverTemplate.spotlight,.editorial,.contrast] {
+            let cover=CoverPresentation(style:.presenter,template:template,title:"豆子姐讲囚徒困境",emphasis:["囚徒困境"])
+            var value=try revision();value.coverPresentation=cover
+            let title=try CoverPainter.composeTitle(cover:CoverRules.resolved(revision:value),width:canvas.width,height:canvas.height)
+            let variant=template == .editorial ? 1:(template == .contrast ? 2:0)
+            let hero=CoverPainter.presenterPlacement(square:square,variant:variant,titleBounds:title.visibleBounds,pointing:.left)
+            let subject=CoverPainter.presenterSubjectPlacement(square:square,canvas:canvas,variant:variant,titleBounds:title.visibleBounds,heroPlacement:hero,imageAspect:aspect)
+            let oldFittedHeight=min(square.width*0.65,square.width*0.43/aspect)
+            XCTAssertGreaterThan(subject.height,oldFittedHeight*1.15,"完整故事人物须有实际可辨的放大收益，不能只改区域描述")
+            XCTAssertEqual(subject.width/subject.height,aspect,accuracy:0.0001,"完整原帧按比例展示，不能裁掉帽子、手或腿")
+            XCTAssertTrue(canvas.contains(subject));XCTAssertFalse(subject.intersects(title.visibleBounds));XCTAssertFalse(subject.intersects(hero.rect))
+            let heroAfter=CoverPainter.presenterPlacement(square:square,variant:variant,titleBounds:title.visibleBounds,pointing:.left)
+            XCTAssertEqual(heroAfter.rect,hero.rect);XCTAssertEqual(heroAfter.mirrored,hero.mirrored)
+            let savedTitle=try XCTUnwrap(cover.title)
+            XCTAssertTrue(title.safeRect.contains(title.visibleBounds));XCTAssertEqual(CoverPainter.displayTitle(savedTitle,style:.presenter),"豆子姐讲\n囚徒困境")
+        }
+    }
+    func testPresenterSubjectPreservesTightSquarePortraitAndUnsupportedPlacements()throws {
+        for (width,height) in [(720.0,720.0),(720.0,1280.0),(1280.0,720.0)] {
+            let d=CGFloat(min(width,height)),canvas=CGRect(x:0,y:0,width:width,height:height)
+            let square=CGRect(x:(CGFloat(width)-d)/2,y:(CGFloat(height)-d)/2,width:d,height:d)
+            let cover=CoverPresentation(style:.presenter,title:"豆子姐讲囚徒困境",emphasis:["囚徒困境"])
+            var value=try revision();value.coverPresentation=cover
+            let composition=try CoverPainter.composeTitle(cover:CoverRules.resolved(revision:value),width:canvas.width,height:canvas.height)
+            for variant in 0...2 {
+                let hero=CoverPainter.presenterPlacement(square:square,variant:variant,titleBounds:composition.visibleBounds,pointing:.left)
+                let x=variant == 1 ? min(canvas.width-d*0.43,square.maxX+d*0.09):max(d*0.035,square.minX-d*0.27)
+                let original=CGRect(x:x,y:square.minY+d*0.055,width:d*0.43,height:d*0.65)
+                if width<=height {
+                    XCTAssertEqual(CoverPainter.presenterSubjectPlacement(square:square,canvas:canvas,variant:variant,titleBounds:composition.visibleBounds,heroPlacement:hero,imageAspect:384.0/522),original,"窄画幅不得为了碰撞门禁缩小原故事人物")
+                }
+                for unavailableTitle in [CGRect.zero,canvas] {
+                    XCTAssertEqual(CoverPainter.presenterSubjectPlacement(square:square,canvas:canvas,variant:variant,titleBounds:unavailableTitle,heroPlacement:hero,imageAspect:384.0/522),original,"无主题净空时保留既有构图")
+                }
+                let invalidAspects:[CGFloat]=[0,-1,.nan,.infinity]
+                for invalid in invalidAspects {
+                    XCTAssertEqual(CoverPainter.presenterSubjectPlacement(square:square,canvas:canvas,variant:variant,titleBounds:composition.visibleBounds,heroPlacement:hero,imageAspect:invalid),original)
+                }
+            }
+        }
+    }
+    func testPresenterSubjectPlacementKeepsCompleteImagesSafeAcrossWideAspectRatios()throws {
+        for width in [1100.0,1280.0,1600.0] {
+            let canvas=CGRect(x:0,y:0,width:width,height:720),square=CGRect(x:(CGFloat(width)-720)/2,y:0,width:720,height:720)
+            let cover=CoverPresentation(style:.presenter,title:"豆子姐讲囚徒困境",emphasis:["囚徒困境"])
+            var value=try revision();value.coverPresentation=cover
+            let title=try CoverPainter.composeTitle(cover:CoverRules.resolved(revision:value),width:canvas.width,height:canvas.height)
+            for variant in 0...2 {
+                let hero=CoverPainter.presenterPlacement(square:square,variant:variant,titleBounds:title.visibleBounds,pointing:.right)
+                let sourceAspects:[CGFloat]=[0.5,384.0/522,1,2]
+                for aspect in sourceAspects {
+                    let subject=CoverPainter.presenterSubjectPlacement(square:square,canvas:canvas,variant:variant,titleBounds:title.visibleBounds,heroPlacement:hero,imageAspect:aspect)
+                    // The legacy region has fixed 309.6×468 dimensions. Any
+                    // changed placement must be a complete proportional fit
+                    // and have room on the side opposite the existing IP.
+                    if abs(subject.width-309.6)>0.001 || abs(subject.height-468)>0.001 {
+                        XCTAssertTrue(canvas.contains(subject));XCTAssertFalse(subject.intersects(title.visibleBounds));XCTAssertFalse(subject.intersects(hero.rect))
+                        XCTAssertEqual(subject.width/subject.height,aspect,accuracy:0.0001)
+                        XCTAssertGreaterThan(subject.height,min(468,309.6/aspect))
+                    }
+                }
+            }
+        }
+    }
     func testQuantitySpotlightFocusTracksMissingGroupAcrossCanvasShapesAndTemplates()throws {
         for (width,height) in [(1280.0,720.0),(720.0,720.0),(720.0,1280.0)] {
             let side=CGFloat(min(width,height))
