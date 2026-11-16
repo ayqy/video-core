@@ -118,7 +118,11 @@ public enum CoverPainter {
             && value.rangeOfCharacter(from:CharacterSet(charactersIn:"，,、：:；;。")) == nil
         var arrangements=titleArrangements(value,emphasis:ranges)
         if shortGameTitle {arrangements=[([NSRange(location:0,length:(value as NSString).length)],0)]}
-        var size=side*(shortGameTitle ? 0.09:0.112)
+        // A programming-topic cover has no character portrait to carry the
+        // subject. Let its short headline lead; long copy still shrinks only
+        // after shaping into complete phrases in the shared preview-safe area.
+        let baseSize:CGFloat=cover.style == .code ? 0.14:0.112
+        var size=side*(shortGameTitle ? 0.09:baseSize)
         while size>=side*0.042 {
             let normal=try CoverTypeface.displayFont(size:size),emphasized=try CoverTypeface.displayFont(size:size*1.17)
             let title=NSMutableAttributedString(string:value,attributes:[.init(kCTFontAttributeName as String):normal,.init(kCTKernAttributeName as String):kern,.init(kCTForegroundColorAttributeName as String):color(p.ink)])
@@ -440,7 +444,8 @@ public enum CoverPainter {
               slots.allSatisfy({abs($0.minY-baseline)<=s.width*0.0001}) else{return}
         let d=s.width,objects=slots.reduce(CGRect.null){$0.union($1)}
         let left=max(d*0.025,objects.minX-d*0.075),right=min(canvas.width-d*0.025,objects.maxX+d*0.075)
-        let front=objects.minY-d*0.042,back=objects.minY+d*0.028
+        let front=max(s.minY+d*0.040,objects.minY-d*0.042)
+        let back=max(front+d*0.030,objects.minY+d*0.028)
         c.saveGState();c.setShadow(offset:CGSize(width:0,height:-d*0.022),blur:d*0.040,color:color("000000",alpha:0.72))
         c.setFillColor(color("030C29"))
         polygon([CGPoint(x:left,y:front),CGPoint(x:right,y:front),CGPoint(x:right,y:front-d*0.034),CGPoint(x:left,y:front-d*0.034)],c:c)
@@ -466,7 +471,7 @@ public enum CoverPainter {
         let rows=(required+columns-1)/columns,stagger:CGFloat=variant == 2 ? 0.22:0
         let gap=d*0.035,availableWidth=d*0.86
         let upper=titleBounds.minY-d*0.055,lower=s.minY+d*0.04
-        let maximum=d*(variant == 1 ? 0.19:(variant == 2 ? 0.225:0.205))
+        let maximum=d*(variant == 1 ? 0.215:(variant == 2 ? 0.245:0.235))
         let diameter=min(maximum,(availableWidth-gap*CGFloat(columns-1))/CGFloat(columns),
                          (upper-lower-gap*CGFloat(rows-1))/(CGFloat(rows)+stagger*CGFloat(columns-1)))
         guard diameter>=d*0.06 else {throw VideoError.review("当前标题未给真实数量图留下足够空间")}
