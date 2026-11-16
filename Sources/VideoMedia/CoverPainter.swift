@@ -126,6 +126,15 @@ public enum CoverPainter {
         while size>=side*0.042 {
             let normal=try CoverTypeface.displayFont(size:size),emphasized=try CoverTypeface.displayFont(size:size*1.17)
             let title=NSMutableAttributedString(string:value,attributes:[.init(kCTFontAttributeName as String):normal,.init(kCTKernAttributeName as String):kern,.init(kCTForegroundColorAttributeName as String):color(p.ink)])
+            // Keep the existing host attribution readable, while giving the
+            // actual subject the first visual read. The title stays centered
+            // and the emphasized topic keeps its existing width, so the real
+            // pointing portrait is not pushed farther beyond the canvas edge.
+            if cover.style == .presenter,value.hasPrefix("豆子姐讲") {
+                let attribution=try CoverTypeface.displayFont(size:size*0.75)
+                title.addAttribute(.init(kCTFontAttributeName as String),value:attribution,
+                                   range:NSRange(location:0,length:("豆子姐讲" as NSString).length))
+            }
             let keywordInk=cover.style == .presenter ? color("071638"):color(p.accent)
             for range in ranges {title.addAttributes([.init(kCTFontAttributeName as String):emphasized,.init(kCTForegroundColorAttributeName as String):keywordInk],range:range)}
             let typesetter=CTTypesetterCreateWithAttributedString(title)

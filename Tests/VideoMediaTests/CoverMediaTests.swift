@@ -226,6 +226,11 @@ final class CoverMediaTests:XCTestCase {
                     }
                 }
                 XCTAssertEqual(sizes.count,2,"主题词与标题其余文字须有真实字级对比")
+                if style == .presenter {
+                    let attributionSize=try XCTUnwrap(sizes.min()),topicSize=try XCTUnwrap(sizes.max())
+                    XCTAssertGreaterThanOrEqual(Double(topicSize)/Double(attributionSize),1.5,
+                                                "现有解说员署名须让主题先读，不能与主题争同等字级")
+                }
                 XCTAssertEqual(inkColors.count,2,"主题词与标题其余文字须有真实文字色对比")
                 let expectedKeyword:[CoverStyle:[CGFloat]]=[.presenter:[7.0/255,22.0/255,56.0/255,1],
                     .pencil:[99.0/255,240.0/255,228.0/255,1],.code:[80.0/255,227.0/255,218.0/255,1]]
