@@ -305,6 +305,52 @@ final class CoverMediaTests:XCTestCase {
             XCTAssertTrue(bubble.contains(composition.visibleBounds))
         }
     }
+    func testGameForegroundCrossesBubbleRimAndPreservesTitlePixelsInBothAspects()throws {
+        // Colored transparent artwork verifies real compositing order. It is
+        // not evidence about a game character's face or artistic quality.
+        try assertRGBAFixture()
+        let space=CGColorSpace(name:CGColorSpace.sRGB)!
+        let context=try XCTUnwrap(CGContext(data:nil,width:120,height:200,bitsPerComponent:8,bytesPerRow:480,
+            space:space,bitmapInfo:CGImageAlphaInfo.premultipliedLast.rawValue))
+        context.clear(CGRect(x:0,y:0,width:120,height:200))
+        context.setFillColor(try XCTUnwrap(CGColor(colorSpace:space,components:[1,0,0,1])))
+        context.fill(CGRect(x:20,y:0,width:80,height:200))
+        let hero=try XCTUnwrap(context.makeImage()),original=try ScenePainter.png(hero)
+        let tight=try CoverPainter.visibleArtwork(hero)
+        for aspect in [Aspect.landscape,.portrait] {
+            var variants=Set<String>()
+            for template in [CoverTemplate.spotlight,.editorial,.contrast] {
+                var value=try revision(aspect:aspect)
+                value.coverPresentation=CoverPresentation(style:.game,template:template,title:"合作还是背叛？",
+                    hero:CoverImage(assetID:"hero"),background:CoverImage(assetID:"scene"),emphasis:["背叛"])
+                let source=try bitmap(width:aspect.width,height:aspect.height)
+                let background=try bitmap(width:aspect.width,height:aspect.height,red:0,green:0,blue:1)
+                let rendered=try CoverPainter.image(revision:value,source:source,images:["hero":hero,"scene":background])
+                variants.insert(Codec.hash(try ScenePainter.png(rendered)))
+                let title=try CoverPainter.composeTitle(cover:CoverRules.resolved(revision:value),width:CGFloat(aspect.width),height:CGFloat(aspect.height))
+                let d=CGFloat(min(aspect.width,aspect.height)),canvas=CGRect(x:0,y:0,width:aspect.width,height:aspect.height)
+                let square=CGRect(x:(canvas.width-d)/2,y:(canvas.height-d)/2,width:d,height:d)
+                let variant=template == .editorial ? 1:(template == .contrast ? 2:0)
+                let bubble=CoverPainter.gameDialogueBubble(square:square,canvas:canvas,variant:variant,titleBounds:title.visibleBounds)
+                let layout=CoverPainter.gameDepthLayout(square:square,canvas:canvas,variant:variant,titleBounds:title.visibleBounds,
+                    heroAspect:CGFloat(tight.width)/CGFloat(tight.height))
+                XCTAssertTrue(canvas.contains(layout.hero));XCTAssertTrue(layout.hero.intersects(bubble))
+                XCTAssertEqual(layout.hero.width/layout.hero.height,CGFloat(tight.width)/CGFloat(tight.height),accuracy:0.001)
+                func crop(_ image:CGImage,_ area:CGRect)throws->CGImage {
+                    try XCTUnwrap(image.cropping(to:CGRect(x:area.minX,y:CGFloat(aspect.height)-area.maxY,width:area.width,height:area.height)))
+                }
+                let rim=try pixels(crop(rendered,bubble))
+                XCTAssertGreaterThan(stride(from:0,to:rim.count,by:4).filter{rim[$0]>250 && rim[$0+1]<5 && rim[$0+2]<5}.count,25,
+                    "原透明角色须真实出现在气泡前缘，不能仍全被泡遮住")
+                value.coverPresentation?.hero=nil
+                let behind=try CoverPainter.image(revision:value,source:source,images:["scene":background])
+                XCTAssertEqual(try pixels(crop(rendered,title.visibleBounds)),try pixels(crop(behind,title.visibleBounds)),
+                    "角色跨泡前缘后，完整标题实绘像素仍须保持清楚")
+            }
+            XCTAssertEqual(variants.count,3,"三模板须有实际不同的原图构图，不代三种审美通过")
+        }
+        XCTAssertEqual(try ScenePainter.png(hero),original,"跨平面层次不能修改原角色PNG字节")
+    }
     func testPresenterGestureMirrorsActualPixelsTowardCenteredTitle()throws {
         try assertRGBAFixture()
         let c=try XCTUnwrap(CGContext(data:nil,width:120,height:200,bitsPerComponent:8,bytesPerRow:480,space:CGColorSpace(name:CGColorSpace.sRGB)!,bitmapInfo:CGImageAlphaInfo.premultipliedLast.rawValue))

@@ -297,10 +297,20 @@ public enum CoverPainter {
         glow(canvas,center:CGPoint(x:canvas.midX,y:canvas.midY),radius:d*0.49,ink:"06102E",alpha:0.82,c:c)
         if let hero {c.saveGState();c.setShadow(offset:CGSize(width:d*0.012,height:-d*0.012),blur:d*0.020,color:color("000000",alpha:0.64));draw(hero,in:placement.rect.offsetBy(dx:0,dy:d*0.028),fill:false,mirrored:placement.mirrored,context:c);c.restoreGState()}
     }
-    static func gameDepthLayout(square s:CGRect,canvas:CGRect,variant:Int,titleBounds:CGRect)->GameDepthLayout {
-        let d=s.width,width=d*0.48,height=d*0.64
-        let x=variant == 1 ? max(d*0.025,s.minX-width*0.56):min(canvas.width-width-d*0.025,s.maxX-width*0.10)
-        return GameDepthLayout(aperture:canvas,hero:CGRect(x:x,y:s.minY+d*0.04,width:width,height:height),frontLip:.zero)
+    static func gameDepthLayout(square s:CGRect,canvas:CGRect,variant:Int,titleBounds:CGRect,heroAspect:CGFloat=0.75)->GameDepthLayout {
+        let d=s.width,bubble=gameDialogueBubble(square:s,canvas:canvas,variant:variant,titleBounds:titleBounds)
+        // A tight original character stands across the topic plane. Its upper
+        // body occupies the clear space above the bubble, rather than placing
+        // the face behind the centered headline. Fit the actual source aspect.
+        let overlap:CGFloat=variant == 2 ? 0.36:0.30
+        let headroom=max(d*0.04,s.maxY-d*0.035-bubble.maxY)
+        let aspect=max(0.1,min(4,heroAspect))
+        let height=min(d*0.66,headroom/(1-overlap),(canvas.width-d*0.05)/aspect)
+        let width=height*aspect
+        let left=max(d*0.025,bubble.minX-width*0.72)
+        let right=min(canvas.width-width-d*0.025,bubble.maxX-width*(variant == 2 ? 0.36:0.28))
+        let rect=CGRect(x:variant == 1 ? left:right,y:bubble.maxY-height*overlap,width:width,height:height)
+        return GameDepthLayout(aperture:canvas,hero:rect,frontLip:.zero)
     }
     static func gameDialogueBubble(square s:CGRect,canvas:CGRect,variant:Int,titleBounds:CGRect)->CGRect {
         let width=min(canvas.width-s.width*0.04,titleBounds.width+s.width*(variant == 2 ? 0.14:0.10))
@@ -308,7 +318,8 @@ public enum CoverPainter {
         return CGRect(x:canvas.midX-width/2,y:titleBounds.midY-height/2,width:width,height:height)
     }
     private static func game(_ image:CGImage?,hero:CGImage?,square s:CGRect,canvas:CGRect,variant:Int,titleBounds:CGRect,p:Palette,c:CGContext) {
-        let d=s.width,layout=gameDepthLayout(square:s,canvas:canvas,variant:variant,titleBounds:titleBounds)
+        let d=s.width,aspect=hero.map{CGFloat($0.width)/CGFloat($0.height)} ?? 0.75
+        let layout=gameDepthLayout(square:s,canvas:canvas,variant:variant,titleBounds:titleBounds,heroAspect:aspect)
         // The actual set is the whole cover, as in a normal game screenshot.
         // Volume comes from its original scene/materials/characters, not a
         // second photograph standing in a fabricated portal or paper frame.
@@ -323,6 +334,15 @@ public enum CoverPainter {
         let radius=bubble.height*(variant == 1 ? 0.12:(variant == 2 ? 0.30:0.22))
         c.saveGState();c.setShadow(offset:CGSize(width:0,height:-d*0.006),blur:d*0.010,color:color("364F32",alpha:0.16));c.setFillColor(color(p.paper))
         c.addPath(CGPath(roundedRect:bubble,cornerWidth:radius,cornerHeight:radius,transform:nil));c.fillPath();c.restoreGState()
+        if let hero {
+            // Repaint only the original silhouette crossing the bubble's rim.
+            // The title's whole measured area stays in front and untouched;
+            // no invented window, source-image edit or duplicate character is
+            // needed to establish a foreground/background occlusion cue.
+            let titleGuard=titleBounds.insetBy(dx:-d*0.012,dy:-d*0.010)
+            c.saveGState();c.addRect(bubble);c.addRect(titleGuard);c.clip(using:.evenOdd)
+            draw(hero,in:layout.hero,fill:false,context:c);c.restoreGState()
+        }
     }
     private static func cartoon(_ image:CGImage?,hero:CGImage?,square s:CGRect,canvas:CGRect,variant:Int,p:Palette,c:CGContext) {
         let d=s.width
