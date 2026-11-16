@@ -122,7 +122,8 @@ public enum CoverPainter {
         while size>=side*0.042 {
             let normal=try CoverTypeface.displayFont(size:size),emphasized=try CoverTypeface.displayFont(size:size*1.17)
             let title=NSMutableAttributedString(string:value,attributes:[.init(kCTFontAttributeName as String):normal,.init(kCTKernAttributeName as String):kern,.init(kCTForegroundColorAttributeName as String):color(p.ink)])
-            for range in ranges {title.addAttributes([.init(kCTFontAttributeName as String):emphasized,.init(kCTForegroundColorAttributeName as String):color(p.accent)],range:range)}
+            let keywordInk=cover.style == .presenter ? color("071638"):color(p.accent)
+            for range in ranges {title.addAttributes([.init(kCTFontAttributeName as String):emphasized,.init(kCTForegroundColorAttributeName as String):keywordInk],range:range)}
             let typesetter=CTTypesetterCreateWithAttributedString(title)
             var candidates:[(lines:[CTLine],score:CGFloat)]=[]
             for arrangement in arrangements {
@@ -204,8 +205,16 @@ public enum CoverPainter {
     }
     private static func paintTitle(_ value:TitleComposition,style:CoverStyle,p:Palette,c:CGContext) {
         c.saveGState();c.setShouldAntialias(true)
-        // Contrast belongs to the actual topic glyphs. No yellow/black marker
-        // block or secondary copy competes with the white/orange/cyan title.
+        // Presenter topics use a high-contrast advertising color field. Keep
+        // the original glyphs and title geometry: no added strokes close the
+        // counters, and the existing title/gesture relationship stays intact.
+        if style == .presenter {
+            c.setFillColor(color(p.accent))
+            for rect in value.highlights {
+                let radius=rect.height*0.075
+                c.addPath(CGPath(roundedRect:rect,cornerWidth:radius,cornerHeight:radius,transform:nil));c.fillPath()
+            }
+        }
         for (line,origin) in zip(value.lines,value.origins) {
             c.textMatrix = .identity;c.textPosition=origin;CTLineDraw(line,c)
         }

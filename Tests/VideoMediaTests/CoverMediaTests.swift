@@ -198,13 +198,13 @@ final class CoverMediaTests:XCTestCase {
                 }
                 XCTAssertEqual(sizes.count,2,"主题词与标题其余文字须有真实字级对比")
                 XCTAssertEqual(inkColors.count,2,"主题词与标题其余文字须有真实文字色对比")
-                let expectedKeyword:[CoverStyle:[CGFloat]]=[.presenter:[1,152.0/255,93.0/255,1],
+                let expectedKeyword:[CoverStyle:[CGFloat]]=[.presenter:[7.0/255,22.0/255,56.0/255,1],
                     .pencil:[99.0/255,240.0/255,228.0/255,1],.code:[80.0/255,227.0/255,218.0/255,1]]
                 if let components=expectedKeyword[style] {
                     let space=CGColorSpace(name:CGColorSpace.sRGB)!
                     let white=try XCTUnwrap(CGColor(colorSpace:space,components:[1,1,1,1]))
                     let keyword=try XCTUnwrap(CGColor(colorSpace:space,components:components))
-                    XCTAssertEqual(inkColors,Set([String(describing:white.components),String(describing:keyword.components)]),"常见广告高反差白字配橙/青主题字，不得恢复黄底黑字")
+                    XCTAssertEqual(inkColors,Set([String(describing:white.components),String(describing:keyword.components)]),"主题字按类型配色：presenter深靛蓝配珊瑚色底，其余橙/青字；不恢复黄底黑字")
                 }
                 let side=CGFloat(min(aspect.width,aspect.height)),w=CGFloat(aspect.width),h=CGFloat(aspect.height)
                 let square=CGRect(x:(w-side)/2,y:(h-side)/2,width:side,height:side)
@@ -216,6 +216,16 @@ final class CoverMediaTests:XCTestCase {
                 for bound in composition.bounds {XCTAssertEqual(bound.midX,w/2,accuracy:0.01)}
                 let firstImage=try CoverPainter.image(revision:value,source:bitmap(width:aspect.width,height:aspect.height))
                 let first=try ScenePainter.png(firstImage)
+                if style == .presenter {
+                    for highlight in composition.highlights {
+                        let sourceRect=CGRect(x:highlight.minX,y:CGFloat(aspect.height)-highlight.maxY,width:highlight.width,height:highlight.height)
+                        let crop=try XCTUnwrap(firstImage.cropping(to:sourceRect)),raw=try pixels(crop)
+                        let coral=stride(from:0,to:raw.count,by:4).filter{raw[$0]==255 && raw[$0+1]==152 && raw[$0+2]==93}.count
+                        let navy=stride(from:0,to:raw.count,by:4).filter{raw[$0]==7 && raw[$0+1]==22 && raw[$0+2]==56}.count
+                        XCTAssertGreaterThan(coral,100,"实际主题范围须有可见高反差底色")
+                        XCTAssertGreaterThan(navy,100,"实际主题字形须清楚绘制在底色上，不以空色块代标题")
+                    }
+                }
                 if [CoverStyle.presenter,.pencil,.code].contains(style) {
                     let raw=try pixels(firstImage)
                     var yellow=0
