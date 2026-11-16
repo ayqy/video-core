@@ -6,6 +6,96 @@ import VideoCore
 @testable import VideoMedia
 
 final class CoverMediaTests:XCTestCase {
+    func testQuantitySpotlightFocusTracksMissingGroupAcrossCanvasShapesAndTemplates()throws {
+        for (width,height) in [(1280.0,720.0),(720.0,720.0),(720.0,1280.0)] {
+            let side=CGFloat(min(width,height))
+            let square=CGRect(x:(CGFloat(width)-side)/2,y:(CGFloat(height)-side)/2,width:side,height:side)
+            for template in [CoverTemplate.spotlight,.editorial,.contrast] {
+                var value=try revision()
+                value.coverPresentation=CoverPresentation(style:.code,template:template,title:"少一枚，路就修不成？",
+                    emphasis:["少一枚"],quantityGraphic:CoverQuantityGraphic(available:2,required:3))
+                let title=try CoverPainter.composeTitle(cover:CoverRules.resolved(revision:value),width:CGFloat(width),height:CGFloat(height))
+                let variant=template == .editorial ? 1:(template == .contrast ? 2:0)
+                let slots=try CoverPainter.quantitySlots(square:square,titleBounds:title.visibleBounds,required:3,variant:variant)
+                let oneMissing=try CoverPainter.quantitySpotlightFocus(slots:slots,available:2)
+                XCTAssertEqual(oneMissing,slots[2],"缺一枚时，聚光只能以真实空位为中心")
+                let manyMissing=try CoverPainter.quantitySpotlightFocus(slots:slots,available:1)
+                XCTAssertTrue(manyMissing.contains(slots[1]) && manyMissing.contains(slots[2]),"多个空位应共同成为视觉焦点")
+                XCTAssertFalse(manyMissing.contains(slots[0]),"已筹到的左侧实币不应冒充缺位范围")
+                let none=try CoverPainter.quantitySpotlightFocus(slots:slots,available:0)
+                let full=try CoverPainter.quantitySpotlightFocus(slots:slots,available:3)
+                XCTAssertEqual(full,none,"无实币和全部筹齐均以整个已声明对象组为范围")
+                XCTAssertTrue(slots.allSatisfy{full.contains($0)},"完整聚光范围须包含各槽外边界：\(width)×\(height)，\(template.rawValue)")
+                for available in 0...3 {
+                    let focus=try CoverPainter.quantitySpotlightFocus(slots:slots,available:available)
+                    XCTAssertTrue(square.contains(focus));XCTAssertFalse(focus.intersects(title.visibleBounds))
+                    let light=try CoverPainter.quantitySpotlightEnvelope(focus:focus,square:square,titleBounds:title.visibleBounds)
+                    XCTAssertTrue(light.contains(focus),"柔光须覆盖实际缺位联合范围，不能压扁到只剩一条光线")
+                    XCTAssertLessThan(light.maxY,title.visibleBounds.minY,"径向光须在标题下方自然归零，不依赖矩形截光")
+                    XCTAssertFalse(light.intersects(title.visibleBounds))
+                    XCTAssertEqual(light.midX,focus.midX,accuracy:0.0001)
+                    XCTAssertEqual(light.midY,focus.midY,accuracy:0.0001)
+                }
+            }
+        }
+    }
+    func testQuantitySpotlightFocusPreservesLayoutCoordinatesAndRejectsInvalidCounts()throws {
+        let slots=[CGRect(x:20,y:30,width:50,height:50),CGRect(x:90,y:55,width:50,height:50),CGRect(x:160,y:80,width:50,height:50)]
+        let original=slots
+        for available in 0...3 {
+            let focus=try CoverPainter.quantitySpotlightFocus(slots:slots,available:available)
+            let moved=slots.map{$0.offsetBy(dx:83,dy:-17)}
+            XCTAssertEqual(try CoverPainter.quantitySpotlightFocus(slots:moved,available:available),focus.offsetBy(dx:83,dy:-17),"移动对象组后焦点须跟随实际对象，而非固定画布位置")
+            let doubled=slots.map{CGRect(x:$0.minX*2,y:$0.minY*2,width:$0.width*2,height:$0.height*2)}
+            XCTAssertEqual(try CoverPainter.quantitySpotlightFocus(slots:doubled,available:available),
+                CGRect(x:focus.minX*2,y:focus.minY*2,width:focus.width*2,height:focus.height*2))
+        }
+        XCTAssertEqual(slots,original,"光色布局不得移动或缩放真实数量物")
+        let fractional=[CGRect(x:0.1,y:0.2,width:0.2,height:0.3),CGRect(x:0.4,y:0.6,width:0.3,height:0.2)]
+        let enclosing=try CoverPainter.quantitySpotlightFocus(slots:fractional,available:0)
+        XCTAssertTrue(fractional.allSatisfy{enclosing.contains($0)},"小数坐标重建后仍须包含对象外边界，不能只近似包含")
+        XCTAssertThrowsError(try CoverPainter.quantitySpotlightFocus(slots:slots,available:-1))
+        XCTAssertThrowsError(try CoverPainter.quantitySpotlightFocus(slots:slots,available:4))
+        XCTAssertThrowsError(try CoverPainter.quantitySpotlightFocus(slots:[],available:0))
+        XCTAssertThrowsError(try CoverPainter.quantitySpotlightFocus(slots:[.zero],available:0))
+        XCTAssertThrowsError(try CoverPainter.quantitySpotlightFocus(slots:[.infinite],available:0))
+    }
+    func testQuantitySpotlightChangesBackdropWithoutChangingTitleOrAvailableCoinPixels()throws {
+        for aspect in [Aspect.landscape,.portrait] {
+            var value=try revision(aspect:aspect)
+            value.coverPresentation=CoverPresentation(style:.code,template:.spotlight,title:"少一枚，路就修不成？",
+                emphasis:["少一枚"],quantityGraphic:CoverQuantityGraphic(available:2,required:3))
+            let title=try CoverPainter.composeTitle(cover:CoverRules.resolved(revision:value),width:CGFloat(aspect.width),height:CGFloat(aspect.height))
+            let side=CGFloat(min(aspect.width,aspect.height))
+            let square=CGRect(x:(CGFloat(aspect.width)-side)/2,y:(CGFloat(aspect.height)-side)/2,width:side,height:side)
+            let slots=try CoverPainter.quantitySlots(square:square,titleBounds:title.visibleBounds,required:3)
+            let source=try bitmap(width:aspect.width,height:aspect.height)
+            let missing=try CoverPainter.image(revision:value,source:source)
+            value.coverPresentation?.quantityGraphic?.available=3
+            let funded=try CoverPainter.image(revision:value,source:source)
+            func region(_ image:CGImage,_ rect:CGRect)throws->[UInt8] {
+                let top=CGRect(x:rect.minX,y:CGFloat(image.height)-rect.maxY,width:rect.width,height:rect.height).integral
+                return try pixels(XCTUnwrap(image.cropping(to:top)))
+            }
+            XCTAssertEqual(try region(missing,title.visibleBounds),try region(funded,title.visibleBounds),"筹款数量改变时保持同一完整标题、字号和深色背景")
+            value.coverPresentation?.quantityGraphic=nil
+            let studio=try CoverPainter.image(revision:value,source:source)
+            // The top corners are outside both the quantity light and the
+            // non-quantity programming symbols. They retain the same studio
+            // lighting that gives the existing code template spatial depth.
+            for x in [CGFloat(10),CGFloat(aspect.width)-20] {
+                let corner=CGRect(x:x,y:CGFloat(aspect.height)-20,width:10,height:10)
+                XCTAssertEqual(try region(missing,corner),try region(studio,corner),"缺位聚光须叠在原工作室光色之上，不能移除共有的空间背景")
+                XCTAssertEqual(try region(funded,corner),try region(studio,corner))
+            }
+            for slot in slots.prefix(2) {
+                let center=CGRect(x:slot.midX-5,y:slot.midY-5,width:10,height:10)
+                XCTAssertEqual(try region(missing,center),try region(funded,center),"焦点光色不能重绘已有金币的真实金属表面")
+            }
+            let backdrop=CGRect(x:slots[2].maxX+side*0.015,y:slots[2].midY-5,width:10,height:10)
+            XCTAssertNotEqual(try region(missing,backdrop),try region(funded,backdrop),"聚光须真正跟随缺位改变背景，而非只返回几何描述")
+        }
+    }
     func testQuantityGraphicRendersExactObjectsAndKeepsCommonCropClearOfTitle()throws {
         func gold(_ image:CGImage,slot:CGRect)throws->Int {
             let top=CGRect(x:slot.minX,y:CGFloat(image.height)-slot.maxY,width:slot.width,height:slot.height).insetBy(dx:5,dy:5)

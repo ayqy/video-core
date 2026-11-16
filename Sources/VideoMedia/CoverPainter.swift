@@ -463,6 +463,8 @@ public enum CoverPainter {
             let cover=try CoverRules.resolved(revision:revision)
             let title=try composeTitle(cover:cover,width:canvas.width,height:canvas.height)
             let slots=try quantitySlots(square:s,titleBounds:title.visibleBounds,required:quantity.required,variant:variant)
+            let focus=try quantitySpotlightFocus(slots:slots,available:quantity.available)
+            try quantitySpotlight(focus,protectedCoins:slots.prefix(quantity.available),square:s,canvas:canvas,titleBounds:title.visibleBounds,c:c)
             quantityStage(slots,square:s,canvas:canvas,c:c)
             // Real countable objects communicate the declared condition. A
             // missing object remains an empty slot, never a fabricated coin.
@@ -489,6 +491,59 @@ public enum CoverPainter {
             c.setStrokeColor(color(index == 0 ? "50E3DA":"FF985D"));c.addPath(path);c.strokePath();c.restoreGState()
         }
         glow(canvas,center:CGPoint(x:canvas.midX,y:canvas.midY),radius:d*0.57,ink:"060E30",alpha:0.78,c:c)
+    }
+    /// Light follows the author-declared shortfall, rather than title words.
+    /// A fully funded group has no missing object, so the whole group leads.
+    static func quantitySpotlightFocus(slots:[CGRect],available:Int)throws->CGRect {
+        guard (1...8).contains(slots.count),(0...slots.count).contains(available),
+              slots.allSatisfy({!$0.isNull && !$0.isInfinite && $0.width>0 && $0.height>0
+                  && $0.minX.isFinite && $0.minY.isFinite && $0.maxX.isFinite && $0.maxY.isFinite}) else {
+            throw VideoError.invalid("数量聚光须使用完整且有效的实际对象位置与数量")
+        }
+        let selected=available<slots.count ? slots.dropFirst(available):slots[...]
+        guard selected.count>1 else{return selected.first!}
+        let left=selected.map(\.minX).min()!,bottom=selected.map(\.minY).min()!
+        let right=selected.map(\.maxX).max()!,top=selected.map(\.maxY).max()!
+        // Subtracting and rebuilding a floating-point extent can otherwise
+        // lose the outer edge. Enclose it conservatively by one representable
+        // step, many orders of magnitude smaller than an output pixel.
+        return CGRect(x:left,y:bottom,width:(right-left).nextUp,height:(top-bottom).nextUp)
+    }
+    static func quantitySpotlightEnvelope(focus:CGRect,square s:CGRect,titleBounds:CGRect)throws->CGRect {
+        let d=s.width,upper=titleBounds.minY-d*0.035
+        let width=max(focus.width+d*0.48,d*0.82)
+        let halfHeight=min(max((focus.height+d*0.54)/2,d*0.39),upper-focus.midY)
+        guard d>0,halfHeight>=focus.height/2,halfHeight.isFinite else {
+            throw VideoError.review("当前标题未给数量聚光留下完整且分离的空间")
+        }
+        // The radial gradient reaches zero alpha before the title. Limiting
+        // its ellipse avoids a visible rectangular notch in the light field.
+        return CGRect(x:focus.midX-width/2,y:focus.midY-halfHeight,width:width,height:halfHeight*2)
+    }
+    private static func quantitySpotlight(_ focus:CGRect,protectedCoins:ArraySlice<CGRect>,square s:CGRect,canvas:CGRect,titleBounds:CGRect,c:CGContext)throws {
+        let envelope=try quantitySpotlightEnvelope(focus:focus,square:s,titleBounds:titleBounds)
+        // A broad cyan falloff reveals the actual empty place. It stays behind
+        // the unchanged metal objects and never supplies an extra contribution.
+        // Its natural zero-alpha upper edge keeps the title's backdrop dark.
+        c.saveGState();c.clip(to:canvas)
+        // Light belongs to the backdrop. Keep the existing coins' front and
+        // thickness silhouettes on an unchanged base, including two physical
+        // pixels around their antialiased edges. Successive clips subtract
+        // their union even where the two silhouettes overlap.
+        for coin in protectedCoins {
+            let side=coin.offsetBy(dx:coin.width*0.012,dy:-coin.width*0.055)
+            for face in [coin,side] {
+                c.addRect(canvas);c.addEllipse(in:face.insetBy(dx:-2,dy:-2));c.clip(using:.evenOdd)
+            }
+        }
+        c.translateBy(x:envelope.midX,y:envelope.midY)
+        c.scaleBy(x:envelope.width/2,y:envelope.height/2)
+        if let light=CGGradient(colorsSpace:CGColorSpace(name:CGColorSpace.sRGB),
+            colors:[color("1BAFAE",alpha:0.68),color("116C89",alpha:0.30),color("07143E",alpha:0)] as CFArray,
+            locations:[0,0.48,1]) {
+            c.drawRadialGradient(light,startCenter:.zero,startRadius:0,endCenter:.zero,endRadius:1,options:[])
+        }
+        c.restoreGState()
     }
     private static func quantityStage(_ slots:[CGRect],square s:CGRect,canvas:CGRect,c:CGContext) {
         // A single physical surface supports only a shared baseline. Keep
