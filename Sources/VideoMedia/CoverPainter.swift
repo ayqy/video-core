@@ -258,17 +258,31 @@ public enum CoverPainter {
     }
     private static func presenter(_ image:CGImage?,hero:CGImage?,placement:HeroPlacement,square s:CGRect,canvas:CGRect,variant:Int,p:Palette,c:CGContext) {
         let d=s.width
-        gradient(canvas,colors:[color("03113E"),color(p.paper),color("125EC3")],locations:[0,0.55,1],c:c)
-        glow(canvas,center:CGPoint(x:canvas.midX+CGFloat(variant-1)*d*0.19,y:s.minY+d*0.63),radius:d*0.85,ink:"2589EF",alpha:0.58,c:c)
-        c.saveGState();c.setShadow(offset:.zero,blur:d*0.05,color:color("6297D5",alpha:0.18));c.setFillColor(color("27477C",alpha:0.55))
-        c.fillEllipse(in:CGRect(x:canvas.midX-d*0.92,y:s.minY-d*0.28,width:d*1.84,height:d*0.49));c.restoreGState()
+        gradient(canvas,colors:[color("030A25"),color("10236A"),color("243C8C")],locations:[0,0.58,1],c:c)
+        // Broad lit planes are a studio backdrop, with a warm key behind the
+        // presenter and a cool fill behind the actual subject. Their diagonal
+        // overlap gives depth without adding a frame, wiring or extra copy.
+        let heroOnLeft=placement.rect.midX<canvas.midX
+        c.saveGState()
+        if heroOnLeft {c.translateBy(x:canvas.width,y:0);c.scaleBy(x:-1,y:1)}
+        let tilt=CGFloat(variant-1)*0.035
+        let plane=[CGPoint(x:canvas.width*(0.63+tilt),y:0),CGPoint(x:canvas.width,y:0),
+                   CGPoint(x:canvas.width,y:canvas.height),CGPoint(x:canvas.width*(0.87-tilt),y:canvas.height)]
+        c.addLines(between:plane);c.closePath();c.clip()
+        gradient(canvas,colors:[color("9E355C"),color("F17F79"),color("FFBC9D")],locations:[0,0.60,1],c:c)
+        c.restoreGState()
+        glow(canvas,center:CGPoint(x:placement.rect.midX,y:s.minY+d*0.68),radius:d*0.63,ink:"FC968B",alpha:0.28,c:c)
+        let propX=variant == 1 ? min(canvas.width-d*0.43,s.maxX+d*0.09):max(d*0.035,s.minX-d*0.27)
+        let prop=CGRect(x:propX,y:s.minY+d*0.055,width:d*0.43,height:d*0.65)
+        glow(canvas,center:CGPoint(x:prop.midX,y:prop.midY),radius:d*0.57,ink:"296ADE",alpha:0.78,c:c)
+        c.setFillColor(color("030A25",alpha:0.66))
+        c.fillEllipse(in:CGRect(x:prop.minX-d*0.04,y:prop.minY-d*0.024,width:prop.width+d*0.08,height:d*0.038))
         if let image {
-            let propX=variant == 1 ? canvas.midX+d*0.30:canvas.midX-d*0.65
-            c.saveGState();c.setAlpha(0.42);c.setShadow(offset:CGSize(width:d*0.018,height:-d*0.018),blur:d*0.022,color:color("000000",alpha:0.70))
-            draw(image,in:CGRect(x:propX,y:s.minY+d*0.10,width:d*0.35,height:d*0.52),fill:false,context:c);c.restoreGState()
+            c.saveGState();c.setAlpha(0.84);c.setShadow(offset:CGSize(width:d*0.018,height:-d*0.018),blur:d*0.022,color:color("000000",alpha:0.70))
+            draw(image,in:prop,fill:false,context:c);c.restoreGState()
         }
-        glow(canvas,center:CGPoint(x:canvas.midX,y:canvas.midY),radius:d*0.53,ink:"0A183C",alpha:0.82,c:c)
-        if let hero {c.saveGState();c.setShadow(offset:CGSize(width:d*0.012,height:-d*0.012),blur:d*0.016,color:color("000000",alpha:0.6));draw(hero,in:placement.rect,fill:false,mirrored:placement.mirrored,context:c);c.restoreGState()}
+        glow(canvas,center:CGPoint(x:canvas.midX,y:canvas.midY),radius:d*0.49,ink:"06102E",alpha:0.82,c:c)
+        if let hero {c.saveGState();c.setShadow(offset:CGSize(width:d*0.012,height:-d*0.012),blur:d*0.020,color:color("000000",alpha:0.64));draw(hero,in:placement.rect.offsetBy(dx:0,dy:d*0.028),fill:false,mirrored:placement.mirrored,context:c);c.restoreGState()}
     }
     static func gameDepthLayout(square s:CGRect,canvas:CGRect,variant:Int,titleBounds:CGRect)->GameDepthLayout {
         let d=s.width,width=d*0.48,height=d*0.64
@@ -363,16 +377,27 @@ public enum CoverPainter {
     }
     private static func code(_ image:CGImage?,hero:CGImage?,square s:CGRect,canvas:CGRect,variant:Int,revision:Revision,quantity:CoverQuantityGraphic?,p:Palette,c:CGContext)throws {
         let d=s.width,shift=CGFloat(variant-1)*d*0.035
-        gradient(canvas,colors:[color("03061E"),color(p.paper),color("103D83")],locations:[0,0.52,1],c:c)
+        gradient(canvas,colors:[color("020719"),color("07143E"),color("10245C")],locations:[0,0.56,1],c:c)
         // Input art may influence the broad color mood, but no spatial source
         // pixels, code lines, editor controls or document text enter the cover.
         if let image=hero ?? image,let wash=paletteColor(image),let translucent=wash.copy(alpha:0.16) {c.setFillColor(translucent);c.fill(canvas)}
-        glow(canvas,center:CGPoint(x:canvas.midX+d*0.50,y:s.minY+d*0.74),radius:d*0.82,ink:"176AA5",alpha:0.62,c:c)
+        // A diagonal reflected light plane, rather than a uniform wash, keeps
+        // the subject in a deliberate studio space. The center stays dark so
+        // the title remains the strongest shape at reduced thumbnail sizes.
+        c.saveGState()
+        let lightPlane=[CGPoint(x:canvas.width*0.54,y:0),CGPoint(x:canvas.width,y:0),
+                        CGPoint(x:canvas.width,y:canvas.height),CGPoint(x:canvas.width*0.86,y:canvas.height)]
+        c.addLines(between:lightPlane);c.closePath();c.clip()
+        gradient(canvas,colors:[color("0F788B"),color("164C89"),color("172F73")],locations:[0,0.52,1],c:c)
+        c.restoreGState()
+        glow(canvas,center:CGPoint(x:canvas.midX-d*0.40,y:s.minY+d*0.84),radius:d*0.76,ink:"374AA4",alpha:0.54,c:c)
+        glow(canvas,center:CGPoint(x:canvas.midX,y:canvas.midY),radius:d*0.50,ink:"02071D",alpha:0.72,c:c)
         if let quantity {
             try quantity.validate()
             let cover=try CoverRules.resolved(revision:revision)
             let title=try composeTitle(cover:cover,width:canvas.width,height:canvas.height)
             let slots=try quantitySlots(square:s,titleBounds:title.visibleBounds,required:quantity.required,variant:variant)
+            quantityStage(slots,square:s,canvas:canvas,c:c)
             // Real countable objects communicate the declared condition. A
             // missing object remains an empty slot, never a fabricated coin.
             for (index,rect) in slots.enumerated() {
@@ -398,6 +423,28 @@ public enum CoverPainter {
             c.setStrokeColor(color(index == 0 ? "50E3DA":"FF985D"));c.addPath(path);c.strokePath();c.restoreGState()
         }
         glow(canvas,center:CGPoint(x:canvas.midX,y:canvas.midY),radius:d*0.57,ink:"060E30",alpha:0.78,c:c)
+    }
+    private static func quantityStage(_ slots:[CGRect],square s:CGRect,canvas:CGRect,c:CGContext) {
+        // A single physical surface supports only a shared baseline. Keep
+        // editorial rows and contrast steps in their original graphic layout.
+        guard let baseline=slots.first?.minY,
+              slots.allSatisfy({abs($0.minY-baseline)<=s.width*0.0001}) else{return}
+        let d=s.width,objects=slots.reduce(CGRect.null){$0.union($1)}
+        let left=max(d*0.025,objects.minX-d*0.075),right=min(canvas.width-d*0.025,objects.maxX+d*0.075)
+        let front=objects.minY-d*0.042,back=objects.minY+d*0.028
+        c.saveGState();c.setShadow(offset:CGSize(width:0,height:-d*0.022),blur:d*0.040,color:color("000000",alpha:0.72))
+        c.setFillColor(color("030C29"))
+        polygon([CGPoint(x:left,y:front),CGPoint(x:right,y:front),CGPoint(x:right,y:front-d*0.034),CGPoint(x:left,y:front-d*0.034)],c:c)
+        c.restoreGState()
+        let top=[CGPoint(x:left,y:front),CGPoint(x:right,y:front),CGPoint(x:right-d*0.040,y:back),CGPoint(x:left+d*0.040,y:back)]
+        c.saveGState();c.addLines(between:top);c.closePath();c.clip()
+        gradient(CGRect(x:left,y:front,width:right-left,height:back-front),colors:[color("204979"),color("457D9E")],locations:[0,1],c:c)
+        c.restoreGState()
+        // The real objects sit on this surface; empty slots get no gold fill.
+        for slot in slots {
+            c.setFillColor(color("010719",alpha:0.52))
+            c.fillEllipse(in:CGRect(x:slot.minX-d*0.008,y:slot.minY-d*0.028,width:slot.width+d*0.016,height:d*0.036))
+        }
     }
     static func quantitySlots(square s:CGRect,titleBounds:CGRect,required:Int,variant:Int=0)throws->[CGRect] {
         guard (1...8).contains(required) else {throw VideoError.invalid("封面数量图范围无效")}
@@ -468,11 +515,15 @@ public enum CoverPainter {
         return CGColor(colorSpace:CGColorSpace(name:CGColorSpace.sRGB)!,components:[CGFloat(bytes[0])/255/alpha,CGFloat(bytes[1])/255/alpha,CGFloat(bytes[2])/255/alpha,1])
     }
     static func presenterPlacement(square s:CGRect,variant:Int,titleBounds:CGRect,pointing:CoverPointing?)->HeroPlacement {
-        let d=s.width,canvasWidth=d+s.minX*2,width=d*0.74,height=d*0.98
+        let d=s.width,canvasWidth=d+s.minX*2,width=d*0.70,height=d*0.98
         // The IP can share background space with the title; the title itself
         // is painted last. Never shrink a person to the empty strip below it.
-        let left=max(d*0.02,titleBounds.minX-width+d*0.06)
-        let right=min(canvasWidth-width-d*0.02,titleBounds.maxX-d*0.06)
+        // Keep the actual leading hand beside the title. Clamping the whole
+        // silhouette inside the canvas used to push that finger underneath
+        // the final glyph. A cover may crop the outer hair/body at its edge.
+        let wide=canvasWidth>d*1.35
+        let left=wide ? titleBounds.minX-width+d*0.01:max(d*0.02,titleBounds.minX-width+d*0.06)
+        let right=wide ? titleBounds.maxX-d*0.01:min(canvasWidth-width-d*0.02,titleBounds.maxX-d*0.06)
         let rect=CGRect(x:variant == 1 ? left:right,y:s.minY+d*0.005,width:width,height:height)
         let target:CoverPointing=rect.midX<titleBounds.midX ? .right:.left
         return HeroPlacement(rect:rect,target:target,mirrored:pointing.map{$0 != target} ?? false)
