@@ -12,6 +12,14 @@ final class CoverMediaTests:XCTestCase {
             let crop=try XCTUnwrap(image.cropping(to:top)),raw=try pixels(crop)
             return stride(from:0,to:raw.count,by:4).filter{raw[$0]>180 && raw[$0+1]>100 && raw[$0+2]<140}.count
         }
+        func thumbnail(_ image:CGImage)throws->CGImage {
+            let width=image.width/4,height=image.height/4
+            let context=try XCTUnwrap(CGContext(data:nil,width:width,height:height,bitsPerComponent:8,bytesPerRow:width*4,
+                space:CGColorSpace(name:CGColorSpace.sRGB)!,bitmapInfo:CGImageAlphaInfo.premultipliedLast.rawValue))
+            context.interpolationQuality = .high
+            context.draw(image,in:CGRect(x:0,y:0,width:width,height:height))
+            return try XCTUnwrap(context.makeImage())
+        }
         for aspect in [Aspect.landscape,.portrait] {
             var variants=Set<String>()
             for template in [CoverTemplate.spotlight,.editorial,.contrast] {
@@ -40,6 +48,16 @@ final class CoverMediaTests:XCTestCase {
                 let full=try CoverPainter.image(revision:value,source:source)
                 XCTAssertGreaterThan(try gold(full,slot:slots[2]),100,"仅真实available变化就须补上对应金币")
                 XCTAssertEqual(try gold(short,slot:slots[0]),try gold(full,slot:slots[0]))
+                let reducedShort=try thumbnail(short),reducedFull=try thumbnail(full)
+                for (index,slot) in slots.enumerated() {
+                    let reduced=CGRect(x:slot.minX/4,y:slot.minY/4,width:slot.width/4,height:slot.height/4)
+                    if index<2 {
+                        XCTAssertGreaterThan(try gold(reducedShort,slot:reduced),25,"广告缩略图仍须读出两枚实际金币")
+                    } else {
+                        XCTAssertEqual(try gold(reducedShort,slot:reduced),0,"缩略后的凹槽仍为空缺，不能被金属高光冒充已筹金额")
+                        XCTAssertGreaterThan(try gold(reducedFull,slot:reduced),25,"真实补齐后缩略图须显示第三枚金币")
+                    }
+                }
                 for count in 1...8 {
                     let bounded=try CoverPainter.quantitySlots(square:square,titleBounds:title.visibleBounds,required:count,variant:variant)
                     XCTAssertEqual(bounded.count,count);XCTAssertTrue(bounded.allSatisfy{square.contains($0) && !$0.intersects(title.visibleBounds)})

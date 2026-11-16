@@ -540,25 +540,54 @@ public enum CoverPainter {
         let diameter=rect.width
         c.saveGState()
         if !present {
-            c.setFillColor(color("071A47",alpha:0.55));c.fillEllipse(in:rect)
-            c.setStrokeColor(color("50E3DA",alpha:0.84));c.setLineWidth(diameter*0.036)
+            // A recessed, unfilled place remains visibly different from the
+            // real metal objects. Its broken cool rim never invents gold for
+            // a contribution which the author has not declared available.
+            c.setShadow(offset:CGSize(width:0,height:-diameter*0.035),blur:diameter*0.07,color:color("010615",alpha:0.65))
+            c.setFillColor(color("031023"));c.fillEllipse(in:rect)
+            c.setShadow(offset:.zero,blur:0,color:nil)
+            c.saveGState();c.addEllipse(in:rect);c.clip()
+            gradient(rect,colors:[color("0D5668"),color("092541"),color("02091D")],locations:[0,0.38,1],c:c)
+            c.restoreGState()
+            c.setFillColor(color("030D24"));c.fillEllipse(in:rect.insetBy(dx:diameter*0.07,dy:diameter*0.07))
+            c.setStrokeColor(color("68F1E9",alpha:0.96));c.setLineWidth(diameter*0.036)
             c.setLineDash(phase:0,lengths:[diameter*0.045,diameter*0.065])
             c.strokeEllipse(in:rect.insetBy(dx:diameter*0.018,dy:diameter*0.018))
+            c.setLineDash(phase:0,lengths:[])
+            c.setStrokeColor(color("BEFFFF",alpha:0.72));c.setLineWidth(diameter*0.014)
+            c.addArc(center:CGPoint(x:rect.midX,y:rect.midY),radius:diameter*0.425,startAngle:.pi*0.15,endAngle:.pi*0.86,clockwise:false);c.strokePath()
             c.restoreGState();return
         }
-        c.setShadow(offset:CGSize(width:diameter*0.025,height:-diameter*0.05),blur:diameter*0.10,color:color("000000",alpha:0.44))
-        c.setFillColor(color("D87317"));c.fillEllipse(in:rect.offsetBy(dx:0,dy:-diameter*0.04))
-        c.setFillColor(color("FFD66A"));c.fillEllipse(in:rect)
+        c.setShadow(offset:CGSize(width:diameter*0.035,height:-diameter*0.055),blur:diameter*0.075,color:color("000000",alpha:0.56))
+        let side=rect.offsetBy(dx:diameter*0.012,dy:-diameter*0.055)
+        c.setFillColor(color("8F430B"));c.fillEllipse(in:side)
         c.setShadow(offset:.zero,blur:0,color:nil)
-        let inner=rect.insetBy(dx:diameter*0.11,dy:diameter*0.11)
-        c.saveGState();c.addEllipse(in:inner);c.clip()
-        gradient(inner,colors:[color("FFE8A0"),color("F5AC28"),color("D88513")],locations:[0,0.55,1],c:c)
+        c.saveGState();c.addEllipse(in:side);c.clip()
+        gradient(side,colors:[color("7B3005"),color("D27F1C"),color("A04B08")],locations:[0,0.56,1],c:c)
         c.restoreGState()
-        c.setStrokeColor(color("FFF1BC"));c.setLineWidth(diameter*0.022);c.strokeEllipse(in:inner)
-        // A simple embossed center marks a coin without introducing numerals,
-        // logos or any cover text beyond the actual title.
-        let mark=rect.insetBy(dx:diameter*0.35,dy:diameter*0.27)
-        c.setStrokeColor(color("BD6E13",alpha:0.76));c.setLineWidth(diameter*0.035);c.strokeEllipse(in:mark)
+        // Broad opposing reflections on the bevel and face describe metal,
+        // rather than a flat yellow disk with an outline resembling a zero.
+        c.saveGState();c.addEllipse(in:rect);c.clip()
+        gradient(rect,colors:[color("A85B10"),color("FFD06B"),color("FFF1B6")],locations:[0,0.47,1],c:c)
+        c.restoreGState()
+        let inner=rect.insetBy(dx:diameter*0.105,dy:diameter*0.105)
+        c.saveGState();c.addEllipse(in:inner);c.clip()
+        gradient(inner,colors:[color("FFE8A1"),color("F1B33F"),color("AD5B0C")],locations:[0,0.45,1],c:c)
+        c.restoreGState()
+        c.setStrokeColor(color("87420A",alpha:0.72));c.setLineWidth(diameter*0.015);c.strokeEllipse(in:inner)
+        c.setStrokeColor(color("FFF6D1",alpha:0.94));c.setLineWidth(diameter*0.026)
+        c.addArc(center:CGPoint(x:rect.midX,y:rect.midY),radius:diameter*0.455,startAngle:.pi*0.08,endAngle:.pi*0.81,clockwise:false);c.strokePath()
+        c.setStrokeColor(color("FFEAB0",alpha:0.88));c.setLineWidth(diameter*0.012)
+        c.addArc(center:CGPoint(x:rect.midX,y:rect.midY),radius:diameter*0.387,startAngle:.pi*1.08,endAngle:.pi*1.86,clockwise:false);c.strokePath()
+        // A neutral geometric relief supplies surface detail without adding
+        // numerals, currency symbols, a logo or any new cover copy.
+        let mark=rect.insetBy(dx:diameter*0.32,dy:diameter*0.32)
+        let relief=[CGPoint(x:mark.midX,y:mark.maxY),CGPoint(x:mark.maxX,y:mark.midY),
+                    CGPoint(x:mark.midX,y:mark.minY),CGPoint(x:mark.minX,y:mark.midY)]
+        c.setFillColor(color("B76A13",alpha:0.62));polygon(relief,c:c)
+        c.setStrokeColor(color("FFF0BB",alpha:0.83));c.setLineWidth(diameter*0.017)
+        c.move(to:relief[2]);c.addLine(to:relief[3]);c.addLine(to:relief[0]);c.strokePath()
+        c.setStrokeColor(color("85400A",alpha:0.74));c.move(to:relief[0]);c.addLine(to:relief[1]);c.addLine(to:relief[2]);c.strokePath()
         c.restoreGState()
     }
     private static func codeBrace(in rect:CGRect,opening:Bool)->CGPath {

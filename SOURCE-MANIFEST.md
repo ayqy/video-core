@@ -2,10 +2,10 @@
 
 VideoFree source export · package_free.py · version 1
 
-生成时间：2026-11-17 01:38:11 北京时间
+生成时间：2026-11-17 02:19:18 北京时间
 
-- 源码与必要元数据：348个文件；14318493字节（不含本清单）。
-- 整体内容指纹：`0a043af0d7d2e45e5cd47f4a8de45fbb318874655e58d58f82177204b10fbc06`。
+- 源码与必要元数据：348个文件；14322236字节（不含本清单）。
+- 整体内容指纹：`d146ba7637749463b5c795e0b2b98dda3b53d81887a99fc4af9918b81cbd89fc`。
 - 来源：受控原始工程中的逐文件白名单；Package.swift、唯一免费制作workflow与README均来自Distribution/Free精确模板。
 - 本包不含.git，不可作为新业务checkout；本清单生成过程不执行构建、设备验收、签名安装或公共上传，各阶段以独立证据为准。
 - 排除：App、VideoGame、VideoCartoon、Premium、高级实现运行时测试、私有仓库地址、凭据、客户数据、缓存、日志及媒体过程产物。
@@ -14,7 +14,7 @@ VideoFree source export · package_free.py · version 1
 
 | SHA-256 | 字节数 | 包内路径 / 原工程来源 |
 |---|---:|---|
-| 520166ebdf396454acbd528e020dc6d8b4658c9eeb204287f54581c6476fcfef | 76505 | .github/workflows/free-production.yml |
+| c6502dc17b2b9e494f2080678c097ce6940fe1ab13279f80ee6fe21ede9930b1 | 76505 | .github/workflows/free-production.yml |
 | ac90de9132befb9227282c230671875edb7fd8dc4297999fc39622ea7efe3644 | 52964 | Integrations/README.md |
 | 28833193551aa06befb3bc0fc30b69ef87f74cccae39895f4242af4321d717dd | 15308 | Integrations/actor_motion.py |
 | 39dd8274ff1e6b0649acb63281087a1144e1f4a4e0eed3dc2b92e10df2cbd121 | 28488 | Integrations/asset_reuse.py |
@@ -210,7 +210,7 @@ VideoFree source export · package_free.py · version 1
 | 6beff353416b9b4329e20ab3cbd84fcb19d34c8687427feb157b97d00ed63b4d | 10707 | Sources/VideoMedia/ClassicBuiltinAssets.swift |
 | 451de62ae66ce51bc390deb9d210ca46de5ca66e5bb52b4572a6e5e792e141a2 | 4904 | Sources/VideoMedia/CoursePreview.swift |
 | 8e2500a885e85ea6f28faa3dd36ce6c860b8d2c216089832cb4616e2e92783b8 | 1564881 | Sources/VideoMedia/CoverDisplayTypeface.swift |
-| 97771fe881b9531f8d7bb788f4eed785cfdd271e56ffc4e7671c78803ae244be | 51693 | Sources/VideoMedia/CoverPainter.swift |
+| af954b1008907ba7be20152bafdb3fa2c0c3fffc96f1d875c681a70f9641a494 | 54117 | Sources/VideoMedia/CoverPainter.swift |
 | cf4f47e54fb55606755e65b1f837697edca6ac3bd8f3a67497ebea9514bfb82d | 2197018 | Sources/VideoMedia/CoverTypeface.swift |
 | 5edf04222491105771fd69d3ad3c47861e1729a14e846babdf82005d8b43fd92 | 8064 | Sources/VideoMedia/DataPresentationPainter.swift |
 | a3c1ff6981dd81b2a97fee7cff2489fc9edb2381904ee46ebad18e9b6562dc91 | 4662 | Sources/VideoMedia/Diagnostics.swift |
@@ -330,7 +330,7 @@ VideoFree source export · package_free.py · version 1
 | 8b96667d09662c958d0b77f10f5265dc0f040de6c2b011609a06e3ce029f7dee | 22056 | Tests/VideoMediaTests/CinemaSubtitleTests.swift |
 | 1b07c5e554da95ea2f6843b3bf9546534dad7eb80a8c8f3a9e01e75afd84f870 | 4960 | Tests/VideoMediaTests/ContentProjectMediaTests.swift |
 | c7b7bf2aa6091f105373becd60c2dc830ed5167fc85db480b9193d60543e1db4 | 3999 | Tests/VideoMediaTests/CoursePreviewTests.swift |
-| 55e1dcf7053fa5823b42e8de22f49cd97c93d969dc568d65ea123c3679e442e7 | 43889 | Tests/VideoMediaTests/CoverMediaTests.swift |
+| b5de03ef32dde4df77b86b73aaa6b0f0c77b3d444a06825ff40b372d5d69ab2a | 45208 | Tests/VideoMediaTests/CoverMediaTests.swift |
 | 8403a3ae7c587fb1ab19527b175923a13eb13acf36130336169e81141fb2fccb | 30904 | Tests/VideoMediaTests/DataPresentationPainterTests.swift |
 | c97a04ff50f844317e5f9db0f319c1042b15f2bb8fb4ff0bce620fc886ce5f13 | 18530 | Tests/VideoMediaTests/IndependentLicenseRevocationTests.swift |
 | 5951353de83fb06d4eaa3a1ae06b005b7c4efb993ad159c3b52bd3815c978ca8 | 15810 | Tests/VideoMediaTests/LayerImageSequenceMediaTests.swift |
