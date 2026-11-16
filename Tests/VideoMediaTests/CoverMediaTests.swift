@@ -6,6 +6,48 @@ import VideoCore
 @testable import VideoMedia
 
 final class CoverMediaTests:XCTestCase {
+    func testQuantityGraphicRendersExactObjectsAndKeepsCommonCropClearOfTitle()throws {
+        func gold(_ image:CGImage,slot:CGRect)throws->Int {
+            let top=CGRect(x:slot.minX,y:CGFloat(image.height)-slot.maxY,width:slot.width,height:slot.height).insetBy(dx:5,dy:5)
+            let crop=try XCTUnwrap(image.cropping(to:top)),raw=try pixels(crop)
+            return stride(from:0,to:raw.count,by:4).filter{raw[$0]>180 && raw[$0+1]>100 && raw[$0+2]<140}.count
+        }
+        for aspect in [Aspect.landscape,.portrait] {
+            var variants=Set<String>()
+            for template in [CoverTemplate.spotlight,.editorial,.contrast] {
+                var value=try revision(aspect:aspect)
+                value.coverPresentation=CoverPresentation(style:.code,template:template,title:"少一枚，路就修不成？",
+                    emphasis:["少一枚"],quantityGraphic:CoverQuantityGraphic(available:2,required:3))
+                let resolved=try CoverRules.resolved(revision:value)
+                let title=try CoverPainter.composeTitle(cover:resolved,width:CGFloat(aspect.width),height:CGFloat(aspect.height))
+                let side=CGFloat(min(aspect.width,aspect.height))
+                let square=CGRect(x:(CGFloat(aspect.width)-side)/2,y:(CGFloat(aspect.height)-side)/2,width:side,height:side)
+                let variant=template == .editorial ? 1:(template == .contrast ? 2:0)
+                let slots=try CoverPainter.quantitySlots(square:square,titleBounds:title.visibleBounds,required:3,variant:variant)
+                XCTAssertEqual(slots.count,3);XCTAssertTrue(title.safeRect.contains(title.visibleBounds))
+                for (index,slot) in slots.enumerated() {
+                    XCTAssertTrue(square.contains(slot),"全部真实对象须保留在横竖共用的方形裁切区")
+                    XCTAssertFalse(slot.intersects(title.visibleBounds),"数量图形不能压住唯一标题")
+                    for other in slots.dropFirst(index+1) {XCTAssertFalse(slot.intersects(other))}
+                }
+                let source=try bitmap(width:aspect.width,height:aspect.height)
+                let short=try CoverPainter.image(revision:value,source:source)
+                variants.insert(Codec.hash(Data(try pixels(short))))
+                XCTAssertGreaterThan(try gold(short,slot:slots[0]),100)
+                XCTAssertGreaterThan(try gold(short,slot:slots[1]),100)
+                XCTAssertEqual(try gold(short,slot:slots[2]),0,"缺的一枚只绘空槽，不能冒充已筹到")
+                value.coverPresentation?.quantityGraphic?.available=3
+                let full=try CoverPainter.image(revision:value,source:source)
+                XCTAssertGreaterThan(try gold(full,slot:slots[2]),100,"仅真实available变化就须补上对应金币")
+                XCTAssertEqual(try gold(short,slot:slots[0]),try gold(full,slot:slots[0]))
+                for count in 1...8 {
+                    let bounded=try CoverPainter.quantitySlots(square:square,titleBounds:title.visibleBounds,required:count,variant:variant)
+                    XCTAssertEqual(bounded.count,count);XCTAssertTrue(bounded.allSatisfy{square.contains($0) && !$0.intersects(title.visibleBounds)})
+                }
+            }
+            XCTAssertEqual(variants.count,3,"同一真实数量和标题的三模板须保持不同几何排布")
+        }
+    }
     func bitmap(width:Int,height:Int,red:CGFloat=0.1,green:CGFloat=0.5,blue:CGFloat=0.6)throws->CGImage {
         let c=try XCTUnwrap(CGContext(data:nil,width:width,height:height,bitsPerComponent:8,bytesPerRow:width*4,space:CGColorSpace(name:CGColorSpace.sRGB)!,bitmapInfo:CGImageAlphaInfo.premultipliedLast.rawValue))
         c.setFillColor(CGColor(red:red,green:green,blue:blue,alpha:1));c.fill(CGRect(x:0,y:0,width:width,height:height))

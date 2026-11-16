@@ -11,6 +11,30 @@ public enum CoverTemplate: String, Codable, CaseIterable, Sendable {
 /// Direction of the actual source gesture, before layout mirroring. This is
 /// author-checked image metadata, not inferred from expression names.
 public enum CoverPointing: String, Codable, CaseIterable, Sendable { case left, right }
+/// Explicit author data for an object-count condition, independent of title
+/// wording or displayed source code. Nil preserves every legacy composition.
+public struct CoverQuantityGraphic: Codable, Equatable, Sendable {
+    public enum Symbol: String, Codable, Sendable { case coin }
+    public var available: Int
+    public var required: Int
+    public var symbol: Symbol
+    public init(available: Int, required: Int, symbol: Symbol = .coin) {
+        self.available=available;self.required=required;self.symbol=symbol
+    }
+    private enum CodingKeys:String,CodingKey {case available,required,symbol}
+    public init(from decoder:Decoder)throws {
+        try CoverRules.keys(decoder,required:["available","required","symbol"])
+        let c=try decoder.container(keyedBy:CodingKeys.self)
+        available=try c.decode(Int.self,forKey:.available);required=try c.decode(Int.self,forKey:.required)
+        symbol=try c.decode(Symbol.self,forKey:.symbol)
+        try validate()
+    }
+    public func validate()throws {
+        guard (1...8).contains(required),(0...required).contains(available) else {
+            throw VideoError.invalid("封面数量图须明确一至八个所需对象及不超过所需量的实际数量")
+        }
+    }
+}
 public struct CoverImage: Codable, Equatable, Sendable {
     public var assetID: String
     public var sourceRect: MediaFraming?
@@ -59,13 +83,14 @@ public struct CoverPresentation: Codable, Equatable, Sendable {
     public var hero: CoverImage?
     public var background: CoverImage?
     public var poses: [CoverPose]?
+    public var quantityGraphic: CoverQuantityGraphic?
     public init(style: CoverStyle = .automatic, template: CoverTemplate = .automatic, title: String? = nil,
                 subtitle: String? = nil, hero: CoverImage? = nil, background: CoverImage? = nil, poses: [CoverPose]? = nil,
-                emphasis: [String]? = nil) {
+                emphasis: [String]? = nil, quantityGraphic: CoverQuantityGraphic? = nil) {
         self.style=style;self.template=template;self.title=title;self.subtitle=subtitle
-        self.hero=hero;self.background=background;self.poses=poses;self.emphasis=emphasis
+        self.hero=hero;self.background=background;self.poses=poses;self.emphasis=emphasis;self.quantityGraphic=quantityGraphic
     }
-    private enum CodingKeys: String, CodingKey, CaseIterable { case version,style,template,title,subtitle,hero,background,poses,emphasis }
+    private enum CodingKeys: String, CodingKey, CaseIterable { case version,style,template,title,subtitle,hero,background,poses,emphasis,quantityGraphic }
     public init(from decoder: Decoder) throws {
         let actual=Set(try decoder.container(keyedBy: CoverKey.self).allKeys.map(\.stringValue))
         guard actual.isSubset(of:Set(CodingKeys.allCases.map(\.rawValue))) else { throw VideoError.invalid("封面设置包含未知字段") }
@@ -75,10 +100,15 @@ public struct CoverPresentation: Codable, Equatable, Sendable {
         subtitle=try c.decodeIfPresent(String.self,forKey:.subtitle);hero=try c.decodeIfPresent(CoverImage.self,forKey:.hero)
         background=try c.decodeIfPresent(CoverImage.self,forKey:.background);poses=try c.decodeIfPresent([CoverPose].self,forKey:.poses)
         emphasis=try c.decodeIfPresent([String].self,forKey:.emphasis)
+        quantityGraphic=try c.decodeIfPresent(CoverQuantityGraphic.self,forKey:.quantityGraphic)
         try validate()
     }
     public var images: [CoverImage] { [hero,background].compactMap{$0}+(poses ?? []).map(\.image) }
     public func validate() throws {
+        try quantityGraphic?.validate()
+        guard quantityGraphic == nil || style == .code || style == .automatic else {
+            throw VideoError.invalid("封面数量条件图目前仅用于代码主题；不默默忽略作者数据")
+        }
         guard version==1,title.map({CoverRules.text($0,maximum:160)}) ?? true,
               subtitle.map({CoverRules.text($0,maximum:100)}) ?? true,
               poses.map({(1...24).contains($0.count) && Set($0.map(\.id)).count==$0.count}) ?? true else {
@@ -114,6 +144,7 @@ public struct ResolvedCover: Equatable, Sendable {
     public var background: CoverImage?
     public var poseID: String?
     public var emphasis: [String]
+    public var quantityGraphic: CoverQuantityGraphic?
 }
 public enum CoverRules {
     static func keys(_ decoder:Decoder,required:Set<String>,optional:Set<String> = [])throws {
@@ -155,6 +186,9 @@ public enum CoverRules {
         let value=revision.coverPresentation ?? CoverPresentation()
         try value.validate()
         let style=value.style == .automatic ? inferredStyle(revision:revision):value.style
+        guard value.quantityGraphic == nil || style == .code else {
+            throw VideoError.invalid("数量条件图需要实际代码主题封面")
+        }
         // A stable title-based choice gives new topics three layouts without
         // randomness, wall-clock dependencies or a paid image-generation call.
         let topic=revision.contentName.trimmingCharacters(in:.whitespacesAndNewlines)
@@ -193,7 +227,7 @@ public enum CoverRules {
            let sprite=scene.classicArtwork?.sprites.first(where:{$0.role==role}) {
             hero=CoverImage(assetID:sprite.assetID,sourceRect:MediaFraming(x:sprite.x,y:sprite.y,width:sprite.width,height:sprite.height))
         }
-        return ResolvedCover(style:style,template:template,title:title,subtitle:value.subtitle ?? "",hero:hero,background:value.background,poseID:value.hero == nil ? selected?.id:nil,emphasis:emphasis)
+        return ResolvedCover(style:style,template:template,title:title,subtitle:value.subtitle ?? "",hero:hero,background:value.background,poseID:value.hero == nil ? selected?.id:nil,emphasis:emphasis,quantityGraphic:value.quantityGraphic)
     }
     public static func validate(revision:Revision,assets:[Asset])throws {
         let cover=try resolved(revision:revision)

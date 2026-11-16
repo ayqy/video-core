@@ -83,7 +83,7 @@ public enum CoverPainter {
         case .cartoon:cartoon(background,hero:hero,square:square,canvas:canvas,variant:variant,p:p,c:c)
         case .media:media(background,hero:hero,square:square,canvas:canvas,variant:variant,p:p,c:c)
         case .chart:try chart(background,hero:hero,square:square,canvas:canvas,variant:variant,revision:revision,p:p,c:c)
-        case .code:try code(background,hero:hero,square:square,canvas:canvas,variant:variant,revision:revision,p:p,c:c)
+        case .code:try code(background,hero:hero,square:square,canvas:canvas,variant:variant,revision:revision,quantity:cover.quantityGraphic,p:p,c:c)
         default:explanation(background,hero:hero,square:square,canvas:canvas,variant:variant,p:p,c:c)
         }
         // No label, ribbon, subtitle, timestamp or explanation is painted.
@@ -361,13 +361,25 @@ public enum CoverPainter {
         c.move(to:CGPoint(x:0,y:s.minY+d*0.04));c.addLine(to:CGPoint(x:canvas.width,y:s.minY+d*0.04));c.strokePath()
         auxiliary(hero,square:s,variant:variant,c:c)
     }
-    private static func code(_ image:CGImage?,hero:CGImage?,square s:CGRect,canvas:CGRect,variant:Int,revision:Revision,p:Palette,c:CGContext)throws {
+    private static func code(_ image:CGImage?,hero:CGImage?,square s:CGRect,canvas:CGRect,variant:Int,revision:Revision,quantity:CoverQuantityGraphic?,p:Palette,c:CGContext)throws {
         let d=s.width,shift=CGFloat(variant-1)*d*0.035
         gradient(canvas,colors:[color("03061E"),color(p.paper),color("103D83")],locations:[0,0.52,1],c:c)
         // Input art may influence the broad color mood, but no spatial source
         // pixels, code lines, editor controls or document text enter the cover.
         if let image=hero ?? image,let wash=paletteColor(image),let translucent=wash.copy(alpha:0.16) {c.setFillColor(translucent);c.fill(canvas)}
         glow(canvas,center:CGPoint(x:canvas.midX+d*0.50,y:s.minY+d*0.74),radius:d*0.82,ink:"176AA5",alpha:0.62,c:c)
+        if let quantity {
+            try quantity.validate()
+            let cover=try CoverRules.resolved(revision:revision)
+            let title=try composeTitle(cover:cover,width:canvas.width,height:canvas.height)
+            let slots=try quantitySlots(square:s,titleBounds:title.visibleBounds,required:quantity.required,variant:variant)
+            // Real countable objects communicate the declared condition. A
+            // missing object remains an empty slot, never a fabricated coin.
+            for (index,rect) in slots.enumerated() {
+                quantityCoin(in:rect,present:index<quantity.available,c:c)
+            }
+            return
+        }
         // A pair of large source-code braces is a graphic programming symbol,
         // not fabricated source text, UI windows or unexplained flow wiring.
         // Position limits can consume the horizontal shift in a portrait
@@ -386,6 +398,54 @@ public enum CoverPainter {
             c.setStrokeColor(color(index == 0 ? "50E3DA":"FF985D"));c.addPath(path);c.strokePath();c.restoreGState()
         }
         glow(canvas,center:CGPoint(x:canvas.midX,y:canvas.midY),radius:d*0.57,ink:"060E30",alpha:0.78,c:c)
+    }
+    static func quantitySlots(square s:CGRect,titleBounds:CGRect,required:Int,variant:Int=0)throws->[CGRect] {
+        guard (1...8).contains(required) else {throw VideoError.invalid("封面数量图范围无效")}
+        guard (0...2).contains(variant) else {throw VideoError.invalid("数量图模板无效")}
+        let d=s.width
+        // Spotlight is a direct row; editorial groups the count in two rows;
+        // contrast ascends toward the final slot. Objects never overlap, and
+        // these remain different layouts without changing the declared data.
+        let columns=variant == 1 ? min(4,max(1,(required+1)/2)):min(4,required)
+        let rows=(required+columns-1)/columns,stagger:CGFloat=variant == 2 ? 0.22:0
+        let gap=d*0.035,availableWidth=d*0.86
+        let upper=titleBounds.minY-d*0.055,lower=s.minY+d*0.04
+        let maximum=d*(variant == 1 ? 0.19:(variant == 2 ? 0.225:0.205))
+        let diameter=min(maximum,(availableWidth-gap*CGFloat(columns-1))/CGFloat(columns),
+                         (upper-lower-gap*CGFloat(rows-1))/(CGFloat(rows)+stagger*CGFloat(columns-1)))
+        guard diameter>=d*0.06 else {throw VideoError.review("当前标题未给真实数量图留下足够空间")}
+        let height=diameter*(CGFloat(rows)+stagger*CGFloat(columns-1))+gap*CGFloat(rows-1),bottom=upper-height
+        return (0..<required).map { index in
+            let row=index/columns,column=index%columns,rowCount=min(columns,required-row*columns)
+            let width=diameter*CGFloat(rowCount)+gap*CGFloat(rowCount-1)
+            return CGRect(x:s.midX-width/2+CGFloat(column)*(diameter+gap),
+                          y:bottom+CGFloat(rows-row-1)*(diameter+gap)+CGFloat(column)*diameter*stagger,width:diameter,height:diameter)
+        }
+    }
+    private static func quantityCoin(in rect:CGRect,present:Bool,c:CGContext) {
+        let diameter=rect.width
+        c.saveGState()
+        if !present {
+            c.setFillColor(color("071A47",alpha:0.55));c.fillEllipse(in:rect)
+            c.setStrokeColor(color("50E3DA",alpha:0.84));c.setLineWidth(diameter*0.036)
+            c.setLineDash(phase:0,lengths:[diameter*0.045,diameter*0.065])
+            c.strokeEllipse(in:rect.insetBy(dx:diameter*0.018,dy:diameter*0.018))
+            c.restoreGState();return
+        }
+        c.setShadow(offset:CGSize(width:diameter*0.025,height:-diameter*0.05),blur:diameter*0.10,color:color("000000",alpha:0.44))
+        c.setFillColor(color("D87317"));c.fillEllipse(in:rect.offsetBy(dx:0,dy:-diameter*0.04))
+        c.setFillColor(color("FFD66A"));c.fillEllipse(in:rect)
+        c.setShadow(offset:.zero,blur:0,color:nil)
+        let inner=rect.insetBy(dx:diameter*0.11,dy:diameter*0.11)
+        c.saveGState();c.addEllipse(in:inner);c.clip()
+        gradient(inner,colors:[color("FFE8A0"),color("F5AC28"),color("D88513")],locations:[0,0.55,1],c:c)
+        c.restoreGState()
+        c.setStrokeColor(color("FFF1BC"));c.setLineWidth(diameter*0.022);c.strokeEllipse(in:inner)
+        // A simple embossed center marks a coin without introducing numerals,
+        // logos or any cover text beyond the actual title.
+        let mark=rect.insetBy(dx:diameter*0.35,dy:diameter*0.27)
+        c.setStrokeColor(color("BD6E13",alpha:0.76));c.setLineWidth(diameter*0.035);c.strokeEllipse(in:mark)
+        c.restoreGState()
     }
     private static func codeBrace(in rect:CGRect,opening:Bool)->CGPath {
         func point(_ x:CGFloat,_ y:CGFloat)->CGPoint {

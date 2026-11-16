@@ -18,6 +18,48 @@ final class CoverPresentationTests:XCTestCase {
         XCTAssertEqual(resolved.style,.explanation);XCTAssertEqual(resolved.title,"囚徒困境")
         XCTAssertNotEqual(resolved.template,.automatic)
     }
+    func testQuantityGraphicIsStrictOptionalAndExposedByNormalSchema()throws {
+        let legacy=CoverPresentation(style:.code,title:"数量条件")
+        let raw=try Codec.data(legacy)
+        XCTAssertFalse(String(decoding:raw,as:UTF8.self).contains("quantityGraphic"))
+        XCTAssertEqual(try Codec.data(Codec.decoder().decode(CoverPresentation.self,from:raw)),raw)
+        for invalid in [#"{"available":2,"required":3,"symbol":"person"}"#,
+                        #"{"available":true,"required":3,"symbol":"coin"}"#,
+                        #"{"available":-1,"required":3,"symbol":"coin"}"#,
+                        #"{"available":4,"required":3,"symbol":"coin"}"#,
+                        #"{"available":2,"required":9,"symbol":"coin"}"#,
+                        #"{"available":0,"required":0,"symbol":"coin"}"#,
+                        #"{"available":2,"required":3,"symbol":"coin","guessFromTitle":true}"#] {
+            XCTAssertThrowsError(try Codec.decoder().decode(CoverQuantityGraphic.self,from:Data(invalid.utf8)))
+        }
+        let definitions=AgentSchemas.definitions()
+        let cover=try XCTUnwrap(definitions["CoverPresentation"]?.object?["properties"]?.object)
+        XCTAssertNotNil(cover["quantityGraphic"])
+        let quantity=try XCTUnwrap(definitions["CoverQuantityGraphic"]?.object)
+        XCTAssertEqual(quantity["additionalProperties"],.boolean(false))
+        guard case .array(let required)?=quantity["required"] else {return XCTFail("数量图schema缺少必填字段列表")}
+        let names=required.compactMap { value -> String? in
+            if case .string(let name)=value {return name};return nil
+        }
+        XCTAssertEqual(Set(names),["available","required","symbol"])
+    }
+    func testQuantityGraphicNormalEditKeepsSceneAndRoundTripsActualCounts()throws {
+        var value=try revision()
+        value.coverPresentation=CoverPresentation(style:.code,title:"数量条件")
+        let original=Project(workspaceID:"w",name:"数量条件",revision:value)
+        var cover=try XCTUnwrap(value.coverPresentation)
+        cover.quantityGraphic=CoverQuantityGraphic(available:2,required:3)
+        let edited=try Editor.apply([.coverPresentation(cover)],to:original,baseRevision:value.id,assets:[],message:"绑定作者数量条件")
+        XCTAssertEqual(edited.current.scenes,value.scenes)
+        XCTAssertEqual(try CoverRules.resolved(revision:edited.current).quantityGraphic,cover.quantityGraphic)
+        XCTAssertNotEqual(try edited.current.contentDigest(),try value.contentDigest())
+        let encoded=try Codec.data(edited.current)
+        XCTAssertEqual(try Codec.data(Codec.decoder().decode(Revision.self,from:encoded)),encoded)
+        cover.style = .pencil;XCTAssertThrowsError(try cover.validate())
+        cover.style = .automatic
+        value.coverPresentation=cover
+        XCTAssertThrowsError(try CoverRules.resolved(revision:value),"实际非代码主题不能默默吞掉数量图")
+    }
     func testAutomaticStyleFollowsRealSceneKindsAndAuthoredPresentation()throws {
         var value=try revision()
         value.scenes[0].kind = .video;XCTAssertEqual(CoverRules.inferredStyle(revision:value),.media)

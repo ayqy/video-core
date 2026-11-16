@@ -118,7 +118,8 @@ public enum AgentSchemas {
         result["MediaConfirmationMethod"] = .object(["type":.string("string"),"enum":.array(["manual","approved_original","reliable_timestamps"].map(AgentValue.string))])
         for name in ["MediaConfirmationRequest","MediaConfirmationBinding","MediaVoiceBinding"] {var shape=result[name]!.object!;shape["additionalProperties"] = .boolean(false);result[name] = .object(shape)}
         let dataRecords:[String:String] = [
-            "CoverPresentation":"version:i style:CoverStyle template:CoverTemplate title?:s subtitle?:s hero?:CoverImage background?:CoverImage poses?:[CoverPose] emphasis?:[s]",
+            "CoverPresentation":"version:i style:CoverStyle template:CoverTemplate title?:s subtitle?:s hero?:CoverImage background?:CoverImage poses?:[CoverPose] emphasis?:[s] quantityGraphic?:CoverQuantityGraphic",
+            "CoverQuantityGraphic":"available:i required:i symbol:CoverQuantitySymbol",
             "CoverImage":"assetID:s sourceRect?:MediaFraming pointing?:CoverPointing",
             "CoverPose":"id:s image:CoverImage expression:s action:s keywords:[s]",
             "MediaPresentation":"version:i layout:MediaLayout backgroundColor:s",
@@ -154,6 +155,9 @@ public enum AgentSchemas {
         constraint("CoverPresentation","subtitle",["minLength":.number(1),"maxLength":.number(100)])
         constraint("CoverPresentation","poses",["minItems":.number(1),"maxItems":.number(24)])
         constraint("CoverPresentation","emphasis",["minItems":.number(1),"maxItems":.number(3),"uniqueItems":.boolean(true),"items":.object(["type":.string("string"),"minLength":.number(1),"maxLength":.number(40)]),"description":.string("Actual non-overlapping title substrings; highlighted without adding text. Legacy subtitle is preserved but not painted.")])
+        constraint("CoverQuantityGraphic","available",["minimum":.number(0),"maximum":.number(8),"description":.string("Explicit authored count, at most required; never inferred from title or displayed source code.")])
+        constraint("CoverQuantityGraphic","required",["minimum":.number(1),"maximum":.number(8)])
+        result["CoverQuantitySymbol"] = .object(["type":.string("string"),"enum":.array([.string("coin")])])
         constraint("CoverImage","assetID",["minLength":.number(1),"maxLength":.number(200)])
         constraint("CoverImage","pointing",["description":.string("Actual source hand/gesture direction before layout. Presenter templates mirror this image when necessary so the gesture points toward the centered title. Omit when the action has no single direction; missing in legacy JSON.")])
         constraint("CoverPose","keywords",["maxItems":.number(16),"uniqueItems":.boolean(true)])
