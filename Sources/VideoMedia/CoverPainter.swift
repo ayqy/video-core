@@ -77,7 +77,7 @@ public enum CoverPainter {
         let placement=presenterPlacement(square:square,variant:variant,titleBounds:composition.visibleBounds,pointing:cover.hero?.pointing)
         c.setFillColor(color(p.paper));c.fill(canvas)
         switch cover.style {
-        case .pencil:pencil(background,hero:hero,square:square,canvas:canvas,variant:variant,titleBounds:composition.visibleBounds,p:p,c:c)
+        case .pencil:try pencil(background,hero:hero,square:square,canvas:canvas,variant:variant,titleBounds:composition.visibleBounds,p:p,c:c)
 case .presenter:presenter(background,hero:hero,placement:placement,square:square,canvas:canvas,variant:variant,titleBounds:composition.visibleBounds,p:p,c:c)
         case .game:game(background,hero:hero,square:square,canvas:canvas,variant:variant,titleBounds:composition.visibleBounds,p:p,c:c)
         case .cartoon:cartoon(background,hero:hero,square:square,canvas:canvas,variant:variant,p:p,c:c)
@@ -265,7 +265,38 @@ case .presenter:presenter(background,hero:hero,placement:placement,square:square
         if variant == 2 {c.setFillColor(color(p.accent,alpha:0.22));c.fillEllipse(in:CGRect(x:canvas.midX-d*0.33,y:s.minY+d*0.77,width:d*0.66,height:d*0.20))}
         auxiliary(hero,square:s,variant:variant,c:c)
     }
-    private static func pencil(_ image:CGImage?,hero:CGImage?,square s:CGRect,canvas:CGRect,variant:Int,titleBounds:CGRect,p:Palette,c:CGContext) {
+    static func pencilArtworkRect(square s:CGRect,canvas:CGRect,variant:Int,titleBounds:CGRect,imageAspect:CGFloat)->CGRect {
+        let d=s.width,shift=CGFloat(variant-1)*d*0.055,gap=d*0.065,edge=d*0.025
+        let width:CGFloat,height:CGFloat
+        if canvas.width>=canvas.height {
+            width=min(d*0.66,max(d*0.08,titleBounds.minX-gap-edge),(d*0.92)*imageAspect)
+            height=width/imageAspect
+            return CGRect(x:max(edge,titleBounds.minX-gap-width),y:s.midY-height/2+shift*0.14,width:width,height:height)
+        }
+        height=min(d*0.86,max(d*0.08,canvas.maxY-edge-titleBounds.maxY-gap),(d*0.76)/imageAspect)
+        width=height*imageAspect
+        return CGRect(x:canvas.midX-width/2+shift*0.30,y:titleBounds.maxY+gap,width:width,height:height)
+    }
+    static func pencilCounterpartRect(square s:CGRect,canvas:CGRect,variant:Int,titleBounds:CGRect,primary:CGRect,imageAspect:CGFloat)throws->CGRect {
+        guard imageAspect.isFinite,imageAspect>0 else {throw VideoError.invalid("彩铅第二主体须有有效完整原图比例")}
+        let d=s.width,shift=CGFloat(variant-1)*d*0.055,gap=d*0.065,edge=d*0.025
+        let width:CGFloat,height:CGFloat,rect:CGRect
+        if canvas.width>canvas.height {
+            let available=canvas.maxX-edge-titleBounds.maxX-gap
+            height=min(d*0.92,available/imageAspect);width=height*imageAspect
+            rect=CGRect(x:titleBounds.maxX+gap,y:s.midY-height/2+shift*0.14,width:width,height:height)
+        } else {
+            height=min(d*0.86,titleBounds.minY-gap-edge,(d*0.76)/imageAspect);width=height*imageAspect
+            rect=CGRect(x:canvas.midX-width/2-shift*0.30,y:titleBounds.minY-gap-height,width:width,height:height)
+        }
+        guard width.isFinite,height.isFinite,width>=d*0.08,height>=d*0.08,
+              canvas.contains(primary),canvas.contains(rect),!primary.intersects(titleBounds),
+              !rect.intersects(titleBounds),!rect.intersects(primary) else {
+            throw VideoError.invalid("彩铅双主体没有完整且清楚的独立空间，请缩短标题或调整画幅")
+        }
+        return rect
+    }
+    private static func pencil(_ image:CGImage?,hero:CGImage?,square s:CGRect,canvas:CGRect,variant:Int,titleBounds:CGRect,p:Palette,c:CGContext)throws {
         let d=s.width,shift=CGFloat(variant-1)*d*0.055
         gradient(canvas,colors:[color("291329"),color("64243F"),color("24152F")],locations:[0,0.49,1],c:c)
         // A lit subject and a quiet headline occupy separate parts of an
@@ -281,26 +312,27 @@ case .presenter:presenter(background,hero:hero,placement:placement,square:square
         c.addLines(between:plane);c.closePath();c.clip()
         gradient(canvas,colors:[color("8E3D58"),color("E7A18A"),color("A14B62")],locations:[0,0.64,1],c:c)
         c.restoreGState()
-        if hero != nil,let image,let wash=paletteColor(image),let translucent=wash.copy(alpha:0.08) {
-            c.setFillColor(translucent);c.fill(canvas)
-        }
         guard let artwork=hero ?? image else{return}
-        let aspect=CGFloat(artwork.width)/CGFloat(artwork.height),gap=d*0.065,edge=d*0.025
-        let width:CGFloat,height:CGFloat,subject:CGRect
-        if landscape {
-            width=min(d*0.66,max(d*0.08,titleBounds.minX-gap-edge),(d*0.92)*aspect)
-            height=width/aspect
-            subject=CGRect(x:max(edge,titleBounds.minX-gap-width),y:s.midY-height/2+shift*0.14,width:width,height:height)
-        } else {
-            height=min(d*0.86,max(d*0.08,canvas.maxY-edge-titleBounds.maxY-gap),(d*0.76)/aspect)
-            width=height*aspect
-            subject=CGRect(x:canvas.midX-width/2+shift*0.30,y:titleBounds.maxY+gap,width:width,height:height)
-        }
+        let aspect=CGFloat(artwork.width)/CGFloat(artwork.height)
+        let subject=pencilArtworkRect(square:s,canvas:canvas,variant:variant,titleBounds:titleBounds,imageAspect:aspect)
         glow(canvas,center:CGPoint(x:subject.midX,y:subject.midY),radius:max(subject.width,subject.height)*0.72,ink:"F4B7A0",alpha:0.23,c:c)
         c.setFillColor(color("230C24",alpha:0.38))
         c.fillEllipse(in:CGRect(x:subject.minX-d*0.025,y:subject.minY-d*0.018,width:subject.width+d*0.05,height:d*0.035))
         c.saveGState();c.setShadow(offset:CGSize(width:d*0.018,height:-d*0.014),blur:d*0.024,color:color("230C24",alpha:0.55))
         draw(artwork,in:subject,fill:false,context:c);c.restoreGState()
+        if hero != nil,let image {
+            // An explicitly authored second original participates as pixels,
+            // not as an inferred emotion or an unrelated full-canvas wash.
+            // Trimming only transparent gutters preserves every visible part.
+            let counterpart=try visibleArtwork(image)
+            let rect=try pencilCounterpartRect(square:s,canvas:canvas,variant:variant,titleBounds:titleBounds,
+                primary:subject,imageAspect:CGFloat(counterpart.width)/CGFloat(counterpart.height))
+            c.saveGState();c.clip(to:rect.insetBy(dx:-d*0.025,dy:-d*0.025))
+            c.setFillColor(color("230C24",alpha:0.38))
+            c.fillEllipse(in:CGRect(x:rect.minX-d*0.025,y:rect.minY-d*0.018,width:rect.width+d*0.05,height:d*0.035))
+            c.setShadow(offset:CGSize(width:d*0.018,height:-d*0.014),blur:d*0.024,color:color("230C24",alpha:0.55))
+            draw(counterpart,in:rect,fill:false,context:c);c.restoreGState()
+        }
     }
     static func presenterSubjectPlacement(square s:CGRect,canvas:CGRect,variant:Int,titleBounds:CGRect,heroPlacement:HeroPlacement,imageAspect:CGFloat)->CGRect {
         let d=s.width

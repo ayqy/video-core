@@ -6,6 +6,109 @@ import VideoCore
 @testable import VideoMedia
 
 final class CoverMediaTests:XCTestCase {
+    func testPencilPairFitsBothCompleteOriginalsAroundActualTitleInAllCanvasShapes()throws {
+        for (width,height) in [(1280.0,720.0),(720.0,1280.0),(720.0,720.0)] {
+            let canvas=CGRect(x:0,y:0,width:width,height:height),d=CGFloat(min(width,height))
+            let square=CGRect(x:(canvas.width-d)/2,y:(canvas.height-d)/2,width:d,height:d)
+            for template in [CoverTemplate.spotlight,.editorial,.contrast] {
+                var value=try revision();value.coverPresentation=CoverPresentation(style:.pencil,template:template,title:"合作还是背叛？",emphasis:["背叛"])
+                let title=try CoverPainter.composeTitle(cover:CoverRules.resolved(revision:value),width:canvas.width,height:canvas.height)
+                let variant=template == .editorial ? 1:(template == .contrast ? 2:0)
+                let primary=CoverPainter.pencilArtworkRect(square:square,canvas:canvas,variant:variant,titleBounds:title.visibleBounds,imageAspect:351.0/491)
+                let counterpart=try CoverPainter.pencilCounterpartRect(square:square,canvas:canvas,variant:variant,titleBounds:title.visibleBounds,primary:primary,imageAspect:179.0/266)
+                for rect in [primary,counterpart] {
+                    XCTAssertTrue(canvas.contains(rect));XCTAssertFalse(rect.intersects(title.visibleBounds))
+                    XCTAssertGreaterThan(rect.width*rect.height,canvas.width*canvas.height*0.01,"每个完整人物须有可观察区域，不能靠近零缩放冒充已显示")
+                }
+                XCTAssertFalse(primary.intersects(counterpart));XCTAssertEqual(counterpart.width/counterpart.height,179.0/266,accuracy:0.0001)
+                XCTAssertTrue(title.safeRect.contains(title.visibleBounds))
+                XCTAssertThrowsError(try CoverPainter.pencilCounterpartRect(square:square,canvas:canvas,variant:variant,titleBounds:canvas,primary:primary,imageAspect:1),"没有净空必须明确拒绝，不能丢掉作者第二原图")
+            }
+        }
+    }
+    func testPencilPairRendersWholeConnectedOriginalsWithoutTintingTitleOrFirstActor()throws {
+        func marked(_ width:Int,_ height:Int,body:[CGFloat],corner:[CGFloat])throws->CGImage {
+            let space=CGColorSpace(name:CGColorSpace.sRGB)!
+            let context=try XCTUnwrap(CGContext(data:nil,width:width,height:height,bitsPerComponent:8,bytesPerRow:width*4,space:space,bitmapInfo:CGImageAlphaInfo.premultipliedLast.rawValue))
+            context.setFillColor(try XCTUnwrap(CGColor(colorSpace:space,components:body)));context.fill(CGRect(x:0,y:0,width:width,height:height))
+            context.setFillColor(try XCTUnwrap(CGColor(colorSpace:space,components:corner)))
+            for x in [0,width-width/5] {for y in [0,height-height/5] {context.fill(CGRect(x:x,y:y,width:width/5,height:height/5))}}
+            return try XCTUnwrap(context.makeImage())
+        }
+        let first=try marked(351,491,body:[1,0,0,1],corner:[1,1,0,1])
+        let second=try marked(179,266,body:[0,0,1,1],corner:[0,1,0,1])
+        let changed=try marked(179,266,body:[1,0,1,1],corner:[0,1,0,1])
+        for aspect in [Aspect.landscape,.portrait] {
+            for template in [CoverTemplate.spotlight,.editorial,.contrast] {
+                var value=try revision(aspect:aspect)
+                value.coverPresentation=CoverPresentation(style:.pencil,template:template,title:"合作还是背叛？",hero:CoverImage(assetID:"first"),background:CoverImage(assetID:"second"),emphasis:["背叛"])
+                let source=try bitmap(width:aspect.width,height:aspect.height)
+                let original=try CoverPainter.image(revision:value,source:source,images:["first":first,"second":second])
+                let alternate=try CoverPainter.image(revision:value,source:source,images:["first":first,"second":changed])
+                let raw=try pixels(original)
+                func bounds(_ matches:(UInt8,UInt8,UInt8)->Bool)throws->CGRect {
+                    var left=aspect.width,right = -1,top=aspect.height,bottom = -1
+                    for y in 0..<aspect.height {for x in 0..<aspect.width {
+                        let at=(y*aspect.width+x)*4
+                        if matches(raw[at],raw[at+1],raw[at+2]) {left=min(left,x);right=max(right,x);top=min(top,y);bottom=max(bottom,y)}
+                    }}
+                    XCTAssertGreaterThanOrEqual(right,left);XCTAssertGreaterThanOrEqual(bottom,top)
+                    return CGRect(x:left,y:top,width:right-left+1,height:bottom-top+1)
+                }
+                let primary=try bounds{$0>245 && $2<10}
+                let counterpart=try bounds{($0<10 && $1<10 && $2>245) || ($0<10 && $1>245 && $2<10)}
+                XCTAssertFalse(primary.intersects(counterpart))
+                XCTAssertEqual(primary.width/primary.height,351.0/491,accuracy:0.025)
+                XCTAssertEqual(counterpart.width/counterpart.height,179.0/266,accuracy:0.025)
+                for (rect,kind) in [(primary,0),(counterpart,1)] {
+                    for x in [rect.minX,rect.maxX-rect.width*0.12] {for y in [rect.minY,rect.maxY-rect.height*0.12] {
+                        var markers=0
+                        for py in Int(y)..<Int(y+rect.height*0.12) {for px in Int(x)..<Int(x+rect.width*0.12) {
+                            let at=(py*aspect.width+px)*4
+                            if raw[at+1]>245 && raw[at+2]<10 && (kind == 0 ? raw[at]>245:raw[at]<10) {markers+=1}
+                        }}
+                        XCTAssertGreaterThan(markers,2,"完整连接原图的四角标记都须实际可见，不能裁脚、裁帽或只返回几何")
+                    }}
+                }
+                func region(_ image:CGImage,_ rect:CGRect)throws->[UInt8] {try pixels(XCTUnwrap(image.cropping(to:rect.integral)))}
+                XCTAssertEqual(try region(original,primary),try region(alternate,primary),"替换第二原图不能改动第一角色像素")
+                let title=try CoverPainter.composeTitle(cover:CoverRules.resolved(revision:value),width:CGFloat(aspect.width),height:CGFloat(aspect.height))
+                let titleRaster=CGRect(x:title.visibleBounds.minX,y:CGFloat(aspect.height)-title.visibleBounds.maxY,width:title.visibleBounds.width,height:title.visibleBounds.height)
+                XCTAssertEqual(try region(original,titleRaster),try region(alternate,titleRaster),"第二原图不得全画面均色污染居中主题")
+            }
+        }
+    }
+    func testPencilCounterpartHonorsNormalSourceRectAndRejectsMissingOriginal()throws {
+        try assertRGBAFixture()
+        let space=try XCTUnwrap(CGColorSpace(name:CGColorSpace.sRGB))
+        let context=try XCTUnwrap(CGContext(data:nil,width:200,height:160,bitsPerComponent:8,bytesPerRow:800,space:space,bitmapInfo:CGImageAlphaInfo.premultipliedLast.rawValue))
+        context.setFillColor(try XCTUnwrap(CGColor(colorSpace:space,components:[0,0,1,1])));context.fill(CGRect(x:0,y:0,width:100,height:160))
+        context.setFillColor(try XCTUnwrap(CGColor(colorSpace:space,components:[0,1,0,1])));context.fill(CGRect(x:100,y:0,width:100,height:160))
+        let atlas=try XCTUnwrap(context.makeImage()),first=try bitmap(width:100,height:160,red:1,green:0,blue:0)
+        for (x,expected) in [(0.0,[UInt8(0),0,255,255]),(0.5,[UInt8(0),255,0,255])] {
+            let original=try MediaFramingRenderer.crop(atlas,framing:MediaFraming(x:x,y:0,width:0.5,height:1))
+            let raw=try pixels(original),center=((original.height/2)*original.width+original.width/2)*4
+            XCTAssertEqual(Array(raw[center..<center+4]),expected,"先确认源裁区的真实 sRGB 像素，再验证封面保持该裁区")
+        }
+        var value=try revision();value.coverPresentation=CoverPresentation(style:.pencil,title:"合作还是背叛？",hero:CoverImage(assetID:"first"),background:CoverImage(assetID:"atlas",sourceRect:MediaFraming(x:0,y:0,width:0.5,height:1)),emphasis:["背叛"])
+        let source=try bitmap(width:1280,height:720),images=["first":first,"atlas":atlas]
+        func count(_ image:CGImage,blue:Bool)throws->Int {
+            let raw=try pixels(image)
+            var result=0
+            for index in stride(from:0,to:raw.count,by:4) {
+                let red=raw[index],green=raw[index+1],value=raw[index+2]
+                let selected=blue ? (green<10 && value>245):(green>245 && value<10)
+                if red<10 && selected {result+=1}
+            }
+            return result
+        }
+        let left=try CoverPainter.image(revision:value,source:source,images:images)
+        XCTAssertGreaterThan(try count(left,blue:true),500);XCTAssertEqual(try count(left,blue:false),0)
+        value.coverPresentation?.background?.sourceRect=MediaFraming(x:0.5,y:0,width:0.5,height:1)
+        let right=try CoverPainter.image(revision:value,source:source,images:images)
+        XCTAssertEqual(try count(right,blue:true),0);XCTAssertGreaterThan(try count(right,blue:false),500)
+        XCTAssertThrowsError(try CoverPainter.image(revision:value,source:source,images:["first":first]),"正常显式第二图缺失不能降级单人封面")
+    }
     func testPresenterOriginalSubjectUsesWideTitleCorridorWithoutTouchingTopicOrIP()throws {
         let canvas=CGRect(x:0,y:0,width:1280,height:720),square=CGRect(x:280,y:0,width:720,height:720)
         let aspect=CGFloat(384)/522
