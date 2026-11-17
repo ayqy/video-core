@@ -135,7 +135,9 @@ enum VisualClipCache {
             $0.startFrame<=heldFrame && $0.endFrame>heldFrame
         }) == true
         let fullFrame=scene.kind == .simulation || scene.kind == .cartoon
-        let rendererVersion=version+(paperData ? "-paper-data-1":"")+(layerHold ? "-layer-tail-hold-1":"")+(fullFrame ? "-advanced-full-frame-1":"")
+        let islandCode=scene.paperPresentation == nil && scene.layers?.contains(where:{$0.kind == .code}) == true
+        let islandStyle=islandCode ? "-"+IslandTheme.styleVersion+"-"+IslandTypeface.sourceSHA256:""
+        let rendererVersion=version+(paperData ? "-paper-data-1":"")+(layerHold ? "-layer-tail-hold-1":"")+(fullFrame ? "-advanced-full-frame-1":"")+islandStyle
         return try Codec.digest(Key(version:rendererVersion+revision.toolchain,cinemaSubtitleStyle:CinemaSubtitles.styleVersion,os:ProcessInfo.processInfo.operatingSystemVersionString,font:fontID,scene:scene,encoding:encoding,purpose:revision.purpose,aspect:revision.aspect,fps:revision.fps,index:index,sceneCount:revision.scenes.count,startFrame:revision.scenes.prefix(index).reduce(0){$0+$1.timelineFrames},price:scene.showPrice ? try revision.product?.price(at:revision.createdAt):nil,cta:index==revision.scenes.count-1 ? revision.cta:nil,sourceHash:database.assets.first{$0.id==scene.assetID}?.hash,layerHashes:Dictionary(uniqueKeysWithValues:database.assets.filter { a in scene.layers?.contains(where:{$0.assetID==a.id})==true }.map{($0.id,$0.hash)}),moduleIdentity:moduleIdentity,artworkIdentity:try ClassicArtworkMedia.fingerprint(scene:scene,database:database),cartoonSpeechBinding:cartoonSpeechBinding))
     }
     static func compose(revision r: Revision, repository: Repository, database db: Database, output: URL,modules:RenderModuleRegistry?, invocation:RenderInvocation?=nil, encoding:EncodingConfiguration?=nil, videoEncoder:NativeEncoderSelection = .automatic, progress: @escaping @Sendable (Double) throws -> Void) async throws -> Int {

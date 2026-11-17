@@ -38,15 +38,46 @@ final class CoverMediaTests:XCTestCase {
                 let shadow=try CoverPainter.gameContactShadowRect(artwork:tight,placement:layout.hero)
                 XCTAssertLessThan(shadow.width,layout.hero.width,"接触范围应来自实际双脚，不能直接取整个上身宽度")
                 let raw=try pixels(rendered),plain=try pixels(background)
+                // The admitted board is in front of both actor and shadow.
+                // Its genuine alpha determines where a foot is still exposed;
+                // a completely covered foot must not be made visible on top.
+                let paper=CoverPainter.gameDialogueBubble(square:square,canvas:canvas,variant:variant,titleBounds:title.visibleBounds)
+                let board=try XCTUnwrap(CGContext(data:nil,width:aspect.width,height:aspect.height,bitsPerComponent:8,
+                    bytesPerRow:aspect.width*4,space:space,bitmapInfo:CGImageAlphaInfo.premultipliedLast.rawValue))
+                board.clear(canvas);board.setFillColor(CGColor(gray:1,alpha:1));board.fill(paper)
+                board.draw(try CommunityNoticeBoardArtwork.image(),in:CoverPainter.gameNoticeBoardImageFrame(
+                    square:square,canvas:canvas,variant:variant,titleBounds:title.visibleBounds))
+                let foreground=try pixels(XCTUnwrap(board.makeImage()))
                 func rgba(_ bytes:[UInt8],_ point:CGPoint)->[UInt8] {
                     let x=Int(point.x),y=aspect.height-1-Int(point.y),at=(y*aspect.width+x)*4
                     return Array(bytes[at..<(at+4)])
                 }
-                let underFoot=CGPoint(x:shadow.midX,y:shadow.minY+shadow.height*0.30)
-                let footPixel=rgba(raw,underFoot),plainPixel=rgba(plain,underFoot)
-                XCTAssertLessThan(Int(footPixel[0])+Int(footPixel[1])+Int(footPixel[2]),Int(plainPixel[0])+Int(plainPixel[1])+Int(plainPixel[2])-20,"实际脚底下方须有可观察的接触影，不能只新增几何方法")
-                let opaque=rgba(raw,CGPoint(x:layout.hero.midX,y:layout.hero.minY+layout.hero.height*0.65))
-                XCTAssertEqual(opaque,[255,0,0,255],"接触影不能重染原角色不透明像素")
+                for fraction in [CGFloat(0.15),0.30,0.45] {
+                    let underFoot=CGPoint(x:shadow.midX,y:shadow.minY+shadow.height*fraction)
+                    let footPixel=rgba(raw,underFoot),plainPixel=rgba(plain,underFoot)
+                    let alpha=Int(rgba(foreground,underFoot)[3])
+                    if alpha==0 {
+                        XCTAssertLessThan(Int(footPixel[0])+Int(footPixel[1])+Int(footPixel[2]),Int(plainPixel[0])+Int(plainPixel[1])+Int(plainPixel[2])-20,"未被公告板遮挡的实际脚底下方须有可观察的接触影")
+                    } else if alpha==255 {
+                        XCTAssertEqual(footPixel,plainPixel,"完全不透明的公告板纸面必须盖过脚和接触影")
+                    } else {
+                        // Source-over can reveal at most the true residual
+                        // transmission, plus one byte of rounding.
+                        for channel in 0..<3 {
+                            XCTAssertLessThanOrEqual(abs(Int(footPixel[channel])-Int(plainPixel[channel])),256-alpha,
+                                "木边必须按原图真实透明度覆盖角色与脚影，不能把影重画到公告板前")
+                        }
+                    }
+                }
+                var exposedActor=0
+                for fraction in [CGFloat(0.50),0.65,0.80,0.95] {
+                    let point=CGPoint(x:layout.hero.midX,y:layout.hero.minY+layout.hero.height*fraction)
+                    if rgba(foreground,point)[3]==0 {
+                        XCTAssertEqual(rgba(raw,point),[255,0,0,255],"接触影不能重染未遮挡的原角色不透明像素")
+                        exposedActor+=1
+                    }
+                }
+                XCTAssertGreaterThan(exposedActor,0,"公告板前景不能把真实角色全部遮掉")
                 let besideHead=CGPoint(x:layout.hero.maxX+2,y:layout.hero.minY+layout.hero.height*0.70)
                 XCTAssertEqual(rgba(raw,besideHead),rgba(plain,besideHead),"头身外不得残留贴纸式均匀投影")
                 let crop=CGRect(x:title.visibleBounds.minX,y:CGFloat(aspect.height)-title.visibleBounds.maxY,width:title.visibleBounds.width,height:title.visibleBounds.height)
@@ -497,7 +528,11 @@ final class CoverMediaTests:XCTestCase {
                 if abs(Int(first[offset])-Int(second[offset]))>20 || abs(Int(first[offset+1])-Int(second[offset+1]))>20 {changed+=1}
             }
             affected[style]=changed
-            XCTAssertGreaterThan(changed,1280*720/25,"真实内容应是构图组成部分，不能缩成邮票：\(style)")
+            if style == .code {
+                XCTAssertEqual(changed,0,"代码主题封面使用可复用岛屿组件，不能重新铺入无关作者图片")
+            } else {
+                XCTAssertGreaterThan(changed,1280*720/25,"真实内容应是构图组成部分，不能缩成邮票：\(style)")
+            }
         }
         XCTAssertGreaterThan(try XCTUnwrap(affected[.media]),1280*720*7/10,"真实影像应大幅铺满；连续遮光不能退化成底部窄图条")
         XCTAssertGreaterThan(try XCTUnwrap(affected[.pencil]),1280*720*12/100,"彩铅大故事组景应保实际素材可见面积")
@@ -569,7 +604,8 @@ final class CoverMediaTests:XCTestCase {
                     for run in CTLineGetGlyphRuns(line) as! [CTRun] {
                         let attributes=CTRunGetAttributes(run) as NSDictionary
                         if let font=attributes[kCTFontAttributeName] as! CTFont? {
-                            XCTAssertEqual(CTFontCopyPostScriptName(font) as String,CoverTypeface.displayPostScriptName)
+                            let expectedFont=[CoverStyle.game,.code].contains(style) ? "ChillRoundF":"DOUYINSANSBOLD-GB"
+                            XCTAssertEqual(CTFontCopyPostScriptName(font) as String,expectedFont)
                             sizes.insert(Int((CTFontGetSize(font)*100).rounded()))
                         }
                         if let color=attributes[kCTForegroundColorAttributeName] as! CGColor? {inkColors.insert(String(describing:color.components))}
@@ -583,12 +619,16 @@ final class CoverMediaTests:XCTestCase {
                 }
                 XCTAssertEqual(inkColors.count,2,"主题词与标题其余文字须有真实文字色对比")
                 let expectedKeyword:[CoverStyle:[CGFloat]]=[.presenter:[7.0/255,22.0/255,56.0/255,1],
-                    .pencil:[99.0/255,240.0/255,228.0/255,1],.code:[80.0/255,227.0/255,218.0/255,1]]
+                    .pencil:[99.0/255,240.0/255,228.0/255,1],
+                    .game:[17.0/255,126.0/255,112.0/255,1],.code:[17.0/255,126.0/255,112.0/255,1]]
                 if let components=expectedKeyword[style] {
                     let space=CGColorSpace(name:CGColorSpace.sRGB)!
-                    let white=try XCTUnwrap(CGColor(colorSpace:space,components:[1,1,1,1]))
+                    // Explicit source/design colors: island ink #725D42 and
+                    // readable deep mint #117E70, independent of Palette.
+                    let normal:[CGFloat]=[CoverStyle.game,.code].contains(style) ? [114.0/255,93.0/255,66.0/255,1]:[1,1,1,1]
+                    let base=try XCTUnwrap(CGColor(colorSpace:space,components:normal))
                     let keyword=try XCTUnwrap(CGColor(colorSpace:space,components:components))
-                    XCTAssertEqual(inkColors,Set([String(describing:white.components),String(describing:keyword.components)]),"主题字按类型配色：presenter深靛蓝配珊瑚色底，其余橙/青字；不恢复黄底黑字")
+                    XCTAssertEqual(inkColors,Set([String(describing:base.components),String(describing:keyword.components)]),"岛屿主题使用暖棕与深薄荷字，广告主题保留原高对比文字色；不恢复黄底黑字")
                 }
                 let side=CGFloat(min(aspect.width,aspect.height)),w=CGFloat(aspect.width),h=CGFloat(aspect.height)
                 let square=CGRect(x:(w-side)/2,y:(h-side)/2,width:side,height:side)
@@ -655,9 +695,17 @@ final class CoverMediaTests:XCTestCase {
             XCTAssertEqual(composition.visibleBounds.midY,CGFloat(aspect.height)/2,accuracy:0.01)
             let d=CGFloat(min(aspect.width,aspect.height)),square=CGRect(x:(CGFloat(aspect.width)-d)/2,y:(CGFloat(aspect.height)-d)/2,width:d,height:d)
             for variant in 0..<3 {
-                let bubble=CoverPainter.gameDialogueBubble(square:square,canvas:CGRect(x:0,y:0,width:aspect.width,height:aspect.height),variant:variant,titleBounds:composition.visibleBounds)
-                XCTAssertLessThan(bubble.height,d*0.19,"短题气泡按实际单行字高收紧，不保留原两行大气泡")
-                XCTAssertTrue(bubble.contains(composition.visibleBounds))
+                var current=short
+                current.coverPresentation?.template=[CoverTemplate.spotlight,.editorial,.contrast][variant]
+                let title=try CoverPainter.composeTitle(cover:CoverRules.resolved(revision:current),width:CGFloat(aspect.width),height:CGFloat(aspect.height))
+                let canvas=CGRect(x:0,y:0,width:aspect.width,height:aspect.height)
+                let paper=CoverPainter.gameDialogueBubble(square:square,canvas:canvas,variant:variant,titleBounds:title.visibleBounds)
+                let board=CoverPainter.gameNoticeBoardFrame(square:square,canvas:canvas,variant:variant,titleBounds:title.visibleBounds)
+                let artwork=CoverPainter.gameNoticeBoardImageFrame(square:square,canvas:canvas,variant:variant,titleBounds:title.visibleBounds)
+                XCTAssertEqual(title.lines.count,1,"短标题仍须完整单行置于公告栏纸面")
+                XCTAssertEqual(paper.width/paper.height,(0.518*1672)/(0.475*941),accuracy:0.001,"公告栏保持完整原图纸面的宽面比例")
+                XCTAssertTrue(paper.contains(title.visibleBounds));XCTAssertTrue(board.contains(paper))
+                XCTAssertTrue(canvas.contains(artwork),"公告栏整张原图不能为了塞入标题而被裁掉")
             }
             short.coverPresentation?.title="合作，还是背叛？"
             XCTAssertGreaterThan(try CoverPainter.composeTitle(cover:CoverRules.resolved(revision:short),width:CGFloat(aspect.width),height:CGFloat(aspect.height)).lines.count,1,"含明确短语逗号仍按原合法断行策略")
@@ -665,15 +713,13 @@ final class CoverMediaTests:XCTestCase {
         for template in [CoverTemplate.spotlight,.editorial,.contrast] {
             var value=try revision();value.coverPresentation=CoverPresentation(style:.game,template:template,title:"选择与后果",hero:CoverImage(assetID:"hero"),background:CoverImage(assetID:"scene"))
             let image=try CoverPainter.image(revision:value,source:bitmap(width:1280,height:720),images:["hero":hero,"scene":background]),raw=try pixels(image)
-            var red=0,cream=0,bluePixels=0
+            var red=0,bluePixels=0
             for offset in stride(from:0,to:raw.count,by:4) {
                 let r=Int(raw[offset]),g=Int(raw[offset+1]),b=Int(raw[offset+2])
                 if r>250 && g<5 && b<5 {red+=1}
-                if abs(r-255)<3 && abs(g-251)<3 && abs(b-232)<3 {cream+=1}
                 if r<5 && g<5 && b>250 {bluePixels+=1}
             }
             XCTAssertGreaterThan(red,100,"原透明角色保真实可见像素")
-            XCTAssertGreaterThan(cream,10000,"题目使用原游戏式米白气泡，只有标题文字")
             XCTAssertGreaterThan(bluePixels,1280*720/2,"原场景须全幅而非缩进门户或照片卡片")
             for point in [(0,0),(1279,0),(0,719),(1279,719)] {
                 let offset=(point.1*1280+point.0)*4
@@ -685,8 +731,18 @@ final class CoverMediaTests:XCTestCase {
             XCTAssertEqual(layout.aperture,CGRect(x:0,y:0,width:1280,height:720))
             XCTAssertTrue(layout.frontLip.isEmpty,"新默认不再凭空生成门户框沿或纸台")
             let bubble=CoverPainter.gameDialogueBubble(square:square,canvas:CGRect(x:0,y:0,width:1280,height:720),variant:variant,titleBounds:composition.visibleBounds)
-            XCTAssertGreaterThanOrEqual(bubble.width/bubble.height,3,"对话泡须宽扁，不能退回盖住场景的大圆泡")
+            XCTAssertGreaterThanOrEqual(bubble.width/bubble.height,1.7,"社区公告栏须保留宽面大纸张，而非旧窄气泡")
             XCTAssertTrue(bubble.contains(composition.visibleBounds))
+            let alternate=try CoverPainter.image(revision:value,source:bitmap(width:1280,height:720),
+                images:["hero":hero,"scene":bitmap(width:1280,height:720,red:1,green:1,blue:0)])
+            let interior=bubble.insetBy(dx:2,dy:2)
+            let raster=CGRect(x:interior.minX,y:720-interior.maxY,width:interior.width,height:interior.height)
+            let paperPixels=try pixels(XCTUnwrap(image.cropping(to:raster)))
+            XCTAssertEqual(paperPixels,try pixels(XCTUnwrap(alternate.cropping(to:raster))),"整块公告纸与标题必须不透明，换场景也不能透底")
+            let warmPaper=stride(from:0,to:paperPixels.count,by:4).filter {
+                paperPixels[$0]>200 && paperPixels[$0+1]>190 && paperPixels[$0+2]>130
+            }.count
+            XCTAssertGreaterThan(warmPaper,10000,"原公告栏须真实绘制大面积浅暖色纸面，不能留下透明占位")
         }
     }
     func testGameNoticeAndTitleStayTogetherAboveEveryHeroInBothAspects()throws {
@@ -717,17 +773,17 @@ final class CoverMediaTests:XCTestCase {
                 XCTAssertTrue(board.contains(paper));XCTAssertTrue(paper.contains(title.visibleBounds))
                 XCTAssertTrue(canvas.contains(board));XCTAssertTrue(layout.hero.intersects(paper))
                 let a=try pixels(first),b=try pixels(second)
-                // An inset capsule is strictly inside the wooden notice shape
-                // in every template, avoiding rounded-edge antialias samples.
-                let guardPath=CGPath(roundedRect:board.insetBy(dx:2,dy:2),cornerWidth:board.height/2,cornerHeight:board.height/2,transform:nil)
+                // Protect the actual opaque paper, rather than inventing a
+                // capsule around transparent cutouts of the retained original.
+                let guardPath=CGPath(rect:paper.insetBy(dx:2,dy:2),transform:nil)
                 var protected=0,changedOutside=0,wood=0,protectedMismatch=0
                 for y in 0..<aspect.height {for x in 0..<aspect.width {
                     let at=(y*aspect.width+x)*4,point=CGPoint(x:CGFloat(x)+0.5,y:CGFloat(aspect.height-y)-0.5)
                     if guardPath.contains(point) {
                         if a[at] != b[at] || a[at+1] != b[at+1] || a[at+2] != b[at+2] || a[at+3] != b[at+3] {protectedMismatch+=1}
                         protected+=1
-                        if a[at]>150 && a[at+1]>90 && a[at+1]<220 && a[at+2]<150 {wood+=1}
                     } else if abs(Int(a[at])-Int(b[at]))>100 || abs(Int(a[at+2])-Int(b[at+2]))>100 {changedOutside+=1}
+                    if board.contains(point),!paper.contains(point),a[at]>100 && a[at+1]>75 && a[at+1]<235 && a[at+2]<175 {wood+=1}
                 }}
                 XCTAssertEqual(protectedMismatch,0,"标题及其公告板必须整体盖过原人物，拳头不能夹进字和底之间");XCTAssertGreaterThan(protected,10000);XCTAssertGreaterThan(wood,100,"原场景上应有实际木质公告板边缘，不以标题换名充数")
                 XCTAssertGreaterThan(changedOutside,5000,"标题后仍须保留真实人物，不能通过删掉hero假装修好层次")

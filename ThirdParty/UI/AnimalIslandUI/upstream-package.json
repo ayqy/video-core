@@ -1,0 +1,78 @@
+{
+    "name": "animal-island-ui-vue",
+    "version": "0.1.0",
+    "description": "Animal Island 风格的 Vue 3 组件库，提供 30 个开箱即用的温暖质感组件，基于 TypeScript + Vite 构建",
+    "type": "module",
+    "main": "dist/cjs/index.cjs",
+    "module": "dist/es/index.js",
+    "types": "dist/types/index.d.ts",
+    "exports": {
+        ".": {
+            "types": "./dist/types/index.d.ts",
+            "import": "./dist/es/index.js",
+            "require": "./dist/cjs/index.cjs"
+        }
+    },
+    "files": [
+        "dist"
+    ],
+    "sideEffects": [
+        "**/*.css",
+        "**/*.less"
+    ],
+    "author": "yanstu",
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/yanstu/animal-island-ui-vue.git"
+    },
+    "bugs": {
+        "url": "https://github.com/yanstu/animal-island-ui-vue/issues"
+    },
+    "homepage": "https://animal-island-ui-vue.netlify.app",
+    "publishConfig": {
+        "access": "public",
+        "registry": "https://registry.npmjs.org/"
+    },
+    "scripts": {
+        "dev": "vite",
+        "build": "vite build && vue-tsc --project tsconfig.build.json --declaration --emitDeclarationOnly",
+        "build:demo": "vite build --config vite.config.demo.ts",
+        "test": "vitest run",
+        "release": "node scripts/release.mjs",
+        "release:verify": "node scripts/release.mjs verify",
+        "release:repo-details": "node scripts/release.mjs repo-details",
+        "release:netlify": "node scripts/release.mjs netlify",
+        "release:github-package": "node scripts/release.mjs github-package",
+        "release:full": "node scripts/release.mjs full",
+        "prepublishOnly": "npm run build"
+    },
+    "peerDependencies": {
+        "vue": "^3.5.0"
+    },
+    "devDependencies": {
+        "@types/node": "^25.5.2",
+        "@vitejs/plugin-vue": "^6.0.1",
+        "@vue/test-utils": "^2.4.6",
+        "jsdom": "^26.1.0",
+        "less": "^4.2.1",
+        "typescript": "^5.7.3",
+        "vite": "^7.3.2",
+        "vite-plugin-css-injected-by-js": "^4.0.1",
+        "vitest": "^4.1.4",
+        "vue": "^3.5.13",
+        "vue-tsc": "^2.2.0"
+    },
+    "keywords": [
+        "vue",
+        "vue3",
+        "component-library",
+        "ui",
+        "typescript",
+        "theme",
+        "animal-island-ui-vue",
+        "animal-island",
+        "nature",
+        "warm"
+    ],
+    "license": "MIT"
+}

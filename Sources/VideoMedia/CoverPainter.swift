@@ -13,11 +13,11 @@ public enum CoverPainter {
             switch style {
             case .presenter:(paper,ink,accent,secondary)=("082A78","FFFFFF","FF985D","1678EC")
             case .pencil:(paper,ink,accent,secondary)=("C52654","FFFFFF","63F0E4","F76788")
-            case .game:(paper,ink,accent,secondary)=("FFFBE8","555448","008E9B","EB83B1")
+            case .game:(paper,ink,accent,secondary)=("F7F3DF","725D42","117E70","E6F9F6")
             case .cartoon:(paper,ink,accent,secondary)=("F2E9FF","38274F","C63B67","A6E8E1")
             case .media:(paper,ink,accent,secondary)=("101B28","FFFFFF","F7A56F","417F8B")
             case .chart:(paper,ink,accent,secondary)=("F1F3FE","21305B","6B3EB5","6386D9")
-            case .code:(paper,ink,accent,secondary)=("071A47","FFFFFF","50E3DA","1681EE")
+            case .code:(paper,ink,accent,secondary)=("F8F8F0","725D42","117E70","E6F9F6")
             default:(paper,ink,accent,secondary)=("F6F3EF","24384F","BB4024","EB755B")
             }
         }
@@ -98,7 +98,10 @@ case .presenter:presenter(background,hero:hero,placement:placement,square:square
         return square.intersection(wide).insetBy(dx:side*0.065,dy:side*0.065)
     }
     static func composeTitle(cover:ResolvedCover,width:CGFloat,height:CGFloat)throws->TitleComposition {
-        let safe=titleSafeRect(width:width,height:height),side=min(width,height),p=Palette(cover.style)
+        let commonSafe=titleSafeRect(width:width,height:height),side=min(width,height),p=Palette(cover.style)
+        // Keep the complete title on the admitted board's large paper, even
+        // inside a portrait channel crop. The center remains the shared center.
+        let safe=cover.style == .game ? commonSafe.insetBy(dx:commonSafe.width*0.10,dy:0):commonSafe
         let display=titleDisplay(cover.title,style:cover.style),value=display.text,original=cover.title as NSString
         var ranges:[NSRange]=[]
         for keyword in cover.emphasis {
@@ -117,15 +120,21 @@ case .presenter:presenter(background,hero:hero,placement:placement,square:square
         let kern=side*0.001
         let shortGameTitle=cover.style == .game && value.count<=9 && !value.contains("\n")
             && value.rangeOfCharacter(from:CharacterSet(charactersIn:"，,、：:；;。")) == nil
-        var arrangements=titleArrangements(value,emphasis:ranges)
-        if shortGameTitle {arrangements=[([NSRange(location:0,length:(value as NSString).length)],0)]}
+        let phraseArrangements=titleArrangements(value,emphasis:ranges)
+        let singleLine:[(ranges:[NSRange],penalty:CGFloat)]=[([NSRange(location:0,length:(value as NSString).length)],0)]
+        let passes=shortGameTitle ? [singleLine,phraseArrangements]:[phraseArrangements]
         // A programming-topic cover has no character portrait to carry the
         // subject. Let its short headline lead; long copy still shrinks only
         // after shaping into complete phrases in the shared preview-safe area.
         let baseSize:CGFloat=cover.style == .code ? 0.14:0.112
+        // Preserve readable single-line short topics whenever the complete
+        // artwork fits; only then try legal phrase breaks for a tight crop.
+        for arrangements in passes {
         var size=side*(shortGameTitle ? 0.09:baseSize)
         while size>=side*0.042 {
-            let normal=try CoverTypeface.displayFont(size:size),emphasized=try CoverTypeface.displayFont(size:size*1.17)
+            let rounded=cover.style == .game || cover.style == .code
+            let normal=try (rounded ? IslandTypeface.font(size:size):CoverTypeface.displayFont(size:size))
+            let emphasized=try (rounded ? IslandTypeface.font(size:size*1.17):CoverTypeface.displayFont(size:size*1.17))
             let title=NSMutableAttributedString(string:value,attributes:[.init(kCTFontAttributeName as String):normal,.init(kCTKernAttributeName as String):kern,.init(kCTForegroundColorAttributeName as String):color(p.ink)])
             // Keep the existing host attribution readable, while giving the
             // actual subject the first visual read. The title stays centered
@@ -143,7 +152,7 @@ case .presenter:presenter(background,hero:hero,placement:placement,square:square
             for arrangement in arrangements {
                 let lines=arrangement.ranges.map{CTTypesetterCreateLine(typesetter,CFRange(location:$0.location,length:$0.length))}
                 let widths=lines.map{CGFloat(CTLineGetTypographicBounds($0,nil,nil,nil))}
-                guard !lines.isEmpty,widths.allSatisfy({$0<=safe.width-margin*2}),supported(lines,requiredFont:CoverTypeface.displayPostScriptName) else {continue}
+                guard !lines.isEmpty,widths.allSatisfy({$0<=safe.width-margin*2}),supported(lines,requiredFont:rounded ? "ChillRoundF":CoverTypeface.displayPostScriptName) else {continue}
                 let widest=widths.max() ?? 0,narrowest=widths.min() ?? 0
                 let score=(widest-narrowest)/safe.width+arrangement.penalty
                 candidates.append((lines,score))
@@ -167,9 +176,20 @@ case .presenter:presenter(background,hero:hero,placement:placement,square:square
                 let union=(effects+highlights).reduce(CGRect.null){$0.union($1)},shift=safe.midY-union.midY
                 origins=origins.map{CGPoint(x:$0.x,y:$0.y+shift)};bounds=bounds.map{$0.offsetBy(dx:0,dy:shift)};highlights=highlights.map{$0.offsetBy(dx:0,dy:shift)}
                 effects=effects.map{$0.offsetBy(dx:0,dy:shift)}
-                if (effects+highlights).allSatisfy({safe.contains($0)}) {return TitleComposition(lines:lines,origins:origins,bounds:bounds,highlights:highlights,safeRect:safe,effects:effects,outline:outline,depth:depth)}
+                if (effects+highlights).allSatisfy({safe.contains($0)}) {
+                    let composed=TitleComposition(lines:lines,origins:origins,bounds:bounds,highlights:highlights,safeRect:safe,effects:effects,outline:outline,depth:depth)
+                    if cover.style == .game {
+                        let canvas=CGRect(x:0,y:0,width:width,height:height)
+                        let square=CGRect(x:canvas.midX-side/2,y:canvas.midY-side/2,width:side,height:side)
+                        let variant=cover.template == .editorial ? 1:(cover.template == .contrast ? 2:0)
+                        let artwork=gameNoticeBoardImageFrame(square:square,canvas:canvas,variant:variant,titleBounds:composed.visibleBounds)
+                        guard canvas.insetBy(dx:side*0.02,dy:side*0.02).contains(artwork) else {continue}
+                    }
+                    return composed
+                }
             }
             size-=2
+        }
         }
         throw VideoError.review("封面标题过长、缺字或超出横版和方形共同安全区，请精简标题后重新制作")
     }
@@ -228,6 +248,9 @@ case .presenter:presenter(background,hero:hero,placement:placement,square:square
                 let radius=rect.height*0.075
                 c.addPath(CGPath(roundedRect:rect,cornerWidth:radius,cornerHeight:radius,transform:nil));c.fillPath()
             }
+        }
+        if style == .code {
+            for rect in value.highlights {IslandTheme.drawPill(in:rect,fill:p.secondary,context:c)}
         }
         for (line,origin) in zip(value.lines,value.origins) {
             c.textMatrix = .identity;c.textPosition=origin;CTLineDraw(line,c)
@@ -405,36 +428,38 @@ case .presenter:presenter(background,hero:hero,placement:placement,square:square
         let rect=CGRect(x:variant == 1 ? left:right,y:bubble.maxY-height*overlap,width:width,height:height)
         return GameDepthLayout(aperture:canvas,hero:rect,frontLip:.zero)
     }
+    static func gameNoticeBoardImageFrame(square s:CGRect,canvas:CGRect,variant:Int,titleBounds:CGRect)->CGRect {
+        let paper=CommunityNoticeBoardArtwork.paper
+        let pad=s.width*([0.08,0.10,0.12][min(2,max(0,variant))])
+        let minimum=max((titleBounds.width+pad)/paper.width,
+                        (titleBounds.height+s.width*0.08)/paper.height*CommunityNoticeBoardArtwork.width/CommunityNoticeBoardArtwork.height)
+        let width=max(s.width*0.82,minimum)
+        let height=width*CommunityNoticeBoardArtwork.height/CommunityNoticeBoardArtwork.width
+        return CGRect(x:titleBounds.midX-paper.midX*width,y:titleBounds.midY-paper.midY*height,width:width,height:height)
+    }
+    private static func noticeRegion(_ region:CGRect,in image:CGRect)->CGRect {
+        CGRect(x:image.minX+region.minX*image.width,y:image.minY+region.minY*image.height,
+               width:region.width*image.width,height:region.height*image.height)
+    }
     static func gameDialogueBubble(square s:CGRect,canvas:CGRect,variant:Int,titleBounds:CGRect)->CGRect {
-        let width=min(canvas.width-s.width*0.04,titleBounds.width+s.width*(variant == 2 ? 0.14:0.10))
-        let height=titleBounds.height+s.width*(variant == 2 ? 0.05:0.035)
-        return CGRect(x:canvas.midX-width/2,y:titleBounds.midY-height/2,width:width,height:height)
+        noticeRegion(CommunityNoticeBoardArtwork.paper,
+                     in:gameNoticeBoardImageFrame(square:s,canvas:canvas,variant:variant,titleBounds:titleBounds))
     }
     static func gameNoticeBoardFrame(square s:CGRect,canvas:CGRect,variant:Int,titleBounds:CGRect)->CGRect {
-        let paper=gameDialogueBubble(square:s,canvas:canvas,variant:variant,titleBounds:titleBounds)
-        return paper.insetBy(dx:-s.width*0.018,dy:-s.width*0.018)
+        noticeRegion(CommunityNoticeBoardArtwork.backing,
+                     in:gameNoticeBoardImageFrame(square:s,canvas:canvas,variant:variant,titleBounds:titleBounds))
     }
-    private static func gameNoticeBoard(square s:CGRect,canvas:CGRect,variant:Int,titleBounds:CGRect,p:Palette,c:CGContext) {
-        let d=s.width,paper=gameDialogueBubble(square:s,canvas:canvas,variant:variant,titleBounds:titleBounds)
-        let frame=gameNoticeBoardFrame(square:s,canvas:canvas,variant:variant,titleBounds:titleBounds)
-        let radius=paper.height*(variant == 1 ? 0.10:(variant == 2 ? 0.22:0.16))
-        // The notice and wooden backing form one foreground unit. Supports
-        // belong behind that unit, never between the words and their paper.
-        for x in [frame.minX+frame.width*0.16,frame.maxX-frame.width*0.16] {
-            let post=CGRect(x:x-d*0.009,y:frame.minY-d*0.10,width:d*0.018,height:d*0.12)
-            gradient(post,colors:[color("A46F42"),color("D9AE73")],locations:[0,1],c:c)
-        }
-        c.saveGState();c.setShadow(offset:CGSize(width:0,height:-d*0.007),blur:d*0.011,color:color("364F32",alpha:0.20))
-        c.setFillColor(color("A97444"));c.addPath(CGPath(roundedRect:frame,cornerWidth:radius,cornerHeight:radius,transform:nil));c.fillPath();c.restoreGState()
-        let upper=frame.insetBy(dx:d*0.003,dy:d*0.003).offsetBy(dx:0,dy:d*0.002)
-        c.saveGState();c.addPath(CGPath(roundedRect:upper,cornerWidth:radius,cornerHeight:radius,transform:nil));c.clip()
-        gradient(upper,colors:[color("C9975C"),color("E8C58C")],locations:[0,1],c:c);c.restoreGState()
-        c.setFillColor(color(p.paper));c.addPath(CGPath(roundedRect:paper,cornerWidth:radius*0.75,cornerHeight:radius*0.75,transform:nil));c.fillPath()
-        let pin=d*0.006
-        c.setFillColor(color("805E3F"))
-        for x in [frame.minX+d*0.009,frame.maxX-d*0.009] {
-            c.fillEllipse(in:CGRect(x:x-pin/2,y:frame.midY-pin/2,width:pin,height:pin))
-        }
+    private static func gameNoticeBoard(square s:CGRect,canvas:CGRect,variant:Int,titleBounds:CGRect,p:Palette,c:CGContext)throws {
+        let imageFrame=gameNoticeBoardImageFrame(square:s,canvas:canvas,variant:variant,titleBounds:titleBounds)
+        let paper=gameDialogueBubble(square:s,canvas:canvas,variant:variant,titleBounds:titleBounds)
+        guard paper.contains(titleBounds) else {throw VideoError.review("标题超出社区公告栏纸面")}
+        // One complete transparent artwork is the final foreground unit.
+        // Glyphs are drawn only afterwards; no character can enter this layer.
+        // The generated original has gently translucent paper pixels. Keep
+        // its bytes intact, and place an opaque paper surface underneath so
+        // a fist or sleeve can never show through the headline's own board.
+        c.setFillColor(color("F7F3DF"));c.fill(paper)
+        c.draw(try CommunityNoticeBoardArtwork.image(),in:imageFrame)
     }
     static func gameContactShadowRect(artwork image:CGImage,placement:CGRect)throws->CGRect {
         let width=image.width,height=image.height
@@ -487,7 +512,7 @@ case .presenter:presenter(background,hero:hero,placement:placement,square:square
         // Complete the scene and IP first. Backing and notice are the final
         // foreground unit; the only later drawing is the shared title text.
         // An arm must never be repainted between its paper and its glyphs.
-        gameNoticeBoard(square:s,canvas:canvas,variant:variant,titleBounds:titleBounds,p:p,c:c)
+        try gameNoticeBoard(square:s,canvas:canvas,variant:variant,titleBounds:titleBounds,p:p,c:c)
     }
 
     private static func cartoon(_ image:CGImage?,hero:CGImage?,square s:CGRect,canvas:CGRect,variant:Int,p:Palette,c:CGContext) {
@@ -556,54 +581,45 @@ case .presenter:presenter(background,hero:hero,placement:placement,square:square
     }
     private static func code(_ image:CGImage?,hero:CGImage?,square s:CGRect,canvas:CGRect,variant:Int,revision:Revision,quantity:CoverQuantityGraphic?,p:Palette,c:CGContext)throws {
         let d=s.width,shift=CGFloat(variant-1)*d*0.035
-        gradient(canvas,colors:[color("020719"),color("07143E"),color("10245C")],locations:[0,0.56,1],c:c)
-        // Input art may influence the broad color mood, but no spatial source
-        // pixels, code lines, editor controls or document text enter the cover.
-        if let image=hero ?? image,let wash=paletteColor(image),let translucent=wash.copy(alpha:0.16) {c.setFillColor(translucent);c.fill(canvas)}
-        // A diagonal reflected light plane, rather than a uniform wash, keeps
-        // the subject in a deliberate studio space. The center stays dark so
-        // the title remains the strongest shape at reduced thumbnail sizes.
-        c.saveGState()
-        let lightPlane=[CGPoint(x:canvas.width*0.54,y:0),CGPoint(x:canvas.width,y:0),
-                        CGPoint(x:canvas.width,y:canvas.height),CGPoint(x:canvas.width*0.86,y:canvas.height)]
-        c.addLines(between:lightPlane);c.closePath();c.clip()
-        gradient(canvas,colors:[color("0F788B"),color("164C89"),color("172F73")],locations:[0,0.52,1],c:c)
-        c.restoreGState()
-        glow(canvas,center:CGPoint(x:canvas.midX-d*0.40,y:s.minY+d*0.84),radius:d*0.76,ink:"374AA4",alpha:0.54,c:c)
-        glow(canvas,center:CGPoint(x:canvas.midX,y:canvas.midY),radius:d*0.50,ink:"02071D",alpha:0.72,c:c)
+        c.setFillColor(color(IslandTheme.canvas));c.fill(canvas)
+        // Use the same published Animal Island Panel/Popover vocabulary as
+        // the ordinary code video. No source pixels or invented code text.
+        let panel=CGRect(x:canvas.midX-d*0.58,y:canvas.midY-d*0.40,width:d*1.16,height:d*0.80)
+        IslandTheme.drawPanel(in:panel,context:c)
         if let quantity {
             try quantity.validate()
             let cover=try CoverRules.resolved(revision:revision)
             let title=try composeTitle(cover:cover,width:canvas.width,height:canvas.height)
             let slots=try quantitySlots(square:s,titleBounds:title.visibleBounds,required:quantity.required,variant:variant)
             let focus=try quantitySpotlightFocus(slots:slots,available:quantity.available)
-            try quantitySpotlight(focus,protectedCoins:slots.prefix(quantity.available),square:s,canvas:canvas,titleBounds:title.visibleBounds,c:c)
+            let highlight=try quantitySpotlightEnvelope(focus:focus,square:s,titleBounds:title.visibleBounds)
+            c.saveGState()
+            // The shortfall panel may change with the available count, while
+            // existing coins retain identical base pixels at their soft edge.
+            for coin in slots.prefix(quantity.available) {
+                let side=coin.offsetBy(dx:coin.width*0.012,dy:-coin.width*0.055)
+                for face in [coin,side] {
+                    c.addRect(canvas);c.addEllipse(in:face.insetBy(dx:-2,dy:-2));c.clip(using:.evenOdd)
+                }
+            }
+            IslandTheme.drawPill(in:highlight,fill:IslandTheme.mintWash,context:c)
+            c.restoreGState()
             quantityStage(slots,square:s,canvas:canvas,c:c)
-            // Real countable objects communicate the declared condition. A
-            // missing object remains an empty slot, never a fabricated coin.
             for (index,rect) in slots.enumerated() {
                 quantityCoin(in:rect,present:index<quantity.available,c:c)
             }
             return
         }
-        // A pair of large source-code braces is a graphic programming symbol,
-        // not fabricated source text, UI windows or unexplained flow wiring.
-        // Position limits can consume the horizontal shift in a portrait
-        // canvas. Real symbol proportions still distinguish all templates.
-        let symbolWidth=d*(variant == 2 ? 0.27:0.24)
-        let symbolHeight=d*(variant == 1 ? 0.76:0.84)
+        let symbolWidth=d*(variant == 2 ? 0.23:0.20)
+        let symbolHeight=d*(variant == 1 ? 0.60:0.66)
         let symbolY=s.midY-symbolHeight/2
-        let left=CGRect(x:max(d*0.07,s.minX-d*0.28+shift),y:symbolY,width:symbolWidth,height:symbolHeight)
-        let right=CGRect(x:min(canvas.width-symbolWidth-d*0.06,s.maxX+d*0.10+shift),y:symbolY,width:symbolWidth,height:symbolHeight)
+        let left=CGRect(x:max(d*0.07,s.minX-d*0.17+shift),y:symbolY,width:symbolWidth,height:symbolHeight)
+        let right=CGRect(x:min(canvas.width-symbolWidth-d*0.06,s.maxX-d*0.03+shift),y:symbolY,width:symbolWidth,height:symbolHeight)
         for (index,rect) in [left,right].enumerated() {
-            let path=codeBrace(in:rect,opening:index==0)
-            c.saveGState();c.setLineCap(.round);c.setLineJoin(.round);c.setLineWidth(d*0.065)
-            c.setShadow(offset:CGSize(width:d*0.016,height:-d*0.014),blur:d*0.018,color:color("000000",alpha:0.65))
-            c.setStrokeColor(color(index == 0 ? "177A90":"A04C2F"));c.addPath(path);c.strokePath()
-            c.translateBy(x:-d*0.009,y:d*0.009)
-            c.setStrokeColor(color(index == 0 ? "50E3DA":"FF985D"));c.addPath(path);c.strokePath();c.restoreGState()
+            c.saveGState();c.setLineCap(.round);c.setLineJoin(.round);c.setLineWidth(d*0.045)
+            c.setStrokeColor(color(index == 0 ? IslandTheme.mint:IslandTheme.ink))
+            c.addPath(codeBrace(in:rect,opening:index==0));c.strokePath();c.restoreGState()
         }
-        glow(canvas,center:CGPoint(x:canvas.midX,y:canvas.midY),radius:d*0.57,ink:"060E30",alpha:0.78,c:c)
     }
     /// Light follows the author-declared shortfall, rather than title words.
     /// A fully funded group has no missing object, so the whole group leads.

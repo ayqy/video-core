@@ -17,6 +17,25 @@ enum DataPresentationPainter {
         let zeroY: CGFloat
         let bars: [Bar]
     }
+    struct IslandCodeGeometry {
+        let title: CGRect
+        let rows: [CGRect]
+        let numbers: [CGRect]
+        let text: [CGRect]
+    }
+    static func islandCodeGeometry(_ code: CodePresentation, rect: CGRect) throws -> IslandCodeGeometry {
+        guard rect.width.isFinite,rect.height.isFinite,rect.width>=280,rect.height>=200,
+              !code.lines.isEmpty else {throw VideoError.review("代码卡片需要完整可读的区域和原始代码行")}
+        let row=(rect.height-86)/CGFloat(code.lines.count)
+        guard row>=40 else {throw VideoError.review("代码卡片无法完整可读地容纳各行，请扩大区域或拆分镜头")}
+        let rows=code.lines.indices.map { index in
+            CGRect(x:rect.minX+32,y:rect.maxY-62-CGFloat(index+1)*row,width:rect.width-64,height:row)
+        }
+        return IslandCodeGeometry(title:CGRect(x:rect.minX+48,y:rect.maxY-52,width:rect.width-96,height:36),
+            rows:rows,
+            numbers:rows.map {CGRect(x:$0.minX+10,y:$0.midY-15,width:30,height:30)},
+            text:rows.map {CGRect(x:$0.minX+52,y:$0.minY+6,width:$0.width-68,height:$0.height-12)})
+    }
     static func chartGeometry(_ chart: DataChart, frame: Int, rect: CGRect) throws -> ChartGeometry {
         try chart.validate()
         guard rect.width.isFinite, rect.height.isFinite, rect.width >= 280, rect.height >= 200 else {
@@ -42,6 +61,20 @@ enum DataPresentationPainter {
         guard rect.minX.isFinite,rect.minY.isFinite,rect.width.isFinite,rect.height.isFinite,
               canvas.contains(rect) else {throw VideoError.review("数据/代码元素越出画面安全区，请调整位置、尺寸或关键帧")}
         try paperPresentation?.validate()
+        if let code=data.code,paperPresentation == nil {
+            let geometry=try islandCodeGeometry(code,rect:rect)
+            IslandTheme.drawPanel(in:rect,context:c)
+            try IslandTheme.drawText(code.title,in:geometry.title,size:24,context:c)
+            let active=try code.highlightedLine(at:frame)
+            for (index,line) in code.lines.enumerated() {
+                if active==index {IslandTheme.drawSelectedRow(in:geometry.rows[index].insetBy(dx:0,dy:4),context:c)}
+                IslandTheme.drawPill(in:geometry.numbers[index],fill:active==index ? IslandTheme.mint:IslandTheme.border,context:c)
+                try IslandTheme.drawText("\(index+1)",in:geometry.numbers[index].insetBy(dx:2,dy:1),size:18,
+                    color:"FFFFFF",alignment:.center,context:c)
+                try IslandTheme.drawText(line,in:geometry.text[index],size:20,context:c)
+            }
+            return
+        }
         let ink=paperPresentation?.inkColor ?? "F1F5F9"
         c.setFillColor(color(paperPresentation?.paperColor ?? "111C31"));c.fill(rect)
         if let chart=data.chart {

@@ -106,12 +106,21 @@ final class DataPresentationPainterTests: XCTestCase {
         assertPixel(try pixel(next,x:1188,y:270),equals:highlighted)
         assertPixel(highlighted,equals:try referencePixel("FFF9EF",overlay:"243638",alpha:0.12))
     }
-    func testOrdinaryDataAndCodeKeepLegacyDarkPanels() throws {
+    func testOrdinaryChartKeepsDarkPanelAndCodeUsesNormalIslandComponents() throws {
         let chart=try ScenePainter.image(revision:revision(),frame:0)
         assertPixel(try pixel(chart,x:82,y:296),equals:try referencePixel("111C31"))
-        let code=try ScenePainter.image(revision:revision(code:true),frame:0)
-        assertPixel(try pixel(code,x:82,y:296),equals:try referencePixel("111C31"))
-        assertPixel(try pixel(code,x:1188,y:500),equals:try referencePixel("244A61"))
+        let codeRevision=revision(code:true)
+        let first=try ScenePainter.image(revision:codeRevision,frame:0)
+        let next=try ScenePainter.image(revision:codeRevision,frame:60)
+        assertPixel(try pixel(first,x:4,y:4),equals:try referencePixel(IslandTheme.canvas))
+        assertPixel(try pixel(first,x:640,y:580),equals:try referencePixel(IslandTheme.panel))
+        let code=try XCTUnwrap(codeRevision.scenes[0].layers?[0].dataPresentation?.code)
+        let geometry=try DataPresentationPainter.islandCodeGeometry(code,rect:CGRect(x:80,y:294,width:1120,height:316))
+        let a=geometry.rows[0],b=geometry.rows[2]
+        assertPixel(try pixel(first,x:a.maxX-24,y:a.midY),equals:try referencePixel(IslandTheme.mintWash))
+        assertPixel(try pixel(next,x:a.maxX-24,y:a.midY),equals:try referencePixel(IslandTheme.panel))
+        assertPixel(try pixel(first,x:b.maxX-24,y:b.midY),equals:try referencePixel(IslandTheme.panel))
+        assertPixel(try pixel(next,x:b.maxX-24,y:b.midY),equals:try referencePixel(IslandTheme.mintWash))
     }
     func testDataAndCodeRetainTheirLastValuesThroughSpeedPauseAndSourceSplit() throws {
         for code in [false,true] {for paper in [false,true] {
@@ -150,7 +159,11 @@ final class DataPresentationPainterTests: XCTestCase {
         }
         for code in [false,true] {
             let ordinary=revision(code:code)
-            XCTAssertEqual(try baseKeyForCurrentEncoding(ordinary),try VisualClipCache.fingerprint(revision:ordinary,index:0,database:Database(),modules:nil,encoding:encoding))
+            if code {
+                XCTAssertNotEqual(try baseKeyForCurrentEncoding(ordinary),try VisualClipCache.fingerprint(revision:ordinary,index:0,database:Database(),modules:nil,encoding:encoding),"普通代码组件样式和离线字体须区别于旧暗板缓存")
+            } else {
+                XCTAssertEqual(try baseKeyForCurrentEncoding(ordinary),try VisualClipCache.fingerprint(revision:ordinary,index:0,database:Database(),modules:nil,encoding:encoding))
+            }
             let paper=paperRevision(code:code)
             XCTAssertNotEqual(try baseKeyForCurrentEncoding(paper),try VisualClipCache.fingerprint(revision:paper,index:0,database:Database(),modules:nil,encoding:encoding),"同一编码身份下，纸面数据绘制语义须区别于普通暗板")
         }

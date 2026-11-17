@@ -99,18 +99,21 @@ public enum ScenePainter {
             }
             return
         }
-        c.setFillColor(color("0B1020")); c.fill(CGRect(x: 0,y: 0,width: w,height: h))
-        c.setFillColor(color(s.color, alpha: 0.12)); c.fillEllipse(in: CGRect(x: w*0.58,y: h*0.45,width: w*0.7,height: w*0.7))
+        let islandCode=(s.layers ?? []).contains { $0.kind == .code }
+        c.setFillColor(color(islandCode ? IslandTheme.canvas:"0B1020")); c.fill(CGRect(x: 0,y: 0,width: w,height: h))
+        c.setFillColor(color(islandCode ? IslandTheme.mintWash:s.color, alpha: islandCode ? 1:0.12)); c.fillEllipse(in: CGRect(x: w*0.58,y: h*0.45,width: w*0.7,height: w*0.7))
         let margin: CGFloat = portrait ? 64 : 80
         let knowledge = s.kind == .simulation && s.simulation.knowledge != nil
         let dataStage = (s.layers ?? []).contains { $0.kind == .chart || $0.kind == .code }
         let detailedStage = knowledge || dataStage || (s.kind == .cartoon && s.cartoonPerformance != nil) || (media != nil && s.mediaFraming != nil), wideKnowledge = detailedStage && !portrait
-        text("VIDEO  /  \(revision.purpose.rawValue)", in: CGRect(x: margin,y: wideKnowledge ? 680:h-84,width: w-margin*2,height: wideKnowledge ? 24:30), size: wideKnowledge ? 16:21, color: "A5B4FC", context: c,fontName:s.fontName ?? "PingFangSC-Medium")
+        if !islandCode {text("VIDEO  /  \(revision.purpose.rawValue)", in: CGRect(x: margin,y: wideKnowledge ? 680:h-84,width: w-margin*2,height: wideKnowledge ? 24:30), size: wideKnowledge ? 16:21, color: "A5B4FC", context: c,fontName:s.fontName ?? "PingFangSC-Medium")}
         // PingFangSC-Medium at 36pt needs 50.4px ascent+descent. Keep a real
         // line above the stage and below the meta label; never relax text checks.
         // Two 45pt PingFang lines require 126.000256px on the supported font.
         // Keep complete wrapped titles inside their reserved area without weakening overflow checks.
-        try checkedText(s.title, in: CGRect(x: margin,y: wideKnowledge ? 626:h-(portrait ? 240:200),width: w-margin*2,height: wideKnowledge ? 54:(portrait ? 128:100)), size: wideKnowledge ? 36:(portrait ? 45:48), color: "FFFFFF", context: c,fontName:s.fontName ?? "PingFangSC-Medium")
+        let titleRect=CGRect(x: margin,y: wideKnowledge ? 626:h-(portrait ? 240:200),width: w-margin*2,height: wideKnowledge ? 54:(portrait ? 128:100))
+        if islandCode {try IslandTheme.drawText(s.title,in:titleRect,size:wideKnowledge ? 36:(portrait ? 45:48),context:c)}
+        else {try checkedText(s.title,in:titleRect,size:wideKnowledge ? 36:(portrait ? 45:48),color:"FFFFFF",context:c,fontName:s.fontName ?? "PingFangSC-Medium")}
         let separateBody=s.kind == .simulation || s.kind == .cartoon || media != nil || dataStage
         let overlay=OverlayLayout(width:w,height:h,showPrice:s.showPrice,separateBody:separateBody,knowledge:detailedStage)
         let base=overlay.visual
@@ -125,16 +128,22 @@ public enum ScenePainter {
             c.setFillColor(color(s.color,alpha:0.14)); c.addPath(CGPath(roundedRect:visual,cornerWidth:28,cornerHeight:28,transform:nil)); c.fillPath()
             try checkedText(s.body,in:visual.insetBy(dx:28,dy:26),size:portrait ? 32:34,color:"E2E8F0",context:c,fontName:s.fontName ?? "PingFangSC-Medium")
         }
-        if separateBody { try checkedText(s.body,in:overlay.mediaBody,size:portrait ? 26:25,color:"E2E8F0",context:c,fontName:s.fontName ?? "PingFangSC-Medium") }
+        if separateBody {
+            if islandCode {try IslandTheme.drawText(s.body,in:overlay.mediaBody,size:portrait ? 26:25,context:c)}
+            else {try checkedText(s.body,in:overlay.mediaBody,size:portrait ? 26:25,color:"E2E8F0",context:c,fontName:s.fontName ?? "PingFangSC-Medium")}
+        }
         let caption=s.captions.first(where: { $0.startFrame <= mapped && $0.endFrame > mapped })
         if caption != nil { try CinemaSubtitles.validateClearance(scene:s,sourceFrame:mapped,aspect:revision.aspect,rect:overlay.captionText) }
         try LayerPainter.draw(scene:s,sourceFrame:mapped,aspect:revision.aspect,images:layerImages,context:c,fontName:s.fontName ?? "PingFangSC-Medium")
-        if s.showPrice { guard let product=revision.product else{throw VideoError.review("没有关联产品事实，不能绘制产品价格")};let price = try product.price(at:revision.createdAt); try checkedText(price.money.display,in:overlay.price,size:40,color:"A5F3FC",context:c,fontName:s.fontName ?? "PingFangSC-Medium") }
+        if s.showPrice { guard let product=revision.product else{throw VideoError.review("没有关联产品事实，不能绘制产品价格")};let price = try product.price(at:revision.createdAt); try checkedText(price.money.display,in:overlay.price,size:40,color:islandCode ? IslandTheme.ink:"A5F3FC",context:c,fontName:s.fontName ?? "PingFangSC-Medium") }
         if let caption { try CinemaSubtitles.draw(caption.text,in:overlay.captionText,context:c,fontName:s.fontName ?? "PingFangSC-Medium") }
         if index==revision.scenes.count-1 {
-            try checkedText(revision.cta,in:overlay.cta,size:portrait ? 19:18,color:"A5F3FC",context:c,fontName:s.fontName ?? "PingFangSC-Medium")
+            if islandCode {try IslandTheme.drawText(revision.cta,in:overlay.cta,size:portrait ? 19:18,context:c)}
+            else {try checkedText(revision.cta,in:overlay.cta,size:portrait ? 19:18,color:"A5F3FC",context:c,fontName:s.fontName ?? "PingFangSC-Medium")}
         }
-        try checkedText("\(index+1) / \(revision.scenes.count)  ·  \(String(format:"%.1fs",Double(frame)/Double(revision.fps)))",in:overlay.footer,size:18,color:"94A3B8",context:c,fontName:s.fontName ?? "PingFangSC-Medium")
+        let footer="\(index+1) / \(revision.scenes.count)  ·  \(String(format:"%.1fs",Double(frame)/Double(revision.fps)))"
+        if islandCode {try IslandTheme.drawText(footer,in:overlay.footer,size:16,color:IslandTheme.secondaryInk,context:c)}
+        else {try checkedText(footer,in:overlay.footer,size:18,color:"94A3B8",context:c,fontName:s.fontName ?? "PingFangSC-Medium")}
     }
     public static func png(_ image: CGImage) throws -> Data { let data = NSMutableData(); guard let target = CGImageDestinationCreateWithData(data,"public.png" as CFString,1,nil) else { throw VideoError.unavailable("无法生成封面") }; CGImageDestinationAddImage(target,image,nil); guard CGImageDestinationFinalize(target) else { throw VideoError.unavailable("保存封面失败") }; return data as Data }
     public static func checkedText(_ value:String,in rect:CGRect,size:CGFloat,color:String,context:CGContext,fontName:String="PingFangSC-Medium") throws { guard CGRect(x:0,y:0,width:CGFloat(context.width),height:CGFloat(context.height)).contains(rect) else{throw VideoError.review("画面文字区域越出实际画布，请调整位置、缩放或拆分镜头")};let font=CTFontCreateWithName(fontName as CFString,size,nil);guard (CTFontCopyPostScriptName(font) as String)==fontName else{throw VideoError.unavailable("指定字体未安装或名称不准确，请改用可用中文系统字体")};if !text(value,in:rect,size:size,color:color,context:context,fontName:fontName) { throw VideoError.review("画面文字超出安全区或缺少实际可绘制字形，请更换字体、缩短或拆分镜头") } }
