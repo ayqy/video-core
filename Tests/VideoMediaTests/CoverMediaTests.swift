@@ -6,6 +6,78 @@ import VideoCore
 @testable import VideoMedia
 
 final class CoverMediaTests:XCTestCase {
+    private func gameFootOriginal(padding:Int=0)throws->CGImage {
+        let width=100+padding*2,height=200+padding*2,space=CGColorSpace(name:CGColorSpace.sRGB)!
+        let context=try XCTUnwrap(CGContext(data:nil,width:width,height:height,bitsPerComponent:8,bytesPerRow:width*4,space:space,bitmapInfo:CGImageAlphaInfo.premultipliedLast.rawValue))
+        context.clear(CGRect(x:0,y:0,width:width,height:height));context.translateBy(x:CGFloat(padding),y:CGFloat(padding))
+        context.setFillColor(try XCTUnwrap(CGColor(colorSpace:space,components:[1,0,0,1])))
+        context.fill(CGRect(x:10,y:40,width:80,height:160))
+        context.fill(CGRect(x:20,y:0,width:16,height:40));context.fill(CGRect(x:64,y:0,width:16,height:40))
+        return try XCTUnwrap(context.makeImage())
+    }
+    func testGameContactShadowActuallyGroundsFeetAndLeavesHeadOutlineAndTitleClean()throws {
+        try assertRGBAFixture()
+        let hero=try gameFootOriginal(),tight=try CoverPainter.visibleArtwork(hero)
+        let space=CGColorSpace(name:CGColorSpace.sRGB)!
+        let white=try XCTUnwrap(CGContext(data:nil,width:1280,height:720,bitsPerComponent:8,bytesPerRow:5120,space:space,bitmapInfo:CGImageAlphaInfo.premultipliedLast.rawValue))
+        white.setFillColor(try XCTUnwrap(CGColor(colorSpace:space,components:[1,1,1,1])));white.fill(CGRect(x:0,y:0,width:1280,height:720))
+        let scene=try XCTUnwrap(white.makeImage())
+        for aspect in [Aspect.landscape,.portrait] {
+            for template in [CoverTemplate.spotlight,.editorial,.contrast] {
+                var value=try revision(aspect:aspect)
+                value.coverPresentation=CoverPresentation(style:.game,template:template,title:"合作还是背叛？",hero:CoverImage(assetID:"hero"),background:CoverImage(assetID:"scene"),emphasis:["背叛"])
+                let source=try bitmap(width:aspect.width,height:aspect.height)
+                let rendered=try CoverPainter.image(revision:value,source:source,images:["hero":hero,"scene":scene])
+                value.coverPresentation?.hero=nil
+                let background=try CoverPainter.image(revision:value,source:source,images:["scene":scene])
+                let title=try CoverPainter.composeTitle(cover:CoverRules.resolved(revision:value),width:CGFloat(aspect.width),height:CGFloat(aspect.height))
+                let d=CGFloat(min(aspect.width,aspect.height)),canvas=CGRect(x:0,y:0,width:aspect.width,height:aspect.height)
+                let square=CGRect(x:(canvas.width-d)/2,y:(canvas.height-d)/2,width:d,height:d)
+                let variant=template == .editorial ? 1:(template == .contrast ? 2:0)
+                let layout=CoverPainter.gameDepthLayout(square:square,canvas:canvas,variant:variant,titleBounds:title.visibleBounds,heroAspect:CGFloat(tight.width)/CGFloat(tight.height))
+                let shadow=try CoverPainter.gameContactShadowRect(artwork:tight,placement:layout.hero)
+                XCTAssertLessThan(shadow.width,layout.hero.width,"接触范围应来自实际双脚，不能直接取整个上身宽度")
+                let raw=try pixels(rendered),plain=try pixels(background)
+                func rgba(_ bytes:[UInt8],_ point:CGPoint)->[UInt8] {
+                    let x=Int(point.x),y=aspect.height-1-Int(point.y),at=(y*aspect.width+x)*4
+                    return Array(bytes[at..<(at+4)])
+                }
+                let underFoot=CGPoint(x:shadow.midX,y:shadow.minY+shadow.height*0.30)
+                let footPixel=rgba(raw,underFoot),plainPixel=rgba(plain,underFoot)
+                XCTAssertLessThan(Int(footPixel[0])+Int(footPixel[1])+Int(footPixel[2]),Int(plainPixel[0])+Int(plainPixel[1])+Int(plainPixel[2])-20,"实际脚底下方须有可观察的接触影，不能只新增几何方法")
+                let opaque=rgba(raw,CGPoint(x:layout.hero.midX,y:layout.hero.minY+layout.hero.height*0.65))
+                XCTAssertEqual(opaque,[255,0,0,255],"接触影不能重染原角色不透明像素")
+                let besideHead=CGPoint(x:layout.hero.maxX+2,y:layout.hero.minY+layout.hero.height*0.70)
+                XCTAssertEqual(rgba(raw,besideHead),rgba(plain,besideHead),"头身外不得残留贴纸式均匀投影")
+                let crop=CGRect(x:title.visibleBounds.minX,y:CGFloat(aspect.height)-title.visibleBounds.maxY,width:title.visibleBounds.width,height:title.visibleBounds.height)
+                XCTAssertEqual(try pixels(XCTUnwrap(rendered.cropping(to:crop))),try pixels(XCTUnwrap(background.cropping(to:crop))),"足底影与原人物均不能污染完整居中标题")
+            }
+        }
+    }
+    func testGameContactShadowUsesActualFeetRatherThanTransparentCanvasMargins()throws {
+        let original=try gameFootOriginal(),padded=try gameFootOriginal(padding:30)
+        let scene=try bitmap(width:1280,height:720)
+        for aspect in [Aspect.landscape,.portrait] {
+            for template in [CoverTemplate.spotlight,.editorial,.contrast] {
+                var value=try revision(aspect:aspect)
+                value.coverPresentation=CoverPresentation(style:.game,template:template,title:"合作还是背叛？",hero:CoverImage(assetID:"hero"),background:CoverImage(assetID:"scene"),emphasis:["背叛"])
+                let source=try bitmap(width:aspect.width,height:aspect.height)
+                let first=try CoverPainter.image(revision:value,source:source,images:["hero":original,"scene":scene])
+                let second=try CoverPainter.image(revision:value,source:source,images:["hero":padded,"scene":scene])
+                XCTAssertEqual(try pixels(first),try pixels(second),"只加透明边距时，正常生产的完整角色和足底接触影必须保持同位置")
+            }
+        }
+    }
+    func testGameContactShadowRejectsEmptyArtAndInvalidPlacementInsteadOfInventingFeet()throws {
+        let space=CGColorSpace(name:CGColorSpace.sRGB)!
+        let context=try XCTUnwrap(CGContext(data:nil,width:80,height:120,bitsPerComponent:8,bytesPerRow:320,space:space,bitmapInfo:CGImageAlphaInfo.premultipliedLast.rawValue))
+        context.clear(CGRect(x:0,y:0,width:80,height:120))
+        let empty=try XCTUnwrap(context.makeImage()),hero=try gameFootOriginal()
+        XCTAssertThrowsError(try CoverPainter.gameContactShadowRect(artwork:empty,placement:CGRect(x:100,y:100,width:80,height:120)))
+        for invalid in [CGRect.zero,.null,.infinite] {
+            XCTAssertThrowsError(try CoverPainter.gameContactShadowRect(artwork:hero,placement:invalid))
+        }
+    }
     func testPencilPairFitsBothCompleteOriginalsAroundActualTitleInAllCanvasShapes()throws {
         for (width,height) in [(1280.0,720.0),(720.0,1280.0),(720.0,720.0)] {
             let canvas=CGRect(x:0,y:0,width:width,height:height),d=CGFloat(min(width,height))

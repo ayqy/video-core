@@ -79,7 +79,7 @@ public enum CoverPainter {
         switch cover.style {
         case .pencil:try pencil(background,hero:hero,square:square,canvas:canvas,variant:variant,titleBounds:composition.visibleBounds,p:p,c:c)
 case .presenter:presenter(background,hero:hero,placement:placement,square:square,canvas:canvas,variant:variant,titleBounds:composition.visibleBounds,p:p,c:c)
-        case .game:game(background,hero:hero,square:square,canvas:canvas,variant:variant,titleBounds:composition.visibleBounds,p:p,c:c)
+        case .game:try game(background,hero:hero,square:square,canvas:canvas,variant:variant,titleBounds:composition.visibleBounds,p:p,c:c)
         case .cartoon:cartoon(background,hero:hero,square:square,canvas:canvas,variant:variant,p:p,c:c)
         case .media:media(background,hero:hero,square:square,canvas:canvas,variant:variant,p:p,c:c)
         case .chart:try chart(background,hero:hero,square:square,canvas:canvas,variant:variant,revision:revision,p:p,c:c)
@@ -409,7 +409,43 @@ case .presenter:presenter(background,hero:hero,placement:placement,square:square
         let height=titleBounds.height+s.width*(variant == 2 ? 0.05:0.035)
         return CGRect(x:canvas.midX-width/2,y:titleBounds.midY-height/2,width:width,height:height)
     }
-    private static func game(_ image:CGImage?,hero:CGImage?,square s:CGRect,canvas:CGRect,variant:Int,titleBounds:CGRect,p:Palette,c:CGContext) {
+    static func gameContactShadowRect(artwork image:CGImage,placement:CGRect)throws->CGRect {
+        let width=image.width,height=image.height
+        guard width>0,height>0,width*height<=64*1024*1024,
+              !placement.isInfinite,!placement.isNull,!placement.isEmpty,
+              placement.width>0,placement.height>0,placement.width.isFinite,placement.height.isFinite,
+              placement.minX.isFinite,placement.minY.isFinite,
+              let context=CGContext(data:nil,width:width,height:height,bitsPerComponent:8,bytesPerRow:width*4,
+                space:CGColorSpace(name:CGColorSpace.sRGB)!,bitmapInfo:CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue),
+              let bytes=context.data?.assumingMemoryBound(to:UInt8.self) else {throw VideoError.review("游戏封面足底透明轮廓无法读取")}
+        context.setBlendMode(.copy);context.interpolationQuality = .none
+        context.draw(image,in:CGRect(x:0,y:0,width:width,height:height));context.flush()
+        var bottom = -1,left=width,right = -1
+        for y in stride(from:height-1,through:0,by:-1) {
+            if (0..<width).contains(where:{bytes[y*context.bytesPerRow+$0*4+3]>0}) {bottom=y;break}
+        }
+        guard bottom>=0 else {throw VideoError.review("游戏封面角色完全透明，不能生成没有主体的接触影")}
+        let rows=max(1,Int((CGFloat(height)*0.14).rounded(.up)))
+        for y in max(0,bottom-rows+1)...bottom {for x in 0..<width where bytes[y*context.bytesPerRow+x*4+3]>0 {
+            left=min(left,x);right=max(right,x)
+        }}
+        guard right>=left else {throw VideoError.review("游戏封面角色没有实际足底范围")}
+        let scale=min(placement.width/CGFloat(width),placement.height/CGFloat(height))
+        let imageX=placement.midX-CGFloat(width)*scale/2,imageY=placement.midY-CGFloat(height)*scale/2
+        let footprintWidth=CGFloat(right-left+1)*scale,shadowWidth=footprintWidth*1.10
+        let shadowHeight=max(2,min(CGFloat(height)*scale*0.075,shadowWidth*0.22))
+        let footX=imageX+CGFloat(left+right+1)*scale/2,footY=imageY+CGFloat(height-bottom-1)*scale
+        return CGRect(x:footX-shadowWidth/2,y:footY-shadowHeight*0.58,width:shadowWidth,height:shadowHeight)
+    }
+    private static func gameContactShadow(in rect:CGRect,c:CGContext) {
+        let colors=[color("173C34",alpha:0.32),color("173C34",alpha:0.18),color("173C34",alpha:0)]
+        guard let gradient=CGGradient(colorsSpace:CGColorSpace(name:CGColorSpace.sRGB),colors:colors as CFArray,locations:[0,0.48,1]) else{return}
+        c.saveGState();c.clip(to:rect)
+        c.translateBy(x:rect.midX,y:rect.midY);c.scaleBy(x:rect.width/2,y:rect.height/2)
+        c.drawRadialGradient(gradient,startCenter:.zero,startRadius:0,endCenter:.zero,endRadius:1,options:[])
+        c.restoreGState()
+    }
+    private static func game(_ image:CGImage?,hero:CGImage?,square s:CGRect,canvas:CGRect,variant:Int,titleBounds:CGRect,p:Palette,c:CGContext)throws {
         let d=s.width,aspect=hero.map{CGFloat($0.width)/CGFloat($0.height)} ?? 0.75
         let layout=gameDepthLayout(square:s,canvas:canvas,variant:variant,titleBounds:titleBounds,heroAspect:aspect)
         // The actual set is the whole cover, as in a normal game screenshot.
@@ -418,7 +454,8 @@ case .presenter:presenter(background,hero:hero,placement:placement,square:square
         if let image {draw(image,in:canvas,fill:true,context:c)}
         else {gradient(canvas,colors:[color("BEE3AC"),color("6BAF72")],locations:[0,1],c:c)}
         if let hero {
-            c.saveGState();c.setShadow(offset:CGSize(width:d*0.012,height:-d*0.012),blur:d*0.018,color:color("173C34",alpha:0.22));draw(hero,in:layout.hero,fill:false,context:c);c.restoreGState()
+            gameContactShadow(in:try gameContactShadowRect(artwork:hero,placement:layout.hero),c:c)
+            draw(hero,in:layout.hero,fill:false,context:c)
         }
         // A broad cream dialogue shape carries ONLY the topic, with native
         // dark lettering and colored keywords. No game-name label is added.
