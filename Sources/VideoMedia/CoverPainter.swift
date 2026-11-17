@@ -74,7 +74,8 @@ public enum CoverPainter {
         let square=CGRect(x:canvas.midX-side/2,y:canvas.midY-side/2,width:side,height:side)
         let variant=cover.template == .editorial ? 1:(cover.template == .contrast ? 2:0)
         let composition=try composeTitle(cover:cover,width:canvas.width,height:canvas.height)
-        let placement=presenterPlacement(square:square,variant:variant,titleBounds:composition.visibleBounds,pointing:cover.hero?.pointing)
+        let placement=presenterPlacement(square:square,variant:variant,titleBounds:composition.visibleBounds,
+            pointing:cover.hero?.pointing,imageAspect:hero.map{CGFloat($0.width)/CGFloat($0.height)})
         c.setFillColor(color(p.paper));c.fill(canvas)
         switch cover.style {
         case .pencil:try pencil(background,hero:hero,square:square,canvas:canvas,variant:variant,titleBounds:composition.visibleBounds,p:p,c:c)
@@ -387,7 +388,7 @@ case .presenter:presenter(background,hero:hero,placement:placement,square:square
             draw(image,in:prop,fill:false,context:c);c.restoreGState()
         }
         glow(canvas,center:CGPoint(x:canvas.midX,y:canvas.midY),radius:d*0.49,ink:"06102E",alpha:0.82,c:c)
-        if let hero {c.saveGState();c.setShadow(offset:CGSize(width:d*0.012,height:-d*0.012),blur:d*0.020,color:color("000000",alpha:0.64));draw(hero,in:placement.rect.offsetBy(dx:0,dy:d*0.028),fill:false,mirrored:placement.mirrored,context:c);c.restoreGState()}
+        if let hero {c.saveGState();c.setShadow(offset:CGSize(width:d*0.012,height:-d*0.012),blur:d*0.020,color:color("000000",alpha:0.64));draw(hero,in:placement.rect,fill:false,mirrored:placement.mirrored,context:c);c.restoreGState()}
     }
     static func gameDepthLayout(square s:CGRect,canvas:CGRect,variant:Int,titleBounds:CGRect,heroAspect:CGFloat=0.75)->GameDepthLayout {
         let d=s.width,bubble=gameDialogueBubble(square:s,canvas:canvas,variant:variant,titleBounds:titleBounds)
@@ -408,6 +409,32 @@ case .presenter:presenter(background,hero:hero,placement:placement,square:square
         let width=min(canvas.width-s.width*0.04,titleBounds.width+s.width*(variant == 2 ? 0.14:0.10))
         let height=titleBounds.height+s.width*(variant == 2 ? 0.05:0.035)
         return CGRect(x:canvas.midX-width/2,y:titleBounds.midY-height/2,width:width,height:height)
+    }
+    static func gameNoticeBoardFrame(square s:CGRect,canvas:CGRect,variant:Int,titleBounds:CGRect)->CGRect {
+        let paper=gameDialogueBubble(square:s,canvas:canvas,variant:variant,titleBounds:titleBounds)
+        return paper.insetBy(dx:-s.width*0.018,dy:-s.width*0.018)
+    }
+    private static func gameNoticeBoard(square s:CGRect,canvas:CGRect,variant:Int,titleBounds:CGRect,p:Palette,c:CGContext) {
+        let d=s.width,paper=gameDialogueBubble(square:s,canvas:canvas,variant:variant,titleBounds:titleBounds)
+        let frame=gameNoticeBoardFrame(square:s,canvas:canvas,variant:variant,titleBounds:titleBounds)
+        let radius=paper.height*(variant == 1 ? 0.10:(variant == 2 ? 0.22:0.16))
+        // The notice and wooden backing form one foreground unit. Supports
+        // belong behind that unit, never between the words and their paper.
+        for x in [frame.minX+frame.width*0.16,frame.maxX-frame.width*0.16] {
+            let post=CGRect(x:x-d*0.009,y:frame.minY-d*0.10,width:d*0.018,height:d*0.12)
+            gradient(post,colors:[color("A46F42"),color("D9AE73")],locations:[0,1],c:c)
+        }
+        c.saveGState();c.setShadow(offset:CGSize(width:0,height:-d*0.007),blur:d*0.011,color:color("364F32",alpha:0.20))
+        c.setFillColor(color("A97444"));c.addPath(CGPath(roundedRect:frame,cornerWidth:radius,cornerHeight:radius,transform:nil));c.fillPath();c.restoreGState()
+        let upper=frame.insetBy(dx:d*0.003,dy:d*0.003).offsetBy(dx:0,dy:d*0.002)
+        c.saveGState();c.addPath(CGPath(roundedRect:upper,cornerWidth:radius,cornerHeight:radius,transform:nil));c.clip()
+        gradient(upper,colors:[color("C9975C"),color("E8C58C")],locations:[0,1],c:c);c.restoreGState()
+        c.setFillColor(color(p.paper));c.addPath(CGPath(roundedRect:paper,cornerWidth:radius*0.75,cornerHeight:radius*0.75,transform:nil));c.fillPath()
+        let pin=d*0.006
+        c.setFillColor(color("805E3F"))
+        for x in [frame.minX+d*0.009,frame.maxX-d*0.009] {
+            c.fillEllipse(in:CGRect(x:x-pin/2,y:frame.midY-pin/2,width:pin,height:pin))
+        }
     }
     static func gameContactShadowRect(artwork image:CGImage,placement:CGRect)throws->CGRect {
         let width=image.width,height=image.height
@@ -446,7 +473,7 @@ case .presenter:presenter(background,hero:hero,placement:placement,square:square
         c.restoreGState()
     }
     private static func game(_ image:CGImage?,hero:CGImage?,square s:CGRect,canvas:CGRect,variant:Int,titleBounds:CGRect,p:Palette,c:CGContext)throws {
-        let d=s.width,aspect=hero.map{CGFloat($0.width)/CGFloat($0.height)} ?? 0.75
+        let aspect=hero.map{CGFloat($0.width)/CGFloat($0.height)} ?? 0.75
         let layout=gameDepthLayout(square:s,canvas:canvas,variant:variant,titleBounds:titleBounds,heroAspect:aspect)
         // The actual set is the whole cover, as in a normal game screenshot.
         // Volume comes from its original scene/materials/characters, not a
@@ -457,22 +484,12 @@ case .presenter:presenter(background,hero:hero,placement:placement,square:square
             gameContactShadow(in:try gameContactShadowRect(artwork:hero,placement:layout.hero),c:c)
             draw(hero,in:layout.hero,fill:false,context:c)
         }
-        // A broad cream dialogue shape carries ONLY the topic, with native
-        // dark lettering and colored keywords. No game-name label is added.
-        let bubble=gameDialogueBubble(square:s,canvas:canvas,variant:variant,titleBounds:titleBounds)
-        let radius=bubble.height*(variant == 1 ? 0.12:(variant == 2 ? 0.30:0.22))
-        c.saveGState();c.setShadow(offset:CGSize(width:0,height:-d*0.006),blur:d*0.010,color:color("364F32",alpha:0.16));c.setFillColor(color(p.paper))
-        c.addPath(CGPath(roundedRect:bubble,cornerWidth:radius,cornerHeight:radius,transform:nil));c.fillPath();c.restoreGState()
-        if let hero {
-            // Repaint only the original silhouette crossing the bubble's rim.
-            // The title's whole measured area stays in front and untouched;
-            // no invented window, source-image edit or duplicate character is
-            // needed to establish a foreground/background occlusion cue.
-            let titleGuard=titleBounds.insetBy(dx:-d*0.012,dy:-d*0.010)
-            c.saveGState();c.addRect(bubble);c.addRect(titleGuard);c.clip(using:.evenOdd)
-            draw(hero,in:layout.hero,fill:false,context:c);c.restoreGState()
-        }
+        // Complete the scene and IP first. Backing and notice are the final
+        // foreground unit; the only later drawing is the shared title text.
+        // An arm must never be repainted between its paper and its glyphs.
+        gameNoticeBoard(square:s,canvas:canvas,variant:variant,titleBounds:titleBounds,p:p,c:c)
     }
+
     private static func cartoon(_ image:CGImage?,hero:CGImage?,square s:CGRect,canvas:CGRect,variant:Int,p:Palette,c:CGContext) {
         let d=s.width
         c.setFillColor(color(p.secondary));polygon([CGPoint(x:0,y:0),CGPoint(x:canvas.width*0.44,y:0),CGPoint(x:canvas.width*0.32,y:canvas.height),CGPoint(x:0,y:canvas.height)],c:c)
@@ -761,20 +778,20 @@ case .presenter:presenter(background,hero:hero,placement:placement,square:square
         let alpha=CGFloat(bytes[3])/255
         return CGColor(colorSpace:CGColorSpace(name:CGColorSpace.sRGB)!,components:[CGFloat(bytes[0])/255/alpha,CGFloat(bytes[1])/255/alpha,CGFloat(bytes[2])/255/alpha,1])
     }
-    static func presenterPlacement(square s:CGRect,variant:Int,titleBounds:CGRect,pointing:CoverPointing?)->HeroPlacement {
-        let d=s.width,canvasWidth=d+s.minX*2,width=d*0.70,height=d*0.98
-        // The IP can share background space with the title; the title itself
-        // is painted last. Never shrink a person to the empty strip below it.
-        // Keep the actual leading hand beside the title. Clamping the whole
-        // silhouette inside the canvas used to push that finger underneath
-        // the final glyph. A cover may crop the outer hair/body at its edge.
-        let wide=canvasWidth>d*1.35
-        let left=wide ? titleBounds.minX-width+d*0.01:max(d*0.02,titleBounds.minX-width+d*0.06)
-        let right=wide ? titleBounds.maxX-d*0.01:min(canvasWidth-width-d*0.02,titleBounds.maxX-d*0.06)
-        let rect=CGRect(x:variant == 1 ? left:right,y:s.minY+d*0.005,width:width,height:height)
-        let target:CoverPointing=rect.midX<titleBounds.midX ? .right:.left
+    static func presenterPlacement(square s:CGRect,variant:Int,titleBounds:CGRect,pointing:CoverPointing?,imageAspect:CGFloat?=nil)->HeroPlacement {
+        let d=s.width,canvasWidth=d+s.minX*2,bleed=max(2,d*0.015)
+        let aspect=imageAspect.flatMap{$0.isFinite && $0>0 ? $0:nil} ?? (0.70/0.98)
+        let height=imageAspect == nil ? d*0.98:min(d*0.98,d*0.70/aspect)
+        let width=imageAspect == nil ? d*0.70:height*aspect
+        // hero is trimmed to its nonzero-alpha silhouette. Its exact aspect
+        // prevents fit-letterboxing below a cropped torso or at the outer arm.
+        // Slight bleed hides the cut edge while the gesture points inward.
+        let onLeft=variant == 1
+        let rect=CGRect(x:onLeft ? -bleed:canvasWidth-width+bleed,y:-bleed,width:width,height:height)
+        let target:CoverPointing=onLeft ? .right:.left
         return HeroPlacement(rect:rect,target:target,mirrored:pointing.map{$0 != target} ?? false)
     }
+
     /// Fit the actual silhouette, not the transparent generation canvas. This
     /// is an in-memory composition crop; source bytes and CAS identity stay
     /// untouched, and every nonzero-alpha pixel remains included.
