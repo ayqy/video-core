@@ -288,6 +288,15 @@ public struct AudioDiagnostics: Codable, Equatable, Sendable {
     public var envelope: [AudioEnvelopePoint]
     public var loudness:LoudnessDiagnostics? = nil
     public var containerDuration:Double? = nil
+    /// Optional decode accounting: old serialized diagnostics remain decodable.
+    /// Duration/levels above measure only actual PCM in the complete source
+    /// presentation interval; raw decoder drain is retained separately here.
+    public var rawDecodedPCMFrames:Int64? = nil
+    public var rawDecodedDuration:Double? = nil
+    public var presentedPCMFrames:Int64? = nil
+    public var outsidePlaybackStartPCMFrames:Int64? = nil
+    public var outsidePlaybackEndPCMFrames:Int64? = nil
+    public var readerCompleted:Bool? = nil
     public var measurement: String { "sample_peak_and_unweighted_rms_dbfs_not_lufs" }
     public var warnings: [String] {
         var result: [String] = []

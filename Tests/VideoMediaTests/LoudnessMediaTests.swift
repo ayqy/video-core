@@ -1,9 +1,195 @@
 import XCTest
 import AVFoundation
 import VideoCore
-import VideoMedia
+@testable import VideoMedia
 
 final class LoudnessMediaTests:XCTestCase {
+    private func pcmBuffer(start:CMTime,frames:Int,sampleRate:Double=48000,sampleDuration:CMTime?=nil)throws->CMSampleBuffer {
+        let format=try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate:sampleRate,channels:1))
+        var block:CMBlockBuffer?
+        XCTAssertEqual(CMBlockBufferCreateWithMemoryBlock(allocator:kCFAllocatorDefault,memoryBlock:nil,
+            blockLength:frames*4,blockAllocator:kCFAllocatorDefault,customBlockSource:nil,
+            offsetToData:0,dataLength:frames*4,flags:0,blockBufferOut:&block),kCMBlockBufferNoErr)
+        let storage=try XCTUnwrap(block)
+        var values=[Float](repeating:0.1,count:frames)
+        if frames>0 {values[frames-1]=1} // An out-of-range tail must not inflate measured levels.
+        XCTAssertEqual(values.withUnsafeBytes {CMBlockBufferReplaceDataBytes(with:$0.baseAddress!,blockBuffer:storage,
+            offsetIntoDestination:0,dataLength:frames*4)},kCMBlockBufferNoErr)
+        var timing=CMSampleTimingInfo(duration:sampleDuration ?? CMTime(value:1,timescale:CMTimeScale(sampleRate)),
+            presentationTimeStamp:start,decodeTimeStamp:.invalid)
+        var result:CMSampleBuffer?
+        XCTAssertEqual(CMSampleBufferCreateReady(allocator:kCFAllocatorDefault,dataBuffer:storage,
+            formatDescription:format.formatDescription,sampleCount:frames,sampleTimingEntryCount:1,
+            sampleTimingArray:&timing,sampleSizeEntryCount:0,sampleSizeArray:nil,sampleBufferOut:&result),noErr)
+        return try XCTUnwrap(result)
+    }
+
+    private func selection(_ buffer:CMSampleBuffer,range:CMTimeRange)throws->Range<Int> {
+        try AudioInspection.presentedFrameRange(buffer:buffer,sampleRate:48000,playbackRange:range)
+    }
+
+    private func attachTrim(_ time:CMTime,to buffer:CMSampleBuffer,key:CFString)throws {
+        let value=try XCTUnwrap(CMTimeCopyAsDictionary(time,allocator:kCFAllocatorDefault))
+        CMSetAttachment(buffer,key:key,value:value,attachmentMode:kCMAttachmentMode_ShouldPropagate)
+    }
+
+    func testCoreMediaTrimAttachmentsChangePlaybackClockWithoutMovingRawPCM()throws {
+        let rawStart=CMTime(value:-3,timescale:48000)
+        let buffer=try pcmBuffer(start:rawStart,frames:8)
+        let block=try XCTUnwrap(CMSampleBufferGetDataBuffer(buffer))
+        func contents()throws->Data {
+            var bytes=Data(count:CMBlockBufferGetDataLength(block))
+            let result=bytes.withUnsafeMutableBytes {CMBlockBufferCopyDataBytes(block,atOffset:0,
+                dataLength:$0.count,destination:$0.baseAddress!)}
+            XCTAssertEqual(result,kCMBlockBufferNoErr)
+            return bytes
+        }
+        let original=try contents()
+        let trimStart=try XCTUnwrap(CMTimeCopyAsDictionary(CMTime(value:3,timescale:48000),allocator:kCFAllocatorDefault))
+        let trimEnd=try XCTUnwrap(CMTimeCopyAsDictionary(CMTime(value:1,timescale:48000),allocator:kCFAllocatorDefault))
+        CMSetAttachment(buffer,key:kCMSampleBufferAttachmentKey_TrimDurationAtStart,
+            value:trimStart,attachmentMode:kCMAttachmentMode_ShouldPropagate)
+        CMSetAttachment(buffer,key:kCMSampleBufferAttachmentKey_TrimDurationAtEnd,
+            value:trimEnd,attachmentMode:kCMAttachmentMode_ShouldPropagate)
+        XCTAssertEqual(CMTimeCompare(CMSampleBufferGetPresentationTimeStamp(buffer),rawStart),0)
+        XCTAssertEqual(CMTimeCompare(CMSampleBufferGetDuration(buffer),CMTime(value:8,timescale:48000)),0)
+        XCTAssertEqual(CMTimeCompare(CMSampleBufferGetOutputPresentationTimeStamp(buffer),.zero),0)
+        XCTAssertEqual(CMTimeCompare(CMSampleBufferGetOutputDuration(buffer),CMTime(value:4,timescale:48000)),0)
+        XCTAssertEqual(CMSampleBufferGetNumSamples(buffer),8)
+        XCTAssertEqual(CMBlockBufferGetDataLength(block),8*MemoryLayout<Float>.size)
+        XCTAssertEqual(try contents(),original,"trim附件描述解码后的播放范围，没有移动原PCM样本索引")
+    }
+
+    func testTrimmedPlaybackUsesRawPCMIndexAndIntersectsBothPlaybackWindows()throws {
+        let buffer=try pcmBuffer(start:CMTime(value:-3,timescale:48000),frames:8)
+        try attachTrim(CMTime(value:3,timescale:48000),to:buffer,key:kCMSampleBufferAttachmentKey_TrimDurationAtStart)
+        try attachTrim(CMTime(value:1,timescale:48000),to:buffer,key:kCMSampleBufferAttachmentKey_TrimDurationAtEnd)
+        let complete=CMTimeRange(start:CMTime(value:-10,timescale:48000),duration:CMTime(value:20,timescale:48000))
+        XCTAssertEqual(try selection(buffer,range:complete),3..<7,"宽源区间也不能把trim前后的原样本送入计量")
+        let inside=CMTimeRange(start:CMTime(value:1,timescale:48000),duration:CMTime(value:2,timescale:48000))
+        XCTAssertEqual(try selection(buffer,range:inside),4..<6,"源播放范围与缓冲output范围共同限制真实样本")
+        let after=CMTimeRange(start:CMTime(value:4,timescale:48000),duration:CMTime(value:4,timescale:48000))
+        XCTAssertEqual(try selection(buffer,range:after),7..<7,"零交集不得保留恰好end的样本")
+    }
+
+    func testEntirePrimingOrDrainBufferHasNoPresentedSamples()throws {
+        let range=CMTimeRange(start:.zero,duration:CMTime(value:16,timescale:48000))
+        let priming=try pcmBuffer(start:.zero,frames:8)
+        try attachTrim(CMTime(value:8,timescale:48000),to:priming,key:kCMSampleBufferAttachmentKey_TrimDurationAtStart)
+        XCTAssertEqual(try selection(priming,range:range),8..<8)
+        let drain=try pcmBuffer(start:.zero,frames:8)
+        try attachTrim(CMTime(value:8,timescale:48000),to:drain,key:kCMSampleBufferAttachmentKey_TrimDurationAtEnd)
+        XCTAssertEqual(try selection(drain,range:range),0..<0)
+        XCTAssertEqual(CMSampleBufferGetNumSamples(priming),8)
+        XCTAssertEqual(CMSampleBufferGetNumSamples(drain),8,"空播放区间保留完整原始解码计数，不补零")
+    }
+
+    func testUnsupportedPCMClockTransformsAreRejectedInsteadOfGuessingSamplePositions()throws {
+        let range=CMTimeRange(start:.zero,duration:CMTime(value:8,timescale:48000))
+        let speed=try pcmBuffer(start:.zero,frames:8)
+        CMSetAttachment(speed,key:kCMSampleBufferAttachmentKey_SpeedMultiplier,
+            value:NSNumber(value:2),attachmentMode:kCMAttachmentMode_ShouldPropagate)
+        XCTAssertThrowsError(try selection(speed,range:range))
+        let reverse=try pcmBuffer(start:.zero,frames:8)
+        CMSetAttachment(reverse,key:kCMSampleBufferAttachmentKey_Reverse,
+            value:kCFBooleanTrue,attachmentMode:kCMAttachmentMode_ShouldPropagate)
+        XCTAssertThrowsError(try selection(reverse,range:range))
+        let shifted=try pcmBuffer(start:.zero,frames:8)
+        XCTAssertEqual(CMSampleBufferSetOutputPresentationTimeStamp(shifted,newValue:CMTime(value:1,timescale:48000)),noErr)
+        XCTAssertThrowsError(try selection(shifted,range:range))
+        let unmodified=try pcmBuffer(start:.zero,frames:8)
+        CMSetAttachment(unmodified,key:kCMSampleBufferAttachmentKey_SpeedMultiplier,
+            value:NSNumber(value:1),attachmentMode:kCMAttachmentMode_ShouldPropagate)
+        CMSetAttachment(unmodified,key:kCMSampleBufferAttachmentKey_Reverse,
+            value:kCFBooleanFalse,attachmentMode:kCMAttachmentMode_ShouldPropagate)
+        XCTAssertEqual(try selection(unmodified,range:range),0..<8)
+    }
+
+    func testInvalidPCMTrimAndClockMetadataAreRejected()throws {
+        let range=CMTimeRange(start:.zero,duration:CMTime(value:8,timescale:48000))
+        for trim in [CMTime(value:-1,timescale:48000),CMTime(value:9,timescale:48000),CMTime.invalid] {
+            let buffer=try pcmBuffer(start:.zero,frames:8)
+            try attachTrim(trim,to:buffer,key:kCMSampleBufferAttachmentKey_TrimDurationAtStart)
+            XCTAssertThrowsError(try selection(buffer,range:range))
+        }
+        let malformed=try pcmBuffer(start:.zero,frames:8)
+        CMSetAttachment(malformed,key:kCMSampleBufferAttachmentKey_TrimDurationAtStart,
+            value:"not a time" as CFString,attachmentMode:kCMAttachmentMode_ShouldPropagate)
+        XCTAssertThrowsError(try selection(malformed,range:range))
+        let wrongClock=try pcmBuffer(start:.zero,frames:8,sampleDuration:CMTime(value:2,timescale:48000))
+        XCTAssertThrowsError(try selection(wrongClock,range:range))
+        XCTAssertThrowsError(try AudioInspection.presentedFrameRange(bufferStart:.invalid,frameCount:8,
+            sampleRate:48000,playbackRange:range))
+        XCTAssertThrowsError(try AudioInspection.presentedFrameRange(bufferStart:.zero,frameCount:8,
+            sampleRate:48000,playbackRange:CMTimeRange(start:.zero,duration:.indefinite)))
+    }
+
+    func testPCMBufferPresentationRangeUsesExactHalfOpenSampleBoundaries()throws {
+        let crossing=try pcmBuffer(start:CMTime(value:-3,timescale:48000),frames:8)
+        let range=CMTimeRange(start:.zero,duration:CMTime(value:4,timescale:48000))
+        XCTAssertEqual(try selection(crossing,range:range),3..<7,
+            "只选0、1、2、3号源采样；负PTS与恰好end的样本都在原播放区间外")
+        let fractional=CMTimeRange(start:CMTime(value:1,timescale:96000),
+            duration:CMTime(value:12,timescale:96000))
+        let start=try pcmBuffer(start:.zero,frames:8)
+        XCTAssertEqual(try selection(start,range:fractional),1..<7,
+            "半采样边界必须精确ceil，不把源最后一个合法样本四舍五入丢掉")
+        XCTAssertEqual(try selection(start,range:range),0..<4)
+        XCTAssertEqual(try selection(try pcmBuffer(start:CMTime(value:4,timescale:48000),frames:8),range:range),0..<0)
+        XCTAssertEqual(try selection(try pcmBuffer(start:CMTime(value:-8,timescale:48000),frames:8),range:range),8..<8)
+    }
+
+    func testDecoderTailOutsideActualPlaybackDoesNotBecomeSourceOrLoudnessSamples()throws {
+        // Synthetic PCM packet reproduces the measured clocks, not product audio.
+        let packet=try pcmBuffer(start:CMTime(value:974848,timescale:48000),frames:7684)
+        let source=CMTimeRange(start:.zero,duration:CMTime(value:490752,timescale:24000))
+        let selected=try selection(packet,range:source)
+        XCTAssertEqual(selected,0..<6656)
+        XCTAssertEqual(CMSampleBufferGetNumSamples(packet)-selected.count,1028)
+        let storage=try XCTUnwrap(CMSampleBufferGetDataBuffer(packet))
+        var values=[Float](repeating:0,count:7684)
+        XCTAssertEqual(values.withUnsafeMutableBytes {CMBlockBufferCopyDataBytes(storage,atOffset:0,
+            dataLength:7684*4,destination:$0.baseAddress!)},kCMBlockBufferNoErr)
+        var meter=try AudioMeter(sampleRate:48000,channels:1)
+        var loudness=try LoudnessMeter(channels:1)
+        let presented=Array(values[selected])
+        try meter.append(presented);try loudness.append(presented)
+        let measured=try meter.finish(),levels=try loudness.finish()
+        XCTAssertEqual(measured.duration,6656.0/48000,accuracy:1.0/48000)
+        XCTAssertEqual(measured.clippedSamples,0)
+        XCTAssertEqual(measured.peakDBFS,-20,accuracy:0.001)
+        XCTAssertEqual(levels.totalBlocks,0,"区间外drain不能凑成额外的400ms测量块")
+    }
+
+    func testActualWAVRetainsEveryPresentedSampleAndDecodeAccounting()async throws {
+        let root=FileManager.default.temporaryDirectory.appendingPathComponent("presented-wav-"+UUID().uuidString)
+        try FileManager.default.createDirectory(at:root,withIntermediateDirectories:true)
+        defer{try? FileManager.default.removeItem(at:root)}
+        let url=root.appendingPathComponent("authored.wav")
+        try file(url,seconds:1.125)
+        let before=try Data(contentsOf:url)
+        let measured=try await AudioInspection.inspect(url)
+        XCTAssertEqual(try Data(contentsOf:url),before)
+        XCTAssertEqual(measured.readerCompleted,true)
+        XCTAssertEqual(measured.presentedPCMFrames,54000)
+        XCTAssertEqual(measured.rawDecodedPCMFrames,54000)
+        XCTAssertEqual(measured.outsidePlaybackStartPCMFrames,0)
+        XCTAssertEqual(measured.outsidePlaybackEndPCMFrames,0)
+        XCTAssertEqual(measured.duration,1.125,accuracy:1.0/48000)
+        XCTAssertEqual(try XCTUnwrap(measured.rawDecodedDuration),1.125,accuracy:1.0/48000)
+    }
+
+    func testHistoricalDiagnosticsDecodeWithoutNewOptionalAccountingFields()throws {
+        var meter=try AudioMeter(sampleRate:48000,channels:1)
+        try meter.append([Float](repeating:0.1,count:480))
+        let original=try meter.finish()
+        let legacy=try Codec.data(original)
+        let decoded=try Codec.decoder().decode(AudioDiagnostics.self,from:legacy)
+        XCTAssertEqual(decoded,original)
+        XCTAssertNil(decoded.rawDecodedPCMFrames)
+        XCTAssertNil(decoded.readerCompleted)
+    }
+
     private func file(_ url:URL,sampleRate:Double=48000,seconds:Double=2,silence:Bool=false)throws {
         let format=try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate:sampleRate,channels:1))
         let file=try AVAudioFile(forWriting:url,settings:format.settings)

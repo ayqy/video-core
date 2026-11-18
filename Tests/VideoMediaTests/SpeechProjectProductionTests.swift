@@ -68,6 +68,16 @@ final class SpeechProjectProductionTests: XCTestCase {
         XCTAssertEqual(value.object?["state"],.string("needs_review"));let d=try repo.read()
         XCTAssertEqual(d.assets.count,1);XCTAssertEqual(d.evidence.count,1);XCTAssertFalse(d.projects[0].current.scenes[0].voice!.listened)
         XCTAssertEqual(d.projects[0].current.scenes[0].voice?.durationFrames,30)
+        let measured=try await AudioInspection.inspect(repo.assetURL(a))
+        XCTAssertEqual(measured.readerCompleted,true)
+        XCTAssertEqual(measured.presentedPCMFrames,48000)
+        XCTAssertEqual(measured.rawDecodedPCMFrames,48000)
+        XCTAssertEqual(measured.outsidePlaybackStartPCMFrames,0)
+        XCTAssertEqual(measured.outsidePlaybackEndPCMFrames,0)
+        XCTAssertEqual(measured.duration,1,accuracy:1.0/48000)
+        XCTAssertEqual(measured.containerDuration,1)
+        XCTAssertEqual(d.projects[0].current.scenes[0].voice?.textDigest,
+                       try d.projects[0].current.scenes[0].speechDigest())
         let replay=try await producer.perform(q,repository:repo,principal:"owner");XCTAssertEqual(value,replay)
         var changed=q;changed.requestID=Codec.id();changed.baseRevision=d.projects[0].current.id
         try Data("tampered".utf8).write(to:repo.assetURL(a))

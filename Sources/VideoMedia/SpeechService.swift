@@ -17,18 +17,110 @@ public struct SpeechProduction: Sendable {
 
 /// Streams decoded 48kHz mono/stereo through independent raw-sample and BS.1770 meters; never changes the source file.
 public enum AudioInspection {
+    private static func finiteTime(_ value:CMTime)->Bool {
+        value.isValid && value.timescale>0 && value.seconds.isFinite
+    }
+
+    /// Select actual PCM frames whose presentation timestamps lie in the source
+    /// track's complete half-open playback range. Ceil is needed at both ends:
+    /// a frame beginning exactly at the end belongs to the following interval.
+    /// Keep rational CMTime arithmetic through conversion to the sample clock.
+    static func presentedFrameRange(bufferStart:CMTime,frameCount:Int,sampleRate:Double,
+                                    playbackRange:CMTimeRange)throws->Range<Int> {
+        let end=CMTimeRangeGetEnd(playbackRange)
+        guard frameCount>=0,sampleRate.isFinite,sampleRate>0,sampleRate<=Double(Int32.max),
+              sampleRate.rounded()==sampleRate,finiteTime(bufferStart),finiteTime(playbackRange.start),
+              finiteTime(playbackRange.duration),finiteTime(end),
+              CMTimeCompare(playbackRange.start,end)<=0 else {
+            throw VideoError.invalid("解码PCM时间戳、采样时钟或完整源播放区间无效")
+        }
+        let rate=Int32(sampleRate)
+        func boundary(_ time:CMTime)throws->Int {
+            let delta=CMTimeSubtract(time,bufferStart)
+            let frames=CMTimeConvertScale(delta,timescale:rate,method:.roundTowardPositiveInfinity)
+            guard finiteTime(frames),frames.timescale==rate else {
+                throw VideoError.invalid("完整源播放边界无法精确映射到PCM采样时钟")
+            }
+            return Int(min(Int64(frameCount),max(0,frames.value)))
+        }
+        let lower=try boundary(playbackRange.start),upper=try boundary(end)
+        guard lower<=upper else {throw VideoError.invalid("完整源PCM播放区间倒置")}
+        return lower..<upper
+    }
+
+    /// Raw PCM index zero stays at the original PTS even when trim attachments
+    /// advance the output PTS. Only the overlap of source and buffer playback
+    /// ranges is measured; the decoder's original bytes are still read to EOF.
+    static func presentedFrameRange(buffer:CMSampleBuffer,sampleRate:Double,
+                                    playbackRange:CMTimeRange)throws->Range<Int> {
+        let frames=CMSampleBufferGetNumSamples(buffer)
+        guard frames>=0,sampleRate.isFinite,sampleRate>0,sampleRate<=Double(Int32.max),
+              sampleRate.rounded()==sampleRate else {throw VideoError.invalid("解码PCM采样时钟无效")}
+        let rawPTS=CMSampleBufferGetPresentationTimeStamp(buffer),rawDuration=CMSampleBufferGetDuration(buffer)
+        let pcmDuration=CMTime(value:Int64(frames),timescale:Int32(sampleRate))
+        guard finiteTime(rawPTS),finiteTime(rawDuration),CMTimeCompare(rawDuration,pcmDuration)==0 else {
+            throw VideoError.invalid("解码PCM原始时间戳或时长与实际采样帧时钟不一致")
+        }
+        func trim(_ key:CFString)throws->CMTime {
+            guard let value=CMGetAttachment(buffer,key:key,attachmentModeOut:nil) else{return .zero}
+            guard CFGetTypeID(value)==CFDictionaryGetTypeID() else {throw VideoError.invalid("PCM裁剪附件不是有效CMTime")}
+            let time=CMTimeMakeFromDictionary(value as! CFDictionary)
+            guard finiteTime(time),CMTimeCompare(time,.zero)>=0 else {throw VideoError.invalid("PCM裁剪时长无效")}
+            return time
+        }
+        let trimStart=try trim(kCMSampleBufferAttachmentKey_TrimDurationAtStart)
+        let trimEnd=try trim(kCMSampleBufferAttachmentKey_TrimDurationAtEnd)
+        let trimmed=CMTimeAdd(trimStart,trimEnd)
+        guard finiteTime(trimmed),CMTimeCompare(trimmed,rawDuration)<=0 else {throw VideoError.invalid("PCM裁剪范围超过原始缓冲")}
+        if let value=CMGetAttachment(buffer,key:kCMSampleBufferAttachmentKey_SpeedMultiplier,attachmentModeOut:nil) {
+            guard CFGetTypeID(value)==CFNumberGetTypeID(),let speed=value as? NSNumber,speed.doubleValue==1 else {
+                throw VideoError.invalid("PCM计量不支持变速缓冲，请先导出正常播放音频")
+            }
+        }
+        if let value=CMGetAttachment(buffer,key:kCMSampleBufferAttachmentKey_Reverse,attachmentModeOut:nil) {
+            guard CFGetTypeID(value)==CFBooleanGetTypeID(),CFEqual(value,kCFBooleanFalse) else {
+                throw VideoError.invalid("PCM计量不支持逆播缓冲，请先导出正常播放音频")
+            }
+        }
+        let outputPTS=CMSampleBufferGetOutputPresentationTimeStamp(buffer)
+        let outputDuration=CMSampleBufferGetOutputDuration(buffer)
+        let expectedPTS=CMTimeAdd(rawPTS,trimStart),expectedDuration=CMTimeSubtract(rawDuration,trimmed)
+        guard finiteTime(outputPTS),finiteTime(outputDuration),finiteTime(expectedPTS),finiteTime(expectedDuration),
+              CMTimeCompare(outputDuration,.zero)>=0,CMTimeCompare(outputPTS,expectedPTS)==0,
+              CMTimeCompare(outputDuration,expectedDuration)==0 else {
+            throw VideoError.invalid("PCM输出时钟无效或含未支持的显式时间偏移")
+        }
+        let sourceEnd=CMTimeRangeGetEnd(playbackRange),outputEnd=CMTimeAdd(outputPTS,outputDuration)
+        guard finiteTime(playbackRange.start),finiteTime(playbackRange.duration),finiteTime(sourceEnd),
+              finiteTime(outputEnd),CMTimeCompare(playbackRange.start,sourceEnd)<=0 else {
+            throw VideoError.invalid("PCM完整源或输出播放区间无效")
+        }
+        let start=CMTimeCompare(playbackRange.start,outputPTS)<0 ? outputPTS:playbackRange.start
+        let end=CMTimeCompare(sourceEnd,outputEnd)<0 ? sourceEnd:outputEnd
+        let duration=CMTimeCompare(start,end)<0 ? CMTimeSubtract(end,start):CMTime.zero
+        return try presentedFrameRange(bufferStart:rawPTS,frameCount:frames,sampleRate:sampleRate,
+            playbackRange:CMTimeRange(start:start,duration:duration))
+    }
+
     public static func inspect(_ url: URL,policy:AudioQualityPolicy = .init()) async throws -> AudioDiagnostics {
         try policy.validate()
         let asset = AVURLAsset(url: url)
-        let duration = try await asset.load(.duration).seconds
+        let assetDuration = try await asset.load(.duration)
+        let duration = assetDuration.seconds
         guard duration.isFinite, duration > 0, duration <= 3600 else { throw VideoError.invalid("音频实长无效或超过一小时") }
         guard let track = try await asset.loadTracks(withMediaType: .audio).first else { throw VideoError.invalid("文件没有真实音轨") }
+        let trackRange=try await track.load(.timeRange)
+        let playback=CMTimeRangeGetIntersection(trackRange,otherRange:CMTimeRange(start:.zero,duration:assetDuration))
+        guard playback.start.seconds.isFinite,playback.duration.seconds.isFinite,playback.duration.seconds>0 else {
+            throw VideoError.invalid("音轨与完整原容器没有有效的实际播放区间")
+        }
         let reader = try AVAssetReader(asset: asset)
         let settings: [String: Any] = [AVFormatIDKey: kAudioFormatLinearPCM, AVSampleRateKey:48000, AVLinearPCMIsFloatKey: true, AVLinearPCMBitDepthKey: 32, AVLinearPCMIsBigEndianKey: false, AVLinearPCMIsNonInterleaved: false]
         let output = AVAssetReaderTrackOutput(track: track, outputSettings: settings); output.alwaysCopiesSampleData = false
         guard reader.canAdd(output) else { throw VideoError.unavailable("当前音频格式不能解码检查，请转换为WAV或M4A") }
         reader.add(output); guard reader.startReading() else { throw VideoError.invalid("音频解码未启动") }
         var meter: AudioMeter?;var loudness:LoudnessMeter?; var format: (Double, Int)?
+        var rawFrames:Int64=0,presentedFrames:Int64=0,outsideStart:Int64=0,outsideEnd:Int64=0
         do {
             while let buffer = output.copyNextSampleBuffer() {
                 try Task.checkCancellation()
@@ -40,15 +132,30 @@ public enum AudioInspection {
                 let current = (asbd.mSampleRate, Int(asbd.mChannelsPerFrame))
                 if let format { guard format.0 == current.0, format.1 == current.1 else { throw VideoError.invalid("音轨中途变更采样格式，需先转换为一致格式") } }
                 else { format = current; meter = try AudioMeter(sampleRate: current.0, channels: current.1);loudness=try LoudnessMeter(sampleRate:current.0,channels:current.1,policy:policy) }
-                let length = CMBlockBufferGetDataLength(block)
-                guard length <= 32 * 1024 * 1024, length % MemoryLayout<Float>.size == 0 else { throw VideoError.invalid("解码音频缓冲范围异常") }
+                let length = CMBlockBufferGetDataLength(block),frames=CMSampleBufferGetNumSamples(buffer)
+                let channels=current.1
+                guard channels>0,channels<=32,frames<=32*1024*1024/MemoryLayout<Float>.size/channels,
+                      length <= 32 * 1024 * 1024,length==frames*channels*MemoryLayout<Float>.size,
+                      Int(asbd.mBytesPerFrame)==channels*MemoryLayout<Float>.size else { throw VideoError.invalid("解码音频缓冲范围或实际PCM采样帧数异常") }
+                let selected=try presentedFrameRange(buffer:buffer,sampleRate:current.0,playbackRange:playback)
+                rawFrames+=Int64(frames);presentedFrames+=Int64(selected.count)
+                outsideStart+=Int64(selected.lowerBound);outsideEnd+=Int64(frames-selected.upperBound)
                 var values = [Float](repeating: 0, count: length / MemoryLayout<Float>.size)
                 let status = values.withUnsafeMutableBytes { bytes in CMBlockBufferCopyDataBytes(block, atOffset: 0, dataLength: length, destination: bytes.baseAddress!) }
                 guard status == kCMBlockBufferNoErr else { throw VideoError.invalid("无法读取解码音频采样") }
-                try meter?.append(values);try loudness?.append(values)
+                // Reader EOF and raw counts still cover every decoded buffer.
+                // Decoder priming/drain outside the asset's real playback range
+                // is not source content, and is never written back to the MP3.
+                let presented=Array(values[(selected.lowerBound*channels)..<(selected.upperBound*channels)])
+                try meter?.append(presented);try loudness?.append(presented)
             }
             guard reader.status == .completed, var meter,var loudness else { throw VideoError.invalid("音频解码中断或没有有效采样") }
-            var diagnostics=try meter.finish();diagnostics.loudness=try loudness.finish();diagnostics.containerDuration=duration;return diagnostics
+            var diagnostics=try meter.finish();diagnostics.loudness=try loudness.finish();diagnostics.containerDuration=duration
+            diagnostics.rawDecodedPCMFrames=rawFrames;diagnostics.rawDecodedDuration=Double(rawFrames)/format!.0
+            diagnostics.presentedPCMFrames=presentedFrames
+            diagnostics.outsidePlaybackStartPCMFrames=outsideStart;diagnostics.outsidePlaybackEndPCMFrames=outsideEnd
+            diagnostics.readerCompleted=true
+            return diagnostics
         } catch { reader.cancelReading(); throw error }
     }
 }
