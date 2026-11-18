@@ -2,10 +2,10 @@
 
 VideoFree source export · package_free.py · version 1
 
-生成时间：2026-11-17 19:15:37 北京时间
+生成时间：2026-11-18 23:09:17 北京时间
 
-- 源码与必要元数据：365个文件；27282711字节（不含本清单）。
-- 整体内容指纹：`1cef8ed66cdc53bb68691554a2e5abb7421ffa7d5915e48206818d8141d375ab`。
+- 源码与必要元数据：365个文件；27282334字节（不含本清单）。
+- 整体内容指纹：`7879a461cbd9abc41c7ab759349a7b8de80932a056240d1f3d64ad5df78aa85d`。
 - 来源：受控原始工程中的逐文件白名单；Package.swift、唯一免费制作workflow与README均来自Distribution/Free精确模板。
 - 本包不含.git，不可作为新业务checkout；本清单生成过程不执行构建、设备验收、签名安装或公共上传，各阶段以独立证据为准。
 - 排除：App、VideoGame、VideoCartoon、Premium、高级实现运行时测试、私有仓库地址、凭据、客户数据、缓存、日志及媒体过程产物。
@@ -14,7 +14,7 @@ VideoFree source export · package_free.py · version 1
 
 | SHA-256 | 字节数 | 包内路径 / 原工程来源 |
 |---|---:|---|
-| b6a3244a21f90ae06d69c78eaf5605214d8cf76e97333c6e3dd0115587e3cec6 | 86043 | .github/workflows/free-production.yml |
+| 73573fb8037d98ae61667fafd4dbe3f8c7ec448e8293d5c146c8b1fc1b1eff9d | 84984 | .github/workflows/free-production.yml |
 | ac90de9132befb9227282c230671875edb7fd8dc4297999fc39622ea7efe3644 | 52964 | Integrations/README.md |
 | 28833193551aa06befb3bc0fc30b69ef87f74cccae39895f4242af4321d717dd | 15308 | Integrations/actor_motion.py |
 | 39dd8274ff1e6b0649acb63281087a1144e1f4a4e0eed3dc2b92e10df2cbd121 | 28488 | Integrations/asset_reuse.py |
@@ -235,7 +235,7 @@ VideoFree source export · package_free.py · version 1
 | a10eed97164e8f7f6f897692b3eb88e410e27ec8b6aaba7a9ea6193832917618 | 12474 | Sources/VideoMedia/PencilBuiltinAssets.swift |
 | f8e7a922c35553073b6fbbeadf88f98339bbe59aae04ed73f646bd4ba2b72fab | 36632 | Sources/VideoMedia/PluginProcess.swift |
 | 314d0ef065fd07193d19200b8075886cb573d6601479fa4160b9c8ee31faa478 | 19527 | Sources/VideoMedia/PluginRPCServer.swift |
-| b6ecc97e5f3e179f6c4daf869b94f8e8310868d84336400e11e57f0e9dff44fd | 2742 | Sources/VideoMedia/PluginXPCServer.swift |
+| fe0e944685364dc73d08c3f82f1a0a695324be3f395806c1299e1a0200f0e029 | 3424 | Sources/VideoMedia/PluginXPCServer.swift |
 | 9b5a83d4b5f2d3ee77ca26d518268e9bd25b01d767d43d558b30d32a1948814a | 2806 | Sources/VideoMedia/Preview.swift |
 | 4eccc0ef4b35ea271e2ce6333c42c694567e76617cab5e83238ac601879e5af2 | 8745 | Sources/VideoMedia/ProviderClient.swift |
 | f5aacbebebab273379616f4889ededbfe5f7a8f4ca39ada829e495fd3fa84cc1 | 10429 | Sources/VideoMedia/RemoteJobs.swift |

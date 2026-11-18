@@ -27,26 +27,26 @@ jobs:
           ref: ${{ github.sha }}
           persist-credentials: false
 
-      - name: Verify exact scale UI payloads and preserved baseline
+      - name: Verify bounded XPC file limit fix and preserved365 payloads
         shell: bash
         run: |
           python3 -B - <<'PYCODE'
           from pathlib import Path
           import base64, hashlib, os, re, struct, subprocess
           root=Path(os.environ["GITHUB_WORKSPACE"])
-          BASE='d78f36c70ec08ddb9457169739fe6b022cecd41d'
-          REVIEWED=set(['.github/workflows/free-production.yml', 'NOTICE', 'Sources/VideoMedia/CoverPainter.swift', 'Sources/VideoMedia/DataPresentationPainter.swift', 'Sources/VideoMedia/Painter.swift', 'Sources/VideoMedia/VisualCache.swift', 'Tests/VideoMediaTests/CoverMediaTests.swift', 'Tests/VideoMediaTests/DataPresentationPainterTests.swift'])
-          ADDED=set(['Sources/VideoMedia/CommunityNoticeBoardArtwork.swift', 'Sources/VideoMedia/IslandTheme.swift', 'Sources/VideoMedia/IslandTypeface.swift', 'Tests/VideoMediaTests/IslandCoverTests.swift', 'Tests/VideoMediaTests/IslandThemeTests.swift', 'ThirdParty/Fonts/ChillRoundF/ChillRoundF-v3.0.ttf', 'ThirdParty/Fonts/ChillRoundF/LICENSE', 'ThirdParty/Fonts/ChillRoundF/SOURCE.md', 'ThirdParty/Fonts/ChillRoundF/UPSTREAM-README.md', 'ThirdParty/UI/AnimalIslandUI/Modal.vue', 'ThirdParty/UI/AnimalIslandUI/SOURCE.md', 'ThirdParty/UI/AnimalIslandUI/modal.module.less', 'ThirdParty/UI/AnimalIslandUI/popover.module.less', 'ThirdParty/UI/AnimalIslandUI/upstream-package.json', 'ThirdParty/UI/AnimalIslandUI/variables.less', 'ThirdParty/UI/CommunityNoticeBoard/SOURCE.md', 'scripts/embed_island_typeface.py'])
+          BASE='d29aacbd743671ffa4be9cc36fb951b23cbe5397'
+          REVIEWED=set(['.github/workflows/free-production.yml', 'Sources/VideoMedia/PluginXPCServer.swift'])
+          ADDED=set()
           FONT_FILES={'Sources/VideoMedia/IslandTypeface.swift': (4868996, 'd2ec2f7edbdee750871f5ae5573a4f712fe7fe90b5460d58cd7347b28f0c8f72'), 'ThirdParty/Fonts/ChillRoundF/ChillRoundF-v3.0.ttf': (6168772, '7dae804b344f7bc1a1c8426b9515e9b54d7baac3e123263d0bae94d0a305a732'), 'Sources/VideoMedia/CoverTypeface.swift': (2197018, 'cf4f47e54fb55606755e65b1f837697edca6ac3bd8f3a67497ebea9514bfb82d'), 'ThirdParty/Fonts/SmileySans/SmileySans-Oblique.ttf': (2629764, 'b447d7e781f08bc95c4c9f23ba71ed2b8ebb639aa7184485c71c4ca5afcd25c4'), 'Sources/VideoMedia/CoverDisplayTypeface.swift': (1564881, '8e2500a885e85ea6f28faa3dd36ce6c860b8d2c216089832cb4616e2e92783b8'), 'ThirdParty/Fonts/DouyinSans/DouyinSansBold.ttf': (1919404, 'fbecfacdfac33982774e301073a8d357a09c698cd3134bb6ddec0f5bfc268fa1')}
           FONT_LICENSES={'ThirdParty/Fonts/ChillRoundF/LICENSE': (4375, 'd45891f8adfd21368c98e803603df1f575ff3fc4a6ec713ba7ccf0e3cba15b28'), 'ThirdParty/Fonts/SmileySans/LICENSE': (4422, '9401f4050f1b66c26b6ccdc8b0e14a3c1cc37aac122eda84386f25854a9bec72'), 'ThirdParty/Fonts/DouyinSans/LICENSE': (4455, 'a6d5700a002ea32bcfbe3310253d603997683dac8ac63777e375d06c07c30ea6')}
           FONT_BINARIES=set(['ThirdParty/Fonts/ChillRoundF/ChillRoundF-v3.0.ttf', 'ThirdParty/Fonts/DouyinSans/DouyinSansBold.ttf', 'ThirdParty/Fonts/SmileySans/SmileySans-Oblique.ttf'])
           FONT_TOTAL=19348835
           METADATA=set(['.gitignore', 'docs/.nojekyll', 'docs/index.html', 'docs/privacy.html', 'docs/site.css', 'docs/support.html', 'docs/terms.html'])
           EXPECTED_COUNT=365
-          BASE_MANIFEST_SHA='9eda8e416ab80e77b59248a0e62debde3fc3b9d2fec5d38aaf4b890623261408'
-          BASE_FINGERPRINT='728b7bbda586e9098999bc862c21d7c842284c39966e3a8afca10b00a44563b0'
-          UNCHANGED_COUNT=340
-          UNCHANGED_FINGERPRINT='b9d6571336bdd638ddb6b1bd311a812e904ba7875866b027f429330fb837c21a'
+          BASE_MANIFEST_SHA='3f4548c5c6e8ce0635c8d2dd20c1c915db270f5fe9cc53eb9f02333365f16215'
+          BASE_FINGERPRINT='1cef8ed66cdc53bb68691554a2e5abb7421ffa7d5915e48206818d8141d375ab'
+          UNCHANGED_COUNT=363
+          UNCHANGED_FINGERPRINT='337f9583d97150d2f2c7dcd5dacf1ac8d66de3c150e359a7cfe35862ab9593fc'
 
           def rows(raw):
               result=re.findall(r'(?m)^\| ([a-f0-9]{64}) \| ([0-9]+) \| ([^|\n]+) \|$',raw.decode())
@@ -82,7 +82,7 @@ jobs:
           raw=subprocess.check_output(['git','show',BASE+':SOURCE-MANIFEST.md'],cwd=root)
           assert hashlib.sha256(raw).hexdigest()==BASE_MANIFEST_SHA
           baseline=rows(raw)
-          assert len(baseline)==348 and fingerprint(baseline)==BASE_FINGERPRINT
+          assert len(baseline)==365 and fingerprint(baseline)==BASE_FINGERPRINT
           assert not set(baseline)&ADDED and not REVIEWED&ADDED
           assert set(current)==set(baseline)|ADDED and set(baseline)-set(current)==set()
           assert {name for name in baseline if current[name]!=baseline[name]}==REVIEWED
@@ -92,14 +92,14 @@ jobs:
           assert all((root/name).read_bytes()==subprocess.check_output(['git','show',BASE+':'+name],cwd=root) for name in METADATA)
           assert '整体内容指纹：`'+fingerprint(current)+'`' in manifest.decode()
           assert 'Package.swift' not in REVIEWED|ADDED
-          assert {name for name in REVIEWED|ADDED if name.endswith('.py')}=={'scripts/embed_island_typeface.py'}
+          assert {name for name in REVIEWED|ADDED if name.endswith('.py')}==set()
           board=(root/'Sources/VideoMedia/CommunityNoticeBoardArtwork.swift').read_text()
           encoded=re.findall(r'private static let encoded = """\n(.*?)\n"""',board,re.S)
           assert len(encoded)==1
           png=base64.b64decode(''.join(encoded[0].split()),validate=True)
           assert hashlib.sha256(png).hexdigest()=='ee4831de0254aae28c7d3b6ac1affc097b52c73555c502f54df903f9ec0df4ae'
           assert png[:8]==b'\x89PNG\r\n\x1a\n' and struct.unpack('>II',png[16:24])==(1672,941) and png[25]==6
-          print('public_payloads='+str(len(current))+' direct_baseline_payloads=348 additions='+str(len(ADDED))+' removals=0 reviewed_changed='+str(len(REVIEWED))+' unchanged='+str(len(unchanged)))
+          print('public_payloads='+str(len(current))+' direct_baseline_payloads=365 additions='+str(len(ADDED))+' removals=0 reviewed_changed='+str(len(REVIEWED))+' unchanged='+str(len(unchanged)))
           print('current_payload_sha256='+fingerprint(current)+' unchanged_sha256='+fingerprint(unchanged))
           print('complete_embedded_board_original_verified=true fixed_font_originals_and_licenses_verified=true source_baseline='+BASE)
           PYCODE

@@ -29,15 +29,34 @@ private final class PluginXPCDelegate:NSObject,NSXPCListenerDelegate {
         connection.resume();return true
     }
 }
+
+enum PluginXPCResourceLimits {
+    static let maximumFileBytes = rlim_t(32 * 1024 * 1024)
+
+    // Optional framework caches must receive EFBIG at the unchanged file limit,
+    // rather than terminating the invocation-private rendering process.
+    static func install() -> Bool {
+        var action = sigaction()
+        action.__sigaction_u.__sa_handler = SIG_IGN
+        guard sigemptyset(&action.sa_mask) == 0,
+              sigaction(SIGXFSZ, &action, nil) == 0 else { return false }
+        func ceiling(_ resource: Int32, _ value: rlim_t) -> Bool {
+            var limit = rlimit(rlim_cur: value, rlim_max: value)
+            return setrlimit(resource, &limit) == 0
+        }
+        return ceiling(RLIMIT_CPU, rlim_t(4 * 60 * 60))
+            && ceiling(RLIMIT_FSIZE, maximumFileBytes)
+            && ceiling(RLIMIT_NOFILE, rlim_t(128))
+            && ceiling(RLIMIT_CORE, rlim_t(0))
+    }
+}
+
 /// launchd creates the separate entitlement domain. No inherited sandbox, paths or keys.
 public enum PluginXPCServer {
     public static func run(exchange:@escaping @Sendable(Data,@escaping @Sendable(Data)->Void)->Void)->Never {
         guard let name=Bundle.main.bundleIdentifier,PluginNativeCode.validService(name) else{_exit(78)}
         // Hard resource ceilings are per process. They do not claim a RAM or user-wide process quota.
-        for (resource,value) in [(RLIMIT_CPU,rlim_t(4*60*60)),(RLIMIT_FSIZE,rlim_t(32*1024*1024)),(RLIMIT_NOFILE,rlim_t(128)),(RLIMIT_CORE,rlim_t(0))] {
-            var limit=rlimit(rlim_cur:value,rlim_max:value)
-            guard setrlimit(resource,&limit)==0 else{_exit(78)}
-        }
+        guard PluginXPCResourceLimits.install() else { _exit(78) }
         let delegate=PluginXPCDelegate(service:name,handler:exchange),listener=NSXPCListener.service()
         listener.delegate=delegate
         withExtendedLifetime(delegate){listener.resume();RunLoop.current.run()}
