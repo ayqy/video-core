@@ -13,6 +13,7 @@ import plistlib
 import re
 import subprocess
 
+from backup_snapshot import read_backup
 from frozen_speech import FrozenSpeech
 from knowledge_story import _plan, _last_tick
 from production_workflow import ProductionWorkflow, data, need, read, save, sha, unpack
@@ -354,9 +355,7 @@ class DocumentProduction(ProductionWorkflow):
         response=self.invoke('backup create',dict(request_id=self.uid('material-snapshot-'+label)))
         artifact=response['artifacts'][0];raw=Path(artifact['path']).read_bytes()
         need(sha(raw)==artifact['sha256'],'normal material snapshot artifact differs')
-        archive=plistlib.loads(raw)
-        need(sha(archive['snapshot'])==archive['digest'],'normal material snapshot digest differs')
-        return json.loads(archive['snapshot'])
+        return read_backup(raw)[1]
 
     def import_materials(self,source_project):
         spec=self.document.value.get('sdk_import')

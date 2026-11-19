@@ -20,6 +20,7 @@ import uuid
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "Integrations"))
+from backup_snapshot import read_backup
 from knowledge_story import record_sources, apply_presentation
 from examples.knowledge_exchange import SUBJECTS, protocol_models, story_plan, presentation
 
@@ -96,9 +97,8 @@ def _action_cost_scene(identity, subjects, story):
 def snapshot(path):
     raw = path.read_bytes()
     need(len(raw) <= 16 * 1024 * 1024, "unexpectedly large author-only backup")
-    envelope = plistlib.loads(raw)
-    need(sha(envelope["snapshot"]) == envelope["digest"], "normal backup snapshot hash differs")
-    return json.loads(envelope["snapshot"]), envelope
+    envelope, value = read_backup(raw, maximum_bytes=16 * 1024 * 1024)
+    return value, envelope
 
 
 def _delivery_scene(identity, subjects, story, frames):

@@ -20,6 +20,7 @@ import tempfile
 import uuid
 import zlib
 
+from backup_snapshot import read_backup
 
 def png():
     def chunk(kind,raw):
@@ -158,8 +159,7 @@ def main():
         assert 'native_decoded_frames=30 animated_pixels=red_green_red static_crop=green' in decoded.stdout
         backup=call('normal-backup','backup create')
         assert len(backup['artifacts'])==1
-        archive_path=Path(backup['artifacts'][0]['path']);archive=plistlib.loads(archive_path.read_bytes())
-        assert hashlib.sha256(archive['snapshot']).hexdigest()==archive['digest']
+        archive_path=Path(backup['artifacts'][0]['path']);read_backup(archive_path.read_bytes())
         call('independent-normal-restore','backup restore',dict(path=str(archive_path)),target=restored)
         roundtrip=project(wid,pid,target=restored)
         assert roundtrip['revisions']==current['revisions']

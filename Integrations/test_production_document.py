@@ -6,6 +6,7 @@ import tempfile
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
+import zlib
 
 import production_document as document_module
 import production_workflow as workflow_module
@@ -395,6 +396,21 @@ class FrozenSpeechTests(unittest.TestCase):
             result=FrozenSpeech(self.witness(ordinary=ordinary),self.voice,self.receipt,self.plan)
             self.assertEqual(result.timed['frames'],480)
             self.assertEqual(result.boundaries_sha256,'a'*64)
+
+    def test_compressed_complete_backup_keeps_the_original_voice_axis_and_history(self):
+        witness=self.witness(ordinary=True)
+        path=Path(witness['backup']['path']);value=plistlib.loads(path.read_bytes())
+        original=value['snapshot'];encoder=zlib.compressobj(wbits=-15)
+        value.update(version=3,snapshot=encoder.compress(original)+encoder.flush(),
+                     snapshotEncoding='deflate-raw-v1',snapshotBytes=len(original))
+        path.write_bytes(plistlib.dumps(value));witness['backup']['sha256']=sha(path.read_bytes())
+        result=FrozenSpeech(witness,self.voice,self.receipt,self.plan)
+        self.assertEqual(result.timed['frames'],480)
+        self.assertEqual(result.boundaries_sha256,'a'*64)
+        value['snapshot']+=b'\0';path.write_bytes(plistlib.dumps(value))
+        witness['backup']['sha256']=sha(path.read_bytes())
+        with self.assertRaisesRegex(ValueError,'trailing bytes'):
+            FrozenSpeech(witness,self.voice,self.receipt,self.plan)
 
     def test_mismatched_spoken_shot_axis_rejects_even_when_caption_and_backup_agree(self):
         self.records['speech-axis']['axis']['segments'][0]['shot_id']='wrong-shot'

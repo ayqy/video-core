@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 import fcntl
 import hashlib
 import io
+import inspect
 import json
 import math
 import os
@@ -31,6 +32,8 @@ import wave
 import zipfile
 from zoneinfo import ZoneInfo
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from backup_snapshot import read_backup
 
 # Content first: no filename, cache inventory or downloaded asset defines it.
 TITLE = "放对三颗，才算完成"
@@ -206,6 +209,8 @@ class Recipe:
     def __init__(self, binary, expected, out, cache):
         self.binary, self.expected, self.out, self.cache = binary, expected, out, cache
         self.source_sha = sha(Path(__file__).read_bytes())
+        self.snapshot_helper = Path(inspect.getfile(read_backup)).resolve()
+        self.snapshot_helper_sha = sha(self.snapshot_helper.read_bytes())
         require(binary.is_file() and sha(binary.read_bytes()) == expected, "CLI SHA256不符")
         cache.mkdir(parents=True, exist_ok=True)
         self.lock = (cache / "recipe.lock").open("a+b")
@@ -222,10 +227,12 @@ class Recipe:
         self.store.execute("CREATE TABLE IF NOT EXISTS steps (name TEXT PRIMARY KEY, input TEXT NOT NULL, response TEXT)")
         self.store.execute("CREATE TABLE IF NOT EXISTS identity (name TEXT PRIMARY KEY, value TEXT NOT NULL)")
         identity = canonical(dict(version=RECIPE_VERSION, recipe_source_sha256=self.source_sha,
+                                  backup_decoder_sha256=self.snapshot_helper_sha,
                                   binary=expected, out=str(out), shots=SHOTS))
         row = self.store.execute("SELECT value FROM identity WHERE name='recipe'").fetchone()
         previous_identity = canonical(dict(version=RECIPE_VERSION,
-            recipe_source_sha256=SOURCE_REUSE_PREVIOUS_RECIPE_SHA, binary=expected, out=str(out), shots=SHOTS))
+            recipe_source_sha256=SOURCE_REUSE_PREVIOUS_RECIPE_SHA, backup_decoder_sha256=self.snapshot_helper_sha,
+            binary=expected, out=str(out), shots=SHOTS))
         require(row is None or row[0] in (identity, previous_identity),
                 "配方输入、CLI或目标变化；不改已有制作现场")
         self.store.execute("INSERT OR IGNORE INTO identity VALUES ('recipe',?)", (identity,))
@@ -242,6 +249,7 @@ class Recipe:
     def invoke(self, name, cmd, payload=None, *, target=True, dry=False, timeout=120, fresh=False):
         require(sha(self.binary.read_bytes()) == self.expected, "CLI调用期间已变化")
         require(sha(Path(__file__).read_bytes()) == self.source_sha, "配方源码在运行期间已变化，保留原现场")
+        require(sha(self.snapshot_helper.read_bytes()) == self.snapshot_helper_sha, "备份解码器在运行期间已变化，保留原现场")
         body = copy.deepcopy(payload or {})
         body.setdefault("request_id", self.uid(name))
         target = self.work if target is True else target
@@ -394,9 +402,7 @@ def review_boundary(database):
 
 
 def validate_restoration(backup, original_root, restored_root):
-    archive = plistlib.loads(backup.read_bytes())
-    require(sha(archive["snapshot"]) == archive["digest"], "备份封套摘要不符")
-    expected = json.loads(archive["snapshot"])
+    archive, expected = read_backup(backup.read_bytes())
     for root in (original_root, restored_root):
         actual = inspect_snapshot(root / "workspace.sqlite")
         review_boundary(actual)

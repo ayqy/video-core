@@ -142,8 +142,8 @@ public final class ManagedReleaseInstaller {
     }
     private func semanticDigest(_ backup:Data)throws->String {
         let value=try PropertyListDecoder().decode(Repository.Backup.self,from:backup)
-        guard value.version==2,Codec.hash(value.snapshot)==value.digest else{throw VideoError.invalid("更新备份封套或摘要不符")}
-        var snapshot=try Codec.decoder().decode(Database.self,from:value.snapshot);snapshot.generation=0;snapshot.providers=[]
+        guard [2,3].contains(value.version) else{throw VideoError.invalid("更新备份封套版本不符")}
+        var snapshot=try Codec.decoder().decode(Database.self,from:value.decodedSnapshot());snapshot.generation=0;snapshot.providers=[]
         struct Fingerprint:Encodable{var snapshot:Database;var assets:[String:String];var exports:[String:String]}
         return try Codec.digest(Fingerprint(snapshot:snapshot,assets:value.assets.mapValues(Codec.hash),exports:(value.exports ?? [:]).mapValues(Codec.hash)))
     }

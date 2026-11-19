@@ -11,6 +11,7 @@ import json
 from pathlib import Path
 import plistlib
 
+from backup_snapshot import read_backup
 from story_planning import StoryPlan
 from knowledge_story import _trace
 
@@ -57,11 +58,13 @@ class FrozenSpeech:
             raw = path.read_bytes()
             need(digest(raw) == row['sha256'], 'retained witness hash differs: ' + name)
             self.paths.append(path.resolve())
-            records[name] = plistlib.loads(raw)
+            if name == 'backup':
+                records[name], backup_snapshot = read_backup(raw)
+            else:
+                records[name] = plistlib.loads(raw)
         prepared, archive = records['prepared'], records['backup']
-        need(archive['version'] == 2 and digest(archive['snapshot']) == archive['digest'],
-             'complete retained backup snapshot digest differs')
-        snapshot = json.loads(archive['snapshot'])
+        need(archive['version'] in (2, 3), 'complete retained backup version differs')
+        snapshot = backup_snapshot
         targets = [p for p in snapshot['projects'] if p['id'] == prepared['project_id']]
         need(len(targets) == 1 and len(targets[0]['revisions'][-1]['scenes']) == 1, 'one original voice scene required')
         revision = targets[0]['revisions'][-1]

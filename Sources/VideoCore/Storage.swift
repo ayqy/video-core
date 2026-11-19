@@ -329,7 +329,19 @@ public final class Repository: @unchecked Sendable {
               sha256.map({actualDigest==$0}) ?? true else{throw VideoError.review("工作区文件缺失、变化或摘要不符")}
         return data
     }
-    public struct Backup: Codable { public var version: Int; public var snapshot: Data; public var digest: String; public var assets: [String: Data]; public var exports: [String:Data]?; public var visualCache:[String:Data]?=nil }
+    public struct Backup: Codable {
+        public var version: Int; public var snapshot: Data; public var digest: String
+        public var assets: [String: Data]; public var exports: [String:Data]?
+        public var visualCache:[String:Data]?=nil
+        public var snapshotEncoding:String?=nil
+        public var snapshotBytes:Int?=nil
+        /// Decode and authenticate the original JSON bytes before reading any
+        /// business fields. The expanded-snapshot ceiling is new for v3.
+        public func decodedSnapshot() throws -> Data {
+            try BackupSnapshotCodec.decode(version:version,snapshot:snapshot,
+                encoding:snapshotEncoding,snapshotBytes:snapshotBytes,digest:digest)
+        }
+    }
     private func backupVisualCache(availableBytes:Int)throws->[String:Data]? {
         var files:[String:Data]=[:],remaining=min(availableBytes,VisualCacheBackup.maximumBytes)
         guard remaining>0 else{return nil}
@@ -363,17 +375,31 @@ public final class Repository: @unchecked Sendable {
         }}
         let data=try Codec.data(clean)
         let visualCache=try backupVisualCache(availableBytes:300*1024*1024-bytes)
-        return try PropertyListEncoder().encode(Backup(version: 2, snapshot: data, digest: Codec.hash(data), assets: assets,exports:exports,visualCache:visualCache))
+        guard data.count <= BackupSnapshotCodec.maximumSnapshotBytes else {
+            throw VideoError.invalid("备份JSON快照展开超过350MiB，请保留原工程")
+        }
+        var backup=Backup(version:2,snapshot:data,digest:Codec.hash(data),assets:assets,exports:exports,visualCache:visualCache)
+        if data.count >= BackupSnapshotCodec.minimumCompressionBytes {
+            let compressed=try BackupSnapshotCodec.compress(data)
+            if compressed.count < data.count {
+                backup.version=3;backup.snapshot=compressed
+                backup.snapshotEncoding=BackupSnapshotCodec.encoding;backup.snapshotBytes=data.count
+            }
+        }
+        let encoded=try PropertyListEncoder().encode(backup)
+        guard encoded.count <= 350*1024*1024 else {throw VideoError.invalid("备份封套超过350MiB，请保留原工程")}
+        return encoded
     }
     public static func restore(_ data: Data, to root: URL) throws -> Repository {
         guard data.count <= 350 * 1024 * 1024 else { throw VideoError.invalid("备份过大") }
-        let b = try PropertyListDecoder().decode(Backup.self, from: data); guard [1,2].contains(b.version), b.digest == Codec.hash(b.snapshot) else { throw VideoError.invalid("备份版本或完整性校验失败") }
-        var state = try Codec.decoder().decode(Database.self, from: b.snapshot); try state.validate()
+        let b = try PropertyListDecoder().decode(Backup.self, from: data)
+        let snapshot=try b.decodedSnapshot()
+        var state = try Codec.decoder().decode(Database.self, from: snapshot); try state.validate()
         guard !FileManager.default.fileExists(atPath: root.path) else { throw VideoError.conflict("恢复目标必须是新目录，避免覆盖已有数据") }
         // Every portable file must be referenced by the frozen business snapshot.
         // Reject extras before Repository creates a directory or writes any bytes.
         let expectedAssets=Set(state.assets.map(\.relativePath))
-        let expectedExports:Set<String> = b.version==2 ? Set(state.jobs.flatMap{$0.artifacts.map(\.path)}):[]
+        let expectedExports:Set<String> = b.version>=2 ? Set(state.jobs.flatMap{$0.artifacts.map(\.path)}):[]
         guard Set(b.assets.keys)==expectedAssets,Set((b.exports ?? [:]).keys)==expectedExports else {
             throw VideoError.invalid("备份文件集合与源素材或历史产物引用不一致；请从原工程重新准备完整备份，未写入恢复目录")
         }

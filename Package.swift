@@ -14,7 +14,7 @@ let package = Package(
     targets: [
         .systemLibrary(name: "CSQLite"),
         .systemLibrary(name: "CZlib"),
-        .target(name: "VideoCore", dependencies: ["CSQLite"]),
+        .target(name: "VideoCore", dependencies: ["CSQLite", "CZlib"]),
         .target(name: "VideoMedia", dependencies: ["VideoCore", "CZlib"]),
         .executableTarget(name: "VideoCLI", dependencies: ["VideoCore", "VideoMedia"]),
         .executableTarget(name: "VideoInstall", dependencies: ["VideoCore", "VideoMedia"]),

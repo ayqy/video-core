@@ -22,6 +22,7 @@ import sqlite3
 import subprocess
 import uuid
 
+from backup_snapshot import read_backup
 from knowledge_story import record_sources,apply_presentation,_last_tick,_trace
 from readaloud_tts import inspect_mp3,read_word_boundaries
 from story_speech import retime_presentation
@@ -235,7 +236,7 @@ class ProductionWorkflow:
         owner=self.author if inspect.ismodule(self.author) or inspect.isclass(self.author) else type(self.author)
         paths.append(Path(inspect.getfile(owner)).resolve())
         paths += [ROOT/'Integrations'/name for name in
-                  ('knowledge_story.py','story_speech.py','speech_plan_alignment.py','story_action.py','story_planning.py','readaloud_tts.py')]
+                  ('knowledge_story.py','story_speech.py','speech_plan_alignment.py','story_action.py','story_planning.py','readaloud_tts.py','backup_snapshot.py')]
         paths += [Path(p).resolve() for p in self.implementation_inputs()]
         paths += [Path(p).resolve() for p in self.EXTRA_INPUTS]
         return paths
@@ -581,16 +582,13 @@ class ProductionWorkflow:
         self.invoke('backup restore',dict(path=str(self.out/'complete.videobackup')),directory=self.home/'restored')
         need(self.invoke('doctor',directory=self.home/'restored')['state']=='succeeded','independent restore doctor failed')
         restored=unpack(self.invoke('projects list',dict(workspace_id=self.ws),directory=self.home/'restored'))
-        original_archive=plistlib.loads(raw);original_snapshot=json.loads(original_archive['snapshot'])
-        need(sha(original_archive['snapshot'])==original_archive['digest']
-            and restored==original_snapshot['projects'],'independent restoration changed complete source/target histories')
+        original_archive,original_snapshot=read_backup(raw)
+        need(restored==original_snapshot['projects'],'independent restoration changed complete source/target histories')
         restored_backup=self.invoke('backup create',directory=self.home/'restored')['artifacts'][0]
-        restored_archive=plistlib.loads(Path(restored_backup['path']).read_bytes())
-        restored_snapshot=json.loads(restored_archive['snapshot'])
+        restored_archive,restored_snapshot=read_backup(Path(restored_backup['path']).read_bytes())
         # Restoring is one normal database transaction. Its generation advances
         # exactly once; every business row and original asset remains identical.
-        need(sha(restored_archive['snapshot'])==restored_archive['digest']
-            and restored_snapshot.get('generation')==original_snapshot.get('generation',0)+1
+        need(restored_snapshot.get('generation')==original_snapshot.get('generation',0)+1
             and {k:v for k,v in restored_snapshot.items() if k!='generation'}==
                 {k:v for k,v in original_snapshot.items() if k!='generation'}
             and restored_archive['assets']==original_archive['assets'],

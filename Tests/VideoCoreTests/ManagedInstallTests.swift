@@ -57,9 +57,13 @@ final class ManagedInstallTests:XCTestCase {
 
     func testInstallAndUpdatePreserveAllBYOKConfigurationOutsidePortableBackups()throws {
         let source=try source(),slot=directory(),profile=provider()
-        try source.transaction{$0.providers=[profile]}
+        try source.transaction{
+            $0.providers=[profile]
+            $0.terminology["完整压缩备份边界"]=String(repeating:"原样词条/UTF-8；",count:70000)
+        }
         let portable=try PropertyListDecoder().decode(Repository.Backup.self,from:source.backup())
-        XCTAssertTrue(try Codec.decoder().decode(Database.self,from:portable.snapshot).providers.isEmpty)
+        XCTAssertEqual(portable.version,3)
+        XCTAssertTrue(try Codec.decoder().decode(Database.self,from:portable.decodedSnapshot()).providers.isEmpty)
         var probes=0
         let preserving=installer{_,data,_ in
             probes+=1
