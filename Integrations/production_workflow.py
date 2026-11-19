@@ -22,7 +22,7 @@ import sqlite3
 import subprocess
 import uuid
 
-from backup_snapshot import read_backup
+from backup_snapshot import read_backup_file, file_identity, member_identities, copy_verified_file
 from knowledge_story import record_sources,apply_presentation,_last_tick,_trace
 from readaloud_tts import inspect_mp3,read_word_boundaries
 from story_speech import retime_presentation
@@ -577,21 +577,23 @@ class ProductionWorkflow:
         save(self.home/'media-verified.plist',dict(voice_sha256=sha(self.voice.read_bytes()),
             video_sha256=sha(video.read_bytes()),source_head_correlation=head,source_tail_correlation=tail,
             full_av_decode=True,frames=state['frames']))
-        backup=self.invoke('backup create');a=backup['artifacts'][0];raw=Path(a['path']).read_bytes()
-        need(sha(raw)==a['sha256'],'normal complete backup bytes differ');(self.out/'complete.videobackup').write_bytes(raw)
+        backup=self.invoke('backup create');a=backup['artifacts'][0];path=Path(a['path'])
+        identity={k:a[k] for k in ('bytes','sha256')}
+        need(file_identity(path)==identity,'normal complete backup bytes differ')
+        original_archive,original_snapshot=read_backup_file(path)
+        copy_verified_file(path,self.out/'complete.videobackup',expected=identity)
         self.invoke('backup restore',dict(path=str(self.out/'complete.videobackup')),directory=self.home/'restored')
         need(self.invoke('doctor',directory=self.home/'restored')['state']=='succeeded','independent restore doctor failed')
         restored=unpack(self.invoke('projects list',dict(workspace_id=self.ws),directory=self.home/'restored'))
-        original_archive,original_snapshot=read_backup(raw)
         need(restored==original_snapshot['projects'],'independent restoration changed complete source/target histories')
         restored_backup=self.invoke('backup create',directory=self.home/'restored')['artifacts'][0]
-        restored_archive,restored_snapshot=read_backup(Path(restored_backup['path']).read_bytes())
+        restored_archive,restored_snapshot=read_backup_file(Path(restored_backup['path']))
         # Restoring is one normal database transaction. Its generation advances
         # exactly once; every business row and original asset remains identical.
         need(restored_snapshot.get('generation')==original_snapshot.get('generation',0)+1
             and {k:v for k,v in restored_snapshot.items() if k!='generation'}==
                 {k:v for k,v in original_snapshot.items() if k!='generation'}
-            and restored_archive['assets']==original_archive['assets'],
+            and member_identities(restored_archive,'assets')==member_identities(original_archive,'assets'),
             'independent restoration changed an asset, source recording, original voice, quote or job')
         evidence=dict(frames=state['frames'],voice_sha256=sha(self.voice.read_bytes()),video_sha256=sha(video.read_bytes()),
             job_id=status['job_id'],revision_id=state['revision_id'],source_head_correlation=head,source_tail_correlation=tail,

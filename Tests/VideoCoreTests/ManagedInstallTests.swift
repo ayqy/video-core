@@ -55,6 +55,16 @@ final class ManagedInstallTests:XCTestCase {
     }
     private struct Licence:Encodable {var id="license-test";var subject="isolated-test";var pluginIDs:Set<String>=["video.game"];var issuedAt=Date().addingTimeInterval(-1000);var expiresAt:Date?=Date().addingTimeInterval(1000);var revoked:Bool}
 
+    func testInstallerRetainsVersionFourFileBackupWithCompleteSemanticDigest()throws {
+        let source=try source(),slot=directory()
+        let result=try installer().install(package:package(build:1),slot:slot,data:source.root)
+        let before=root(result).deletingLastPathComponent().appendingPathComponent("before.videobackup")
+        let handle=try FileHandle(forReadingFrom:before);defer{try? handle.close()}
+        XCTAssertEqual(try handle.read(upToCount:8),Data("VIDBAK04".utf8))
+        XCTAssertEqual(try Repository.backupSemanticDigest(from:before),try source.backupSemanticDigest())
+        XCTAssertEqual(try Repository(root:root(result),readOnly:true).backupSemanticDigest(),try source.backupSemanticDigest())
+    }
+
     func testInstallAndUpdatePreserveAllBYOKConfigurationOutsidePortableBackups()throws {
         let source=try source(),slot=directory(),profile=provider()
         try source.transaction{

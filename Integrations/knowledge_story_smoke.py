@@ -20,7 +20,7 @@ import uuid
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "Integrations"))
-from backup_snapshot import read_backup
+from backup_snapshot import read_backup_file, member_identities
 from knowledge_story import record_sources, apply_presentation
 from examples.knowledge_exchange import SUBJECTS, protocol_models, story_plan, presentation
 
@@ -95,9 +95,7 @@ def _action_cost_scene(identity, subjects, story):
 
 
 def snapshot(path):
-    raw = path.read_bytes()
-    need(len(raw) <= 16 * 1024 * 1024, "unexpectedly large author-only backup")
-    envelope, value = read_backup(raw, maximum_bytes=16 * 1024 * 1024)
+    envelope, value = read_backup_file(path, maximum_bytes=16 * 1024 * 1024)
     return value, envelope
 
 
@@ -353,7 +351,8 @@ def run(binary, output, *, action_cost=False, delivery=False):
     restored_backup = artifact(call("backup create", directory=restored))
     after, restored_archive = snapshot(restored_backup)
     need(after["projects"] == before["projects"] and after["assets"] == before["assets"]
-         and after["jobs"] == before["jobs"] and restored_archive["assets"] == original_archive["assets"],
+         and after["jobs"] == before["jobs"]
+         and member_identities(restored_archive, 'assets') == member_identities(original_archive, 'assets'),
          "normal re-export changed actual source records, target revisions, assets or jobs")
     need(all(sha(path.read_bytes()) == expected for path, expected in pins.items()), "frozen inputs changed before completion")
     need(time.monotonic() <= deadline, "author-contract chain exceeded its 90-second deadline")

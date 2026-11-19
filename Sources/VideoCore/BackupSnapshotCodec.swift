@@ -8,12 +8,42 @@ import CZlib
 public enum BackupSnapshotCodec {
     public static let encoding = "deflate-raw-v1"
     public static let maximumSnapshotBytes = 350 * 1024 * 1024
+    /// A separate v4 file-container limit; legacy Data envelopes keep 350MiB.
+    public static let maximumStreamingSnapshotBytes = 1_000_000_000
+    public static let rawEncoding = "json-raw-v1"
     public static let minimumCompressionBytes = 1024 * 1024
     private static let chunkBytes = 64 * 1024
 
     public static func compress(_ snapshot: Data) throws -> Data {
         try process(snapshot, operation: COMPRESSION_STREAM_ENCODE,
+                    maximumInputBytes: maximumSnapshotBytes,
                     maximumOutputBytes: maximumSnapshotBytes, expectedOutputBytes: nil)
+    }
+
+    public static func compressStreamingSnapshot(_ snapshot: Data) throws -> Data {
+        try process(snapshot, operation: COMPRESSION_STREAM_ENCODE,
+                    maximumInputBytes: maximumStreamingSnapshotBytes,
+                    maximumOutputBytes: maximumStreamingSnapshotBytes + chunkBytes,
+                    expectedOutputBytes: nil)
+    }
+
+    public static func decodeStreamingSnapshot(_ snapshot: Data, encoding: String,
+                                              snapshotBytes: Int, digest: String) throws -> Data {
+        guard snapshotBytes > 0, snapshotBytes <= maximumStreamingSnapshotBytes,
+              !snapshot.isEmpty, snapshot.count <= maximumStreamingSnapshotBytes else {
+            throw VideoError.invalid("v4备份快照长度超过有界读取上限")
+        }
+        let decoded: Data
+        if encoding == rawEncoding {
+            guard snapshot.count == snapshotBytes else { throw VideoError.invalid("v4原始快照长度不符") }
+            decoded = snapshot
+        } else if encoding == Self.encoding {
+            guard snapshot.count < snapshotBytes else { throw VideoError.invalid("v4压缩快照没有压缩收益") }
+            decoded = try inflateExactly(snapshot, expectedBytes: snapshotBytes,
+                                         maximumBytes: maximumStreamingSnapshotBytes)
+        } else { throw VideoError.invalid("v4备份快照编码不支持") }
+        guard Codec.hash(decoded) == digest else { throw VideoError.invalid("v4备份快照完整性校验失败") }
+        return decoded
     }
 
     public static func decode(version: Int, snapshot: Data, encoding: String?,
@@ -31,7 +61,7 @@ public enum BackupSnapshotCodec {
                   count > 0, count <= maximumSnapshotBytes else {
                 throw VideoError.invalid("压缩备份快照编码或展开长度无效")
             }
-            decoded = try inflateExactly(snapshot, expectedBytes: count)
+            decoded = try inflateExactly(snapshot, expectedBytes: count, maximumBytes: maximumSnapshotBytes)
         default:
             throw VideoError.invalid("备份版本不支持")
         }
@@ -44,8 +74,8 @@ public enum BackupSnapshotCodec {
     /// Apple's Compression decoder can consume bytes after a raw DEFLATE end.
     /// zlib exposes the exact unused byte count, so a second stream or trailing
     /// data cannot be silently accepted as the declared original snapshot.
-    private static func inflateExactly(_ input: Data, expectedBytes: Int) throws -> Data {
-        guard !input.isEmpty, input.count <= maximumSnapshotBytes else {
+    private static func inflateExactly(_ input: Data, expectedBytes: Int, maximumBytes: Int) throws -> Data {
+        guard !input.isEmpty, input.count <= maximumBytes else {
             throw VideoError.invalid("备份快照流为空或超过有界读取上限")
         }
         var stream = z_stream()
@@ -90,9 +120,9 @@ public enum BackupSnapshotCodec {
     }
 
     private static func process(_ input: Data, operation: compression_stream_operation,
-                                maximumOutputBytes: Int, expectedOutputBytes: Int?) throws -> Data {
-        guard !input.isEmpty, input.count <= maximumSnapshotBytes,
-              maximumOutputBytes > 0, maximumOutputBytes <= maximumSnapshotBytes else {
+                                maximumInputBytes: Int, maximumOutputBytes: Int, expectedOutputBytes: Int?) throws -> Data {
+        guard !input.isEmpty, input.count <= maximumInputBytes,
+              maximumOutputBytes > 0, maximumOutputBytes <= maximumInputBytes + chunkBytes else {
             throw VideoError.invalid("备份快照流为空或超过有界读取上限")
         }
         let destination = UnsafeMutablePointer<UInt8>.allocate(capacity: chunkBytes)
@@ -113,6 +143,7 @@ public enum BackupSnapshotCodec {
             stream.src_size = source.count
             var output = Data()
             while true {
+                try Task.checkCancellation()
                 let remainingBefore = stream.src_size
                 stream.dst_ptr = destination
                 stream.dst_size = chunkBytes

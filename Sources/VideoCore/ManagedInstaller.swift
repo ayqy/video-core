@@ -60,7 +60,7 @@ public final class ManagedReleaseInstaller {
             // Both snapshots are immutable from the installer perspective; create a new rollback generation.
             // Newer business data remains in the previous active generation and is never deleted.
             return try withDataLock(current.url.appendingPathComponent("data")){
-                _=try checkedBackup(current.url.appendingPathComponent("data"))
+                _=try checkedRepository(current.url.appendingPathComponent("data")).backupSemanticDigest()
                 return try prepareAndActivate(operation:"rollback",manifest:old,document:try document(at:oldURL),sourceProgram:oldURL.appendingPathComponent("program"),sourceData:oldURL.appendingPathComponent("data"),slot:slot,previous:current.state.id,rollbackFloor:current.state.rollbackFloor,mergePolicyFrom:current.url.appendingPathComponent("data"))
             }
         }
@@ -88,13 +88,13 @@ public final class ManagedReleaseInstaller {
         // Move the unpublished staging pair to its final real path before restoring absolute artifact URLs.
         try fm.moveItem(at:temporary,to:generation)
         let dataRoot=generation.appendingPathComponent("data")
-        let before:Data,providers:[ProviderProfile]
+        let before=generation.appendingPathComponent("before.videobackup"),providers:[ProviderProfile]
         if let sourceData {
-            let source=try Repository(root:sourceData,readOnly:true);providers=try source.read().providers;before=try checkedBackup(sourceData)
-        }else{providers=[];let empty=try Repository(root:dataRoot);before=try empty.backup();try fm.removeItem(at:dataRoot)}
+            let source=try Repository(root:sourceData,readOnly:true);providers=try source.read().providers;_=try checkedBackup(sourceData,to:before)
+        }else{providers=[];let empty=try Repository(root:dataRoot);_=try empty.backup(to:before);try fm.removeItem(at:dataRoot)}
         let providerDigest=try providerConfigurationDigest(providers)
-        try before.write(to:generation.appendingPathComponent("before.videobackup"),options:.atomic)
-        let restored=try Repository.restore(before,to:dataRoot)
+        let beforeDigest=try Repository.backupSemanticDigest(from:before)
+        let restored=try Repository.restore(from:before,to:dataRoot)
         if !providers.isEmpty{try restored.transaction{$0.providers=providers}}
         try mergePolicies(from:sourceData,additional:mergePolicyFrom,to:dataRoot)
         // Rollback restores the old business snapshot, but never resurrects a superseded or
@@ -103,24 +103,24 @@ public final class ManagedReleaseInstaller {
         let licence=try independentLicense(at:mergePolicyFrom ?? sourceData)
         if let licence{try licence.write(to:dataRoot.appendingPathComponent("independent.videolicense"),options:.atomic)}
         let highestPolicies=try policies(dataRoot)
-        let after=try restored.backup()
-        guard try semanticDigest(before)==semanticDigest(after) else{throw VideoError.conflict("备份恢复后的工程/许可/版本/账本不一致，未切换安装")}
+        let afterDigest=try restored.backupSemanticDigest()
+        guard beforeDigest==afterDigest else{throw VideoError.conflict("备份恢复后的工程/许可/版本/账本不一致，未切换安装")}
         try verifyProviderConfiguration(providerDigest,candidate:dataRoot,source:sourceData)
         try probe(generation.appendingPathComponent("program"),dataRoot,manifest)
         // Candidate self-check must not silently edit the data it was asked to inspect.
-        guard try semanticDigest(after)==semanticDigest(restored.backup()) else{throw VideoError.conflict("候选程序自检意外改写数据，未切换安装")}
+        guard try afterDigest==restored.backupSemanticDigest() else{throw VideoError.conflict("候选程序自检意外改写数据，未切换安装")}
         try verifyProviderConfiguration(providerDigest,candidate:dataRoot,source:sourceData)
         guard try independentLicense(at:dataRoot)==licence else{throw VideoError.conflict("候选程序自检改写独立许可，未切换安装")}
         guard try policies(dataRoot)==highestPolicies else{throw VideoError.conflict("候选程序自检改写策略最高版本，未切换安装")}
         try ManagedReleaseRules.verifyFiles(manifest,root:generation.appendingPathComponent("program"))
-        let state=ManagedInstallGeneration(id:id,product:manifest.product,previousGeneration:previous,manifestDigest:try Codec.digest(manifest),rollbackFloor:rollbackFloor,dataDigest:try semanticDigest(after))
+        let state=ManagedInstallGeneration(id:id,product:manifest.product,previousGeneration:previous,manifestDigest:try Codec.digest(manifest),rollbackFloor:rollbackFloor,dataDigest:afterDigest)
         try write(state,to:generation.appendingPathComponent(ManagedInstallRules.markerName))
         return try withDataLock(dataRoot){
             try switchPointer(slot,to:id);switched=true
             do {
                 let checked=try active(slot);guard checked.state.id==id else{throw VideoError.conflict("切换后当前安装代不符")}
                 try probe(generation.appendingPathComponent("program"),dataRoot,manifest)
-                guard try semanticDigest(after)==semanticDigest(Repository(root:dataRoot,readOnly:true).backup()) else{throw VideoError.conflict("切换后自检改写数据，正在回退程序与数据")}
+                guard try afterDigest==Repository(root:dataRoot,readOnly:true).backupSemanticDigest() else{throw VideoError.conflict("切换后自检改写数据，正在回退程序与数据")}
                 try verifyProviderConfiguration(providerDigest,candidate:dataRoot,source:sourceData)
                 guard try independentLicense(at:dataRoot)==licence else{throw VideoError.conflict("切换后独立许可不一致，正在回退程序与数据")}
                 guard try policies(dataRoot)==highestPolicies else{throw VideoError.conflict("切换后策略最高版本不一致，正在回退程序与数据")}
@@ -134,18 +134,14 @@ public final class ManagedReleaseInstaller {
             }
         }
     }
-    private func checkedBackup(_ root:URL)throws->Data {
+    private func checkedRepository(_ root:URL)throws->Repository {
         try rejectLinks(root)
         let repository=try Repository(root:root,readOnly:true),database=try repository.read();try database.validate()
         guard !database.jobs.contains(where:{$0.state == .running || ($0.lease?.expiresAt ?? .distantPast)>Date()}) else{throw VideoError.unavailable("存在运行中或持有租约的制作任务，请先完成/停止原任务；未开始更新")}
-        return try repository.backup()
+        return repository
     }
-    private func semanticDigest(_ backup:Data)throws->String {
-        let value=try PropertyListDecoder().decode(Repository.Backup.self,from:backup)
-        guard [2,3].contains(value.version) else{throw VideoError.invalid("更新备份封套版本不符")}
-        var snapshot=try Codec.decoder().decode(Database.self,from:value.decodedSnapshot());snapshot.generation=0;snapshot.providers=[]
-        struct Fingerprint:Encodable{var snapshot:Database;var assets:[String:String];var exports:[String:String]}
-        return try Codec.digest(Fingerprint(snapshot:snapshot,assets:value.assets.mapValues(Codec.hash),exports:(value.exports ?? [:]).mapValues(Codec.hash)))
+    private func checkedBackup(_ root:URL,to destination:URL)throws->BackupFileReceipt {
+        try checkedRepository(root).backup(to:destination)
     }
     private func providerConfigurationDigest(_ profiles:[ProviderProfile])throws->String {
         // Portable backups deliberately omit service configuration. Installation must preserve

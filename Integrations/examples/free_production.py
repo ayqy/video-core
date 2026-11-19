@@ -33,7 +33,7 @@ import zipfile
 from zoneinfo import ZoneInfo
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from backup_snapshot import read_backup
+from backup_snapshot import read_backup_file, file_identity, member_identities
 
 # Content first: no filename, cache inventory or downloaded asset defines it.
 TITLE = "放对三颗，才算完成"
@@ -209,7 +209,7 @@ class Recipe:
     def __init__(self, binary, expected, out, cache):
         self.binary, self.expected, self.out, self.cache = binary, expected, out, cache
         self.source_sha = sha(Path(__file__).read_bytes())
-        self.snapshot_helper = Path(inspect.getfile(read_backup)).resolve()
+        self.snapshot_helper = Path(inspect.getfile(read_backup_file)).resolve()
         self.snapshot_helper_sha = sha(self.snapshot_helper.read_bytes())
         require(binary.is_file() and sha(binary.read_bytes()) == expected, "CLI SHA256不符")
         cache.mkdir(parents=True, exist_ok=True)
@@ -304,15 +304,13 @@ class Recipe:
             prior = sorted(target.glob("backup-*.videobackup"))
             require(len(prior) <= 1, "发现多个备份，不能猜测哪份属于本次操作")
             if prior:
-                data = prior[0].read_bytes()
-                envelope = plistlib.loads(data)
-                require(sha(envelope["snapshot"]) == envelope["digest"], "旧备份封套摘要无效")
-                response = dict(artifacts=[dict(path=str(prior[0]), bytes=len(data), sha256=sha(data))])
+                read_backup_file(prior[0])
+                response = dict(artifacts=[dict(path=str(prior[0]), **file_identity(prior[0]))])
             else:
                 response = self.invoke(name, "backup create", {}, target=target)
         item = response["artifacts"][0]
         path = Path(item["path"])
-        require(path.is_file() and path.stat().st_size == item["bytes"] and sha(path.read_bytes()) == item["sha256"],
+        require(file_identity(path) == {k: item[k] for k in ('bytes', 'sha256')},
                 "正常备份回执与原件不符")
         return path
 
@@ -402,7 +400,7 @@ def review_boundary(database):
 
 
 def validate_restoration(backup, original_root, restored_root):
-    archive, expected = read_backup(backup.read_bytes())
+    archive, expected = read_backup_file(backup)
     for root in (original_root, restored_root):
         actual = inspect_snapshot(root / "workspace.sqlite")
         review_boundary(actual)
@@ -416,9 +414,9 @@ def validate_restoration(backup, original_root, restored_root):
         reference.pop("generation")
         require(actual == reference, "工程恢复存在generation/正常根映射之外的字段差异")
         for group in ("assets", "exports"):
-            for relative, data in archive[group].items():
+            for relative, identity in member_identities(archive, group).items():
                 path = root / relative
-                require(path.is_file() and not path.is_symlink() and path.read_bytes() == data,
+                require(file_identity(path) == identity,
                         "源素材或产物恢复字节不同：" + relative)
     return expected, len(archive["assets"]), len(archive["exports"])
 
@@ -558,7 +556,7 @@ def main():
         "本配方不证明干净未安装环境、宿主模型调用、两架构发行或完整制作形态质量；运行方须另给环境证据。\n\n" +
         "|实际四件|字节|SHA256|\n|---|---:|---|\n" +
         "".join("|" + a["path"] + "|" + str(a["bytes"]) + "|" + a["sha256"] + "|\n" for a in actual_job["artifacts"]) +
-        "\n含源备份：" + str(backup) + "；SHA256 " + sha(backup.read_bytes()) + "。\n\n" +
+        "\n含源备份：" + str(backup) + "；SHA256 " + file_identity(backup)['sha256'] + "。\n\n" +
         "图像来源：" + IMAGE_URL + "；SHA256 " + IMAGE_SHA + "。\n" +
         "图像作者CC0声明：" + IMAGE_RIGHTS_URL + "；SHA256 " + IMAGE_RIGHTS_SHA + "。\n" +
         "声音原作者包：" + VOICE_URL + "；原响应SHA256 " + VOICE_PACKAGE_SHA + "；未保存或交付ZIP。" +

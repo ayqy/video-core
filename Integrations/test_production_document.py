@@ -412,6 +412,27 @@ class FrozenSpeechTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,'trailing bytes'):
             FrozenSpeech(witness,self.voice,self.receipt,self.plan)
 
+    def test_file_backup_stream_verifies_original_voice_without_loading_complete_archive(self):
+        from test_backup_snapshot import file_archive
+        witness=self.witness(ordinary=True)
+        path=Path(witness['backup']['path'])
+        members=[('assets',name,content) for name,content in sorted(self.archive_assets.items())]
+        path.write_bytes(file_archive(self.snapshot,members,encoding='deflate-raw-v1'))
+        witness['backup']['sha256']=sha(path.read_bytes())
+        ordinary_read=Path.read_bytes
+        def bounded_read(actual):
+            if actual==path:raise AssertionError('complete backup cannot be read into bytes')
+            return ordinary_read(actual)
+        with patch.object(Path,'read_bytes',bounded_read):
+            result=FrozenSpeech(witness,self.voice,self.receipt,self.plan)
+        self.assertEqual(result.timed['frames'],480)
+        self.assertEqual(result.boundaries_sha256,'a'*64)
+        with path.open('r+b') as handle:
+            handle.seek(-1,2);handle.write(b'!')
+        witness['backup']['sha256']=sha(path.read_bytes())
+        with self.assertRaisesRegex(ValueError,'member digest'):
+            FrozenSpeech(witness,self.voice,self.receipt,self.plan)
+
     def test_mismatched_spoken_shot_axis_rejects_even_when_caption_and_backup_agree(self):
         self.records['speech-axis']['axis']['segments'][0]['shot_id']='wrong-shot'
         with self.assertRaisesRegex(ValueError,'story shots'): FrozenSpeech(self.witness(),self.voice,self.receipt,self.plan)

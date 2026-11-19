@@ -11,7 +11,7 @@ import json
 from pathlib import Path
 import plistlib
 
-from backup_snapshot import read_backup
+from backup_snapshot import read_backup_file, file_identity, member_identities
 from story_planning import StoryPlan
 from knowledge_story import _trace
 
@@ -55,15 +55,16 @@ class FrozenSpeech:
             need(isinstance(row, dict) and set(row) == {'path', 'sha256'}, 'explicit witness path/hash required')
             path = Path(row['path'])
             need(path.is_absolute() and path.is_file() and not path.is_symlink(), 'ordinary witness file required')
-            raw = path.read_bytes()
-            need(digest(raw) == row['sha256'], 'retained witness hash differs: ' + name)
             self.paths.append(path.resolve())
             if name == 'backup':
-                records[name], backup_snapshot = read_backup(raw)
+                need(file_identity(path)['sha256'] == row['sha256'], 'retained witness hash differs: ' + name)
+                records[name], backup_snapshot = read_backup_file(path)
             else:
+                raw = path.read_bytes()
+                need(digest(raw) == row['sha256'], 'retained witness hash differs: ' + name)
                 records[name] = plistlib.loads(raw)
         prepared, archive = records['prepared'], records['backup']
-        need(archive['version'] in (2, 3), 'complete retained backup version differs')
+        need(archive['version'] in (2, 3, 4), 'complete retained backup version differs')
         snapshot = backup_snapshot
         targets = [p for p in snapshot['projects'] if p['id'] == prepared['project_id']]
         need(len(targets) == 1 and len(targets[0]['revisions'][-1]['scenes']) == 1, 'one original voice scene required')
@@ -79,7 +80,8 @@ class FrozenSpeech:
         audio = Path(voice).read_bytes()
         need(asset['hash'] == receipt['audio_sha256'] == digest(audio)
              and asset['mediaType'] == 'audio' and asset['bytes'] == len(audio)
-             and archive['assets']['assets/' + asset['hash'] + '.' + asset['ext']] == audio,
+             and member_identities(archive, 'assets').get('assets/' + asset['hash'] + '.' + asset['ext']) ==
+                 dict(bytes=len(audio), sha256=digest(audio)),
              'retained backup must contain the same complete original audio bytes')
         inputs = records['inputs']
         for path in (Path(voice), Path(voice).with_suffix('.source.md')):

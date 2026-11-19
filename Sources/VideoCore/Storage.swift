@@ -188,7 +188,7 @@ public final class Repository: @unchecked Sendable {
             return try verifyStoredFile(components:["assets",asset.hash+"."+asset.ext],bytes:asset.bytes,sha256:asset.hash,budget:&budget,includeData:true)
         }
     }
-    private static func verifyModelSceneSources(in state:Database,workspaceID:String?=nil,readSource:(Asset)throws->Data) throws {
+    static func verifyModelSceneSources(in state:Database,workspaceID:String?=nil,readSource:(Asset)throws->Data) throws {
         var inspected:[ModelAssetReference:DAEInspection]=[:]
         for project in state.projects where workspaceID==nil || project.workspaceID==workspaceID {
             let assets=state.assets.filter{$0.workspaceID==project.workspaceID}
@@ -260,7 +260,7 @@ public final class Repository: @unchecked Sendable {
         }
         return replacements.count
     }
-    private static func validateArtifactBinding(_ job:Job,revision:Revision)throws {
+    static func validateArtifactBinding(_ job:Job,revision:Revision)throws {
         guard job.workspaceID==revision.workspaceID,job.revisionID==revision.id,job.digest == (try revision.contentDigest()),
               job.quote.projectID==job.projectID,job.quote.revisionID==job.revisionID,job.quote.digest==job.digest,
               !job.artifacts.isEmpty,Set(job.artifacts.map(\.id)).count==job.artifacts.count else{throw VideoError.review("原任务、冻结版本、报价或产物绑定不一致")}
@@ -285,7 +285,7 @@ public final class Repository: @unchecked Sendable {
         let candidate=components.reduce(root){$0.appendingPathComponent($1)}
         return(candidate,original,oldRoot,components)
     }
-    private func artifactLocations(_ job:Job)throws->[(url:URL,original:URL,oldRoot:String,components:[String])] {
+    func artifactLocations(_ job:Job)throws->[(url:URL,original:URL,oldRoot:String,components:[String])] {
         let locations=try job.artifacts.map{try artifactLocation($0,job:job)}
         guard Set(locations.map(\.oldRoot)).count==1,Set(locations.map{$0.components.joined(separator:"/")}).count==locations.count else{throw VideoError.permission("同一原任务产物来源目录混杂或位置重复")}
         return locations
@@ -342,7 +342,7 @@ public final class Repository: @unchecked Sendable {
                 encoding:snapshotEncoding,snapshotBytes:snapshotBytes,digest:digest)
         }
     }
-    private func backupVisualCache(availableBytes:Int)throws->[String:Data]? {
+    func backupVisualCache(availableBytes:Int)throws->[String:Data]? {
         var files:[String:Data]=[:],remaining=min(availableBytes,VisualCacheBackup.maximumBytes)
         guard remaining>0 else{return nil}
         let names=(try? FileManager.default.contentsOfDirectory(atPath:root.appendingPathComponent("cache/visuals").path)) ?? []
@@ -391,11 +391,22 @@ public final class Repository: @unchecked Sendable {
         return encoded
     }
     public static func restore(_ data: Data, to root: URL) throws -> Repository {
+        try restoreLegacy(data, to: root)
+    }
+    // The file-container adapter owns a fresh, empty 0700 staging directory.
+    // Absolute historical URLs must already name its eventual published root.
+    static func restoreLegacy(_ data: Data, to root: URL, artifactRoot: URL? = nil, allowEmptyDirectory: Bool = false) throws -> Repository {
         guard data.count <= 350 * 1024 * 1024 else { throw VideoError.invalid("备份过大") }
         let b = try PropertyListDecoder().decode(Backup.self, from: data)
         let snapshot=try b.decodedSnapshot()
         var state = try Codec.decoder().decode(Database.self, from: snapshot); try state.validate()
-        guard !FileManager.default.fileExists(atPath: root.path) else { throw VideoError.conflict("恢复目标必须是新目录，避免覆盖已有数据") }
+        if FileManager.default.fileExists(atPath: root.path) {
+            var info=stat()
+            guard allowEmptyDirectory, lstat(root.path, &info) == 0, info.st_mode & S_IFMT == S_IFDIR,
+                  try FileManager.default.contentsOfDirectory(atPath: root.path).isEmpty else {
+                throw VideoError.conflict("恢复目标必须是新目录，避免覆盖已有数据")
+            }
+        }
         // Every portable file must be referenced by the frozen business snapshot.
         // Reject extras before Repository creates a directory or writes any bytes.
         let expectedAssets=Set(state.assets.map(\.relativePath))
@@ -414,12 +425,12 @@ public final class Repository: @unchecked Sendable {
         }
         for j in state.jobs.indices {
             if b.version==1 && !state.jobs[j].artifacts.isEmpty {state.jobs[j].artifacts=[];state.jobs[j].state = .interrupted;state.jobs[j].message="旧版备份没有历史成片，请沿原任务重做；源素材与版本保留";continue}
-            for a in state.jobs[j].artifacts.indices {let artifact=state.jobs[j].artifacts[a];guard Self.validExportPath(artifact.path),let d=b.exports?[artifact.path],d.count==artifact.bytes,Codec.hash(d)==artifact.sha256 else{throw VideoError.invalid("备份缺少历史导出或摘要不符")};state.jobs[j].artifacts[a].path=root.appendingPathComponent(artifact.path).path}
+            for a in state.jobs[j].artifacts.indices {let artifact=state.jobs[j].artifacts[a];guard Self.validExportPath(artifact.path),let d=b.exports?[artifact.path],d.count==artifact.bytes,Codec.hash(d)==artifact.sha256 else{throw VideoError.invalid("备份缺少历史导出或摘要不符")};state.jobs[j].artifacts[a].path=(artifactRoot ?? root).appendingPathComponent(artifact.path).path}
         }
         let repo = try Repository(root: root)
         do { for a in state.assets { let u = repo.assetURL(a); try FileManager.default.createDirectory(at: u.deletingLastPathComponent(), withIntermediateDirectories: true); try b.assets[a.relativePath]!.write(to: u, options: .atomic) };for (relative,d) in b.exports ?? [:]{guard Self.validExportPath(relative)else{throw VideoError.invalid("备份导出路径越界")};let u=root.appendingPathComponent(relative);try FileManager.default.createDirectory(at:u.deletingLastPathComponent(),withIntermediateDirectories:true);try d.write(to:u,options:.atomic)};for (name,d) in visualCache{let u=root.appendingPathComponent("cache/visuals").appendingPathComponent(name);try FileManager.default.createDirectory(at:u.deletingLastPathComponent(),withIntermediateDirectories:true);try d.write(to:u,options:.atomic)}; try repo.transaction { $0 = state }; return repo }
         catch { try? FileManager.default.removeItem(at: root); throw error }
     }
-    private static func validExportPath(_ path:String)->Bool{path.range(of:"^(exports/[a-z0-9-]+/[A-Za-z0-9._-]+|drafts/[a-z0-9-]+\\.txt)$",options:.regularExpression) != nil && !path.contains("..")}
+    static func validExportPath(_ path:String)->Bool{path.range(of:"^(exports/[a-z0-9-]+/[A-Za-z0-9._-]+|drafts/[a-z0-9-]+\\.txt)$",options:.regularExpression) != nil && !path.contains("..")}
     public func clearCache() throws { try ManagedInstallRules.authorizeWrite(repositoryRoot:root); let cache = root.appendingPathComponent("cache"); if FileManager.default.fileExists(atPath: cache.path) { try FileManager.default.removeItem(at: cache) } }
 }
