@@ -8,6 +8,15 @@ public enum CoverStyle: String, Codable, CaseIterable, Sendable {
 public enum CoverTemplate: String, Codable, CaseIterable, Sendable {
     case automatic, spotlight, editorial, contrast
 }
+public enum CoverSubjectLayout: String, Codable, CaseIterable, Sendable {
+    case sharedSquare
+
+    public func supports(_ style: CoverStyle) -> Bool {
+        switch self {
+        case .sharedSquare: return style == .pencil || style == .presenter
+        }
+    }
+}
 /// Direction of the actual source gesture, before layout mirroring. This is
 /// author-checked image metadata, not inferred from expression names.
 public enum CoverPointing: String, Codable, CaseIterable, Sendable { case left, right }
@@ -84,13 +93,16 @@ public struct CoverPresentation: Codable, Equatable, Sendable {
     public var background: CoverImage?
     public var poses: [CoverPose]?
     public var quantityGraphic: CoverQuantityGraphic?
+    public var subjectLayout: CoverSubjectLayout?
     public init(style: CoverStyle = .automatic, template: CoverTemplate = .automatic, title: String? = nil,
                 subtitle: String? = nil, hero: CoverImage? = nil, background: CoverImage? = nil, poses: [CoverPose]? = nil,
-                emphasis: [String]? = nil, quantityGraphic: CoverQuantityGraphic? = nil) {
+                emphasis: [String]? = nil, quantityGraphic: CoverQuantityGraphic? = nil,
+                subjectLayout: CoverSubjectLayout? = nil) {
         self.style=style;self.template=template;self.title=title;self.subtitle=subtitle
         self.hero=hero;self.background=background;self.poses=poses;self.emphasis=emphasis;self.quantityGraphic=quantityGraphic
+        self.subjectLayout=subjectLayout
     }
-    private enum CodingKeys: String, CodingKey, CaseIterable { case version,style,template,title,subtitle,hero,background,poses,emphasis,quantityGraphic }
+    private enum CodingKeys: String, CodingKey, CaseIterable { case version,style,template,title,subtitle,hero,background,poses,emphasis,quantityGraphic,subjectLayout }
     public init(from decoder: Decoder) throws {
         let actual=Set(try decoder.container(keyedBy: CoverKey.self).allKeys.map(\.stringValue))
         guard actual.isSubset(of:Set(CodingKeys.allCases.map(\.rawValue))) else { throw VideoError.invalid("封面设置包含未知字段") }
@@ -101,6 +113,7 @@ public struct CoverPresentation: Codable, Equatable, Sendable {
         background=try c.decodeIfPresent(CoverImage.self,forKey:.background);poses=try c.decodeIfPresent([CoverPose].self,forKey:.poses)
         emphasis=try c.decodeIfPresent([String].self,forKey:.emphasis)
         quantityGraphic=try c.decodeIfPresent(CoverQuantityGraphic.self,forKey:.quantityGraphic)
+        subjectLayout=try c.decodeIfPresent(CoverSubjectLayout.self,forKey:.subjectLayout)
         try validate()
     }
     public var images: [CoverImage] { [hero,background].compactMap{$0}+(poses ?? []).map(\.image) }
@@ -108,6 +121,9 @@ public struct CoverPresentation: Codable, Equatable, Sendable {
         try quantityGraphic?.validate()
         guard quantityGraphic == nil || style == .code || style == .automatic else {
             throw VideoError.invalid("封面数量条件图目前仅用于代码主题；不默默忽略作者数据")
+        }
+        if let subjectLayout, style != .automatic, !subjectLayout.supports(style) {
+            throw VideoError.invalid("中心方形主体布局仅适用于彩铅手绘和角色解说封面")
         }
         guard version==1,title.map({CoverRules.text($0,maximum:160)}) ?? true,
               subtitle.map({CoverRules.text($0,maximum:100)}) ?? true,
@@ -145,6 +161,7 @@ public struct ResolvedCover: Equatable, Sendable {
     public var poseID: String?
     public var emphasis: [String]
     public var quantityGraphic: CoverQuantityGraphic?
+    public var subjectLayout: CoverSubjectLayout?
 }
 public enum CoverRules {
     static func keys(_ decoder:Decoder,required:Set<String>,optional:Set<String> = [])throws {
@@ -189,6 +206,9 @@ public enum CoverRules {
         guard value.quantityGraphic == nil || style == .code else {
             throw VideoError.invalid("数量条件图需要实际代码主题封面")
         }
+        if let subjectLayout=value.subjectLayout, !subjectLayout.supports(style) {
+            throw VideoError.invalid("中心方形主体布局仅适用于彩铅手绘和角色解说封面")
+        }
         // A stable title-based choice gives new topics three layouts without
         // randomness, wall-clock dependencies or a paid image-generation call.
         let topic=revision.contentName.trimmingCharacters(in:.whitespacesAndNewlines)
@@ -227,7 +247,9 @@ public enum CoverRules {
            let sprite=scene.classicArtwork?.sprites.first(where:{$0.role==role}) {
             hero=CoverImage(assetID:sprite.assetID,sourceRect:MediaFraming(x:sprite.x,y:sprite.y,width:sprite.width,height:sprite.height))
         }
-        return ResolvedCover(style:style,template:template,title:title,subtitle:value.subtitle ?? "",hero:hero,background:value.background,poseID:value.hero == nil ? selected?.id:nil,emphasis:emphasis,quantityGraphic:value.quantityGraphic)
+        return ResolvedCover(style:style,template:template,title:title,subtitle:value.subtitle ?? "",
+            hero:hero,background:value.background,poseID:value.hero == nil ? selected?.id:nil,
+            emphasis:emphasis,quantityGraphic:value.quantityGraphic,subjectLayout:value.subjectLayout)
     }
     public static func validate(revision:Revision,assets:[Asset])throws {
         let cover=try resolved(revision:revision)

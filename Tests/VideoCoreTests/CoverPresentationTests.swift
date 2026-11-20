@@ -65,7 +65,10 @@ final class CoverPresentationTests:XCTestCase {
         value.scenes[0].kind = .video;XCTAssertEqual(CoverRules.inferredStyle(revision:value),.media)
         value.scenes[0].kind = .explanation;value.scenes[0].paperPresentation=PaperPresentation()
         XCTAssertEqual(CoverRules.inferredStyle(revision:value),.pencil)
+        value.coverPresentation=CoverPresentation(subjectLayout:.sharedSquare)
+        XCTAssertEqual(try CoverRules.resolved(revision:value).subjectLayout,.sharedSquare)
         value.scenes[0].paperPresentation=nil
+        XCTAssertThrowsError(try CoverRules.resolved(revision:value))
         value.scenes[0].layers=[SceneLayer(kind:.chart,endFrame:30)]
         XCTAssertEqual(CoverRules.inferredStyle(revision:value),.chart)
         value.scenes[0].layers=[SceneLayer(kind:.code,endFrame:30)]
@@ -77,8 +80,10 @@ final class CoverPresentationTests:XCTestCase {
         let raw=Data(#"{"version":1,"style":"pencil","template":"editorial","title":"合作的代价","subtitle":"旧副标题原文"}"#.utf8)
         let value=try Codec.decoder().decode(CoverPresentation.self,from:raw)
         XCTAssertNil(value.emphasis);XCTAssertEqual(value.subtitle,"旧副标题原文")
+        XCTAssertNil(value.subjectLayout)
         let encoded=try Codec.data(value),decoded=try Codec.decoder().decode(CoverPresentation.self,from:encoded)
         XCTAssertEqual(value,decoded);XCTAssertFalse(String(decoding:encoded,as:UTF8.self).contains("emphasis"))
+        XCTAssertFalse(String(decoding:encoded,as:UTF8.self).contains("subjectLayout"))
         XCTAssertEqual(try Codec.data(decoded),encoded)
     }
     func testGestureDirectionIsOptionalStrictAndPartOfNormalCoverEdit()throws {
@@ -96,13 +101,16 @@ final class CoverPresentationTests:XCTestCase {
         value.coverPresentation=CoverPresentation(style:.presenter,poses:[pose])
         XCTAssertEqual(try CoverRules.resolved(revision:value).hero?.pointing,.right)
         var cover=try XCTUnwrap(value.coverPresentation);cover.poses?[0].image.pointing = .left
+        cover.subjectLayout = .sharedSquare
         let project=Project(workspaceID:"w",name:"囚徒困境",revision:value)
         let edited=try Editor.apply([.coverPresentation(cover)],to:project,baseRevision:value.id,assets:[asset()],message:"修正原手势朝向")
         XCTAssertNotEqual(try edited.current.contentDigest(),try value.contentDigest())
         XCTAssertEqual(edited.current.scenes,value.scenes)
         XCTAssertEqual(try CoverRules.resolved(revision:edited.current).hero?.pointing,.left)
+        XCTAssertEqual(try CoverRules.resolved(revision:edited.current).subjectLayout,.sharedSquare)
         let encoded=try Codec.data(edited.current)
         let decoded = try Codec.decoder().decode(Revision.self,from:encoded)
+        XCTAssertEqual(decoded.coverPresentation?.subjectLayout,.sharedSquare)
         XCTAssertEqual(try Codec.data(decoded),encoded)
     }
     func testEmphasisIsBoundedActualNonOverlappingTitleText()throws {
@@ -161,6 +169,9 @@ final class CoverPresentationTests:XCTestCase {
         for raw in [#"{"version":1,"style":"pencil","template":"spotlight","execute":"never"}"#,
                     #"{"version":2,"style":"pencil","template":"spotlight"}"#,
                     #"{"version":1,"style":"pencil","template":"spotlight","title":" "}"#,
+                    #"{"version":1,"style":"pencil","template":"spotlight","subjectLayout":"centered"}"#,
+                    #"{"version":1,"style":"pencil","template":"spotlight","subjectLayout":true}"#,
+                    #"{"version":1,"style":"media","template":"spotlight","subjectLayout":"sharedSquare"}"#,
                     #"{"version":1,"style":"pencil","template":"spotlight","hero":{"assetID":"a","execute":"never"}}"#,
                     #"{"version":1,"style":"pencil","template":"spotlight","hero":{"assetID":"a","sourceRect":{"x":0.9,"y":0,"width":0.5,"height":1}}}"#,
                     #"{"version":1,"style":"pencil","template":"spotlight","poses":[{"id":"a","image":{"assetID":"a"},"expression":"笑","action":"指向","keywords":[],"execute":"never"}]}"#] {
@@ -198,9 +209,10 @@ final class CoverPresentationTests:XCTestCase {
         value.scenes[0].captions=[Caption(text:"两人分别作出选择。",startFrame:0,endFrame:30,confirmed:true)]
         value.review.text=true;value.review.sound=true;value.review.fullPreview=true
         let project=Project(workspaceID:"w",name:"囚徒困境",revision:value)
-        let cover=CoverPresentation(style:.pencil,template:.editorial,title:"合作还是背叛？")
+        let cover=CoverPresentation(style:.pencil,template:.editorial,title:"合作还是背叛？",subjectLayout:.sharedSquare)
         let changed=try Editor.apply([.coverPresentation(cover)],to:project,baseRevision:value.id,assets:[audio],message:"更新封面")
         XCTAssertEqual(changed.current.scenes,value.scenes)
+        XCTAssertEqual(try CoverRules.resolved(revision:changed.current).subjectLayout,.sharedSquare)
         XCTAssertTrue(changed.current.scenes[0].voice!.listened);XCTAssertTrue(changed.current.scenes[0].captions[0].confirmed)
         XCTAssertFalse(changed.current.review.fullPreview);XCTAssertFalse(changed.current.review.sound)
         XCTAssertNotEqual(try changed.current.contentDigest(),try value.contentDigest())
@@ -214,6 +226,8 @@ final class CoverPresentationTests:XCTestCase {
         XCTAssertEqual(definitions["CoverImage"]?.object?["additionalProperties"],.boolean(false))
         XCTAssertEqual(definitions["CoverPose"]?.object?["additionalProperties"],.boolean(false))
         XCTAssertNotNil(definitions["CoverPresentation"]?.object?["properties"]?.object?["emphasis"])
+        XCTAssertNotNil(definitions["CoverPresentation"]?.object?["properties"]?.object?["subjectLayout"])
+        XCTAssertEqual(definitions["CoverSubjectLayout"]?.object?["enum"],.array([.string("sharedSquare")]))
         XCTAssertNotNil(definitions["CoverImage"]?.object?["properties"]?.object?["pointing"])
         XCTAssertEqual(definitions["CoverPointing"]?.object?["enum"],.array([.string("left"),.string("right")]))
         XCTAssertTrue(String(decoding:try Codec.data(definitions["CoverTemplate"]),as:UTF8.self).contains("contrast"))

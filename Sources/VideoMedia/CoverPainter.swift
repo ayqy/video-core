@@ -74,12 +74,29 @@ public enum CoverPainter {
         let square=CGRect(x:canvas.midX-side/2,y:canvas.midY-side/2,width:side,height:side)
         let variant=cover.template == .editorial ? 1:(cover.template == .contrast ? 2:0)
         let composition=try composeTitle(cover:cover,width:canvas.width,height:canvas.height)
-        let placement=presenterPlacement(square:square,variant:variant,titleBounds:composition.visibleBounds,
-            pointing:cover.hero?.pointing,imageAspect:hero.map{CGFloat($0.width)/CGFloat($0.height)})
+        let sharedSquare = cover.subjectLayout == .sharedSquare && w >= h
         c.setFillColor(color(p.paper));c.fill(canvas)
         switch cover.style {
-        case .pencil:try pencil(background,hero:hero,square:square,canvas:canvas,variant:variant,titleBounds:composition.visibleBounds,p:p,c:c)
-case .presenter:presenter(background,hero:hero,placement:placement,square:square,canvas:canvas,variant:variant,titleBounds:composition.visibleBounds,p:p,c:c)
+        case .pencil:
+            try pencil(background,hero:hero,square:square,canvas:canvas,variant:variant,
+                titleBounds:composition.visibleBounds,sharedSquare:sharedSquare,p:p,c:c)
+        case .presenter:
+            let heroAspect = hero.map { CGFloat($0.width)/CGFloat($0.height) }
+            let placement: HeroPlacement
+            let sharedProp: CGRect?
+            if sharedSquare {
+                let subjects = try sharedPresenterArtwork(square:square,titleBounds:composition.visibleBounds,
+                    variant:variant,pointing:cover.hero?.pointing,heroAspect:heroAspect,
+                    propAspect:background.map { CGFloat($0.width)/CGFloat($0.height) })
+                placement = subjects.hero
+                sharedProp = subjects.prop
+            } else {
+                placement = presenterPlacement(square:square,variant:variant,titleBounds:composition.visibleBounds,
+                    pointing:cover.hero?.pointing,imageAspect:heroAspect)
+                sharedProp = nil
+            }
+            presenter(background,hero:hero,placement:placement,square:square,canvas:canvas,variant:variant,
+                titleBounds:composition.visibleBounds,sharedSquare:sharedSquare,sharedProp:sharedProp,p:p,c:c)
         case .game:try game(background,hero:hero,square:square,canvas:canvas,variant:variant,titleBounds:composition.visibleBounds,p:p,c:c)
         case .cartoon:cartoon(background,hero:hero,square:square,canvas:canvas,variant:variant,p:p,c:c)
         case .media:media(background,hero:hero,square:square,canvas:canvas,variant:variant,p:p,c:c)
@@ -173,7 +190,13 @@ case .presenter:presenter(background,hero:hero,placement:placement,square:square
                     }
                 }
                 var effects=(bounds+highlights).map{$0.insetBy(dx:-margin,dy:-margin)}
-                let union=(effects+highlights).reduce(CGRect.null){$0.union($1)},shift=safe.midY-union.midY
+                let union=(effects+highlights).reduce(CGRect.null){$0.union($1)}
+                // Make room for the landscape portrait while keeping long
+                // headlines within the same measured title safe area.
+                let maxLift = max(0,safe.height/2-union.height/2)
+                let artworkRoom = cover.style == .presenter && cover.subjectLayout == .sharedSquare && width >= height
+                    ? min(side*0.09,maxLift) : 0
+                let shift=safe.midY+artworkRoom-union.midY
                 origins=origins.map{CGPoint(x:$0.x,y:$0.y+shift)};bounds=bounds.map{$0.offsetBy(dx:0,dy:shift)};highlights=highlights.map{$0.offsetBy(dx:0,dy:shift)}
                 effects=effects.map{$0.offsetBy(dx:0,dy:shift)}
                 if (effects+highlights).allSatisfy({safe.contains($0)}) {
@@ -320,7 +343,39 @@ case .presenter:presenter(background,hero:hero,placement:placement,square:square
         }
         return rect
     }
-    private static func pencil(_ image:CGImage?,hero:CGImage?,square s:CGRect,canvas:CGRect,variant:Int,titleBounds:CGRect,p:Palette,c:CGContext)throws {
+    private static func fitCoverArtwork(aspect:CGFloat,inside slot:CGRect)throws->CGRect {
+        guard aspect.isFinite,aspect>0,slot.width>0,slot.height>0 else {
+            throw VideoError.review("封面主体需要有效比例和净空，请精简标题或调整原画")
+        }
+        let height=min(slot.height,slot.width/aspect),width=height*aspect
+        return CGRect(x:slot.midX-width/2,y:slot.minY,width:width,height:height)
+    }
+    static func sharedPencilArtwork(square:CGRect,titleBounds:CGRect,primaryAspect:CGFloat,
+                                    counterpartAspect:CGFloat?)throws->(primary:CGRect,counterpart:CGRect?) {
+        let side=square.width,edge=side*0.04,gap=side*0.025
+        let area=square.insetBy(dx:edge,dy:edge)
+        let below=CGRect(x:area.minX,y:area.minY,width:area.width,height:titleBounds.minY-gap-area.minY)
+        guard let counterpartAspect else {
+            return (try fitCoverArtwork(aspect:primaryAspect,inside:below),nil)
+        }
+        let leftWidth=titleBounds.minX-gap-area.minX
+        let rightWidth=area.maxX-titleBounds.maxX-gap
+        let left: CGRect
+        let right: CGRect
+        if min(leftWidth,rightWidth)>=side*0.20 {
+            let height=side*0.69
+            left=CGRect(x:area.minX,y:area.minY,width:leftWidth,height:height)
+            right=CGRect(x:titleBounds.maxX+gap,y:area.minY,width:rightWidth,height:height)
+        } else {
+            let width=(below.width-gap)/2
+            left=CGRect(x:below.minX,y:below.minY,width:width,height:below.height)
+            right=CGRect(x:below.midX+gap/2,y:below.minY,width:width,height:below.height)
+        }
+        return (try fitCoverArtwork(aspect:primaryAspect,inside:left),
+                try fitCoverArtwork(aspect:counterpartAspect,inside:right))
+    }
+    private static func pencil(_ image:CGImage?,hero:CGImage?,square s:CGRect,canvas:CGRect,variant:Int,
+                               titleBounds:CGRect,sharedSquare:Bool,p:Palette,c:CGContext)throws {
         let d=s.width,shift=CGFloat(variant-1)*d*0.055
         gradient(canvas,colors:[color("291329"),color("64243F"),color("24152F")],locations:[0,0.49,1],c:c)
         // A lit subject and a quiet headline occupy separate parts of an
@@ -338,19 +393,26 @@ case .presenter:presenter(background,hero:hero,placement:placement,square:square
         c.restoreGState()
         guard let artwork=hero ?? image else{return}
         let aspect=CGFloat(artwork.width)/CGFloat(artwork.height)
-        let subject=pencilArtworkRect(square:s,canvas:canvas,variant:variant,titleBounds:titleBounds,imageAspect:aspect)
+        let counterpart = try (hero == nil ? nil : image).map(visibleArtwork)
+        let counterpartAspect = counterpart.map { CGFloat($0.width)/CGFloat($0.height) }
+        let subject: CGRect
+        let secondRect: CGRect?
+        if sharedSquare {
+            (subject,secondRect)=try sharedPencilArtwork(square:s,titleBounds:titleBounds,
+                primaryAspect:aspect,counterpartAspect:counterpartAspect)
+        } else {
+            subject=pencilArtworkRect(square:s,canvas:canvas,variant:variant,titleBounds:titleBounds,imageAspect:aspect)
+            secondRect=try counterpartAspect.map {
+                try pencilCounterpartRect(square:s,canvas:canvas,variant:variant,titleBounds:titleBounds,
+                    primary:subject,imageAspect:$0)
+            }
+        }
         glow(canvas,center:CGPoint(x:subject.midX,y:subject.midY),radius:max(subject.width,subject.height)*0.72,ink:"F4B7A0",alpha:0.23,c:c)
         c.setFillColor(color("230C24",alpha:0.38))
         c.fillEllipse(in:CGRect(x:subject.minX-d*0.025,y:subject.minY-d*0.018,width:subject.width+d*0.05,height:d*0.035))
         c.saveGState();c.setShadow(offset:CGSize(width:d*0.018,height:-d*0.014),blur:d*0.024,color:color("230C24",alpha:0.55))
         draw(artwork,in:subject,fill:false,context:c);c.restoreGState()
-        if hero != nil,let image {
-            // An explicitly authored second original participates as pixels,
-            // not as an inferred emotion or an unrelated full-canvas wash.
-            // Trimming only transparent gutters preserves every visible part.
-            let counterpart=try visibleArtwork(image)
-            let rect=try pencilCounterpartRect(square:s,canvas:canvas,variant:variant,titleBounds:titleBounds,
-                primary:subject,imageAspect:CGFloat(counterpart.width)/CGFloat(counterpart.height))
+        if let counterpart,let rect=secondRect {
             c.saveGState();c.clip(to:rect.insetBy(dx:-d*0.025,dy:-d*0.025))
             c.setFillColor(color("230C24",alpha:0.38))
             c.fillEllipse(in:CGRect(x:rect.minX-d*0.025,y:rect.minY-d*0.018,width:rect.width+d*0.05,height:d*0.035))
@@ -381,7 +443,26 @@ case .presenter:presenter(background,hero:hero,placement:placement,square:square
         guard canvas.contains(candidate),!candidate.intersects(titleBounds),!candidate.intersects(heroPlacement.rect) else{return original}
         return candidate
     }
-    private static func presenter(_ image:CGImage?,hero:CGImage?,placement:HeroPlacement,square s:CGRect,canvas:CGRect,variant:Int,titleBounds:CGRect,p:Palette,c:CGContext) {
+    static func sharedPresenterArtwork(square:CGRect,titleBounds:CGRect,variant:Int,pointing:CoverPointing?,
+                                       heroAspect:CGFloat?,propAspect:CGFloat?)throws->(hero:HeroPlacement,prop:CGRect?) {
+        let side=square.width,edge=side*0.04,gap=side*0.025
+        let onLeft=variant == 1
+        let maxY=titleBounds.minY-gap
+        let heroWidth=side*0.55
+        let left=square.minX+edge,right=square.maxX-edge
+        let heroSlot=CGRect(x:onLeft ? left:right-heroWidth,y:square.minY,
+            width:heroWidth,height:maxY-square.minY)
+        let propWidth=right-left-heroWidth-gap
+        let propSlot=CGRect(x:onLeft ? right-propWidth:left,y:square.minY+edge,
+            width:propWidth,height:maxY-square.minY-edge)
+        let target:CoverPointing=onLeft ? .right:.left
+        let bounds=try fitCoverArtwork(aspect:heroAspect ?? 1,inside:heroSlot)
+        let hero=HeroPlacement(rect:bounds,target:target,mirrored:pointing.map{$0 != target} ?? false)
+        let prop=try propAspect.map { try fitCoverArtwork(aspect:$0,inside:propSlot) }
+        return (hero,prop)
+    }
+    private static func presenter(_ image:CGImage?,hero:CGImage?,placement:HeroPlacement,square s:CGRect,canvas:CGRect,
+                                  variant:Int,titleBounds:CGRect,sharedSquare:Bool,sharedProp:CGRect?,p:Palette,c:CGContext) {
         let d=s.width
         gradient(canvas,colors:[color("030A25"),color("10236A"),color("243C8C")],locations:[0,0.58,1],c:c)
         // Broad lit planes are a studio backdrop, with a warm key behind the
@@ -399,13 +480,15 @@ case .presenter:presenter(background,hero:hero,placement:placement,square:square
         glow(canvas,center:CGPoint(x:placement.rect.midX,y:s.minY+d*0.68),radius:d*0.63,ink:"FC968B",alpha:0.28,c:c)
         let aspect=image.map{CGFloat($0.width)/CGFloat($0.height)} ?? 1
         let originalProp=presenterSubjectPlacement(square:s,canvas:canvas,variant:variant,titleBounds:.zero,heroPlacement:placement,imageAspect:aspect)
-        let prop=hero == nil ? originalProp
-            :presenterSubjectPlacement(square:s,canvas:canvas,variant:variant,titleBounds:titleBounds,heroPlacement:placement,imageAspect:aspect)
+        let prop=sharedProp ?? (hero == nil ? originalProp
+            :presenterSubjectPlacement(square:s,canvas:canvas,variant:variant,titleBounds:titleBounds,heroPlacement:placement,imageAspect:aspect))
         // Preserve the original studio fill under the title and teaching IP.
         // Only the original story pixels and their ground shadow move.
         glow(canvas,center:CGPoint(x:originalProp.midX,y:originalProp.midY),radius:d*0.57,ink:"296ADE",alpha:0.78,c:c)
-        c.setFillColor(color("030A25",alpha:0.66))
-        c.fillEllipse(in:CGRect(x:prop.minX-d*0.04,y:prop.minY-d*0.024,width:prop.width+d*0.08,height:d*0.038))
+        if !sharedSquare || image != nil {
+            c.setFillColor(color("030A25",alpha:0.66))
+            c.fillEllipse(in:CGRect(x:prop.minX-d*0.04,y:prop.minY-d*0.024,width:prop.width+d*0.08,height:d*0.038))
+        }
         if let image {
             c.saveGState();c.setAlpha(0.84);c.setShadow(offset:CGSize(width:d*0.018,height:-d*0.018),blur:d*0.022,color:color("000000",alpha:0.70))
             draw(image,in:prop,fill:false,context:c);c.restoreGState()

@@ -126,6 +126,17 @@ final class CoverMediaTests:XCTestCase {
                 XCTAssertFalse(primary.intersects(counterpart));XCTAssertEqual(counterpart.width/counterpart.height,179.0/266,accuracy:0.0001)
                 XCTAssertTrue(title.safeRect.contains(title.visibleBounds))
                 XCTAssertThrowsError(try CoverPainter.pencilCounterpartRect(square:square,canvas:canvas,variant:variant,titleBounds:canvas,primary:primary,imageAspect:1),"没有净空必须明确拒绝，不能丢掉作者第二原图")
+                let shared=try CoverPainter.sharedPencilArtwork(square:square,titleBounds:title.visibleBounds,
+                    primaryAspect:351.0/491,counterpartAspect:179.0/266)
+                let second=try XCTUnwrap(shared.counterpart)
+                for rect in [shared.primary,second] {
+                    XCTAssertTrue(square.contains(rect))
+                    XCTAssertFalse(rect.intersects(title.visibleBounds))
+                    XCTAssertGreaterThan(rect.height,d*0.16)
+                }
+                XCTAssertFalse(shared.primary.intersects(second))
+                XCTAssertEqual(shared.primary.width/shared.primary.height,351.0/491,accuracy:0.0001)
+                XCTAssertEqual(second.width/second.height,179.0/266,accuracy:0.0001)
             }
         }
     }
@@ -828,6 +839,40 @@ final class CoverMediaTests:XCTestCase {
                     let side=(0..<aspect.height).filter{isRed(($0*aspect.width+outsideX)*4)}.count
                     XCTAssertGreaterThan(bottom,20,"实际截断人物必须延伸到画布底外，不能把腿部切口悬在背景里")
                     XCTAssertGreaterThan(side,20,"按姿势外侧贴边略出血，不能留下透明拟合空隙")
+                    value.coverPresentation?.subjectLayout = .sharedSquare
+                    if aspect == .portrait {
+                        let output=try CoverPainter.image(revision:value,
+                            source:bitmap(width:aspect.width,height:aspect.height),images:["hero":padded])
+                        XCTAssertEqual(try pixels(output),raw,"兼顾横版方形的设置不可使竖版半身悬空")
+                        continue
+                    }
+                    let framedTitle=try CoverPainter.composeTitle(cover:CoverRules.resolved(revision:value),
+                        width:CGFloat(aspect.width),height:CGFloat(aspect.height))
+                    let framed=try CoverPainter.sharedPresenterArtwork(square:square,titleBounds:framedTitle.visibleBounds,
+                        variant:variant,pointing:.left,heroAspect:ratio,propAspect:0.72)
+                    let prop=try XCTUnwrap(framed.prop)
+                    XCTAssertTrue(framedTitle.safeRect.contains(framedTitle.visibleBounds))
+                    for rect in [framed.hero.rect,prop] {
+                        XCTAssertTrue(square.contains(rect))
+                        XCTAssertFalse(rect.intersects(framedTitle.visibleBounds))
+                    }
+                    XCTAssertFalse(prop.intersects(framed.hero.rect))
+                    XCTAssertEqual(framed.hero.renderedDirection(.left),framed.hero.target)
+                    if aspect == .landscape && template == .spotlight {
+                        let output=try CoverPainter.image(revision:value,
+                            source:bitmap(width:aspect.width,height:aspect.height),images:["hero":padded])
+                        let framedPixels=try pixels(output)
+                        var subjectPixels=0,outsidePixels=0
+                        for y in 0..<aspect.height {for x in 0..<aspect.width {
+                            let i=(y*aspect.width+x)*4
+                            if framedPixels[i]>250 && framedPixels[i+1]<5 && framedPixels[i+2]<5 {
+                                subjectPixels+=1
+                                if x<Int(square.minX) || x>=Int(square.maxX) {outsidePixels+=1}
+                            }
+                        }}
+                        XCTAssertGreaterThan(subjectPixels,1000)
+                        XCTAssertEqual(outsidePixels,0)
+                    }
                 }
             }
         }
