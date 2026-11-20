@@ -219,9 +219,12 @@ jobs:
           execute([sys.executable,'-B',str(root/'scripts/embed_cover_typeface.py'),'--check'],30,'public_embedded_font_reproduction')
           execute([sys.executable,'-B',str(root/'scripts/embed_cover_typeface.py'),'--display','--check'],30,'public_display_font_reproduction')
           execute([sys.executable,'-B',str(root/'scripts/embed_island_typeface.py'),'--check'],30,'public_island_font_reproduction')
-          text=('当前公开源码实际执行371个唯一Native方法，完整保留352项基线并保序追加19项真实方法；当前备份/恢复规则68项。\n'
+          text=(f'当前公开源码实际执行{len(expected)}个唯一Native方法，覆盖{len(retained)}项基线、'
+                f'{len(affected_added)}项流式备份增量及{len(footer_expected)}项代码页脚回归；当前备份/恢复规则68项。\n'
                 '公开Python备份和完整生产流程实际执行86个唯一方法，完整保留67项基线；失败、遗漏、重复或跳过均拒绝。\n'
                 'Release CLI与更新器、普通制作四件、完整声画解码及含源独立冷恢复实际执行；不授视觉或听审。\n')
           with open(os.environ['GITHUB_STEP_SUMMARY'],'a') as stream:stream.write(text)
-          print('current_native_rules=371 retained_baseline_native_rules=352 current_affected_native_rules=68 ordinary_production_four_artifacts_decode_cold=true visual_accepted=false')
+          print(f'current_native_rules={len(expected)} retained_baseline_native_rules={len(retained)} '
+                f'code_footer_native_rules={len(footer_expected)} current_affected_native_rules=68 '
+                'ordinary_production_four_artifacts_decode_cold=true visual_accepted=false')
           PYCODE
