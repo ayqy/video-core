@@ -8,7 +8,7 @@ import VideoCore
 /// root LICENSE is absent. Original selected sources and the exact declaration
 /// are retained in ThirdParty/UI/AnimalIslandUI. Content and timing belong to IR.
 public enum IslandTheme {
-    public static let styleVersion = "animal-island-ui-0.1.0-chillroundf3-v1"
+    public static let styleVersion = "animal-island-ui-0.1.0-chillroundf3-v2"
     public static let ink = "725D42"
     public static let canvas = "F8F8F0"
     public static let panel = "F7F3DF"

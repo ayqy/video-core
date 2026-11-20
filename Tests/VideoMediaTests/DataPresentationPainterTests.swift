@@ -122,6 +122,19 @@ final class DataPresentationPainterTests: XCTestCase {
         assertPixel(try pixel(first,x:b.maxX-24,y:b.midY),equals:try referencePixel(IslandTheme.panel))
         assertPixel(try pixel(next,x:b.maxX-24,y:b.midY),equals:try referencePixel(IslandTheme.mintWash))
     }
+    func testCodeSceneLeavesPlaybackFooterAreaClear() throws {
+        for aspect in [Aspect.landscape, .portrait] {
+            let image = try ScenePainter.image(revision: revision(code: true, aspect: aspect), frame: 60)
+            let margin: CGFloat = aspect == .landscape ? 80 : 64
+            let footer = CGRect(x: margin, y: CGFloat(image.height) - 30, width: 200, height: 26)
+            let blank = footer.offsetBy(dx: 300, dy: 0)
+            XCTAssertEqual(
+                try ScenePainter.png(XCTUnwrap(image.cropping(to: footer))),
+                try ScenePainter.png(XCTUnwrap(image.cropping(to: blank))),
+                "成片中的代码镜头应留出干净的底边"
+            )
+        }
+    }
     func testDataAndCodeRetainTheirLastValuesThroughSpeedPauseAndSourceSplit() throws {
         for code in [false,true] {for paper in [false,true] {
             var original=paper ? paperRevision(code:code):revision(code:code)
@@ -132,8 +145,8 @@ final class DataPresentationPainterTests: XCTestCase {
             XCTAssertEqual(split.current.scenes.map(\.pauseFrames),[0,9])
             let last=try ScenePainter.image(revision:original,frame:original.frames-1)
             let divided=try ScenePainter.image(revision:split.current,frame:split.current.frames-1)
-            // Ordinary metadata/footer changes after a split; the authored data
-            // area must still show exactly the same final values and highlights.
+            // Compare the authored data area so layout metadata cannot obscure
+            // differences in final values and highlights after a split.
             let rect=paper ? CGRect(x:80,y:172,width:1120,height:342):CGRect(x:80,y:294,width:1120,height:316)
             let pixelRect=CGRect(x:rect.minX,y:CGFloat(last.height)-rect.maxY,width:rect.width,height:rect.height)
             XCTAssertEqual(try ScenePainter.png(XCTUnwrap(last.cropping(to:pixelRect))),try ScenePainter.png(XCTUnwrap(divided.cropping(to:pixelRect))))

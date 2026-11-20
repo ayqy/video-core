@@ -2,10 +2,10 @@
 
 VideoFree source export · package_free.py · version 1
 
-生成时间：2026-11-20 23:44:23 北京时间
+生成时间：2026-11-21 03:43:04 北京时间
 
-- 源码与必要元数据：371个文件；27481446字节（不含本清单）。
-- 整体内容指纹：`b0463eb32f24580815f5b9c0e6b5c46aec5f3cd4890b314e8c9f392f1d527802`。
+- 源码与必要元数据：371个文件；27483107字节（不含本清单）。
+- 整体内容指纹：`62dfc427e615563db6287b5d38f8d0d8cb07f16f1691cfe5d3d79399bec57c72`。
 - 来源：受控原始工程中的逐文件白名单；Package.swift、唯一免费制作workflow与README均来自Distribution/Free精确模板。
 - 本包不含.git，不可作为新业务checkout；本清单生成过程不执行构建、设备验收、签名安装或公共上传，各阶段以独立证据为准。
 - 排除：App、VideoGame、VideoCartoon、Premium、高级实现运行时测试、私有仓库地址、凭据、客户数据、缓存、日志及媒体过程产物。
@@ -14,7 +14,7 @@ VideoFree source export · package_free.py · version 1
 
 | SHA-256 | 字节数 | 包内路径 / 原工程来源 |
 |---|---:|---|
-| b073d2e2e0b74de511744f3559d96e7d75309942c465494bb7b7ee86e2e25a30 | 123380 | .github/workflows/free-production.yml |
+| 083091105faad408758ce6ae4ae54e78b6dd9165e78a44786a90e3e04924e720 | 124184 | .github/workflows/free-production.yml |
 | ac90de9132befb9227282c230671875edb7fd8dc4297999fc39622ea7efe3644 | 52964 | Integrations/README.md |
 | 28833193551aa06befb3bc0fc30b69ef87f74cccae39895f4242af4321d717dd | 15308 | Integrations/actor_motion.py |
 | 39dd8274ff1e6b0649acb63281087a1144e1f4a4e0eed3dc2b92e10df2cbd121 | 28488 | Integrations/asset_reuse.py |
@@ -223,7 +223,7 @@ VideoFree source export · package_free.py · version 1
 | 2eafa759e4f2e1a94a5ecb866f39784b13363f7a5cfcacb60b125cf5e2fa12bd | 13316 | Sources/VideoMedia/FamiliarBuiltinAssets.swift |
 | 45ab9c52b4d657c501039e336c28681ce8adef7d42b97bc299d41d4b55e323d6 | 18862 | Sources/VideoMedia/Importer.swift |
 | a60210d33c6fc2b9462dd8574277cb156f55bf5a8e0b48767faadec25e406a1e | 11538 | Sources/VideoMedia/IndependentLicenseRevocation.swift |
-| 5500ae3b0eefbc1c15c7125442a5b3e059f96c5e251c949aa4558f9d2d934962 | 10780 | Sources/VideoMedia/IslandTheme.swift |
+| 594e862eca838e67cd54d140988ab7b7ce9969edbc9e76c68d91cb1964921ebd | 10780 | Sources/VideoMedia/IslandTheme.swift |
 | d2ec2f7edbdee750871f5ae5573a4f712fe7fe90b5460d58cd7347b28f0c8f72 | 4868996 | Sources/VideoMedia/IslandTypeface.swift |
 | 0158f02d1967c39f4a80756f769b5fcbcac22b3158d10ed70795ed0ed79884f6 | 9069 | Sources/VideoMedia/LayerPainter.swift |
 | 13f556d4f47aea9a7f6f23b8056cde0e1925d3e1d1312c1b176e07385a85d36b | 9934 | Sources/VideoMedia/LocalJobExecutor.swift |
@@ -234,7 +234,7 @@ VideoFree source export · package_free.py · version 1
 | e2ef0b7692a5b757747e8a30bb441c1cdfa7efc7367dbf2243c54480650d9e43 | 21050 | Sources/VideoMedia/MotaBuiltinAssets.swift |
 | 947fe33cc101a4452a28fde6e6341ecff93e196bd5e9f791958bbfc4f22d3713 | 36794 | Sources/VideoMedia/MotaWorldAssets.swift |
 | 3c67ed9bfa913b217bc0dbf97ccd67c3a9813bf6ae5fe94eafba81481a5900a4 | 7269 | Sources/VideoMedia/NativeEncoder.swift |
-| a0c7831a20db0213b3182f33d44ff9d513cd2e893f5ff54997c71b3e7a711810 | 16014 | Sources/VideoMedia/Painter.swift |
+| 865845430bc6acd0797e77c0b9be85571d525fee65e363ce60e308f619ee79b7 | 15926 | Sources/VideoMedia/Painter.swift |
 | 76a872883c6d2197b74295532b84f28adcaf884dce0cd04325e3e46815ee925c | 4199 | Sources/VideoMedia/PaperPresentationPainter.swift |
 | a10eed97164e8f7f6f897692b3eb88e410e27ec8b6aaba7a9ea6193832917618 | 12474 | Sources/VideoMedia/PencilBuiltinAssets.swift |
 | f8e7a922c35553073b6fbbeadf88f98339bbe59aae04ed73f646bd4ba2b72fab | 36632 | Sources/VideoMedia/PluginProcess.swift |
@@ -340,7 +340,7 @@ VideoFree source export · package_free.py · version 1
 | 1b07c5e554da95ea2f6843b3bf9546534dad7eb80a8c8f3a9e01e75afd84f870 | 4960 | Tests/VideoMediaTests/ContentProjectMediaTests.swift |
 | c7b7bf2aa6091f105373becd60c2dc830ed5167fc85db480b9193d60543e1db4 | 3999 | Tests/VideoMediaTests/CoursePreviewTests.swift |
 | 5d0f2466a4687b9a64c1a12145afc50a2ca5b6e22333e66cbdf94b1503f32a1a | 86021 | Tests/VideoMediaTests/CoverMediaTests.swift |
-| c19dbb2fe9ec14b22017e2b4e25375b6a8d09df9bc4a5c37343672885b9a7c18 | 32046 | Tests/VideoMediaTests/DataPresentationPainterTests.swift |
+| 0d058e15ced07439791523adec27ff2c33fdc970b026a2d42c88fbc009719a3e | 32756 | Tests/VideoMediaTests/DataPresentationPainterTests.swift |
 | c97a04ff50f844317e5f9db0f319c1042b15f2bb8fb4ff0bce620fc886ce5f13 | 18530 | Tests/VideoMediaTests/IndependentLicenseRevocationTests.swift |
 | d9a9e0ac22e74993c16af4fcd3e5195f22aa63c3bb7ccb9cb2d1f8af320a7cd0 | 2748 | Tests/VideoMediaTests/IslandCoverTests.swift |
 | a5f39e69d5d95c01e3c7e350b4b19f5d06765c71fb11da62a7eaeab7a8500e43 | 3482 | Tests/VideoMediaTests/IslandThemeTests.swift |
@@ -351,7 +351,7 @@ VideoFree source export · package_free.py · version 1
 | 3c0f34952d7f5f6e22ae06cf13edcb1157b3509a011c04f9eb268a840e899bca | 12981 | Tests/VideoMediaTests/MaterialImporterTests.swift |
 | 8bb6f22b67c1aa5565a485b3c59e37281a728e49c9dd3d06935706ea51420efe | 3990 | Tests/VideoMediaTests/MediaFramingMediaTests.swift |
 | 8c140ba98957835fea19c6df877728b52103269a0f4f2c5aed437b7e1adcf0b6 | 15265 | Tests/VideoMediaTests/MediaPresentationMediaTests.swift |
-| 4e735b7700b6c618f736fd983eeab28e1dbe93f7ffe82c3e564ab997036d5642 | 23423 | Tests/VideoMediaTests/MediaTests.swift |
+| 30236a774d432b6ae01e8d6d8774a36dbe8ebeac4ddb4ca0bc56a4821d2e5175 | 23658 | Tests/VideoMediaTests/MediaTests.swift |
 | 1db2f6da044fcda2e12bec29ff50136582d9974a6c6ed882a8eb597f5d445e05 | 65890 | Tests/VideoMediaTests/ModelPackageMediaTests.swift |
 | 2f24b48426df45f31fd87fcb62e727426a451cb8cb9c2949e0fc8d4238744d18 | 7697 | Tests/VideoMediaTests/NativeEncoderTests.swift |
 | 4107b55c496e037cb26708cfcfc224301c35ac98dc06598130c0219ac351f934 | 15795 | Tests/VideoMediaTests/PaperPresentationMediaTests.swift |
