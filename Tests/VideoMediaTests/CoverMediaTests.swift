@@ -160,17 +160,17 @@ final class CoverMediaTests:XCTestCase {
                 let original=try CoverPainter.image(revision:value,source:source,images:["first":first,"second":second])
                 let alternate=try CoverPainter.image(revision:value,source:source,images:["first":first,"second":changed])
                 let raw=try pixels(original)
-                func bounds(_ matches:(UInt8,UInt8,UInt8)->Bool)throws->CGRect {
+                func bounds(in bytes:[UInt8],_ matches:(UInt8,UInt8,UInt8)->Bool)throws->CGRect {
                     var left=aspect.width,right = -1,top=aspect.height,bottom = -1
                     for y in 0..<aspect.height {for x in 0..<aspect.width {
                         let at=(y*aspect.width+x)*4
-                        if matches(raw[at],raw[at+1],raw[at+2]) {left=min(left,x);right=max(right,x);top=min(top,y);bottom=max(bottom,y)}
+                        if matches(bytes[at],bytes[at+1],bytes[at+2]) {left=min(left,x);right=max(right,x);top=min(top,y);bottom=max(bottom,y)}
                     }}
                     XCTAssertGreaterThanOrEqual(right,left);XCTAssertGreaterThanOrEqual(bottom,top)
                     return CGRect(x:left,y:top,width:right-left+1,height:bottom-top+1)
                 }
-                let primary=try bounds{$0>245 && $2<10}
-                let counterpart=try bounds{($0<10 && $1<10 && $2>245) || ($0<10 && $1>245 && $2<10)}
+                let primary=try bounds(in:raw){$0>245 && $2<10}
+                let counterpart=try bounds(in:raw){($0<10 && $1<10 && $2>245) || ($0<10 && $1>245 && $2<10)}
                 XCTAssertFalse(primary.intersects(counterpart))
                 XCTAssertEqual(primary.width/primary.height,351.0/491,accuracy:0.025)
                 XCTAssertEqual(counterpart.width/counterpart.height,179.0/266,accuracy:0.025)
@@ -189,6 +189,27 @@ final class CoverMediaTests:XCTestCase {
                 let title=try CoverPainter.composeTitle(cover:CoverRules.resolved(revision:value),width:CGFloat(aspect.width),height:CGFloat(aspect.height))
                 let titleRaster=CGRect(x:title.visibleBounds.minX,y:CGFloat(aspect.height)-title.visibleBounds.maxY,width:title.visibleBounds.width,height:title.visibleBounds.height)
                 XCTAssertEqual(try region(original,titleRaster),try region(alternate,titleRaster),"第二原图不得全画面均色污染居中主题")
+                if aspect == .portrait {
+                    value.coverPresentation?.subjectLayout = .sharedSquare
+                    value.coverPresentation?.title = "三枚才能开工\n谁来凑齐？"
+                    value.coverPresentation?.emphasis = ["三枚"]
+                    let shared=try CoverPainter.image(revision:value,source:source,images:["first":first,"second":second])
+                    let output=try pixels(shared)
+                    let subject=try bounds(in:output){$0>245 && $2<10}
+                    let partner=try bounds(in:output){($0<10 && $1<10 && $2>245) || ($0<10 && $1>245 && $2<10)}
+                    let crop=CGRect(x:0,y:(aspect.height-aspect.width)/2,width:aspect.width,height:aspect.width)
+                    let posed=try CoverPainter.composeTitle(cover:CoverRules.resolved(revision:value),
+                        width:CGFloat(aspect.width),height:CGFloat(aspect.height)).visibleBounds
+                    let headline=CGRect(x:posed.minX,y:CGFloat(aspect.height)-posed.maxY,width:posed.width,height:posed.height)
+                    for rect in [subject,partner] {
+                        XCTAssertTrue(crop.contains(rect),"明确选择共同方形时，竖版两张原图也须实际绘入裁切")
+                        XCTAssertGreaterThan(rect.height,CGFloat(aspect.width)*0.16)
+                        XCTAssertFalse(rect.intersects(headline))
+                    }
+                    XCTAssertFalse(subject.intersects(partner))
+                    XCTAssertEqual(subject.width/subject.height,351.0/491,accuracy:0.025)
+                    XCTAssertEqual(partner.width/partner.height,179.0/266,accuracy:0.025)
+                }
             }
         }
     }

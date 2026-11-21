@@ -74,13 +74,14 @@ public enum CoverPainter {
         let square=CGRect(x:canvas.midX-side/2,y:canvas.midY-side/2,width:side,height:side)
         let variant=cover.template == .editorial ? 1:(cover.template == .contrast ? 2:0)
         let composition=try composeTitle(cover:cover,width:canvas.width,height:canvas.height)
-        let sharedSquare = cover.subjectLayout == .sharedSquare && w >= h
+        let useSharedSquare = cover.subjectLayout == .sharedSquare
         c.setFillColor(color(p.paper));c.fill(canvas)
         switch cover.style {
         case .pencil:
             try pencil(background,hero:hero,square:square,canvas:canvas,variant:variant,
-                titleBounds:composition.visibleBounds,sharedSquare:sharedSquare,p:p,c:c)
+                titleBounds:composition.visibleBounds,sharedSquare:useSharedSquare,p:p,c:c)
         case .presenter:
+            let sharedSquare = useSharedSquare && w >= h
             let heroAspect = hero.map { CGFloat($0.width)/CGFloat($0.height) }
             let placement: HeroPlacement
             let sharedProp: CGRect?
