@@ -936,6 +936,30 @@ final class CoverMediaTests:XCTestCase {
         XCTAssertEqual(codeImage,try ScenePainter.png(CoverPainter.image(revision:value,source:source)),"所有实际代码行与元数据均不得成为封面额外文字")
         value.coverPresentation?.title="为什么合作总是失败？";value.coverPresentation?.emphasis=["合作"]
         XCTAssertNotEqual(codeImage,try ScenePainter.png(CoverPainter.image(revision:value,source:source)),"只更换标题仍真实生成对应的新封面")
+        for aspect in Aspect.allCases {
+            var counted=try revision(aspect:aspect)
+            counted.coverPresentation=CoverPresentation(style:.code,template:.editorial,
+                title:"还差一枚\n路就修不成？",emphasis:["差一枚"],
+                quantityGraphic:CoverQuantityGraphic(available:2,required:3))
+            let movie=try bitmap(width:aspect.width,height:aspect.height)
+            let artwork=try bitmap(width:64,height:64,red:1,green:0,blue:0)
+            let expected=Array(try pixels(artwork).prefix(4))
+            let base=try pixels(CoverPainter.image(revision:counted,source:movie))
+            counted.coverPresentation?.hero=CoverImage(assetID:"imported")
+            let revised=try pixels(CoverPainter.image(revision:counted,source:movie,images:["imported":artwork]))
+            let w=CGFloat(aspect.width),h=CGFloat(aspect.height),d=min(w,h)
+            let square=CGRect(x:(w-d)/2,y:(h-d)/2,width:d,height:d)
+            let title=try CoverPainter.composeTitle(cover:CoverRules.resolved(revision:counted),width:w,height:h)
+            let slots=try CoverPainter.quantitySlots(square:square,titleBounds:title.visibleBounds,required:3,variant:1)
+            func center(_ bytes:[UInt8],_ slot:CGRect)->ArraySlice<UInt8> {
+                let at=((aspect.height-1-Int(slot.midY))*aspect.width+Int(slot.midX))*4
+                return bytes[at..<(at+4)]
+            }
+            for paid in slots.prefix(2) {
+                XCTAssertEqual(Array(center(revised,paid)),expected,"显式原图必须作为已筹硬币可见")
+            }
+            XCTAssertEqual(center(revised,slots[2]),center(base,slots[2]),"缺位不能填入原图")
+        }
     }
     func testTransparentHeroUsesVisibleSilhouetteWithoutLeakingMoviePixels()throws {
         try assertRGBAFixture()

@@ -2,10 +2,10 @@
 
 VideoFree source export · package_free.py · version 1
 
-生成时间：2026-11-21 19:20:03 北京时间
+生成时间：2026-11-21 19:55:54 北京时间
 
-- 源码与必要元数据：371个文件；27505696字节（不含本清单）。
-- 整体内容指纹：`970b5fbedcf7ea7f1058f9b136cc11be2062c1369c1ce0d9b489b20a7c93fb83`。
+- 源码与必要元数据：371个文件；27507550字节（不含本清单）。
+- 整体内容指纹：`92c8dbfb71f98f936062228dbd8de674aa2b0183b4a9ebd39374c6a27aac4f98`。
 - 来源：受控原始工程中的逐文件白名单；Package.swift、唯一免费制作workflow与README均来自Distribution/Free精确模板。
 - 本包不含.git，不可作为新业务checkout；本清单生成过程不执行构建、设备验收、签名安装或公共上传，各阶段以独立证据为准。
 - 排除：App、VideoGame、VideoCartoon、Premium、高级实现运行时测试、私有仓库地址、凭据、客户数据、缓存、日志及媒体过程产物。
@@ -215,7 +215,7 @@ VideoFree source export · package_free.py · version 1
 | dc3fe166cfd41d83641daf0518b60b67ba38ea631020b7e4885a80b6c8f305d1 | 1805048 | Sources/VideoMedia/CommunityNoticeBoardArtwork.swift |
 | 451de62ae66ce51bc390deb9d210ca46de5ca66e5bb52b4572a6e5e792e141a2 | 4904 | Sources/VideoMedia/CoursePreview.swift |
 | 8e2500a885e85ea6f28faa3dd36ce6c860b8d2c216089832cb4616e2e92783b8 | 1564881 | Sources/VideoMedia/CoverDisplayTypeface.swift |
-| 205e35f625cb5b1f6074805d72a8bfc542b15975a17b4baab8f75a47ca8ae3d4 | 71542 | Sources/VideoMedia/CoverPainter.swift |
+| 71f97b3a83aebf1e786e2829076c32ba2ed809617bd67433384bdbacd3860118 | 71691 | Sources/VideoMedia/CoverPainter.swift |
 | cf4f47e54fb55606755e65b1f837697edca6ac3bd8f3a67497ebea9514bfb82d | 2197018 | Sources/VideoMedia/CoverTypeface.swift |
 | ba625098d899997924d0cc13f4de47c6b87ca8fe1e5a1d918a1f33d7d9241e59 | 10142 | Sources/VideoMedia/DataPresentationPainter.swift |
 | a3c1ff6981dd81b2a97fee7cff2489fc9edb2381904ee46ebad18e9b6562dc91 | 4662 | Sources/VideoMedia/Diagnostics.swift |
@@ -339,7 +339,7 @@ VideoFree source export · package_free.py · version 1
 | 8b96667d09662c958d0b77f10f5265dc0f040de6c2b011609a06e3ce029f7dee | 22056 | Tests/VideoMediaTests/CinemaSubtitleTests.swift |
 | 5c66bde347e5f56577fa83a0f2b04a1a4ae63b7a94ce3e4f337c74f7c1d00d8d | 16063 | Tests/VideoMediaTests/ContentProjectMediaTests.swift |
 | c7b7bf2aa6091f105373becd60c2dc830ed5167fc85db480b9193d60543e1db4 | 3999 | Tests/VideoMediaTests/CoursePreviewTests.swift |
-| 5d0f2466a4687b9a64c1a12145afc50a2ca5b6e22333e66cbdf94b1503f32a1a | 86021 | Tests/VideoMediaTests/CoverMediaTests.swift |
+| 8f63ddf3e62ba6c033c8298ea2b664b4862d1958b6f83bcf16f6ca3198f03942 | 87726 | Tests/VideoMediaTests/CoverMediaTests.swift |
 | 0d058e15ced07439791523adec27ff2c33fdc970b026a2d42c88fbc009719a3e | 32756 | Tests/VideoMediaTests/DataPresentationPainterTests.swift |
 | c97a04ff50f844317e5f9db0f319c1042b15f2bb8fb4ff0bce620fc886ce5f13 | 18530 | Tests/VideoMediaTests/IndependentLicenseRevocationTests.swift |
 | d9a9e0ac22e74993c16af4fcd3e5195f22aa63c3bb7ccb9cb2d1f8af320a7cd0 | 2748 | Tests/VideoMediaTests/IslandCoverTests.swift |

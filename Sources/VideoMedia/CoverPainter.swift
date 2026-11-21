@@ -101,7 +101,8 @@ public enum CoverPainter {
         case .cartoon:cartoon(background,hero:hero,square:square,canvas:canvas,variant:variant,p:p,c:c)
         case .media:media(background,hero:hero,square:square,canvas:canvas,variant:variant,p:p,c:c)
         case .chart:try chart(background,hero:hero,square:square,canvas:canvas,variant:variant,revision:revision,p:p,c:c)
-        case .code:try code(background,hero:hero,square:square,canvas:canvas,variant:variant,revision:revision,quantity:cover.quantityGraphic,p:p,c:c)
+        case .code:try code(hero:hero,square:square,canvas:canvas,variant:variant,
+                            titleBounds:composition.visibleBounds,quantity:cover.quantityGraphic,c:c)
         default:explanation(background,hero:hero,square:square,canvas:canvas,variant:variant,p:p,c:c)
         }
         // No label, ribbon, subtitle, timestamp or explanation is painted.
@@ -662,20 +663,19 @@ public enum CoverPainter {
         c.move(to:CGPoint(x:0,y:s.minY+d*0.04));c.addLine(to:CGPoint(x:canvas.width,y:s.minY+d*0.04));c.strokePath()
         auxiliary(hero,square:s,variant:variant,c:c)
     }
-    private static func code(_ image:CGImage?,hero:CGImage?,square s:CGRect,canvas:CGRect,variant:Int,revision:Revision,quantity:CoverQuantityGraphic?,p:Palette,c:CGContext)throws {
+    private static func code(hero:CGImage?,square s:CGRect,canvas:CGRect,variant:Int,
+                             titleBounds:CGRect,quantity:CoverQuantityGraphic?,c:CGContext)throws {
         let d=s.width,shift=CGFloat(variant-1)*d*0.035
         c.setFillColor(color(IslandTheme.canvas));c.fill(canvas)
-        // Use the same published Animal Island Panel/Popover vocabulary as
-        // the ordinary code video. No source pixels or invented code text.
+        // The code panel is authored from the same component vocabulary
+        // as the video. Its backdrop adds no source text.
         let panel=CGRect(x:canvas.midX-d*0.58,y:canvas.midY-d*0.40,width:d*1.16,height:d*0.80)
         IslandTheme.drawPanel(in:panel,context:c)
         if let quantity {
             try quantity.validate()
-            let cover=try CoverRules.resolved(revision:revision)
-            let title=try composeTitle(cover:cover,width:canvas.width,height:canvas.height)
-            let slots=try quantitySlots(square:s,titleBounds:title.visibleBounds,required:quantity.required,variant:variant)
+            let slots=try quantitySlots(square:s,titleBounds:titleBounds,required:quantity.required,variant:variant)
             let focus=try quantitySpotlightFocus(slots:slots,available:quantity.available)
-            let highlight=try quantitySpotlightEnvelope(focus:focus,square:s,titleBounds:title.visibleBounds)
+            let highlight=try quantitySpotlightEnvelope(focus:focus,square:s,titleBounds:titleBounds)
             c.saveGState()
             // The shortfall panel may change with the available count, while
             // existing coins retain identical base pixels at their soft edge.
@@ -689,7 +689,7 @@ public enum CoverPainter {
             c.restoreGState()
             quantityStage(slots,square:s,canvas:canvas,c:c)
             for (index,rect) in slots.enumerated() {
-                quantityCoin(in:rect,present:index<quantity.available,c:c)
+                quantityCoin(in:rect,present:index<quantity.available,artwork:hero,c:c)
             }
             return
         }
@@ -803,7 +803,7 @@ public enum CoverPainter {
                           y:bottom+CGFloat(rows-row-1)*(diameter+gap)+CGFloat(column)*diameter*stagger,width:diameter,height:diameter)
         }
     }
-    private static func quantityCoin(in rect:CGRect,present:Bool,c:CGContext) {
+    private static func quantityCoin(in rect:CGRect,present:Bool,artwork:CGImage?,c:CGContext) {
         let diameter=rect.width
         c.saveGState()
         if !present {
@@ -826,6 +826,13 @@ public enum CoverPainter {
             c.restoreGState();return
         }
         c.setShadow(offset:CGSize(width:diameter*0.035,height:-diameter*0.055),blur:diameter*0.075,color:color("000000",alpha:0.56))
+        // Each financed place can show the imported object. Empty places
+        // retain their recessed outline even when artwork is configured.
+        if let artwork {
+            material(artwork,in:rect,c:c)
+            c.restoreGState()
+            return
+        }
         let side=rect.offsetBy(dx:diameter*0.012,dy:-diameter*0.055)
         c.setFillColor(color("8F430B"));c.fillEllipse(in:side)
         c.setShadow(offset:.zero,blur:0,color:nil)
