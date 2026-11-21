@@ -217,17 +217,37 @@ public final class Repository: @unchecked Sendable {
     /// Returns only the verified file in this physical workspace, never a stale
     /// absolute path from another container. This read API does not mutate SQLite.
     public func verifiedArtifactURL(_ artifact:Artifact,job:Job,revision:Revision)throws->URL {
+        let location=try boundArtifactLocation(artifact,job:job,revision:revision)
+        var budget=Int.max
+        _ = try verifyArtifactFile(artifact,components:location.components,budget:&budget)
+        return location.url
+    }
+
+    /// Copy from the same descriptor used to verify the stored bytes. The
+    /// caller supplies a fresh staging path and publishes it after verification.
+    public func copyVerifiedArtifact(_ artifact:Artifact,job:Job,revision:Revision,to destination:URL)throws {
+        let location=try boundArtifactLocation(artifact,job:job,revision:revision)
+        let descriptor=open(destination.path,O_CREAT|O_EXCL|O_NOFOLLOW|O_WRONLY,0o600)
+        guard descriptor>=0 else{throw VideoError.conflict("无法创建当前作业的独立产物暂存文件")}
+        let output=FileHandle(fileDescriptor:descriptor,closeOnDealloc:true)
+        var copied=false
+        defer{try? output.close();if !copied{try? FileManager.default.removeItem(at:destination)}}
+        var budget=Int.max
+        _ = try verifyStoredFile(components:location.components,bytes:artifact.bytes,
+                                 sha256:artifact.sha256,budget:&budget,copyTo:output)
+        try output.close()
+        copied=true
+    }
+
+    private func boundArtifactLocation(_ artifact:Artifact,job:Job,revision:Revision)throws->(url:URL,original:URL,oldRoot:String,components:[String]) {
         try Self.validateArtifactBinding(job,revision:revision)
         let state=try read()
         guard let project=state.projects.first(where:{$0.id==job.projectID && $0.workspaceID==job.workspaceID}),
               let frozen=project.revisions.first(where:{$0.id==job.revisionID}),try frozen.contentDigest()==job.digest,
               let stored=state.jobs.first(where:{$0.id==job.id && $0.workspaceID==job.workspaceID && $0.projectID==job.projectID && $0.revisionID==job.revisionID && $0.digest==job.digest}),
               stored.artifacts.contains(where:{$0.id==artifact.id && $0.path==artifact.path && $0.mime==artifact.mime && $0.bytes==artifact.bytes && $0.sha256==artifact.sha256 && $0.revision==artifact.revision}) else{throw VideoError.review("产物不属于指定工作区、历史版本与原任务")}
-        let location=try artifactLocation(artifact,job:job)
         _ = try artifactLocations(job)
-        var budget=Int.max
-        _ = try verifyArtifactFile(artifact,components:location.components,budget:&budget)
-        return location.url
+        return try artifactLocation(artifact,job:job)
     }
     /// Atomic per job: all of its artifacts must exist under exports/<same job>,
     /// with matching revision, exact bytes and SHA-256, before any path changes.
@@ -293,7 +313,7 @@ public final class Repository: @unchecked Sendable {
     private func verifyArtifactFile(_ artifact:Artifact,components:[String],budget:inout Int,includeData:Bool=false)throws->Data {
         try verifyStoredFile(components:components,bytes:artifact.bytes,sha256:artifact.sha256,budget:&budget,includeData:includeData)
     }
-    private func verifyStoredFile(components:[String],bytes:Int?,sha256:String?,budget:inout Int,includeData:Bool=false,maximumBytes:Int?=nil)throws->Data {
+    private func verifyStoredFile(components:[String],bytes:Int?,sha256:String?,budget:inout Int,includeData:Bool=false,maximumBytes:Int?=nil,copyTo:FileHandle?=nil)throws->Data {
         guard budget>=0,bytes.map({$0>=0 && $0<=budget}) ?? true,!components.isEmpty,components.allSatisfy({!$0.isEmpty && $0 != "." && $0 != ".." && !$0.contains("/") && !$0.contains("\\")}) else{throw VideoError.review("工作区文件路径或本次读取上限无效，原记录保留")}
         // Opening each component relative to the previous descriptor prevents
         // both final-file and parent-directory symlinks, including internal ones.
@@ -317,7 +337,9 @@ public final class Repository: @unchecked Sendable {
             guard count>=0 else{throw VideoError.review("工作区文件读取失败")}
             if count==0{break}
             guard count<=actualBytes-total else{throw VideoError.review("工作区文件在校验中变化")}
-            total += count;let block=Data(buffer[0..<count]);digest.update(data:block);if includeData{data.append(block)}
+            total += count;let block=Data(buffer[0..<count]);digest.update(data:block)
+            if includeData{data.append(block)}
+            try copyTo?.write(contentsOf:block)
         }
         let actualDigest=digest.finalize().map({String(format:"%02x",$0)}).joined()
         var after=stat(),located=stat()

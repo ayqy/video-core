@@ -75,13 +75,17 @@ final class LocalJobKeepalive: @unchecked Sendable {
 
 /// One backend for UI, free CLI and the independent premium Host.
 public enum LocalJobExecutor {
-    public static func run(repository:Repository,jobID:String,owner:String,modules:RenderModuleRegistry?=nil,videoEncoder:NativeEncoderSelection = .automatic,progress:@escaping @Sendable(Double)->Void={_ in}) async throws -> Job {
+    public static func run(repository:Repository,jobID:String,owner:String,principal:String?=nil,modules:RenderModuleRegistry?=nil,videoEncoder:NativeEncoderSelection = .automatic,progress:@escaping @Sendable(Double)->Void={_ in}) async throws -> Job {
         let claimed:(Job,Revision)=try repository.transaction { db in
             for i in db.jobs.indices { db.jobs[i]=JobOperations.recoverExpired(db.jobs[i]) }
             guard let index=db.jobs.firstIndex(where:{$0.id==jobID}) else { throw VideoError.notFound("原任务不存在") }
             guard !db.jobs.contains(where:{$0.state == .running && $0.quote.provider=="native"}) else { throw VideoError.unavailable("已有本地任务执行中，请等待或取消原任务") }
             let p=try db.project(db.jobs[index].projectID)
             guard p.workspaceID==db.jobs[index].workspaceID,let r=p.revisions.first(where:{$0.id==db.jobs[index].revisionID}),try r.contentDigest()==db.jobs[index].digest else {throw VideoError.conflict("冻结版本或任务摘要不一致")}
+            if let principal {
+                let workspace=try db.workspace(p.workspaceID)
+                try workspace.authorize(principal:principal,project:p.id,revision:r.id,write:true)
+            }
             let issues=try Quality.inspect(r,database:db,requireReview:false);guard issues.isEmpty else {throw VideoError.review(issues.map(\.message).joined(separator:"；"))}
             try BatchRules.validateSubmission(project:p,quote:db.jobs[index].quote,batches:db.topicBatches ?? [],existingJobs:db.jobs,requestKey:db.jobs[index].requestKey)
             try TeachingBatchRules.validateSubmission(project:p,quote:db.jobs[index].quote,batches:db.teachingBatches ?? [],existingJobs:db.jobs,requestKey:db.jobs[index].requestKey)
@@ -94,16 +98,50 @@ public enum LocalJobExecutor {
         var scope:RenderInvocation?
         var keepalive:LocalJobKeepalive?
         do {
-            let invocation=try RenderInvocation.job(repository:repository,claimed:claimed.0,revision:claimed.1,token:token,cancellation:cancellation)
+            let invocation=try RenderInvocation.job(repository:repository,claimed:claimed.0,revision:claimed.1,token:token,cancellation:cancellation,principal:principal)
             scope=invocation
             let heartbeat=try LocalJobKeepalive(repository:repository,invocation:invocation,token:token)
             keepalive=heartbeat
             let result=try await withTaskCancellationHandler(operation: {
                 try await render(repository:repository,jobID:jobID,revision:claimed.1,token:token,modules:modules,videoEncoder:videoEncoder,invocation:invocation,progress:progress)
             }, onCancel: { cancellation.cancel();heartbeat.cancel() })
+            defer{if let stage=result.coverReuse?.staging{try? FileManager.default.removeItem(at:stage)}}
             if let failure=await heartbeat.stop(){throw failure}
-            try invocation.check()
-            return try repository.transaction { db in try invocation.check();guard let i=db.jobs.firstIndex(where:{$0.id==jobID}) else {throw VideoError.notFound("原任务不存在")};db.jobs[i]=try JobOperations.finish(db.jobs[i],token:token,artifacts:result.artifacts);db.jobs[i].message=result.warnings.joined(separator:"；");return db.jobs[i] }
+            var moved:[URL]=[]
+            do {
+                return try repository.transaction { db in
+                    try invocation.check()
+                    guard let index=db.jobs.firstIndex(where:{$0.id==jobID}) else {throw VideoError.notFound("原任务不存在")}
+                    var artifacts=result.artifacts
+                    if let reuse=result.coverReuse {
+                        try invocation.authorizeCoverReuse(from:reuse.revisionID,in:db)
+                        let output=reuse.staging.deletingLastPathComponent()
+                        guard reuse.staging.resolvingSymlinksInPath().path==reuse.staging.standardizedFileURL.path else {
+                            throw VideoError.permission("当前作业的产物暂存目录已改变")
+                        }
+                        let files=FileManager.default
+                        for i in artifacts.indices {
+                            let file=URL(fileURLWithPath:artifacts[i].path)
+                            let target=output.appendingPathComponent(file.lastPathComponent)
+                            if files.fileExists(atPath:target.path) {
+                                guard try files.attributesOfItem(atPath:target.path)[.type] as? FileAttributeType == .typeRegular else {
+                                    throw VideoError.conflict("当前作业的产物位置不是普通文件")
+                                }
+                                try files.removeItem(at:target)
+                            }
+                            try files.moveItem(at:file,to:target)
+                            moved.append(target)
+                            artifacts[i].path=target.path
+                        }
+                    }
+                    db.jobs[index]=try JobOperations.finish(db.jobs[index],token:token,artifacts:artifacts)
+                    db.jobs[index].message=result.warnings.joined(separator:"；")
+                    return db.jobs[index]
+                }
+            } catch {
+                for file in moved {try? FileManager.default.removeItem(at:file)}
+                throw error
+            }
         } catch {
             var failure=error
             if let keepalive,let heartbeatFailure=await keepalive.stop(){failure=heartbeatFailure}

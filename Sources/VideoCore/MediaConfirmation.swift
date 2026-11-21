@@ -191,7 +191,8 @@ public enum MediaConfirmationRules {
         }
         return MediaConfirmationStatus(voice:matches.contains(where:{$0.voice}),captions:matches.contains(where:{$0.captions}))
     }
-    private static func coverOnlyParent(_ parent:Revision,_ child:Revision,database:Database)throws->Bool {
+    /// Compares the frozen timeline and its scene dependencies across one parent edge.
+    public static func coverOnlyParent(_ parent:Revision,_ child:Revision,database:Database)throws->Bool {
         guard child.parentID==parent.id,parent.workspaceID==child.workspaceID,
               let old=parent.dependencies,let new=child.dependencies else{return false}
         let oldMedia=old.records.filter{!$0.sceneIDs.isEmpty},newMedia=new.records.filter{!$0.sceneIDs.isEmpty}

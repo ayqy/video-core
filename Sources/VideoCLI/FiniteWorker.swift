@@ -103,7 +103,7 @@ enum FiniteWorker {
                     }
                     if store.stopped(id) || Date()>=deadline {break}
                     try repository.transaction {db in guard try db.workspace(workspaceID).owner==principal else{throw VideoError.permission("工作区所有者已变化，未恢复原任务")};guard let i=db.jobs.firstIndex(where:{$0.id==jobID && $0.workspaceID==workspaceID}) else{throw VideoError.notFound("原任务不存在")};db.jobs[i]=JobOperations.recoverExpired(db.jobs[i]);if plan.resumeInterrupted && [.interrupted,.failed].contains(db.jobs[i].state){db.jobs[i]=try JobRules.recover(db.jobs[i])}}
-                    let result=try await LocalJobExecutor.run(repository:repository,jobID:jobID,owner:"worker:"+id){_ in if store.stopped(id) || Date()>=deadline {try? interrupt(repository:repository,workspaceID:workspaceID,principal:principal,owner:"worker:"+id)}}
+                    let result=try await LocalJobExecutor.run(repository:repository,jobID:jobID,owner:"worker:"+id,principal:principal){_ in if store.stopped(id) || Date()>=deadline {try? interrupt(repository:repository,workspaceID:workspaceID,principal:principal,owner:"worker:"+id)}}
                     _ = try store.update(id){$0.outcomes.append(WorkerOutcome(jobID:jobID,state:result.state.rawValue,note:"原任务产物已生成；仍需人工完整看听审核"))}
                 }
             } catch {let note=(error as? VideoError)?.localizedDescription ?? "原任务执行中断，未重新提交";_ = try store.update(id){$0.outcomes.append(WorkerOutcome(jobID:jobID,state:(error as? VideoError)?.code ?? "interrupted",note:note))}}

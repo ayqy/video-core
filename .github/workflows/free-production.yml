@@ -35,7 +35,7 @@ jobs:
           import base64, hashlib, os, re, struct, subprocess
           root=Path(os.environ["GITHUB_WORKSPACE"])
           BASE='953bd446c56cd26cb0ec1b54b7c4f56e1930619e'
-          REVIEWED=set(['.github/workflows/free-production.yml', 'Integrations/backup_snapshot.py', 'Integrations/examples/free_production.py', 'Integrations/frozen_speech.py', 'Integrations/knowledge_story_smoke.py', 'Integrations/layer_image_sequence_smoke.py', 'Integrations/production_document.py', 'Integrations/production_workflow.py', 'Integrations/test_backup_snapshot.py', 'Integrations/test_production_document.py', 'Sources/VideoCLI/VideoCLI.swift', 'Sources/VideoCore/AgentSchemas.swift', 'Sources/VideoCore/BackupSnapshotCodec.swift', 'Sources/VideoCore/CoverPresentation.swift', 'Sources/VideoCore/ManagedInstaller.swift', 'Sources/VideoCore/Storage.swift', 'Sources/VideoMedia/CoverPainter.swift', 'Sources/VideoMedia/IslandTheme.swift', 'Sources/VideoMedia/Painter.swift', 'Tests/VideoCoreTests/CoverPresentationTests.swift', 'Tests/VideoCoreTests/ManagedInstallTests.swift', 'Tests/VideoMediaTests/CoverMediaTests.swift', 'Tests/VideoMediaTests/DataPresentationPainterTests.swift', 'Tests/VideoMediaTests/MediaTests.swift'])
+          REVIEWED=set(['.github/workflows/free-production.yml', 'Integrations/backup_snapshot.py', 'Integrations/examples/free_production.py', 'Integrations/frozen_speech.py', 'Integrations/knowledge_story_smoke.py', 'Integrations/layer_image_sequence_smoke.py', 'Integrations/production_document.py', 'Integrations/production_workflow.py', 'Integrations/test_backup_snapshot.py', 'Integrations/test_production_document.py', 'Sources/VideoCLI/FiniteWorker.swift', 'Sources/VideoCLI/VideoCLI.swift', 'Sources/VideoCore/AgentSchemas.swift', 'Sources/VideoCore/BackupSnapshotCodec.swift', 'Sources/VideoCore/CoverPresentation.swift', 'Sources/VideoCore/ManagedInstaller.swift', 'Sources/VideoCore/MediaConfirmation.swift', 'Sources/VideoCore/Storage.swift', 'Sources/VideoMedia/CoverPainter.swift', 'Sources/VideoMedia/IslandTheme.swift', 'Sources/VideoMedia/LocalJobExecutor.swift', 'Sources/VideoMedia/Painter.swift', 'Sources/VideoMedia/RenderInvocation.swift', 'Sources/VideoMedia/Renderer.swift', 'Tests/VideoCoreTests/CoverPresentationTests.swift', 'Tests/VideoCoreTests/ManagedInstallTests.swift', 'Tests/VideoMediaTests/ContentProjectMediaTests.swift', 'Tests/VideoMediaTests/CoverMediaTests.swift', 'Tests/VideoMediaTests/DataPresentationPainterTests.swift', 'Tests/VideoMediaTests/MediaTests.swift'])
           ADDED=set(['Sources/VideoCore/StreamingBackup.swift', 'Tests/VideoCoreTests/StreamingBackupTests.swift'])
           FONT_FILES={'Sources/VideoMedia/IslandTypeface.swift': (4868996, 'd2ec2f7edbdee750871f5ae5573a4f712fe7fe90b5460d58cd7347b28f0c8f72'), 'ThirdParty/Fonts/ChillRoundF/ChillRoundF-v3.0.ttf': (6168772, '7dae804b344f7bc1a1c8426b9515e9b54d7baac3e123263d0bae94d0a305a732'), 'Sources/VideoMedia/CoverTypeface.swift': (2197018, 'cf4f47e54fb55606755e65b1f837697edca6ac3bd8f3a67497ebea9514bfb82d'), 'ThirdParty/Fonts/SmileySans/SmileySans-Oblique.ttf': (2629764, 'b447d7e781f08bc95c4c9f23ba71ed2b8ebb639aa7184485c71c4ca5afcd25c4'), 'Sources/VideoMedia/CoverDisplayTypeface.swift': (1564881, '8e2500a885e85ea6f28faa3dd36ce6c860b8d2c216089832cb4616e2e92783b8'), 'ThirdParty/Fonts/DouyinSans/DouyinSansBold.ttf': (1919404, 'fbecfacdfac33982774e301073a8d357a09c698cd3134bb6ddec0f5bfc268fa1')}
           FONT_LICENSES={'ThirdParty/Fonts/ChillRoundF/LICENSE': (4375, 'd45891f8adfd21368c98e803603df1f575ff3fc4a6ec713ba7ccf0e3cba15b28'), 'ThirdParty/Fonts/SmileySans/LICENSE': (4422, '9401f4050f1b66c26b6ccdc8b0e14a3c1cc37aac122eda84386f25854a9bec72'), 'ThirdParty/Fonts/DouyinSans/LICENSE': (4455, 'a6d5700a002ea32bcfbe3310253d603997683dac8ac63777e375d06c07c30ea6')}
@@ -45,8 +45,8 @@ jobs:
           EXPECTED_COUNT=371
           BASE_MANIFEST_SHA='62e154b085c4dc7be486f96dac2bb52cff6b151b1f0510022541b7b7233a7be4'
           BASE_FINGERPRINT='3ebab972de998d02e2de44d7966a847e16551f8e81adc5b0f84eb14df082294b'
-          UNCHANGED_COUNT=345
-          UNCHANGED_FINGERPRINT='8e302d80de53d227bbf4ce484183f8db7b04d54e1c048440ccb2193de40d80b2'
+          UNCHANGED_COUNT=339
+          UNCHANGED_FINGERPRINT='3b2867f72720ade898beff9f94ac71476afa6524a4e03e6138d2ba391147dc6a'
 
           def rows(raw):
               result=re.findall(r'(?m)^\| ([a-f0-9]{64}) \| ([0-9]+) \| ([^|\n]+) \|$',raw.decode())
@@ -144,6 +144,24 @@ jobs:
           footer_expected={name+'.'+method for name,methods in footer_rules.items() for method in methods}
           assert not expected & footer_expected
           expected.update(footer_expected)
+          cover_path=root/'Tests/VideoMediaTests/ContentProjectMediaTests.swift'
+          cover_text=cover_path.read_text()
+          cover_class='ContentProjectMediaTests'
+          assert re.findall(r'(?m)^final class (\w+)\s*:\s*XCTestCase\b',cover_text)==[cover_class]
+          cover_methods={
+              'testOrdinaryJobRendersRealMediaWithoutProductAndBackupRestoresArtifacts',
+              'testEmptyContentDraftCannotRenderOrDrawUnprovenProductPrice',
+              'testCoverOnlyRevisionsReuseTheVerifiedMovieAndSubtitlesAcrossGenerations',
+              'testCoverReuseRequiresPermissionToReadTheParentRevision',
+              'testCoverReuseRechecksRevocationBeforePublishing',
+              'testCoverReuseFailsWhenTheSelectedParentArtifactIsDamaged',
+          }
+          cover_actual=re.findall(r'(?m)^\s*func (test\w+)\s*\(',cover_text)
+          assert len(cover_actual)==len(cover_methods) and set(cover_actual)==cover_methods
+          cover_expected={cover_class+'.'+method for method in cover_methods}
+          assert not expected & cover_expected
+          expected.update(cover_expected)
+          print('current_native_source_sha256='+cover_class+':'+hashlib.sha256(cover_path.read_bytes()).hexdigest())
           def execute(argv,seconds,label):
               started=time.monotonic()
               try:
@@ -220,11 +238,11 @@ jobs:
           execute([sys.executable,'-B',str(root/'scripts/embed_cover_typeface.py'),'--display','--check'],30,'public_display_font_reproduction')
           execute([sys.executable,'-B',str(root/'scripts/embed_island_typeface.py'),'--check'],30,'public_island_font_reproduction')
           text=(f'当前公开源码实际执行{len(expected)}个唯一Native方法，覆盖{len(retained)}项基线、'
-                f'{len(affected_added)}项流式备份增量及{len(footer_expected)}项代码页脚回归；当前备份/恢复规则68项。\n'
+                f'{len(affected_added)}项流式备份增量及{len(footer_expected)}项代码页脚回归和{len(cover_expected)}项内容工程规则；当前备份/恢复规则68项。\n'
                 '公开Python备份和完整生产流程实际执行86个唯一方法，完整保留67项基线；失败、遗漏、重复或跳过均拒绝。\n'
                 'Release CLI与更新器、普通制作四件、完整声画解码及含源独立冷恢复实际执行；不授视觉或听审。\n')
           with open(os.environ['GITHUB_STEP_SUMMARY'],'a') as stream:stream.write(text)
           print(f'current_native_rules={len(expected)} retained_baseline_native_rules={len(retained)} '
-                f'code_footer_native_rules={len(footer_expected)} current_affected_native_rules=68 '
+                f'code_footer_native_rules={len(footer_expected)} content_project_native_rules={len(cover_expected)} current_affected_native_rules=68 '
                 'ordinary_production_four_artifacts_decode_cold=true visual_accepted=false')
           PYCODE

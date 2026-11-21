@@ -26,6 +26,7 @@ public struct RenderInvocation: @unchecked Sendable {
     public let deadline: Date
     public let cancellation: RenderCancellation
     private let authorize: @Sendable () throws -> Void
+    private(set) var principal: String?
 
     public init(id: String = Codec.id(), workspaceID: String, projectID: String, revisionID: String, revisionDigest: String, jobID: String?, budgetReference: String, budgetLimit: Money, deadline: Date, cancellation: RenderCancellation = RenderCancellation(), authorization: @escaping @Sendable () throws -> Void) {
         self.id=id; self.workspaceID=workspaceID; self.projectID=projectID; self.revisionID=revisionID; self.revisionDigest=revisionDigest; self.jobID=jobID; self.budgetReference=budgetReference; self.budgetLimit=budgetLimit; self.deadline=deadline; self.cancellation=cancellation; authorize=authorization
@@ -37,6 +38,13 @@ public struct RenderInvocation: @unchecked Sendable {
         guard deadline > now else { throw VideoError.unavailable("插件任务已到截止时间，未接受迟到结果") }
         try authorize()
         if cancellation.isCancelled || Task.isCancelled { throw CancellationError() }
+    }
+
+    func authorizeCoverReuse(from sourceRevisionID:String,in database:Database)throws {
+        guard let principal else{throw VideoError.permission("封面复用缺少实际操作身份")}
+        let workspace=try database.workspace(workspaceID)
+        try workspace.authorize(principal:principal,project:projectID,revision:sourceRevisionID)
+        try workspace.authorize(principal:principal,project:projectID,revision:revisionID,write:true)
     }
 
     public func verify(revision: Revision) throws {
@@ -60,14 +68,15 @@ public struct RenderInvocation: @unchecked Sendable {
 
     /// Only an already-claimed native job can create this scope. Lease recovery,
     /// cancellation, workspace changes and version edits revoke it immediately.
-    static func job(repository: Repository, claimed: Job, revision: Revision, token: String, cancellation: RenderCancellation) throws -> RenderInvocation {
-        let scope = RenderInvocation(workspaceID:claimed.workspaceID,projectID:claimed.projectID,revisionID:claimed.revisionID,revisionDigest:claimed.digest,jobID:claimed.id,budgetReference:claimed.quote.id,budgetLimit:claimed.quote.upper,deadline:Date().addingTimeInterval(4*60*60),cancellation:cancellation) {
+    static func job(repository: Repository, claimed: Job, revision: Revision, token: String, cancellation: RenderCancellation, principal: String? = nil) throws -> RenderInvocation {
+        var scope = RenderInvocation(workspaceID:claimed.workspaceID,projectID:claimed.projectID,revisionID:claimed.revisionID,revisionDigest:claimed.digest,jobID:claimed.id,budgetReference:claimed.quote.id,budgetLimit:claimed.quote.upper,deadline:Date().addingTimeInterval(4*60*60),cancellation:cancellation) {
             let snapshot = try repository.readWithRevisionDigest(projectID:claimed.projectID,revisionID:claimed.revisionID)
             let database = snapshot.database
             guard let current = database.jobs.first(where:{$0.id == claimed.id}), current.state == .running, current.lease?.token == token, let expires = current.lease?.expiresAt, expires > Date(), current.workspaceID == claimed.workspaceID, current.projectID == claimed.projectID, current.revisionID == claimed.revisionID, current.digest == claimed.digest, current.quote.id == claimed.quote.id, current.quote.upper == claimed.quote.upper, current.quote.provider == "native" else { throw VideoError.permission("制作任务已取消、租约失效或预算凭据改变，插件结果未接受") }
             let project = try database.project(current.projectID)
             guard project.workspaceID == current.workspaceID, project.revisions.contains(where:{$0.id == current.revisionID}), snapshot.digest == current.digest else { throw VideoError.conflict("制作任务的冻结版本已变化") }
         }
+        scope.principal=principal
         try scope.verify(revision:revision)
         return scope
     }

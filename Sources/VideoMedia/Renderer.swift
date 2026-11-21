@@ -4,7 +4,17 @@ import CoreGraphics
 import ImageIO
 import VideoCore
 
-public struct RenderResult: Sendable { public var artifacts: [Artifact]; public var frames: Int; public var seconds: Double; public var warnings: [String] }
+public struct RenderResult: Sendable {
+    public var artifacts: [Artifact]
+    public var frames: Int
+    public var seconds: Double
+    public var warnings: [String]
+    struct CoverReuse: Sendable {
+        let revisionID: String
+        let staging: URL
+    }
+    var coverReuse: CoverReuse? = nil
+}
 public final class MediaRenderer: @unchecked Sendable {
     public let modules:RenderModuleRegistry?
     public let videoEncoder:NativeEncoderSelection
@@ -13,9 +23,14 @@ public final class MediaRenderer: @unchecked Sendable {
         do {
             try invocation?.verify(revision:r)
             let result = try await renderBody(revision:r,repository:repository,output:output,invocation:invocation,progress:progress)
-            try invocation?.check()
-            if let invocation { try modules?.close(invocationID:invocation.id) }
-            return result
+            do {
+                try invocation?.check()
+                if let invocation { try modules?.close(invocationID:invocation.id) }
+                return result
+            } catch {
+                if let stage=result.coverReuse?.staging {try? FileManager.default.removeItem(at:stage)}
+                throw error
+            }
         } catch {
             if let invocation { invocation.cancellation.cancel(); try? modules?.close(invocationID:invocation.id) }
             throw error
@@ -46,6 +61,12 @@ public final class MediaRenderer: @unchecked Sendable {
                 guard attributes[.type] as? FileAttributeType == .typeRegular,(attributes[.size] as? NSNumber)?.intValue==asset.bytes,asset.bytes>0,asset.bytes<=256*1024*1024,Codec.hash(try Data(contentsOf:url))==asset.hash else{throw VideoError.review("引用的源文件、元素、声音或授权原件摘要不一致，请从原件恢复后重做")}
             }
         }
+        if let invocation,
+           let source=try reusableMedia(for:r,invocation:invocation,database:db) {
+            return try await renderCover(from:source,revision:r,repository:repository,database:db,
+                                         output:output,invocation:invocation,started:start,progress:progress)
+        }
+
         // Resolve before touching output. One captured real identity constrains the
         // writer and cache key, including an automatic selection's actual encoder.
         let encoding=try VisualClipCache.EncodingConfiguration.capture(aspect:r.aspect,fps:r.fps,selection:videoEncoder)
@@ -59,33 +80,118 @@ public final class MediaRenderer: @unchecked Sendable {
             let inspection=try await MediaInspection.inspect(final)
             guard inspection.width==r.aspect.width,inspection.height==r.aspect.height,inspection.videoCodec=="avc1",inspection.isH2644208Bit,inspection.isBT709,inspection.audioCodec=="aac ",inspection.sampleRate==48000,abs(inspection.duration-Double(r.frames)/Double(r.fps))<0.15,abs(inspection.fps-30)<0.1 else { throw VideoError.review("成片尺寸、H.264 420 8bit/BT709、AAC48kHz、帧率或时长核验失败") }
             try await MediaInspection.verifyCadence(final,frames:r.frames,fps:r.fps,progress:{value in try progress(0.97+value*0.02)})
-            let policy=r.audioQuality ?? AudioQualityPolicy()
-            let audio=try await AudioInspection.inspect(final,policy:policy)
-            guard audio.clippedSamples==0,audio.rmsDBFS <= -10 else { throw VideoError.review("实际混音存在削波或过高平均电平，请降低分轨音量并重做、听审；失败产物未标可交付") }
-            let audible=r.scenes.contains { !$0.muted && (($0.voice != nil && $0.voiceGain>0) || ($0.kind == .video && $0.sourceGain>0) || SceneAudioCueRules.combined(scene:$0).contains(where:{$0.gain>0})) } || (r.musicAssetID != nil && r.scenes.contains{!$0.muted && $0.musicGain>0})
-            if audible && audio.peakDBFS < -50 { throw VideoError.review("工程含声音但实际混音接近静音，请核对分轨与源音轨后重做") }
-            guard let loudness=audio.loudness else{throw VideoError.review("实际混音尚无响度与真峰值检测，未标可交付")}
-            if audible,let peak=loudness.truePeakDBTP,peak>=0 {throw VideoError.review(String(format:"实际混音的4倍过采样真峰值估计 %.2f dBTP 达到满幅过载，请降低分轨音量并重新制作、听审",peak))}
-            let violations=loudness.violations(policy:policy,audible:audible)
-            guard violations.isEmpty else{throw VideoError.review(violations.joined(separator:"；"))}
-
-            // Compose an editable code template around a decoded frame of this
-            // verified same-version movie and normally imported CAS artwork.
-            // Never replay frame zero in a long-lived advanced plugin scope.
-            try invocation?.check(); try Task.checkCancellation()
-            let generator=AVAssetImageGenerator(asset:AVURLAsset(url:final))
-            generator.appliesPreferredTrackTransform=true;generator.requestedTimeToleranceBefore = .zero;generator.requestedTimeToleranceAfter = .zero
-            let cover=output.appendingPathComponent("cover.png")
-            let coverImages=try CoverPainter.loadImages(revision:r,repository:repository,database:db)
-            let coverImage=try CoverPainter.image(revision:r,source:generator.copyCGImage(at:.zero,actualTime:nil),images:coverImages)
-            try ScenePainter.png(coverImage).write(to:cover,options:.atomic)
-            let subtitles=output.appendingPathComponent("captions.srt"); try subtitleText.write(to:subtitles,atomically:true,encoding:.utf8)
-            let text=output.appendingPathComponent("publication.txt");let note=try Self.publicationNotes(r,audio:audio);try note.write(to:text,atomically:true,encoding:.utf8)
-            let refs=try [final,cover,subtitles,text].map { u -> Artifact in let data=try Data(contentsOf:u); let mime:[String:String]=["mp4":"video/mp4","png":"image/png","srt":"application/x-subrip","txt":"text/plain"]; return Artifact(path:u.path,mime:mime[u.pathExtension]!,bytes:data.count,sha256:Codec.hash(data),revision:r.id) }
+            let (audio,audible)=try await Self.checkAudio(final,revision:r)
+            try subtitleText.write(to:output.appendingPathComponent("captions.srt"),atomically:true,encoding:.utf8)
+            let refs=try writeCoverAndNotes(for:r,repository:repository,database:db,
+                                            output:output,audio:audio,invocation:invocation)
             let encoderNote=encoding.encoderIdentity.map{"实际H.264编码实现："+$0.identifier+(encoding.canReusePersistentCache ? "":"；依赖身份不完整，不持久复用画面缓存")} ?? "H.264实现身份无法完整确认，使用普通编码且不持久复用画面缓存"
             try progress(1); return RenderResult(artifacts:refs,frames:r.frames,seconds:Date().timeIntervalSince(start),warnings:(!audible ? ["此版本无旁白，AAC音轨为明确的静音底轨"] : []) + ["画面缓存复用 \(visuals)/\(r.scenes.count) 镜头；声音与整片时间轴重新合成",encoderNote])
         } catch { try? FileManager.default.removeItem(at:final); throw error }
     }
+    private func reusableMedia(for revision:Revision,invocation:RenderInvocation,database:Database)throws->(job:Job,revision:Revision)? {
+        // An explicit encoder request belongs to a new encode. Old jobs did
+        // not durably bind their encoder selection to reusable artifacts.
+        guard videoEncoder == .automatic,invocation.jobID != nil,let principal=invocation.principal else{return nil}
+        let workspace=try database.workspace(invocation.workspaceID)
+        let project=try database.project(invocation.projectID)
+        try workspace.authorize(principal:principal,project:project.id,revision:revision.id,write:true)
+        var child=revision, visited:Set<String>=[revision.id]
+        while let parentID=child.parentID,visited.insert(parentID).inserted,
+              let parent=project.revisions.first(where:{$0.id==parentID}),
+              try MediaConfirmationRules.coverOnlyParent(parent,child,database:database) {
+            guard (try? workspace.authorize(principal:principal,project:project.id,revision:parent.id)) != nil else{return nil}
+            let digest=try parent.contentDigest()
+            if let source=database.jobs.last(where:{
+                $0.workspaceID==workspace.id && $0.projectID==project.id &&
+                $0.revisionID==parent.id && $0.digest==digest && $0.quote.provider=="native" &&
+                ($0.state == .needsReview || $0.state == .succeeded) && $0.artifacts.count==4 &&
+                Set($0.artifacts.map(\.mime))==["video/mp4","application/x-subrip","image/png","text/plain"]
+            }) {
+                return (source,parent)
+            }
+            child=parent
+        }
+        return nil
+    }
+
+    private func renderCover(from source:(job:Job,revision:Revision),revision r:Revision,repository:Repository,
+                             database:Database,output:URL,invocation:RenderInvocation,started:Date,
+                             progress:@escaping @Sendable(Double)throws->Void)async throws->RenderResult {
+        let fm=FileManager.default
+        try invocation.check()
+        try fm.createDirectory(at:output,withIntermediateDirectories:true)
+        guard output.resolvingSymlinksInPath().path==output.standardizedFileURL.path else {
+            throw VideoError.permission("当前作业的导出目录含链接")
+        }
+        let staging=output.appendingPathComponent(".cover-"+UUID().uuidString,isDirectory:true)
+        try fm.createDirectory(at:staging,withIntermediateDirectories:false,attributes:[.posixPermissions:0o700])
+        var prepared=false
+        defer{if !prepared{try? fm.removeItem(at:staging)}}
+        var preserved:[String:Artifact]=[:]
+        for (mime,name) in [("video/mp4","video.mp4"),("application/x-subrip","captions.srt")] {
+            guard let artifact=source.job.artifacts.first(where:{$0.mime==mime}) else {
+                throw VideoError.review("父版缺少已绑定的成片或字幕")
+            }
+            try invocation.check()
+            try invocation.authorizeCoverReuse(from:source.revision.id,in:repository.read())
+            try repository.copyVerifiedArtifact(artifact,job:source.job,revision:source.revision,
+                                                to:staging.appendingPathComponent(name))
+            preserved[mime]=artifact
+        }
+        try progress(0.5)
+        let (audio,audible)=try await Self.checkAudio(staging.appendingPathComponent("video.mp4"),revision:r)
+        let refs=try writeCoverAndNotes(for:r,repository:repository,database:database,
+                                        output:staging,audio:audio,invocation:invocation)
+        for artifact in refs {
+            if let original=preserved[artifact.mime] {
+                guard artifact.bytes==original.bytes,artifact.sha256==original.sha256 else {
+                    throw VideoError.review("复用成片或字幕的实际字节与父版不一致")
+                }
+            }
+        }
+        try progress(0.95)
+        let warnings=(!audible ? ["此版本无旁白，AAC音轨为明确的静音底轨"] : []) +
+            ["封面独立重绘，成片与字幕沿用已核验父版字节"]
+        prepared=true
+        return RenderResult(artifacts:refs,frames:r.frames,seconds:Date().timeIntervalSince(started),
+                            warnings:warnings,coverReuse:.init(revisionID:source.revision.id,staging:staging))
+    }
+
+    private static func checkAudio(_ final:URL,revision r:Revision)async throws->(AudioDiagnostics,Bool) {
+        let policy=r.audioQuality ?? AudioQualityPolicy()
+        let audio=try await AudioInspection.inspect(final,policy:policy)
+        guard audio.clippedSamples==0,audio.rmsDBFS <= -10 else { throw VideoError.review("实际混音存在削波或过高平均电平，请降低分轨音量并重做、听审；失败产物未标可交付") }
+        let audible=r.scenes.contains { !$0.muted && (($0.voice != nil && $0.voiceGain>0) || ($0.kind == .video && $0.sourceGain>0) || SceneAudioCueRules.combined(scene:$0).contains(where:{$0.gain>0})) } || (r.musicAssetID != nil && r.scenes.contains{!$0.muted && $0.musicGain>0})
+        if audible && audio.peakDBFS < -50 { throw VideoError.review("工程含声音但实际混音接近静音，请核对分轨与源音轨后重做") }
+        guard let loudness=audio.loudness else{throw VideoError.review("实际混音尚无响度与真峰值检测，未标可交付")}
+        if audible,let peak=loudness.truePeakDBTP,peak>=0 {throw VideoError.review(String(format:"实际混音的4倍过采样真峰值估计 %.2f dBTP 达到满幅过载，请降低分轨音量并重新制作、听审",peak))}
+        let violations=loudness.violations(policy:policy,audible:audible)
+        guard violations.isEmpty else{throw VideoError.review(violations.joined(separator:"；"))}
+        return (audio,audible)
+    }
+
+    private func writeCoverAndNotes(for r:Revision,repository:Repository,database:Database,
+                                    output:URL,audio:AudioDiagnostics,invocation:RenderInvocation?)throws->[Artifact] {
+        try invocation?.check()
+        try Task.checkCancellation()
+        // Use the verified movie frame directly, including for advanced projects.
+        let generator=AVAssetImageGenerator(asset:AVURLAsset(url:output.appendingPathComponent("video.mp4")))
+        generator.appliesPreferredTrackTransform=true
+        generator.requestedTimeToleranceBefore = .zero
+        generator.requestedTimeToleranceAfter = .zero
+        let images=try CoverPainter.loadImages(revision:r,repository:repository,database:database)
+        let image=try CoverPainter.image(revision:r,source:generator.copyCGImage(at:.zero,actualTime:nil),images:images)
+        try ScenePainter.png(image).write(to:output.appendingPathComponent("cover.png"),options:.atomic)
+        try Self.publicationNotes(r,audio:audio).write(to:output.appendingPathComponent("publication.txt"),
+                                                       atomically:true,encoding:.utf8)
+        return try [("video.mp4","video/mp4"),("cover.png","image/png"),
+                    ("captions.srt","application/x-subrip"),("publication.txt","text/plain")].map { name,mime in
+            let url=output.appendingPathComponent(name)
+            let data=try Data(contentsOf:url,options:.mappedIfSafe)
+            return Artifact(path:url.path,mime:mime,bytes:data.count,sha256:Codec.hash(data),revision:r.id)
+        }
+    }
+
     private func mix(video:URL,final:URL,revision r:Revision,repository:Repository,database:Database,progress: @escaping @Sendable (Double) throws -> Void) async throws {
         let headroom=try AudioMixRules.mixerHeadroom(scenes:r.scenes,fps:r.fps)
         let preparationDirectory=repository.root.appendingPathComponent("cache/audio-preparation-"+Codec.id(),isDirectory:true)
