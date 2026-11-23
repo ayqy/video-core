@@ -1,7 +1,7 @@
 import Foundation
 
-/// The exported cover is an editable composition. It does not insert a title
-/// into the movie or change the movie's first-second narration.
+/// The editable cover composition replaces exactly the movie's first picture.
+/// The first-second narration and every later picture keep their original clock.
 public enum CoverStyle: String, Codable, CaseIterable, Sendable {
     case automatic, explanation, pencil, presenter, game, cartoon, media, chart, code
 }

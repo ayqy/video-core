@@ -85,6 +85,7 @@ enum VisualClipCache {
         var purpose: Purpose; var aspect: Aspect; var fps: Int; var index: Int; var sceneCount: Int; var startFrame: Int
         var price: Price?; var cta: String?; var sourceHash: String?; var layerHashes: [String:String];var moduleIdentity:String?; var artworkIdentity:String?
         var cartoonSpeechBinding:CartoonSpeechBinding?=nil
+        var firstFrameCover:String?=nil
     }
     struct Entry: Codable { var key: String; var bytes: Int; var sha256: String; var frames: Int }
     // Checkpoint packaging does not change drawing semantics or the existing
@@ -107,6 +108,28 @@ enum VisualClipCache {
         return true
     }
     private static func touch(_ clip:URL) {try? FileManager.default.setAttributes([.modificationDate:Date()],ofItemAtPath:clip.path)}
+    /// Only the first scene contains the cover. Bind the actual resolved layout,
+    /// selected CAS artwork and bundled drawing resources; later clips keep their keys.
+    static func firstFrameCoverFingerprint(revision:Revision,database:Database)throws->String {
+        let resolved=try CoverRules.resolved(revision:revision)
+        struct Identity:Encodable {
+            var version="cover-first-frame-1"
+            var presentation:CoverPresentation
+            var images:[String:String]
+            var fonts:[String]
+            var islandStyle:String
+            var noticeBoard:String
+        }
+        let presentation=CoverPresentation(style:resolved.style,template:resolved.template,title:resolved.title,
+            hero:resolved.hero,background:resolved.background,emphasis:resolved.emphasis.isEmpty ? nil:resolved.emphasis,
+            quantityGraphic:resolved.quantityGraphic)
+        let images=Dictionary(uniqueKeysWithValues:database.assets.filter {asset in
+            asset.workspaceID==revision.workspaceID && presentation.images.contains{$0.assetID==asset.id}
+        }.map{($0.id,$0.hash)})
+        return try Codec.digest(Identity(presentation:presentation,images:images,
+            fonts:[CoverTypeface.sourceSHA256,CoverDisplayTypeface.sourceSHA256,IslandTypeface.sourceSHA256],
+            islandStyle:IslandTheme.styleVersion,noticeBoard:CommunityNoticeBoardArtwork.sha256))
+    }
     static func fingerprint(revision: Revision, index: Int, database: Database,modules:RenderModuleRegistry?, encoding:EncodingConfiguration?=nil) throws -> String {
         let encoding=try encoding ?? EncodingConfiguration.capture(aspect:revision.aspect,fps:revision.fps)
         var scene=revision.scenes[index]
@@ -138,7 +161,7 @@ enum VisualClipCache {
         let islandCode=scene.paperPresentation == nil && scene.layers?.contains(where:{$0.kind == .code}) == true
         let islandStyle=islandCode ? "-"+IslandTheme.styleVersion+"-"+IslandTypeface.sourceSHA256:""
         let rendererVersion=version+(paperData ? "-paper-data-1":"")+(layerHold ? "-layer-tail-hold-1":"")+(fullFrame ? "-advanced-full-frame-1":"")+islandStyle
-        return try Codec.digest(Key(version:rendererVersion+revision.toolchain,cinemaSubtitleStyle:CinemaSubtitles.styleVersion,os:ProcessInfo.processInfo.operatingSystemVersionString,font:fontID,scene:scene,encoding:encoding,purpose:revision.purpose,aspect:revision.aspect,fps:revision.fps,index:index,sceneCount:revision.scenes.count,startFrame:revision.scenes.prefix(index).reduce(0){$0+$1.timelineFrames},price:scene.showPrice ? try revision.product?.price(at:revision.createdAt):nil,cta:index==revision.scenes.count-1 ? revision.cta:nil,sourceHash:database.assets.first{$0.id==scene.assetID}?.hash,layerHashes:Dictionary(uniqueKeysWithValues:database.assets.filter { a in scene.layers?.contains(where:{$0.assetID==a.id})==true }.map{($0.id,$0.hash)}),moduleIdentity:moduleIdentity,artworkIdentity:try ClassicArtworkMedia.fingerprint(scene:scene,database:database),cartoonSpeechBinding:cartoonSpeechBinding))
+        return try Codec.digest(Key(version:rendererVersion+revision.toolchain,cinemaSubtitleStyle:CinemaSubtitles.styleVersion,os:ProcessInfo.processInfo.operatingSystemVersionString,font:fontID,scene:scene,encoding:encoding,purpose:revision.purpose,aspect:revision.aspect,fps:revision.fps,index:index,sceneCount:revision.scenes.count,startFrame:revision.scenes.prefix(index).reduce(0){$0+$1.timelineFrames},price:scene.showPrice ? try revision.product?.price(at:revision.createdAt):nil,cta:index==revision.scenes.count-1 ? revision.cta:nil,sourceHash:database.assets.first{$0.id==scene.assetID}?.hash,layerHashes:Dictionary(uniqueKeysWithValues:database.assets.filter { a in scene.layers?.contains(where:{$0.assetID==a.id})==true }.map{($0.id,$0.hash)}),moduleIdentity:moduleIdentity,artworkIdentity:try ClassicArtworkMedia.fingerprint(scene:scene,database:database),cartoonSpeechBinding:cartoonSpeechBinding,firstFrameCover:index==0 ? try firstFrameCoverFingerprint(revision:revision,database:database):nil))
     }
     static func compose(revision r: Revision, repository: Repository, database db: Database, output: URL,modules:RenderModuleRegistry?, invocation:RenderInvocation?=nil, encoding:EncodingConfiguration?=nil, videoEncoder:NativeEncoderSelection = .automatic, progress: @escaping @Sendable (Double) throws -> Void) async throws -> Int {
         try invocation?.verify(revision:r)
@@ -238,6 +261,7 @@ enum VisualClipCache {
         let input=AVAssetWriterInput(mediaType:.video,outputSettings:encoding.writerSettings); input.mediaTimeScale=encoding.mediaTimeScale;input.expectsMediaDataInRealTime=false
         let adaptor=AVAssetWriterInputPixelBufferAdaptor(assetWriterInput:input,sourcePixelBufferAttributes:encoding.pixelBufferAttributes)
         guard writer.canAdd(input) else { throw VideoError.unavailable("当前设备不支持H.264输出") };writer.add(input);guard writer.startWriting() else { throw VideoError.unavailable("画面编码无法启动") };writer.startSession(atSourceTime:.zero)
+        let coverImages=index==0 && range.contains(0) ? try CoverPainter.loadImages(revision:r,repository:repository,database:db):[:]
         var generator:AVAssetImageGenerator?, picture:CGImage?
         let resources=try ClassicArtworkMedia.load(scene:scene,workspaceID:r.workspaceID,repository:repository,database:db,commercial:r.purpose != .education)
         var layerImages:[String:CGImage]=[:]
@@ -256,7 +280,17 @@ enum VisualClipCache {
                 if let g=generator { let sourceFrame=scene.sourceStartFrame+min(scene.durationFrames-1,Int(Double(local)*scene.speed));media=try g.copyCGImage(at:CMTime(value:Int64(sourceFrame),timescale:Int32(r.fps)),actualTime:nil) }
                 CVPixelBufferLockBaseAddress(buffer,[])
                 guard let context=CGContext(data:CVPixelBufferGetBaseAddress(buffer),width:r.aspect.width,height:r.aspect.height,bitsPerComponent:8,bytesPerRow:CVPixelBufferGetBytesPerRow(buffer),space:CGColorSpace(name:CGColorSpace.sRGB)!,bitmapInfo:CGImageAlphaInfo.noneSkipFirst.rawValue) else { CVPixelBufferUnlockBaseAddress(buffer,[]);throw VideoError.unavailable("帧缓冲不可用") }
-                do { try ScenePainter.draw(revision:r,frame:startFrame+local,in:context,media:media,layerImages:layerImages,resources:resources,modules:modules,invocation:invocation) } catch { CVPixelBufferUnlockBaseAddress(buffer,[]);throw error };CVPixelBufferUnlockBaseAddress(buffer,[])
+                do {
+                    try ScenePainter.draw(revision:r,frame:startFrame+local,in:context,media:media,layerImages:layerImages,resources:resources,modules:modules,invocation:invocation)
+                    // Replace exactly one existing picture before its only H.264
+                    // encode. The source clock, full soundtrack and later frames
+                    // remain in place, and advanced modules are never replayed.
+                    if index==0 && local==0 {
+                        guard let source=context.makeImage() else {throw VideoError.unavailable("封面同版源帧不可用")}
+                        let cover=try CoverPainter.image(revision:r,source:source,images:coverImages)
+                        context.draw(cover,in:CGRect(x:0,y:0,width:r.aspect.width,height:r.aspect.height))
+                    }
+                } catch { CVPixelBufferUnlockBaseAddress(buffer,[]);throw error };CVPixelBufferUnlockBaseAddress(buffer,[])
                 guard adaptor.append(buffer,withPresentationTime:CMTime(value:Int64(local-range.lowerBound),timescale:Int32(r.fps))) else { throw VideoError.unavailable("帧写入失败") }
                 if (local-range.lowerBound)%15==0 { try progress(Double(local-range.lowerBound)/Double(range.count)) }
             }

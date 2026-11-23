@@ -170,7 +170,8 @@ final class MediaTests:XCTestCase {
             let font=CTFontCreateWithName("PingFangSC-Medium" as CFString,32,nil)
             let table=CTFontCopyTable(font,0x68656164,[]) as Data? ?? Data()
             let paperData=scene.paperPresentation != nil && scene.layers?.contains(where:{$0.kind == .chart || $0.kind == .code}) == true
-            return try Codec.digest(VisualClipCache.Key(version:VisualClipCache.version+(paperData ? "-paper-data-1":"")+revision.toolchain,cinemaSubtitleStyle:CinemaSubtitles.styleVersion,os:ProcessInfo.processInfo.operatingSystemVersionString,font:(CTFontCopyPostScriptName(font) as String)+Codec.hash(table),scene:scene,encoding:encoding,purpose:revision.purpose,aspect:revision.aspect,fps:revision.fps,index:0,sceneCount:1,startFrame:0,price:nil,cta:revision.cta,sourceHash:nil,layerHashes:[:],moduleIdentity:nil,artworkIdentity:nil))
+            let islandStyle=scene.paperPresentation == nil && scene.layers?.contains(where:{$0.kind == .code}) == true ? "-"+IslandTheme.styleVersion+"-"+IslandTypeface.sourceSHA256:""
+            return try Codec.digest(VisualClipCache.Key(version:VisualClipCache.version+(paperData ? "-paper-data-1":"")+islandStyle+revision.toolchain,cinemaSubtitleStyle:CinemaSubtitles.styleVersion,os:ProcessInfo.processInfo.operatingSystemVersionString,font:(CTFontCopyPostScriptName(font) as String)+Codec.hash(table),scene:scene,encoding:encoding,purpose:revision.purpose,aspect:revision.aspect,fps:revision.fps,index:0,sceneCount:1,startFrame:0,price:nil,cta:revision.cta,sourceHash:nil,layerHashes:[:],moduleIdentity:nil,artworkIdentity:nil,firstFrameCover:try VisualClipCache.firstFrameCoverFingerprint(revision:revision,database:Database())))
         }
         for paper in [false,true] {for kind in [SceneLayer.Kind.text,.image,.rectangle,.chart,.code] {
             var scene=Scene(title:"停顿缓存",body:"源图与字幕保持独立",durationFrames:90)
