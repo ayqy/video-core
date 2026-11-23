@@ -113,7 +113,7 @@ enum VisualClipCache {
     static func firstFrameCoverFingerprint(revision:Revision,database:Database)throws->String {
         let resolved=try CoverRules.resolved(revision:revision)
         struct Identity:Encodable {
-            var version="cover-first-frame-1"
+            var version="cover-first-frame-2"
             var presentation:CoverPresentation
             var images:[String:String]
             var fonts:[String]

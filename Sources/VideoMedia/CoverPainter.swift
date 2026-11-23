@@ -581,7 +581,10 @@ case .presenter:presenter(background,hero:hero,placement:placement,square:square
     }
     private static func code(_ image:CGImage?,hero:CGImage?,square s:CGRect,canvas:CGRect,variant:Int,revision:Revision,quantity:CoverQuantityGraphic?,p:Palette,c:CGContext)throws {
         let d=s.width,shift=CGFloat(variant-1)*d*0.035
-        c.setFillColor(color(IslandTheme.canvas));c.fill(canvas)
+        // A deep studio field separates the cream Island component from its
+        // surroundings. Light and depth support the authored count shortfall,
+        // rather than adding an unrelated diagram or another line of copy.
+        gradient(canvas,colors:[color("052E35"),color("0C5961"),color("147F77")],locations:[0,0.56,1],c:c)
         // Use the same published Animal Island Panel/Popover vocabulary as
         // the ordinary code video. No source pixels or invented code text.
         let panel=CGRect(x:canvas.midX-d*0.58,y:canvas.midY-d*0.40,width:d*1.16,height:d*0.80)
@@ -592,18 +595,7 @@ case .presenter:presenter(background,hero:hero,placement:placement,square:square
             let title=try composeTitle(cover:cover,width:canvas.width,height:canvas.height)
             let slots=try quantitySlots(square:s,titleBounds:title.visibleBounds,required:quantity.required,variant:variant)
             let focus=try quantitySpotlightFocus(slots:slots,available:quantity.available)
-            let highlight=try quantitySpotlightEnvelope(focus:focus,square:s,titleBounds:title.visibleBounds)
-            c.saveGState()
-            // The shortfall panel may change with the available count, while
-            // existing coins retain identical base pixels at their soft edge.
-            for coin in slots.prefix(quantity.available) {
-                let side=coin.offsetBy(dx:coin.width*0.012,dy:-coin.width*0.055)
-                for face in [coin,side] {
-                    c.addRect(canvas);c.addEllipse(in:face.insetBy(dx:-2,dy:-2));c.clip(using:.evenOdd)
-                }
-            }
-            IslandTheme.drawPill(in:highlight,fill:IslandTheme.mintWash,context:c)
-            c.restoreGState()
+            try quantitySpotlight(focus,protectedCoins:slots.prefix(quantity.available),square:s,canvas:canvas,titleBounds:title.visibleBounds,c:c)
             quantityStage(slots,square:s,canvas:canvas,c:c)
             for (index,rect) in slots.enumerated() {
                 quantityCoin(in:rect,present:index<quantity.available,c:c)

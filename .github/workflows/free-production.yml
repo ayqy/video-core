@@ -35,7 +35,7 @@ jobs:
           import base64, hashlib, os, re, struct, subprocess
           root=Path(os.environ["GITHUB_WORKSPACE"])
           BASE='f6ad22bfd8272f8c682e3a2d14ce48737154ad9a'
-          REVIEWED=set(['.github/workflows/free-production.yml', 'README.md', 'Sources/VideoCore/CoverPresentation.swift', 'Sources/VideoMedia/Renderer.swift', 'Sources/VideoMedia/VisualCache.swift', 'Tests/VideoMediaTests/ContentProjectMediaTests.swift', 'Tests/VideoMediaTests/DataPresentationPainterTests.swift', 'Tests/VideoMediaTests/MediaTests.swift', 'Tests/VideoMediaTests/VisualCacheResumeTests.swift'])
+          REVIEWED=set(['.github/workflows/free-production.yml', 'README.md', 'Sources/VideoCore/CoverPresentation.swift', 'Sources/VideoMedia/CoverPainter.swift', 'Sources/VideoMedia/Renderer.swift', 'Sources/VideoMedia/VisualCache.swift', 'Tests/VideoMediaTests/ContentProjectMediaTests.swift', 'Tests/VideoMediaTests/DataPresentationPainterTests.swift', 'Tests/VideoMediaTests/MediaTests.swift', 'Tests/VideoMediaTests/VisualCacheResumeTests.swift'])
           ADDED=set()
           FONT_FILES={'Sources/VideoMedia/IslandTypeface.swift': (4868996, 'd2ec2f7edbdee750871f5ae5573a4f712fe7fe90b5460d58cd7347b28f0c8f72'), 'ThirdParty/Fonts/ChillRoundF/ChillRoundF-v3.0.ttf': (6168772, '7dae804b344f7bc1a1c8426b9515e9b54d7baac3e123263d0bae94d0a305a732'), 'Sources/VideoMedia/CoverTypeface.swift': (2197018, 'cf4f47e54fb55606755e65b1f837697edca6ac3bd8f3a67497ebea9514bfb82d'), 'ThirdParty/Fonts/SmileySans/SmileySans-Oblique.ttf': (2629764, 'b447d7e781f08bc95c4c9f23ba71ed2b8ebb639aa7184485c71c4ca5afcd25c4'), 'Sources/VideoMedia/CoverDisplayTypeface.swift': (1564881, '8e2500a885e85ea6f28faa3dd36ce6c860b8d2c216089832cb4616e2e92783b8'), 'ThirdParty/Fonts/DouyinSans/DouyinSansBold.ttf': (1919404, 'fbecfacdfac33982774e301073a8d357a09c698cd3134bb6ddec0f5bfc268fa1')}
           FONT_LICENSES={'ThirdParty/Fonts/ChillRoundF/LICENSE': (4375, 'd45891f8adfd21368c98e803603df1f575ff3fc4a6ec713ba7ccf0e3cba15b28'), 'ThirdParty/Fonts/SmileySans/LICENSE': (4422, '9401f4050f1b66c26b6ccdc8b0e14a3c1cc37aac122eda84386f25854a9bec72'), 'ThirdParty/Fonts/DouyinSans/LICENSE': (4455, 'a6d5700a002ea32bcfbe3310253d603997683dac8ac63777e375d06c07c30ea6')}
@@ -45,8 +45,8 @@ jobs:
           EXPECTED_COUNT=371
           BASE_MANIFEST_SHA='011d02eeb5dacf49b49aab5aeef816f9528195924f7e35705c5119fd3b8e38d8'
           BASE_FINGERPRINT='55a3b82d39b074209e32887b93247cedce1dab99c63acc7b30d0736ea9f2be5e'
-          UNCHANGED_COUNT=362
-          UNCHANGED_FINGERPRINT='b7ae5b4e84e40578e33cf04b0e5210e3a4344a46b5aa9089f31010f466b60fe6'
+          UNCHANGED_COUNT=361
+          UNCHANGED_FINGERPRINT='2326f104da04ace03a7493cd738c74d52c5b554dfabf530c6e40aaf957152133'
 
           def rows(raw):
               result=re.findall(r'(?m)^\| ([a-f0-9]{64}) \| ([0-9]+) \| ([^|\n]+) \|$',raw.decode())
@@ -212,5 +212,5 @@ jobs:
                 '公开Python备份和完整生产流程实际执行86个唯一方法；失败、遗漏、重复或跳过均拒绝。\n'
                 'Release CLI与更新器、普通制作四件、完整声画解码及含源独立冷恢复实际执行；不授视觉或听审。\n')
           with open(os.environ['GITHUB_STEP_SUMMARY'],'a') as stream:stream.write(text)
-          print('current_native_rules=377 retained_baseline_native_rules=371 current_affected_cover_native_rules=9 ordinary_production_four_artifacts_decode_cold=true visual_accepted=false')
+          print('current_native_rules=377 retained_baseline_native_rules=371 current_affected_cover_native_rules=11 ordinary_production_four_artifacts_decode_cold=true visual_accepted=false')
           PYCODE

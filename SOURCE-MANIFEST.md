@@ -2,10 +2,10 @@
 
 VideoFree source export · package_free.py · version 1
 
-生成时间：2026-11-23 11:09:11 北京时间
+生成时间：2026-11-23 11:44:01 北京时间
 
-- 源码与必要元数据：371个文件；27486280字节（不含本清单）。
-- 整体内容指纹：`d0586c14bfde992edc6a9669476f06a9bc231402ed6fc799f158cc13d884f3f9`。
+- 源码与必要元数据：371个文件；27486019字节（不含本清单）。
+- 整体内容指纹：`eb8f7691b67a77d0c7a25a596da00b2afde6fe0d7dd2786bcf82c29a3c5d5167`。
 - 来源：受控原始工程中的逐文件白名单；Package.swift、唯一免费制作workflow与README均来自Distribution/Free精确模板。
 - 本包不含.git，不可作为新业务checkout；本清单生成过程不执行构建、设备验收、签名安装或公共上传，各阶段以独立证据为准。
 - 排除：App、VideoGame、VideoCartoon、Premium、高级实现运行时测试、私有仓库地址、凭据、客户数据、缓存、日志及媒体过程产物。
@@ -14,7 +14,7 @@ VideoFree source export · package_free.py · version 1
 
 | SHA-256 | 字节数 | 包内路径 / 原工程来源 |
 |---|---:|---|
-| 14b20a51fb5d12f24d060d31a1048289e28f34e9b0afebf423cd88ceb8528b19 | 124171 | .github/workflows/free-production.yml |
+| e5fe3999ac7832ce5c4edf6716eb558eac0776962fd311797d24f1babb604326 | 124213 | .github/workflows/free-production.yml |
 | ac90de9132befb9227282c230671875edb7fd8dc4297999fc39622ea7efe3644 | 52964 | Integrations/README.md |
 | 28833193551aa06befb3bc0fc30b69ef87f74cccae39895f4242af4321d717dd | 15308 | Integrations/actor_motion.py |
 | 39dd8274ff1e6b0649acb63281087a1144e1f4a4e0eed3dc2b92e10df2cbd121 | 28488 | Integrations/asset_reuse.py |
@@ -215,7 +215,7 @@ VideoFree source export · package_free.py · version 1
 | dc3fe166cfd41d83641daf0518b60b67ba38ea631020b7e4885a80b6c8f305d1 | 1805048 | Sources/VideoMedia/CommunityNoticeBoardArtwork.swift |
 | 451de62ae66ce51bc390deb9d210ca46de5ca66e5bb52b4572a6e5e792e141a2 | 4904 | Sources/VideoMedia/CoursePreview.swift |
 | 8e2500a885e85ea6f28faa3dd36ce6c860b8d2c216089832cb4616e2e92783b8 | 1564881 | Sources/VideoMedia/CoverDisplayTypeface.swift |
-| 3f9cc1e592861952c164279d0e8a1d6e3d20063ca07ca6fb1d45e6f32184ff72 | 67002 | Sources/VideoMedia/CoverPainter.swift |
+| 3365e1e6ee440468404c96e56c564dfff9af6fa0c36473a931afaa498e749b94 | 66699 | Sources/VideoMedia/CoverPainter.swift |
 | cf4f47e54fb55606755e65b1f837697edca6ac3bd8f3a67497ebea9514bfb82d | 2197018 | Sources/VideoMedia/CoverTypeface.swift |
 | ba625098d899997924d0cc13f4de47c6b87ca8fe1e5a1d918a1f33d7d9241e59 | 10142 | Sources/VideoMedia/DataPresentationPainter.swift |
 | a3c1ff6981dd81b2a97fee7cff2489fc9edb2381904ee46ebad18e9b6562dc91 | 4662 | Sources/VideoMedia/Diagnostics.swift |
@@ -250,7 +250,7 @@ VideoFree source export · package_free.py · version 1
 | 99425bc053706aeb1d9879d22d2068bb341caedfa35894392a12e02ee37304a3 | 15775 | Sources/VideoMedia/ScriptJobs.swift |
 | cdacae4766191de4337bdf3d73922fee49acc834203e1afcac3e20f1153d6c09 | 6940 | Sources/VideoMedia/SpeechProjectProduction.swift |
 | 8601c023dd21ccdf98b30b470e3a4237de1d479e76b7f9cf5d70f27c946c4461 | 20303 | Sources/VideoMedia/SpeechService.swift |
-| 2315b4620fedbcf23215f1684d6fa269f37872731e245061f7611e42836c1fed | 26040 | Sources/VideoMedia/VisualCache.swift |
+| ede38c8240b00601d82e931bb89d8d6361b35ef9d5844f67b1b4cc0581b86ac3 | 26040 | Sources/VideoMedia/VisualCache.swift |
 | 73405ccea354d3d9bd2f26f62727ef19ab9e2057decab8bb11c59c8cb9003e86 | 8544 | Sources/VideoMedia/VoicePromptBuiltinAssets.swift |
 | 10f826b1ef67e950bf5beddedc3aa15c14565857af6796876331e4c2125a0aa3 | 127 | Sources/VideoPluginBridge/main.swift |
 | 889d232f2f397a808d7d59eff398ccf0d0c8daa0d8e2ae9e9e08d1e16733b6ba | 4502 | Tests/VideoCLITests/baidu_contract_smoke.swift |
