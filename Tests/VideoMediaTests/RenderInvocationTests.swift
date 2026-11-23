@@ -80,4 +80,41 @@ final class RenderInvocationTests:XCTestCase {
             XCTAssertTrue(error is CancellationError)
         }
     }
+    func testNativeJobMetadataCacheStillRejectsExternalAuthorityChanges() throws {
+        try fixture { repo, workspace, project in
+            let revision = project.current
+            let quote = Quote(projectID: project.id, revisionID: revision.id, digest: try revision.contentDigest(), upper: Money(0), unit: "CNY", provider: "native", expiresAt: Date().addingTimeInterval(300), confirmed: true)
+            let submitted = try JobRules.submit(workspaceID: workspace.id, project: project, quote: quote, requestKey: "native-patch-external-authority", existing: [], budget: BudgetPolicy())
+            try repo.transaction { $0.jobs = [submitted] }
+            let job = try repo.nativeJobTransaction { _, jobs in
+                jobs[0] = try JobOperations.claim(jobs[0], owner: "worker")
+                return jobs[0]
+            }
+            let token = try XCTUnwrap(job.lease?.token)
+            let invocation = try RenderInvocation.job(repository: repo, claimed: job, revision: revision, token: token, cancellation: RenderCancellation())
+            let external = try Repository(root: repo.root)
+            let changes: [(inout Database) -> Void] = [
+                { $0.jobs[0] = JobRules.cancel($0.jobs[0]) },
+                { $0.jobs[0].quote.upper = Money(1) },
+                { $0.jobs[0].quote.id = Codec.id() },
+                { $0.jobs[0].lease?.token = Codec.id() },
+                { $0.projects[0].revisions[0].scenes[0].body = "另一个连接修改了冻结原文" }
+            ]
+            for change in changes {
+                try external.transaction { $0.jobs = [job]; $0.projects = [project] }
+                try repo.nativeJobTransaction { _, jobs in
+                    try invocation.check()
+                    jobs[0] = try JobOperations.heartbeat(jobs[0], token: token, progress: 0.2)
+                }
+                try external.transaction { change(&$0) }
+                let before = try external.read()
+                XCTAssertThrowsError(try repo.nativeJobTransaction { _, jobs in
+                    try invocation.check()
+                    jobs[0] = try JobOperations.heartbeat(jobs[0], token: token, progress: 0.3)
+                })
+                XCTAssertEqual(try external.read().generation, before.generation)
+                XCTAssertEqual(try Codec.data(external.read().jobs), try Codec.data(before.jobs))
+            }
+        }
+    }
 }

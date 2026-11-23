@@ -48,17 +48,17 @@ final class LocalJobKeepalive: @unchecked Sendable {
             do {
                 try await Task.sleep(nanoseconds: interval)
                 guard !isStopped else { return }
-                try repository.transaction { database in
+                try repository.nativeJobTransaction { _, jobs in
                     guard !isStopped else { throw Stopped() }
                     // Repository has a recursive lock and an active SQLite write
                     // transaction here. This original authorization reads the same
                     // frozen snapshot, so budget/token changes cannot race the renewal.
                     try invocation.check()
                     guard !isStopped else { throw Stopped() }
-                    guard let index = database.jobs.firstIndex(where: { $0.id == invocation.jobID }) else {
+                    guard let index = jobs.firstIndex(where: { $0.id == invocation.jobID }) else {
                         throw VideoError.notFound("原制作任务不存在，停止续租")
                     }
-                    database.jobs[index] = try JobOperations.heartbeat(database.jobs[index], token: token, progress: database.jobs[index].progress)
+                    jobs[index] = try JobOperations.heartbeat(jobs[index], token: token, progress: jobs[index].progress)
                 }
             } catch is Stopped {
                 return
@@ -76,18 +76,20 @@ final class LocalJobKeepalive: @unchecked Sendable {
 /// One backend for UI, free CLI and the independent premium Host.
 public enum LocalJobExecutor {
     public static func run(repository:Repository,jobID:String,owner:String,modules:RenderModuleRegistry?=nil,videoEncoder:NativeEncoderSelection = .automatic,progress:@escaping @Sendable(Double)->Void={_ in}) async throws -> Job {
-        let claimed:(Job,Revision)=try repository.transaction { db in
-            for i in db.jobs.indices { db.jobs[i]=JobOperations.recoverExpired(db.jobs[i]) }
-            guard let index=db.jobs.firstIndex(where:{$0.id==jobID}) else { throw VideoError.notFound("原任务不存在") }
-            guard !db.jobs.contains(where:{$0.state == .running && $0.quote.provider=="native"}) else { throw VideoError.unavailable("已有本地任务执行中，请等待或取消原任务") }
-            let p=try db.project(db.jobs[index].projectID)
-            guard p.workspaceID==db.jobs[index].workspaceID,let r=p.revisions.first(where:{$0.id==db.jobs[index].revisionID}),try r.contentDigest()==db.jobs[index].digest else {throw VideoError.conflict("冻结版本或任务摘要不一致")}
-            let issues=try Quality.inspect(r,database:db,requireReview:false);guard issues.isEmpty else {throw VideoError.review(issues.map(\.message).joined(separator:"；"))}
-            try BatchRules.validateSubmission(project:p,quote:db.jobs[index].quote,batches:db.topicBatches ?? [],existingJobs:db.jobs,requestKey:db.jobs[index].requestKey)
-            try TeachingBatchRules.validateSubmission(project:p,quote:db.jobs[index].quote,batches:db.teachingBatches ?? [],existingJobs:db.jobs,requestKey:db.jobs[index].requestKey)
+        let claimed:(Job,Revision)=try repository.nativeJobTransaction { state, jobs in
+            for i in jobs.indices where jobs[i].quote.provider == "native" { jobs[i]=JobOperations.recoverExpired(jobs[i]) }
+            guard let index=jobs.firstIndex(where:{$0.id==jobID}) else { throw VideoError.notFound("原任务不存在") }
+            guard !jobs.contains(where:{$0.state == .running && $0.quote.provider=="native"}) else { throw VideoError.unavailable("已有本地任务执行中，请等待或取消原任务") }
+            let p=try state.project(jobs[index].projectID)
+            guard p.workspaceID==jobs[index].workspaceID,let r=p.revisions.first(where:{$0.id==jobs[index].revisionID}),
+                  try repository.readWithRevisionDigest(projectID:p.id,revisionID:r.id).digest == jobs[index].digest else {throw VideoError.conflict("冻结版本或任务摘要不一致")}
+            var current=state;current.jobs=jobs
+            let issues=try Quality.inspect(r,database:current,requireReview:false);guard issues.isEmpty else {throw VideoError.review(issues.map(\.message).joined(separator:"；"))}
+            try BatchRules.validateSubmission(project:p,quote:jobs[index].quote,batches:state.topicBatches ?? [],existingJobs:jobs,requestKey:jobs[index].requestKey)
+            try TeachingBatchRules.validateSubmission(project:p,quote:jobs[index].quote,batches:state.teachingBatches ?? [],existingJobs:jobs,requestKey:jobs[index].requestKey)
             for s in r.scenes where RenderModuleRegistry.capability(for:s.kind) != nil {guard let modules else{throw VideoError.unavailable("当前执行端未安装有效高级能力，请使用独立高级Host或改用免费图文")};_ = try modules.validate(scene:s)}
-            db.jobs[index]=try JobOperations.claim(db.jobs[index],owner:owner)
-            return(db.jobs[index],r)
+            jobs[index]=try JobOperations.claim(jobs[index],owner:owner)
+            return(jobs[index],r)
         }
         let token=claimed.0.lease!.token
         let cancellation=RenderCancellation()
@@ -103,13 +105,13 @@ public enum LocalJobExecutor {
             }, onCancel: { cancellation.cancel();heartbeat.cancel() })
             if let failure=await heartbeat.stop(){throw failure}
             try invocation.check()
-            return try repository.transaction { db in try invocation.check();guard let i=db.jobs.firstIndex(where:{$0.id==jobID}) else {throw VideoError.notFound("原任务不存在")};db.jobs[i]=try JobOperations.finish(db.jobs[i],token:token,artifacts:result.artifacts);db.jobs[i].message=result.warnings.joined(separator:"；");return db.jobs[i] }
+            return try repository.nativeJobTransaction { _,jobs in try invocation.check();guard let i=jobs.firstIndex(where:{$0.id==jobID}) else {throw VideoError.notFound("原任务不存在")};jobs[i]=try JobOperations.finish(jobs[i],token:token,artifacts:result.artifacts);jobs[i].message=result.warnings.joined(separator:"；");return jobs[i] }
         } catch {
             var failure=error
             if let keepalive,let heartbeatFailure=await keepalive.stop(){failure=heartbeatFailure}
             cancellation.cancel()
             if let scope { try? modules?.close(invocationID:scope.id) }
-            try? repository.transaction { db in guard let i=db.jobs.firstIndex(where:{$0.id==jobID}),db.jobs[i].state == .running,db.jobs[i].lease?.token==token else{return};db.jobs[i].lease=nil;db.jobs[i].state=failure is CancellationError ? .cancelled:.interrupted;db.jobs[i].message=(failure as? VideoError)?.localizedDescription ?? "本地制作中断，工程与已校验缓存保留，可沿原任务恢复" }
+            try? repository.nativeJobTransaction { _,jobs in guard let i=jobs.firstIndex(where:{$0.id==jobID}),jobs[i].state == .running,jobs[i].lease?.token==token else{return};jobs[i].lease=nil;jobs[i].state=failure is CancellationError ? .cancelled:.interrupted;jobs[i].message=(failure as? VideoError)?.localizedDescription ?? "本地制作中断，工程与已校验缓存保留，可沿原任务恢复" }
             throw failure
         }
     }
@@ -133,10 +135,10 @@ public enum LocalJobExecutor {
         // when no write is needed. Never use a renderer-local progress cache.
         _ = try JobOperations.heartbeat(current,token:token,progress:value)
         if value>current.progress {
-            try repository.transaction { db in
+            try repository.nativeJobTransaction { _, jobs in
                 try invocation.check()
-                guard let i=db.jobs.firstIndex(where:{$0.id==jobID}) else {throw VideoError.notFound("原任务不存在")}
-                db.jobs[i]=try JobOperations.heartbeat(db.jobs[i],token:token,progress:value)
+                guard let i=jobs.firstIndex(where:{$0.id==jobID}) else {throw VideoError.notFound("原任务不存在")}
+                jobs[i]=try JobOperations.heartbeat(jobs[i],token:token,progress:value)
             }
         }
         try invocation.check()

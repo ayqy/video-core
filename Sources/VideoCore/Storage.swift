@@ -87,6 +87,16 @@ public final class Repository: @unchecked Sendable {
     private var cachedSnapshot: (dataVersion: Int64, database: Database)?
     private struct RevisionDigestKey: Hashable { let projectID: String; let revisionID: String }
     private var revisionDigests: [RevisionDigestKey: String] = [:]
+    private struct NativeJobFileStamp: Equatable {
+        let device: Int32; let inode: UInt64; let size: Int64
+        let modifiedSeconds: Int; let modifiedNanoseconds: Int
+        let changedSeconds: Int; let changedNanoseconds: Int
+    }
+    private struct NativeJobAdmission {
+        let dataVersion: Int64; let generation: Int
+        let sources: [String: NativeJobFileStamp]
+    }
+    private var nativeJobAdmission: NativeJobAdmission?
     public init(root requestedRoot: URL,readOnly:Bool=false) throws {
         // Keep a stable physical generation even if an installer's current pointer changes later.
         let root=requestedRoot.standardizedFileURL.resolvingSymlinksInPath()
@@ -126,6 +136,7 @@ public final class Repository: @unchecked Sendable {
         // Use the version read before SELECT. An external commit between them
         // may cause one extra reload next time, never label old data as current.
         revisionDigests.removeAll(keepingCapacity: true)
+        nativeJobAdmission = nil
         cachedSnapshot = (version, state)
         return state
     }
@@ -156,8 +167,175 @@ public final class Repository: @unchecked Sendable {
             var state = try readUnlocked(); if let expectedGeneration, state.generation != expectedGeneration { throw VideoError.conflict("数据已在另一窗口修改，请刷新后重试") }
             let result = try mutate(&state); try state.validate(); try verifyModelSceneSources(in:state); state.generation += 1; let data = try Codec.data(state)
             var stmt: OpaquePointer?; guard sqlite3_prepare_v2(db, "INSERT OR REPLACE INTO snapshot(id,payload) VALUES(1,?)", -1, &stmt, nil) == SQLITE_OK else { throw VideoError.unavailable("保存数据失败") }; defer { sqlite3_finalize(stmt) }
-            let rc = data.withUnsafeBytes { sqlite3_bind_blob(stmt, 1, $0.baseAddress, Int32($0.count), unsafeBitCast(-1, to: sqlite3_destructor_type.self)) }; guard rc == SQLITE_OK, sqlite3_step(stmt) == SQLITE_DONE else { throw VideoError.unavailable("保存数据失败") }; try sql("COMMIT"); cachedSnapshot = nil; revisionDigests.removeAll(keepingCapacity: true); return result
-        } catch { cachedSnapshot = nil; revisionDigests.removeAll(keepingCapacity: true); try? sql("ROLLBACK"); throw error }
+            let rc = data.withUnsafeBytes { sqlite3_bind_blob(stmt, 1, $0.baseAddress, Int32($0.count), unsafeBitCast(-1, to: sqlite3_destructor_type.self)) }; guard rc == SQLITE_OK, sqlite3_step(stmt) == SQLITE_DONE else { throw VideoError.unavailable("保存数据失败") }; try sql("COMMIT"); cachedSnapshot = nil; nativeJobAdmission = nil; revisionDigests.removeAll(keepingCapacity: true); return result
+        } catch { cachedSnapshot = nil; nativeJobAdmission = nil; revisionDigests.removeAll(keepingCapacity: true); try? sql("ROLLBACK"); throw error }
+    }
+
+    /// A closed persistence boundary for existing native-job execution facts.
+    /// Content, evidence, budgets and complete job identities are immutable here.
+    /// Admission still performs the normal full validation before a lease is minted.
+    /// Repeated lease/progress writes replace only jobs and generation in schema 1.
+    @discardableResult public func nativeJobTransaction<T>(expectedGeneration: Int? = nil,
+        _ mutate: (Database, inout [Job]) throws -> T) throws -> T {
+        guard !readOnly else { throw VideoError.permission("只读检查不能写入工程") }
+        lock.lock(); defer { lock.unlock() }
+        try sql("BEGIN IMMEDIATE")
+        do {
+            try ManagedInstallRules.authorizeWrite(repositoryRoot: root)
+            let state = try read(), version = try dataVersionUnlocked()
+            guard state.schema == 1, state.generation >= 0, state.generation < Int.max,
+                  expectedGeneration == nil || expectedGeneration == state.generation else {
+                throw VideoError.conflict("原生任务快照版本已变化，请读取原任务")
+            }
+            let sources = try nativeJobSourceStamps(state)
+            if nativeJobAdmission?.dataVersion != version || nativeJobAdmission?.generation != state.generation
+                || nativeJobAdmission?.sources != sources {
+                try state.validate()
+                try verifyAssets(state)
+                try verifyModelSceneSources(in: state)
+                guard try nativeJobSourceStamps(state) == sources else {
+                    throw VideoError.conflict("模型原件在核验期间变化，未认领或续租原任务")
+                }
+                nativeJobAdmission = NativeJobAdmission(dataVersion: version, generation: state.generation, sources: sources)
+            }
+            let boundary = Date()
+            var jobs = state.jobs
+            let original = try Codec.data(jobs)
+            let result = try mutate(state, &jobs)
+            guard try nativeJobSourceStamps(state) == sources else {
+                throw VideoError.conflict("源文件在运行态更新期间变化，原更新已回滚")
+            }
+            try Self.validateNativeJobChanges(from: state.jobs, to: jobs, boundary: boundary)
+            let encoded = try Codec.data(jobs)
+            if encoded == original { try sql("COMMIT"); return result }
+            try ManagedInstallRules.authorizeWrite(repositoryRoot: root)
+            var statement: OpaquePointer?
+            let update = "UPDATE snapshot SET payload=CAST(json_set(CAST(payload AS TEXT),'$.jobs',json(CAST(? AS TEXT)),'$.generation',?) AS BLOB) WHERE id=1 AND json_extract(CAST(payload AS TEXT),'$.schema')=1 AND json_extract(CAST(payload AS TEXT),'$.generation')=?"
+            guard sqlite3_prepare_v2(db, update, -1, &statement, nil) == SQLITE_OK else {
+                throw VideoError.unavailable("当前SQLite不支持原生任务原子更新；原快照未改")
+            }
+            defer { sqlite3_finalize(statement) }
+            let bound = encoded.withUnsafeBytes {
+                sqlite3_bind_blob(statement, 1, $0.baseAddress, Int32($0.count), unsafeBitCast(-1, to: sqlite3_destructor_type.self))
+            }
+            guard bound == SQLITE_OK,
+                  sqlite3_bind_int64(statement, 2, sqlite3_int64(state.generation + 1)) == SQLITE_OK,
+                  sqlite3_bind_int64(statement, 3, sqlite3_int64(state.generation)) == SQLITE_OK,
+                  sqlite3_step(statement) == SQLITE_DONE, sqlite3_changes(db) == 1 else {
+                throw VideoError.conflict("原生任务更新未命中原快照，未覆盖较新状态")
+            }
+            // Reject expiry already visible before COMMIT. COMMIT itself may
+            // still stall; subsequent scope checks remain authoritative and
+            // fail closed rather than treating a persisted lease as a grant.
+            for (previous, job) in zip(state.jobs, jobs) where job.quote.provider == "native" {
+                if job.state == .running {
+                    guard let lease = job.lease, lease.expiresAt > Date() else {
+                        throw VideoError.conflict("原生任务提交前租约已过期，原更新已回滚")
+                    }
+                } else if previous.state == .running && job.state == .needsReview {
+                    guard (previous.lease?.expiresAt ?? .distantPast) > Date() else {
+                        throw VideoError.conflict("产物提交前原租约已过期，未接受迟到结果")
+                    }
+                }
+            }
+            try sql("COMMIT")
+            var current = state
+            current.jobs = try Codec.decoder().decode([Job].self, from: encoded)
+            current.generation += 1
+            // Our commit does not change this connection's data_version. An
+            // external commit after COMMIT must invalidate this older label.
+            cachedSnapshot = (version, current)
+            nativeJobAdmission = NativeJobAdmission(dataVersion: version, generation: current.generation, sources: sources)
+            return result
+        } catch {
+            cachedSnapshot = nil; nativeJobAdmission = nil
+            revisionDigests.removeAll(keepingCapacity: true)
+            try? sql("ROLLBACK")
+            throw error
+        }
+    }
+
+    private func nativeJobSourceStamps(_ state: Database) throws -> [String: NativeJobFileStamp] {
+        func stamp(_ path: String, directory: Bool = false) throws -> NativeJobFileStamp {
+            var value = stat()
+            guard lstat(root.appendingPathComponent(path).path, &value) == 0,
+                  value.st_mode & mode_t(S_IFMT) == mode_t(directory ? S_IFDIR : S_IFREG),
+                  directory || value.st_nlink == 1 else {
+                throw VideoError.invalid("已核模型路径、文件类型或链接发生变化")
+            }
+            return NativeJobFileStamp(device: value.st_dev, inode: value.st_ino, size: value.st_size,
+                modifiedSeconds: value.st_mtimespec.tv_sec, modifiedNanoseconds: value.st_mtimespec.tv_nsec,
+                changedSeconds: value.st_ctimespec.tv_sec, changedNanoseconds: value.st_ctimespec.tv_nsec)
+        }
+        if state.assets.isEmpty { return [:] }
+        var result = ["assets": try stamp("assets", directory: true)]
+        for asset in state.assets {
+            guard asset.hash.range(of: "^[a-f0-9]{64}$", options: .regularExpression) != nil,
+                  asset.ext.range(of: "^[a-z0-9]{1,12}$", options: .regularExpression) != nil else {
+                throw VideoError.invalid("原素材引用不是有界CAS路径")
+            }
+            result[asset.relativePath] = try stamp(asset.relativePath)
+        }
+        return result
+    }
+
+    private static func validateNativeJobChanges(from old: [Job], to new: [Job], boundary: Date) throws {
+        guard old.map(\.id) == new.map(\.id), Set(old.map(\.id)).count == old.count else {
+            throw VideoError.conflict("运行态事务不能增删、重排或替换原任务")
+        }
+        for (before, after) in zip(old, new) {
+            if try Codec.data(before) == Codec.data(after) { continue }
+            guard before.quote.provider == "native" else { throw VideoError.permission("运行态事务不能更新远端任务") }
+            var identity = after
+            identity.state = before.state; identity.progress = before.progress; identity.lease = before.lease
+            identity.attempt = before.attempt; identity.updatedAt = before.updatedAt; identity.message = before.message
+            identity.artifacts = before.artifacts; identity.actual = before.actual; identity.cacheHit = before.cacheHit
+            guard try Codec.data(identity) == Codec.data(before), after.progress.isFinite,
+                  (0...1).contains(after.progress), after.attempt >= 0 else {
+                throw VideoError.permission("运行态事务不能改变任务范围、报价、预算或非运行字段")
+            }
+            let unchangedOutput = try Codec.data(before.artifacts) == Codec.data(after.artifacts)
+                && before.actual == after.actual && before.cacheHit == after.cacheHit
+            switch (before.state, after.state) {
+            case (.queued, .running):
+                guard before.lease == nil || before.lease!.expiresAt <= boundary,
+                      before.attempt < Int.max, after.attempt == before.attempt + 1,
+                      after.progress == before.progress, unchangedOutput, after.message == before.message else {
+                    throw VideoError.conflict("原任务认领状态或尝试次数不合法")
+                }
+            case (.running, .running):
+                guard let previous = before.lease, previous.expiresAt > boundary,
+                      after.lease?.token == previous.token, after.lease?.owner == previous.owner,
+                      after.attempt == before.attempt, after.progress >= before.progress,
+                      unchangedOutput, after.message == before.message else {
+                    throw VideoError.conflict("原任务执行权已失效，不得续租或改写进度")
+                }
+            case (.running, .needsReview):
+                guard (before.lease?.expiresAt ?? .distantPast) > boundary, after.lease == nil,
+                      after.attempt == before.attempt, after.progress == 1,
+                      after.actual == Money(0, before.quote.upper.currency), !after.billingUnknown,
+                      !after.artifacts.isEmpty, after.artifacts.allSatisfy({
+                          $0.revision == before.revisionID && $0.sha256.count == 64
+                          && ($0.bytes > 0 || ($0.bytes == 0 && $0.mime == "application/x-subrip"))
+                      }) else { throw VideoError.conflict("原任务完成执行权或产物版本不符") }
+            case (.running, .interrupted), (.running, .cancelled):
+                guard after.lease == nil, after.attempt == before.attempt,
+                      after.progress == before.progress, unchangedOutput else {
+                    throw VideoError.conflict("原任务中断不能改写产物、进度或尝试次数")
+                }
+            default:
+                throw VideoError.conflict("运行态事务不允许此任务状态变化")
+            }
+            if after.state == .running {
+                guard let lease = after.lease, !lease.owner.isEmpty, !lease.token.isEmpty,
+                      lease.heartbeat >= boundary.addingTimeInterval(-1), lease.heartbeat <= Date().addingTimeInterval(1),
+                      abs(lease.expiresAt.timeIntervalSince(lease.heartbeat) - 120) < 0.001,
+                      lease.expiresAt > Date() else { throw VideoError.conflict("原任务租约范围或有效期不合法") }
+            }
+        }
+        guard new.filter({ $0.quote.provider == "native" && $0.state == .running }).count <= 1 else {
+            throw VideoError.conflict("已有本地任务执行中，不能同时认领另一个任务")
+        }
     }
     public func assetURL(_ asset: Asset) -> URL { root.appendingPathComponent(asset.relativePath) }
     public func ingest(_ data: Data, name: String, workspaceID: String, mediaType: String, durationFrames: Int? = nil) throws -> Asset {

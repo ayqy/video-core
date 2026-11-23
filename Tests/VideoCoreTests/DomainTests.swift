@@ -2,6 +2,216 @@ import XCTest
 import CryptoKit
 import Dispatch
 import VideoCore
+import CSQLite
+
+final class NativeJobTransactionTests: XCTestCase {
+    private struct Fixture {
+        let repository: Repository; let project: Project; let job: Job; let asset: Asset
+    }
+    private func withFixture(history: Int = 1, _ body: (Fixture) throws -> Void) throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("native-job-patch-" + Codec.id())
+        defer { try? FileManager.default.removeItem(at: root) }
+        let repository = try Repository(root: root), workspace = Workspace(name: "原生运行态", owner: "owner")
+        let asset = try repository.ingest(Data("isolated-PNG-source-A".utf8), name: "fixture.png", workspaceID: workspace.id, mediaType: "image")
+        var scene = Scene(title: "中文与浮点", body: String(repeating: "保留同一份历史内容。", count: 100), durationFrames: 30)
+        scene.x = 0.10000000000000002; scene.y = Double.leastNonzeroMagnitude
+        scene.scale = 1.0000000000000002; scene.sourceGain = -0.0
+        var project = Project(workspaceID: workspace.id, name: "不可变场景", revision: try Planner.create(workspaceID: workspace.id, name: "历史", scenes: [scene]))
+        for index in 1..<history {
+            var revision = project.current
+            revision.parentID = revision.id; revision.id = Codec.id(); revision.number += 1
+            revision.change = "保留中文历史\(index)"; revision.scenes[0].title += "\(index)"
+            project.revisions.append(revision)
+        }
+        let revision = project.current
+        let quote = Quote(projectID: project.id, revisionID: revision.id, digest: try revision.contentDigest(), upper: Money(0), unit: "CNY", provider: "native", expiresAt: Date().addingTimeInterval(300), confirmed: true)
+        let job = try JobRules.submit(workspaceID: workspace.id, project: project, quote: quote, requestKey: "original-native-patch", existing: [], budget: BudgetPolicy())
+        try repository.transaction { $0.workspaces = [workspace]; $0.projects = [project]; $0.assets = [asset]; $0.jobs = [job] }
+        try body(Fixture(repository: repository, project: project, job: job, asset: asset))
+    }
+    private func claim(_ f: Fixture) throws -> Job {
+        try f.repository.nativeJobTransaction { _, jobs in
+            jobs[0] = try JobOperations.claim(jobs[0], owner: "original-worker")
+            return jobs[0]
+        }
+    }
+    private func payloadStorageType(_ root: URL) throws -> String {
+        var database: OpaquePointer?, statement: OpaquePointer?
+        guard sqlite3_open_v2(root.appendingPathComponent("workspace.sqlite").path, &database, SQLITE_OPEN_READONLY, nil) == SQLITE_OK else {
+            throw VideoError.unavailable("isolated read-only SQLite open failed")
+        }
+        defer { sqlite3_close(database) }
+        guard sqlite3_prepare_v2(database, "SELECT typeof(payload) FROM snapshot WHERE id=1", -1, &statement, nil) == SQLITE_OK else {
+            throw VideoError.unavailable("isolated payload type query failed")
+        }
+        defer { sqlite3_finalize(statement) }
+        guard sqlite3_step(statement) == SQLITE_ROW, let value = sqlite3_column_text(statement, 0) else {
+            throw VideoError.unavailable("isolated payload type result missing")
+        }
+        return String(cString: value)
+    }
+    func testNativePatchKeepsLongHistoryUnicodeFloatsAndColdBackup() throws {
+        try withFixture(history: 24) { f in
+            let before = try f.repository.read()
+            let digest = try f.repository.readWithRevisionDigest(projectID: f.project.id, revisionID: f.project.current.id).digest
+            let job = try claim(f)
+            var after = try f.repository.read()
+            XCTAssertEqual(after.generation, before.generation + 1)
+            XCTAssertEqual(after.jobs[0].state, .running)
+            XCTAssertEqual(after.jobs[0].id, f.job.id)
+            XCTAssertEqual(after.jobs[0].lease?.token, job.lease?.token)
+            XCTAssertEqual(try f.repository.readWithRevisionDigest(projectID: f.project.id, revisionID: f.project.current.id).digest, digest)
+            let cold = try Repository(root: f.repository.root, readOnly: true).read()
+            XCTAssertEqual(try Codec.data(cold), try Codec.data(after))
+            XCTAssertEqual(try payloadStorageType(f.repository.root), "blob")
+            XCTAssertEqual(cold.projects[0].current.scenes[0].y.bitPattern, before.projects[0].current.scenes[0].y.bitPattern)
+            XCTAssertEqual(cold.projects[0].current.scenes[0].sourceGain.bitPattern, before.projects[0].current.scenes[0].sourceGain.bitPattern)
+            after.jobs = before.jobs; after.generation = before.generation
+            XCTAssertEqual(try Codec.data(after), try Codec.data(before), "job patch must preserve every unrelated IR/source field")
+            let target = f.repository.root.appendingPathComponent("independent-restore")
+            let restored = try Repository.restore(f.repository.backup(), to: target)
+            XCTAssertEqual(try Codec.data(restored.read().jobs), try Codec.data(cold.jobs))
+            XCTAssertEqual(try Codec.data(restored.read().projects), try Codec.data(before.projects))
+        }
+    }
+    func testNativePatchRejectsScopeQuoteAndNonRuntimeChanges() throws {
+        try withFixture { f in
+            let original = try claim(f), before = try f.repository.read()
+            let changes: [(inout Job) -> Void] = [
+                { $0.id = Codec.id() }, { $0.projectID = Codec.id() }, { $0.revisionID = Codec.id() },
+                { $0.digest = String(repeating: "f", count: 64) }, { $0.requestKey = "replacement" },
+                { $0.quote.id = Codec.id() }, { $0.quote.upper = Money(1) }, { $0.quote.provider = "remote" },
+                { $0.createdAt = Date().addingTimeInterval(1) }, { $0.remoteID = "supplier" },
+                { $0.billingUnknown = true }, { $0.billing = [] }, { $0.refundPending = Money(1) },
+                { $0.remoteObservationSequence = 1 }
+            ]
+            for change in changes {
+                XCTAssertThrowsError(try f.repository.nativeJobTransaction { _, jobs in
+                    jobs[0] = try JobOperations.heartbeat(jobs[0], token: original.lease!.token, progress: 0.2)
+                    change(&jobs[0])
+                })
+                XCTAssertEqual(try f.repository.read().generation, before.generation)
+                XCTAssertEqual(try Codec.data(f.repository.read().jobs), try Codec.data(before.jobs))
+            }
+        }
+    }
+    func testNativePatchCannotAddRemoveReorderOrChangeRemoteJobs() throws {
+        try withFixture { f in
+            var remote = f.job; remote.id = Codec.id(); remote.requestKey = "remote-original"
+            remote.quote.provider = "remote"; remote.state = .running; remote.lease = nil; remote.billingUnknown = true
+            try f.repository.transaction { $0.jobs.append(remote) }
+            let before = try f.repository.read()
+            let changes: [(inout [Job]) -> Void] = [
+                { $0.append($0[0]) }, { $0.removeLast() }, { $0.swapAt(0, 1) }, { $0[1].message = "changed" }
+            ]
+            for change in changes {
+                XCTAssertThrowsError(try f.repository.nativeJobTransaction { _, jobs in change(&jobs) })
+                XCTAssertEqual(try f.repository.read().generation, before.generation)
+            }
+            _ = try claim(f)
+            XCTAssertEqual(try Codec.data(f.repository.read().jobs[1]), try Codec.data(remote), "a remote running job without a local lease must remain untouched")
+        }
+    }
+    func testNativeAdmissionRejectsBadPNGBeforeClaimCallback() throws {
+        try withFixture { f in
+            let before = try f.repository.read()
+            try Data("isolated-PNG-source-B".utf8).write(to: f.repository.assetURL(f.asset))
+            var invoked = false
+            XCTAssertThrowsError(try f.repository.nativeJobTransaction { _, jobs in
+                invoked = true; jobs[0] = try JobOperations.claim(jobs[0], owner: "worker")
+            })
+            XCTAssertFalse(invoked)
+            XCTAssertEqual(try f.repository.read().generation, before.generation)
+            XCTAssertEqual(try f.repository.read().jobs[0].state, .queued)
+        }
+    }
+    func testNativeAdmissionDetectsInPlacePNGChangeAfterWarmWrite() throws {
+        try withFixture { f in
+            let job = try claim(f), before = try f.repository.read()
+            try Data("isolated-PNG-source-B".utf8).write(to: f.repository.assetURL(f.asset))
+            var invoked = false
+            XCTAssertThrowsError(try f.repository.nativeJobTransaction { _, jobs in
+                invoked = true; jobs[0] = try JobOperations.heartbeat(jobs[0], token: job.lease!.token, progress: 0.3)
+            })
+            XCTAssertFalse(invoked)
+            XCTAssertEqual(try f.repository.read().generation, before.generation)
+            XCTAssertEqual(try Codec.data(f.repository.read().jobs), try Codec.data(before.jobs))
+        }
+    }
+    func testNativePatchRejectsExpiredAndReplacedLeaseTokens() throws {
+        try withFixture { f in
+            let job = try claim(f), external = try Repository(root: f.repository.root)
+            for replaced in [false, true] {
+                try external.transaction { database in
+                    database.jobs[0] = job
+                    if replaced { database.jobs[0].lease?.token = Codec.id() }
+                    else { database.jobs[0].lease?.expiresAt = Date().addingTimeInterval(-1) }
+                }
+                let before = try external.read()
+                XCTAssertThrowsError(try f.repository.nativeJobTransaction { _, jobs in
+                    jobs[0] = try JobOperations.heartbeat(jobs[0], token: job.lease!.token, progress: 0.4)
+                })
+                XCTAssertEqual(try external.read().generation, before.generation)
+                XCTAssertEqual(try Codec.data(external.read().jobs), try Codec.data(before.jobs))
+            }
+        }
+    }
+    func testNativePatchRejectsIllegalSuccessLeaseAndProgress() throws {
+        try withFixture { f in
+            let job = try claim(f), before = try f.repository.read()
+            let changes: [(inout Job) -> Void] = [
+                { $0.state = .succeeded; $0.lease = nil; $0.progress = 1 },
+                { $0.lease?.token = Codec.id() }, { $0.lease?.expiresAt.addTimeInterval(600) },
+                { $0.progress = -.infinity }, { $0.progress = -0.1 }, { $0.attempt += 1 }
+            ]
+            for change in changes {
+                XCTAssertThrowsError(try f.repository.nativeJobTransaction { _, jobs in
+                    jobs[0] = try JobOperations.heartbeat(jobs[0], token: job.lease!.token, progress: 0.3)
+                    change(&jobs[0])
+                })
+                XCTAssertEqual(try f.repository.read().generation, before.generation)
+            }
+        }
+    }
+    func testNativePatchGenerationFenceNoOpAndReadOnly() throws {
+        try withFixture { f in
+            let before = try f.repository.read()
+            var invoked = false
+            XCTAssertThrowsError(try f.repository.nativeJobTransaction(expectedGeneration: before.generation + 1) { _, _ in invoked = true })
+            XCTAssertFalse(invoked)
+            let result = try f.repository.nativeJobTransaction(expectedGeneration: before.generation) { database, _ in database.generation }
+            XCTAssertEqual(result, before.generation)
+            XCTAssertEqual(try f.repository.read().generation, before.generation)
+            let readOnly = try Repository(root: f.repository.root, readOnly: true)
+            XCTAssertThrowsError(try readOnly.nativeJobTransaction { _, _ in () })
+        }
+    }
+    func testNativeFinishAndInterruptionKeepOriginalJobAndStaticFields() throws {
+        try withFixture { f in
+            let job = try claim(f)
+            let output = Artifact(path: "exports/isolated-result.png", mime: "image/png", bytes: 1, sha256: String(repeating: "a", count: 64), revision: job.revisionID)
+            try f.repository.nativeJobTransaction { _, jobs in
+                jobs[0] = try JobOperations.finish(jobs[0], token: job.lease!.token, artifacts: [output])
+            }
+            let finished = try f.repository.read().jobs[0]
+            XCTAssertEqual(finished.state, .needsReview)
+            XCTAssertEqual(finished.id, job.id); XCTAssertEqual(finished.requestKey, job.requestKey)
+            XCTAssertEqual(try Codec.data(finished.quote), try Codec.data(job.quote))
+            XCTAssertThrowsError(try f.repository.nativeJobTransaction { _, jobs in
+                jobs[0] = try JobOperations.claim(jobs[0], owner: "replacement")
+            })
+        }
+        try withFixture { f in
+            let job = try claim(f)
+            try f.repository.nativeJobTransaction { _, jobs in
+                jobs[0].lease = nil; jobs[0].state = .interrupted; jobs[0].message = "isolated failure"
+            }
+            let stopped = try f.repository.read().jobs[0]
+            XCTAssertEqual(stopped.id, job.id); XCTAssertEqual(stopped.attempt, job.attempt)
+            XCTAssertEqual(stopped.progress, job.progress); XCTAssertNil(stopped.lease)
+        }
+    }
+}
 
 final class DomainTests:XCTestCase {
     func product(_ w:String="w") -> Product { Product(workspaceID:w,sku:"course-a",name:"上下文实验",checkout:"https://example.com/course",audience:"AI初学者",task:"理解上下文预算",outcome:"能复现预算变化",prerequisite:"会使用聊天工具",scope:"资源模拟",prices:[Price(money:Money(99),from:Date(timeIntervalSince1970:0),source:"原购买页",verified:true)]) }
