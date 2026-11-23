@@ -243,7 +243,7 @@ private enum ImportModelMaterials {
         }
         return result
     }
-    private static func unchanged(_ after: Database, before: Database, allowedAssets: Set<String>, allowedEvidence: Set<String>, changed: Bool) throws {
+    private static func unchanged(_ after: Database, before: Database, beforeDigest: String, allowedAssets: Set<String>, allowedEvidence: Set<String>, changed: Bool) throws {
         guard after.generation == before.generation + (changed ? 1 : 0),
               try Codec.digest(Array(after.assets.prefix(before.assets.count))) == Codec.digest(before.assets),
               try Codec.digest(Array(after.evidence.prefix(before.evidence.count))) == Codec.digest(before.evidence),
@@ -251,7 +251,7 @@ private enum ImportModelMaterials {
               after.evidence.dropFirst(before.evidence.count).allSatisfy({ allowedEvidence.contains($0.id) }) else { throw VideoError.conflict("追加范围超过本次实际模型来源") }
         var other = after
         other.generation = before.generation; other.assets = before.assets; other.evidence = before.evidence
-        guard try Codec.digest(other) == Codec.digest(before) else { throw VideoError.conflict("导入改动了已有项目、原音或其他记录") }
+        guard try Codec.digest(other) == beforeDigest else { throw VideoError.conflict("导入改动了已有项目、原音或其他记录") }
     }
     static func main() {
         if Array(CommandLine.arguments.dropFirst()) == ["--help"] {
@@ -263,6 +263,10 @@ private enum ImportModelMaterials {
             let input = try arguments(), declared = try declaration(), declaredFiles = try files(declared)
             stage = "read-only-authorize"
             let context = try authorize(Repository(root: input.workspace, readOnly: true).read(), input: input)
+            // Database is a value type and context is immutable. Hash this
+            // exact validated baseline once; every later live snapshot is
+            // still freshly encoded and compared with this same identity.
+            let contextDigest = try Codec.digest(context.database)
             stage = "preflight-all-sources"
             var inspections: [String: DAEInspection] = [:]
             for file in declaredFiles.values {
@@ -294,7 +298,7 @@ private enum ImportModelMaterials {
             _ = try existing(declaredFiles, database: context.database, input: input)
             stage = "open-existing"
             let repository = try Repository(root: input.workspace)
-            guard try Codec.digest(repository.read()) == Codec.digest(context.database) else { throw VideoError.conflict("打开已有仓库期间记录变化") }
+            guard try Codec.digest(repository.read()) == contextDigest else { throw VideoError.conflict("打开已有仓库期间记录变化") }
             stage = "normal-sdk-import"
             var packages: [String: ImportedModelPackage] = [:], staged: [String: Asset] = [:]
             for alias in declared.models.keys.sorted() {
@@ -319,13 +323,13 @@ private enum ImportModelMaterials {
             }
             stage = "normal-source-registration"
             let current = try authorize(repository.read(), input: input)
-            guard current.principal == context.principal, try Codec.digest(current.database) == Codec.digest(context.database) else { throw VideoError.conflict("源导入期间原工程或记录变化") }
+            guard current.principal == context.principal, try Codec.digest(current.database) == contextDigest else { throw VideoError.conflict("源导入期间原工程或记录变化") }
             var final = try existing(declaredFiles, database: current.database, input: input)
             let changed = final.count != declaredFiles.count
             if changed {
                 final = try repository.transaction(expectedGeneration: context.database.generation) { db in
                     let authorized = try authorize(db, input: input)
-                    guard authorized.principal == context.principal, try Codec.digest(db) == Codec.digest(context.database) else { throw VideoError.conflict("提交前原记录或工程版本变化") }
+                    guard authorized.principal == context.principal, try Codec.digest(db) == contextDigest else { throw VideoError.conflict("提交前原记录或工程版本变化") }
                     var values = try existing(declaredFiles, database: db, input: input)
                     for path in declaredFiles.keys.sorted() where values[path] == nil {
                         let file = declaredFiles[path]!
@@ -356,7 +360,7 @@ private enum ImportModelMaterials {
                 _ = try ModelPackageMedia.verifiedByteClosure(resource, workspaceID: input.workspaceID,
                                                               repository: repository, database: after, commercial: false)
             }
-            try unchanged(after, before: context.database, allowedAssets: Set(final.values.map(\.id)),
+            try unchanged(after, before: context.database, beforeDigest: contextDigest, allowedAssets: Set(final.values.map(\.id)),
                           allowedEvidence: Set(evidence.values), changed: changed)
             let receipt = Receipt(workspaceID: input.workspaceID, projectID: input.projectID, baseRevision: input.baseRevision,
                                   resources: resources, assetsByPath: references, evidenceIDsByPath: evidence)

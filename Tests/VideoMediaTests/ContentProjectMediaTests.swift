@@ -63,6 +63,37 @@ final class ContentProjectMediaTests:XCTestCase {
         revision.coverPresentation?.template = .contrast
         XCTAssertNotEqual(try key(0),changedTitle);XCTAssertEqual(try key(1),body)
     }
+    func testPresenterExplicitSettingIsBoundOnlyToFirstCoverCache()throws {
+        var revision=try Planner.create(workspaceID:"w",name:"囚徒困境",scenes:[Scene(title:"首景",body:"同版正文",durationFrames:15),Scene(title:"尾景",body:"保原时轴",durationFrames:15)])
+        let setting=Asset(workspaceID:"w",name:"actual-setting.png",hash:String(repeating:"a",count:64),ext:"png",bytes:100,mediaType:"image/png")
+        var database=Database();database.assets=[setting]
+        revision.coverPresentation=CoverPresentation(style:.presenter,title:"囚徒困境",setting:CoverImage(assetID:setting.id))
+        let configuration=try VisualClipCache.EncodingConfiguration.capture(aspect:revision.aspect,fps:revision.fps)
+        let cover=try VisualClipCache.fingerprint(revision:revision,index:0,database:database,modules:nil,encoding:configuration),body=try VisualClipCache.fingerprint(revision:revision,index:1,database:database,modules:nil,encoding:configuration)
+        database.assets[0].hash=String(repeating:"b",count:64)
+        XCTAssertNotEqual(cover,try VisualClipCache.fingerprint(revision:revision,index:0,database:database,modules:nil,encoding:configuration))
+        XCTAssertEqual(body,try VisualClipCache.fingerprint(revision:revision,index:1,database:database,modules:nil,encoding:configuration))
+        XCTAssertThrowsError(try CoverRules.validate(revision:revision,assets:[]),"实际场景缺失不能退回普通底色")
+    }
+    func testOnlyPresenterDrawingVersionInvalidatesFirstCoverWhileOtherStylesKeepLegacyKeys()throws {
+        struct Legacy:Encodable {
+            var version="cover-first-frame-2";var presentation:CoverPresentation;var images:[String:String];var fonts:[String];var islandStyle:String;var noticeBoard:String
+        }
+        var revision=try Planner.create(workspaceID:"w",name:"囚徒困境",scenes:[Scene(title:"首景",body:"正文保持",durationFrames:15),Scene(title:"尾景",body:"原时轴",durationFrames:15)])
+        let database=Database(),configuration=try VisualClipCache.EncodingConfiguration.capture(aspect:revision.aspect,fps:revision.fps)
+        var bodyKey:String?
+        for style in [CoverStyle.presenter,.code,.pencil,.media,.explanation,.game] {
+            revision.coverPresentation=CoverPresentation(style:style,template:.spotlight,title:"囚徒困境",emphasis:["囚徒困境"])
+            let resolved=try CoverRules.resolved(revision:revision)
+            let presentation=CoverPresentation(style:resolved.style,template:resolved.template,title:resolved.title,hero:resolved.hero,background:resolved.background,emphasis:resolved.emphasis.isEmpty ? nil:resolved.emphasis,quantityGraphic:resolved.quantityGraphic)
+            let legacy=try Codec.digest(Legacy(presentation:presentation,images:[:],fonts:[CoverTypeface.sourceSHA256,CoverDisplayTypeface.sourceSHA256,IslandTypeface.sourceSHA256],islandStyle:IslandTheme.styleVersion,noticeBoard:CommunityNoticeBoardArtwork.sha256))
+            let actual=try VisualClipCache.firstFrameCoverFingerprint(revision:revision,database:database)
+            if style == .presenter {XCTAssertNotEqual(actual,legacy,"仅新解说员布局必须重绘首帧")}
+            else {XCTAssertEqual(actual,legacy,"未改风格应保原有首帧缓存身份")}
+            let current=try VisualClipCache.fingerprint(revision:revision,index:1,database:database,modules:nil,encoding:configuration)
+            if let bodyKey {XCTAssertEqual(current,bodyKey,"封面布局及版本均不污染正文缓存")} else {bodyKey=current}
+        }
+    }
     func testCoverOnlyEditKeepsCompleteSoundtrackCaptionsCadenceAndBodyInBothAspects()async throws {
         let retained=ProcessInfo.processInfo.environment["FF_COVER_REGRESSION_OUTPUT"]
         let root=retained.map{URL(fileURLWithPath:$0,isDirectory:true)} ?? FileManager.default.temporaryDirectory.appendingPathComponent("cover-first-frame-"+UUID().uuidString)
@@ -77,7 +108,20 @@ final class ContentProjectMediaTests:XCTestCase {
         do {let file=try AVAudioFile(forWriting:tone,settings:format.settings);try file.write(from:buffer)}
         let original=try Data(contentsOf:tone)
         let audio=try repo.ingest(original,name:"original.caf",workspaceID:"w",mediaType:"audio",durationFrames:30)
-        try repo.transaction{$0.assets=[audio]}
+        func coverFixture(_ presenter:Bool)throws->CGImage {
+            let w=presenter ? 100:80,h=presenter ? 120:140
+            let c=try XCTUnwrap(CGContext(data:nil,width:w,height:h,bitsPerComponent:8,bytesPerRow:w*4,space:CGColorSpace(name:CGColorSpace.sRGB)!,bitmapInfo:CGImageAlphaInfo.premultipliedLast.rawValue))
+            c.clear(CGRect(x:0,y:0,width:w,height:h))
+            c.setFillColor(CGColor(srgbRed:presenter ? 0.9:0.2,green:0.4,blue:presenter ? 0.3:0.9,alpha:1))
+            c.fillEllipse(in:CGRect(x:presenter ? 42:15,y:presenter ? 60:95,width:45,height:45))
+            c.fill(CGRect(x:presenter ? 42:20,y:0,width:40,height:presenter ? 65:100))
+            if presenter {c.fill(CGRect(x:0,y:45,width:55,height:12))}
+            return try XCTUnwrap(c.makeImage())
+        }
+        let ip=try repo.ingest(ScenePainter.png(coverFixture(true)),name:"presenter-fixture.png",workspaceID:"w",mediaType:"image/png")
+        let subject=try repo.ingest(ScenePainter.png(coverFixture(false)),name:"subject-fixture.png",workspaceID:"w",mediaType:"image/png")
+        let contextSetting=try repo.ingest(ScenePainter.png(coverFixture(false)),name:"setting-fixture.png",workspaceID:"w",mediaType:"image/png")
+        try repo.transaction{$0.assets=[audio,ip,subject,contextSetting]}
         func samples(_ url:URL,media:AVMediaType)async throws->[(Double,Double,String)] {
             let asset=AVURLAsset(url:url)
             let reader=try AVAssetReader(asset:asset)
@@ -113,10 +157,13 @@ final class ContentProjectMediaTests:XCTestCase {
             let ending=Scene(title:"最后画面",body:"片尾仍保留。",durationFrames:15)
             var revision=try Planner.create(workspaceID:"w",name:"首帧同版封面",aspect:aspect,scenes:[scene,ending])
             var results:[RenderResult]=[]
+            for style in [CoverStyle.explanation,.presenter] {
             for template in [CoverTemplate.spotlight,.contrast] {
-                revision.coverPresentation=CoverPresentation(style:.explanation,template:template,title:template == .spotlight ? "观察结果":"结果保持",emphasis:["结果"])
-                let expectedCover=try CoverPainter.image(revision:revision,source:ScenePainter.image(revision:revision,frame:0))
-                let result=try await MediaRenderer().render(revision:revision,repository:repo,output:root.appendingPathComponent(aspect.rawValue+template.rawValue))
+                revision.coverPresentation=CoverPresentation(style:style,template:template,title:template == .spotlight ? "观察结果":"结果保持",hero:style == .presenter ? CoverImage(assetID:ip.id,pointing:.left,figureFraming:.fullFigure):nil,background:style == .presenter ? CoverImage(assetID:subject.id):nil,setting:style == .presenter ? CoverImage(assetID:contextSetting.id):nil,emphasis:["结果"])
+                revision.dependencies=try DependencyRules.freeze(revision:revision,assets:repo.read().assets,evidence:[])
+                let images=try CoverPainter.loadImages(revision:revision,repository:repo,database:repo.read())
+                let expectedCover=try CoverPainter.image(revision:revision,source:ScenePainter.image(revision:revision,frame:0),images:images)
+                let result=try await MediaRenderer().render(revision:revision,repository:repo,output:root.appendingPathComponent(aspect.rawValue+style.rawValue+template.rawValue))
                 let video=URL(fileURLWithPath:try XCTUnwrap(result.artifacts.first{$0.mime=="video/mp4"}).path)
                 let generator=AVAssetImageGenerator(asset:AVURLAsset(url:video));generator.requestedTimeToleranceBefore = .zero;generator.requestedTimeToleranceAfter = .zero
                 let first=try generator.copyCGImage(at:.zero,actualTime:nil)
@@ -135,16 +182,21 @@ final class ContentProjectMediaTests:XCTestCase {
                 for (frame,sample) in cadence.enumerated(){XCTAssertEqual(sample.0,Double(frame)/30,accuracy:0.0001)}
                 let captions=try XCTUnwrap(result.artifacts.first{$0.mime=="application/x-subrip"})
                 XCTAssertEqual(try String(contentsOfFile:captions.path,encoding:.utf8),try MediaRenderer.subtitles(revision))
-                proof.append("- \(aspect.rawValue) / \(template.rawValue)：45帧、0…44全部PTS精确；首帧RGB平均误差 \(firstDifference)，正文/片尾指定帧最大平均误差 \(bodyDifference)；首帧PNG与独立封面hash精确相同；字幕同原SRT。视频：\(video.path)")
+                proof.append("- \(aspect.rawValue) / \(style.rawValue) / \(template.rawValue)：45帧、0…44全部PTS精确；首帧RGB平均误差 \(firstDifference)，正文/片尾指定帧最大平均误差 \(bodyDifference)；首帧PNG与独立封面hash精确相同；字幕同原SRT。视频：\(video.path)")
                 results.append(result)
             }
+            }
             let firstVideo=URL(fileURLWithPath:try XCTUnwrap(results[0].artifacts.first{$0.mime=="video/mp4"}).path)
-            let nextVideo=URL(fileURLWithPath:try XCTUnwrap(results[1].artifacts.first{$0.mime=="video/mp4"}).path)
-            let firstAudio=try await samples(firstVideo,media:.audio),nextAudio=try await samples(nextVideo,media:.audio)
-            XCTAssertFalse(firstAudio.isEmpty);XCTAssertEqual(firstAudio.map{$0.0},nextAudio.map{$0.0})
-            XCTAssertEqual(firstAudio.map{$0.1},nextAudio.map{$0.1});XCTAssertEqual(firstAudio.map{$0.2},nextAudio.map{$0.2},"仅换封面须保完整AAC压缩流字节与时序")
+            let firstAudio=try await samples(firstVideo,media:.audio)
+            XCTAssertFalse(firstAudio.isEmpty)
+            for other in results.dropFirst() {
+                let nextVideo=URL(fileURLWithPath:try XCTUnwrap(other.artifacts.first{$0.mime=="video/mp4"}).path)
+                let nextAudio=try await samples(nextVideo,media:.audio)
+                XCTAssertEqual(firstAudio.map{$0.0},nextAudio.map{$0.0});XCTAssertEqual(firstAudio.map{$0.1},nextAudio.map{$0.1})
+                XCTAssertEqual(firstAudio.map{$0.2},nextAudio.map{$0.2},"说明与解说员两类型、两封面的完整AAC压缩流字节与时序须保持")
+            }
             XCTAssertEqual(try Data(contentsOf:repo.assetURL(audio)),original)
-            proof.append("- \(aspect.rawValue)：两封面版本完整 \(firstAudio.count) 个AAC压缩样本缓冲的全量payload字节、PTS和duration精确相同；完整原音源hash \(Codec.hash(original)) 保持。")
+            proof.append("- \(aspect.rawValue)：两类型两模板完整 \(firstAudio.count) 个AAC压缩样本缓冲的全量payload字节、PTS和duration精确相同；完整原音源hash \(Codec.hash(original)) 保持。")
         }
         if retained != nil {try proof.joined(separator:"\n").write(to:root.appendingPathComponent("regression.md"),atomically:true,encoding:.utf8)}
     }

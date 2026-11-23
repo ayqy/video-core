@@ -113,7 +113,7 @@ enum VisualClipCache {
     static func firstFrameCoverFingerprint(revision:Revision,database:Database)throws->String {
         let resolved=try CoverRules.resolved(revision:revision)
         struct Identity:Encodable {
-            var version="cover-first-frame-2"
+            var version:String
             var presentation:CoverPresentation
             var images:[String:String]
             var fonts:[String]
@@ -121,12 +121,12 @@ enum VisualClipCache {
             var noticeBoard:String
         }
         let presentation=CoverPresentation(style:resolved.style,template:resolved.template,title:resolved.title,
-            hero:resolved.hero,background:resolved.background,emphasis:resolved.emphasis.isEmpty ? nil:resolved.emphasis,
+            hero:resolved.hero,background:resolved.background,setting:resolved.setting,emphasis:resolved.emphasis.isEmpty ? nil:resolved.emphasis,
             quantityGraphic:resolved.quantityGraphic)
         let images=Dictionary(uniqueKeysWithValues:database.assets.filter {asset in
             asset.workspaceID==revision.workspaceID && presentation.images.contains{$0.assetID==asset.id}
         }.map{($0.id,$0.hash)})
-        return try Codec.digest(Identity(presentation:presentation,images:images,
+        return try Codec.digest(Identity(version:resolved.style == .presenter ? "presenter-shared-square-1":"cover-first-frame-2",presentation:presentation,images:images,
             fonts:[CoverTypeface.sourceSHA256,CoverDisplayTypeface.sourceSHA256,IslandTypeface.sourceSHA256],
             islandStyle:IslandTheme.styleVersion,noticeBoard:CommunityNoticeBoardArtwork.sha256))
     }

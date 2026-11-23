@@ -35,19 +35,24 @@ public struct CoverQuantityGraphic: Codable, Equatable, Sendable {
         }
     }
 }
+public enum CoverFigureFraming: String, Codable, CaseIterable, Sendable { case upperBody, fullFigure }
 public struct CoverImage: Codable, Equatable, Sendable {
     public var assetID: String
     public var sourceRect: MediaFraming?
     public var pointing: CoverPointing?
-    public init(assetID: String, sourceRect: MediaFraming? = nil, pointing: CoverPointing? = nil) {
-        self.assetID=assetID;self.sourceRect=sourceRect;self.pointing=pointing
+    /// Author-declared whole figure or upper-body artwork. Omitted legacy
+    /// images retain their established automatic presenter composition.
+    public var figureFraming: CoverFigureFraming?
+    public init(assetID: String, sourceRect: MediaFraming? = nil, pointing: CoverPointing? = nil, figureFraming:CoverFigureFraming? = nil) {
+        self.assetID=assetID;self.sourceRect=sourceRect;self.pointing=pointing;self.figureFraming=figureFraming
     }
-    private enum CodingKeys:String,CodingKey {case assetID,sourceRect,pointing}
+    private enum CodingKeys:String,CodingKey {case assetID,sourceRect,pointing,figureFraming}
     public init(from decoder:Decoder)throws {
-        try CoverRules.keys(decoder,required:["assetID"],optional:["sourceRect","pointing"])
+        try CoverRules.keys(decoder,required:["assetID"],optional:["sourceRect","pointing","figureFraming"])
         let c=try decoder.container(keyedBy:CodingKeys.self)
         assetID=try c.decode(String.self,forKey:.assetID);sourceRect=try c.decodeIfPresent(MediaFraming.self,forKey:.sourceRect)
         pointing=try c.decodeIfPresent(CoverPointing.self,forKey:.pointing)
+        figureFraming=try c.decodeIfPresent(CoverFigureFraming.self,forKey:.figureFraming)
         guard CoverRules.text(assetID,maximum:200) else{throw VideoError.invalid("封面图片引用无效")}
         try sourceRect?.validate()
     }
@@ -82,15 +87,16 @@ public struct CoverPresentation: Codable, Equatable, Sendable {
     public var emphasis: [String]?
     public var hero: CoverImage?
     public var background: CoverImage?
+    public var setting: CoverImage?
     public var poses: [CoverPose]?
     public var quantityGraphic: CoverQuantityGraphic?
     public init(style: CoverStyle = .automatic, template: CoverTemplate = .automatic, title: String? = nil,
-                subtitle: String? = nil, hero: CoverImage? = nil, background: CoverImage? = nil, poses: [CoverPose]? = nil,
+                subtitle: String? = nil, hero: CoverImage? = nil, background: CoverImage? = nil, setting:CoverImage? = nil, poses: [CoverPose]? = nil,
                 emphasis: [String]? = nil, quantityGraphic: CoverQuantityGraphic? = nil) {
         self.style=style;self.template=template;self.title=title;self.subtitle=subtitle
-        self.hero=hero;self.background=background;self.poses=poses;self.emphasis=emphasis;self.quantityGraphic=quantityGraphic
+        self.hero=hero;self.background=background;self.setting=setting;self.poses=poses;self.emphasis=emphasis;self.quantityGraphic=quantityGraphic
     }
-    private enum CodingKeys: String, CodingKey, CaseIterable { case version,style,template,title,subtitle,hero,background,poses,emphasis,quantityGraphic }
+    private enum CodingKeys: String, CodingKey, CaseIterable { case version,style,template,title,subtitle,hero,background,setting,poses,emphasis,quantityGraphic }
     public init(from decoder: Decoder) throws {
         let actual=Set(try decoder.container(keyedBy: CoverKey.self).allKeys.map(\.stringValue))
         guard actual.isSubset(of:Set(CodingKeys.allCases.map(\.rawValue))) else { throw VideoError.invalid("封面设置包含未知字段") }
@@ -98,14 +104,16 @@ public struct CoverPresentation: Codable, Equatable, Sendable {
         version=try c.decode(Int.self,forKey:.version);style=try c.decode(CoverStyle.self,forKey:.style)
         template=try c.decode(CoverTemplate.self,forKey:.template);title=try c.decodeIfPresent(String.self,forKey:.title)
         subtitle=try c.decodeIfPresent(String.self,forKey:.subtitle);hero=try c.decodeIfPresent(CoverImage.self,forKey:.hero)
-        background=try c.decodeIfPresent(CoverImage.self,forKey:.background);poses=try c.decodeIfPresent([CoverPose].self,forKey:.poses)
+        background=try c.decodeIfPresent(CoverImage.self,forKey:.background);setting=try c.decodeIfPresent(CoverImage.self,forKey:.setting);poses=try c.decodeIfPresent([CoverPose].self,forKey:.poses)
         emphasis=try c.decodeIfPresent([String].self,forKey:.emphasis)
         quantityGraphic=try c.decodeIfPresent(CoverQuantityGraphic.self,forKey:.quantityGraphic)
         try validate()
     }
-    public var images: [CoverImage] { [hero,background].compactMap{$0}+(poses ?? []).map(\.image) }
+    public var images: [CoverImage] { [hero,background,setting].compactMap{$0}+(poses ?? []).map(\.image) }
     public func validate() throws {
         try quantityGraphic?.validate()
+        guard background?.figureFraming == nil,setting?.figureFraming == nil else {throw VideoError.invalid("人物构图用于讲解员主体；故事人物和场景保持各自完整来源")}
+        guard (setting == nil && !images.contains{$0.figureFraming != nil}) || style == .presenter || style == .automatic else {throw VideoError.invalid("人物构图和故事场景目前用于解说员封面，不能在其他风格中默默忽略")}
         guard quantityGraphic == nil || style == .code || style == .automatic else {
             throw VideoError.invalid("封面数量条件图目前仅用于代码主题；不默默忽略作者数据")
         }
@@ -142,6 +150,7 @@ public struct ResolvedCover: Equatable, Sendable {
     public var subtitle: String
     public var hero: CoverImage?
     public var background: CoverImage?
+    public var setting: CoverImage?
     public var poseID: String?
     public var emphasis: [String]
     public var quantityGraphic: CoverQuantityGraphic?
@@ -227,11 +236,12 @@ public enum CoverRules {
            let sprite=scene.classicArtwork?.sprites.first(where:{$0.role==role}) {
             hero=CoverImage(assetID:sprite.assetID,sourceRect:MediaFraming(x:sprite.x,y:sprite.y,width:sprite.width,height:sprite.height))
         }
-        return ResolvedCover(style:style,template:template,title:title,subtitle:value.subtitle ?? "",hero:hero,background:value.background,poseID:value.hero == nil ? selected?.id:nil,emphasis:emphasis,quantityGraphic:value.quantityGraphic)
+        guard (value.setting == nil && !value.images.contains{$0.figureFraming != nil}) || style == .presenter else {throw VideoError.invalid("人物构图和故事场景须解析为解说员封面")}
+        return ResolvedCover(style:style,template:template,title:title,subtitle:value.subtitle ?? "",hero:hero,background:value.background,setting:value.setting,poseID:value.hero == nil ? selected?.id:nil,emphasis:emphasis,quantityGraphic:value.quantityGraphic)
     }
     public static func validate(revision:Revision,assets:[Asset])throws {
         let cover=try resolved(revision:revision)
-        let all=(revision.coverPresentation?.images ?? [])+[cover.hero,cover.background].compactMap{$0}
+        let all=(revision.coverPresentation?.images ?? [])+[cover.hero,cover.background,cover.setting].compactMap{$0}
         for image in all {
             try image.sourceRect?.validate()
             guard assets.contains(where:{$0.id==image.assetID && $0.workspaceID==revision.workspaceID && ($0.mediaType=="image" || $0.mediaType.hasPrefix("image/"))}) else {

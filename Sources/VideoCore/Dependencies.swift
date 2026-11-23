@@ -374,7 +374,7 @@ public enum DependencyRules {
         }
         try CoverRules.validate(revision:revision,assets:assets)
         let resolvedCover=try CoverRules.resolved(revision:revision)
-        for image in (revision.coverPresentation?.images ?? [])+[resolvedCover.hero,resolvedCover.background].compactMap({$0}) {
+        for image in (revision.coverPresentation?.images ?? [])+[resolvedCover.hero,resolvedCover.background,resolvedCover.setting].compactMap({$0}) {
             try addAsset(image.assetID,[])
         }
         for id in revision.productionBrief?.evidenceIDs ?? [] {

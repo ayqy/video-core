@@ -38,7 +38,7 @@ public enum CoverPainter {
         try CoverRules.validate(revision:revision,assets:database.assets)
         let cover=try CoverRules.resolved(revision:revision)
         var result:[String:CGImage]=[:]
-        for reference in [cover.hero,cover.background].compactMap({$0}) where result[reference.assetID]==nil {
+        for reference in [cover.hero,cover.background,cover.setting].compactMap({$0}) where result[reference.assetID]==nil {
             guard let asset=database.assets.first(where:{$0.id==reference.assetID && $0.workspaceID==revision.workspaceID}) else {throw VideoError.permission("封面原图缺失")}
             guard asset.hash.range(of:"^[a-f0-9]{64}$",options:.regularExpression) != nil,
                   asset.ext.range(of:"^[a-z0-9]{1,12}$",options:.regularExpression) != nil else {throw VideoError.review("封面原图CAS路径元数据无效")}
@@ -63,11 +63,15 @@ public enum CoverPainter {
             guard let original=images[reference.assetID] else {throw VideoError.notFound("封面模板引用的实际图片未加载")}
             return try MediaFramingRenderer.crop(original,framing:reference.sourceRect)
         }
+        let fullFigure=cover.hero?.figureFraming == .fullFigure
         let hero=try selected(cover.hero).map { image in
             let visible=try visibleArtwork(image)
-            return cover.style == .presenter ? try presenterArtwork(visible):visible
+            return cover.style == .presenter && !fullFigure ? try presenterArtwork(visible):visible
         }
-        let explicitBackground=try selected(cover.background)
+        let explicitBackground=try selected(cover.background).map { image in
+            cover.style == .presenter ? try visibleArtwork(image):image
+        }
+        let setting=try selected(cover.setting)
         // A dedicated IP never reveals an unrelated face or movie subtitles.
         let background=explicitBackground ?? (hero == nil ? source:nil)
         let canvas=CGRect(x:0,y:0,width:w,height:h),p=Palette(cover.style),side=CGFloat(min(w,h))
@@ -75,11 +79,11 @@ public enum CoverPainter {
         let variant=cover.template == .editorial ? 1:(cover.template == .contrast ? 2:0)
         let composition=try composeTitle(cover:cover,width:canvas.width,height:canvas.height)
         let placement=presenterPlacement(square:square,variant:variant,titleBounds:composition.visibleBounds,
-            pointing:cover.hero?.pointing,imageAspect:hero.map{CGFloat($0.width)/CGFloat($0.height)})
+            pointing:cover.hero?.pointing,imageAspect:hero.map{CGFloat($0.width)/CGFloat($0.height)},fullFigure:fullFigure)
         c.setFillColor(color(p.paper));c.fill(canvas)
         switch cover.style {
         case .pencil:try pencil(background,hero:hero,square:square,canvas:canvas,variant:variant,titleBounds:composition.visibleBounds,p:p,c:c)
-case .presenter:presenter(background,hero:hero,placement:placement,square:square,canvas:canvas,variant:variant,titleBounds:composition.visibleBounds,p:p,c:c)
+case .presenter:try presenter(background,hero:hero,setting:setting,placement:placement,square:square,canvas:canvas,variant:variant,titleBounds:composition.visibleBounds,fullFigure:fullFigure,p:p,c:c)
         case .game:try game(background,hero:hero,square:square,canvas:canvas,variant:variant,titleBounds:composition.visibleBounds,p:p,c:c)
         case .cartoon:cartoon(background,hero:hero,square:square,canvas:canvas,variant:variant,p:p,c:c)
         case .media:media(background,hero:hero,square:square,canvas:canvas,variant:variant,p:p,c:c)
@@ -358,36 +362,22 @@ case .presenter:presenter(background,hero:hero,placement:placement,square:square
             draw(counterpart,in:rect,fill:false,context:c);c.restoreGState()
         }
     }
-    static func presenterSubjectPlacement(square s:CGRect,canvas:CGRect,variant:Int,titleBounds:CGRect,heroPlacement:HeroPlacement,imageAspect:CGFloat)->CGRect {
-        let d=s.width
-        let propX=variant == 1 ? min(canvas.width-d*0.43,s.maxX+d*0.09):max(d*0.035,s.minX-d*0.27)
-        let original=CGRect(x:propX,y:s.minY+d*0.055,width:d*0.43,height:d*0.65)
-        // Only wide canvases have a useful separate subject corridor. Keep
-        // square/portrait compositions and tight headlines unchanged instead
-        // of shrinking a full original into a new postage-stamp placement.
-        guard canvas.width>=d*1.35,imageAspect.isFinite,imageAspect>0,
-              !titleBounds.isEmpty,!titleBounds.isInfinite else{return original}
-        let edge=d*0.025,gap=d*0.05,heroOnLeft=heroPlacement.rect.midX<canvas.midX
-        let left=heroOnLeft ? max(titleBounds.maxX,heroPlacement.rect.maxX)+gap:canvas.minX+edge
-        let right=heroOnLeft ? canvas.maxX-edge:min(titleBounds.minX,heroPlacement.rect.minX)-gap
-        let width=right-left
-        guard width>0 else{return original}
-        let previousHeight=min(original.height,original.width/imageAspect)
-        let baseline=original.minY+(original.height-previousHeight)/2
-        let height=min(d*0.86,canvas.maxY-edge-baseline,width/imageAspect)
-        guard height>previousHeight+0.5 else{return original}
-        let fittedWidth=height*imageAspect
-        let candidate=CGRect(x:heroOnLeft ? left:right-fittedWidth,y:baseline,width:fittedWidth,height:height)
-        guard canvas.contains(candidate),!candidate.intersects(titleBounds),!candidate.intersects(heroPlacement.rect) else{return original}
-        return candidate
+    static func presenterStageTop(square s:CGRect,heroPlacement:HeroPlacement)->CGFloat {
+        // A cropped torso stands behind a teaching counter. The foreground
+        // overlaps the genuine source cut edge instead of leaving it floating.
+        heroPlacement.rect.minY+s.width*0.018
     }
-    private static func presenter(_ image:CGImage?,hero:CGImage?,placement:HeroPlacement,square s:CGRect,canvas:CGRect,variant:Int,titleBounds:CGRect,p:Palette,c:CGContext) {
+    static func presenterSubjectPlacement(square s:CGRect,canvas:CGRect,variant:Int,titleBounds:CGRect,heroPlacement:HeroPlacement,imageAspect:CGFloat,fullFigure:Bool=false)->CGRect {
+        let d=s.width,edge=d*0.025,aspect=imageAspect.isFinite && imageAspect>0 ? imageAspect:1
+        let baseline=fullFigure ? s.minY+d*0.22:presenterStageTop(square:s,heroPlacement:heroPlacement)
+        let height=max(1,min(d*(fullFigure ? 0.72:0.62),s.maxY-edge-baseline,d*(fullFigure ? 0.53:0.42)/aspect))
+        let width=height*aspect,heroOnLeft=heroPlacement.rect.midX<s.midX
+        return CGRect(x:heroOnLeft ? s.maxX-edge-width:s.minX+edge,y:baseline,width:width,height:height)
+    }
+    private static func presenter(_ image:CGImage?,hero:CGImage?,setting:CGImage?,placement:HeroPlacement,square s:CGRect,canvas:CGRect,variant:Int,titleBounds:CGRect,fullFigure:Bool,p:Palette,c:CGContext)throws {
         let d=s.width
         gradient(canvas,colors:[color("030A25"),color("10236A"),color("243C8C")],locations:[0,0.58,1],c:c)
-        // Broad lit planes are a studio backdrop, with a warm key behind the
-        // presenter and a cool fill behind the actual subject. Their diagonal
-        // overlap gives depth without adding a frame, wiring or extra copy.
-        let heroOnLeft=placement.rect.midX<canvas.midX
+        let heroOnLeft=placement.rect.midX<s.midX
         c.saveGState()
         if heroOnLeft {c.translateBy(x:canvas.width,y:0);c.scaleBy(x:-1,y:1)}
         let tilt=CGFloat(variant-1)*0.035
@@ -396,22 +386,38 @@ case .presenter:presenter(background,hero:hero,placement:placement,square:square
         c.addLines(between:plane);c.closePath();c.clip()
         gradient(canvas,colors:[color("9E355C"),color("F17F79"),color("FFBC9D")],locations:[0,0.60,1],c:c)
         c.restoreGState()
-        glow(canvas,center:CGPoint(x:placement.rect.midX,y:s.minY+d*0.68),radius:d*0.63,ink:"FC968B",alpha:0.28,c:c)
+        glow(canvas,center:CGPoint(x:placement.rect.midX,y:placement.rect.midY),radius:d*0.63,ink:"FC968B",alpha:0.28,c:c)
         let aspect=image.map{CGFloat($0.width)/CGFloat($0.height)} ?? 1
-        let originalProp=presenterSubjectPlacement(square:s,canvas:canvas,variant:variant,titleBounds:.zero,heroPlacement:placement,imageAspect:aspect)
-        let prop=hero == nil ? originalProp
-            :presenterSubjectPlacement(square:s,canvas:canvas,variant:variant,titleBounds:titleBounds,heroPlacement:placement,imageAspect:aspect)
-        // Preserve the original studio fill under the title and teaching IP.
-        // Only the original story pixels and their ground shadow move.
-        glow(canvas,center:CGPoint(x:originalProp.midX,y:originalProp.midY),radius:d*0.57,ink:"296ADE",alpha:0.78,c:c)
-        c.setFillColor(color("030A25",alpha:0.66))
-        c.fillEllipse(in:CGRect(x:prop.minX-d*0.04,y:prop.minY-d*0.024,width:prop.width+d*0.08,height:d*0.038))
+        let prop=presenterSubjectPlacement(square:s,canvas:canvas,variant:variant,titleBounds:titleBounds,heroPlacement:placement,imageAspect:aspect,fullFigure:fullFigure)
+        if let setting {
+            let height=canvas.height*1.04,width=height*CGFloat(setting.width)/CGFloat(setting.height)
+            let contextRect=CGRect(x:prop.midX-width/2,y:-canvas.height*0.02,width:width,height:height)
+            c.saveGState();c.setAlpha(0.70);draw(setting,in:contextRect,fill:false,context:c);c.restoreGState()
+        }
+        // Studio light stays behind the originals. It must not dim the story
+        // face after painting, or use the title as a mask over the reaction.
+        glow(canvas,center:CGPoint(x:prop.midX,y:prop.midY),radius:d*0.57,ink:"296ADE",alpha:0.62,c:c)
+        glow(canvas,center:CGPoint(x:canvas.midX,y:canvas.midY),radius:d*0.49,ink:"06102E",alpha:0.55,c:c)
+        let stageTop=presenterStageTop(square:s,heroPlacement:placement)
+        if fullFigure {
+            let ground=CGRect(x:canvas.minX,y:canvas.minY,width:canvas.width,height:s.minY+d*0.29)
+            gradient(ground,colors:[color("1C2A43"),color("101D37")],locations:[0,1],c:c)
+            if let image {gameContactShadow(in:try gameContactShadowRect(artwork:image,placement:prop),c:c)}
+            if let hero {gameContactShadow(in:try gameContactShadowRect(artwork:hero,placement:placement.rect),c:c)}
+        }
         if let image {
-            c.saveGState();c.setAlpha(0.84);c.setShadow(offset:CGSize(width:d*0.018,height:-d*0.018),blur:d*0.022,color:color("000000",alpha:0.70))
+            c.saveGState();c.setShadow(offset:CGSize(width:d*0.012,height:-d*0.010),blur:d*0.015,color:color("000000",alpha:0.62))
             draw(image,in:prop,fill:false,context:c);c.restoreGState()
         }
-        glow(canvas,center:CGPoint(x:canvas.midX,y:canvas.midY),radius:d*0.49,ink:"06102E",alpha:0.82,c:c)
         if let hero {c.saveGState();c.setShadow(offset:CGSize(width:d*0.012,height:-d*0.012),blur:d*0.020,color:color("000000",alpha:0.64));draw(hero,in:placement.rect,fill:false,mirrored:placement.mirrored,context:c);c.restoreGState()}
+        // A real foreground plane hides only the waist cut, while the story
+        // figure stands on its top. The original proportions remain exact.
+        if !fullFigure {
+        let front=CGRect(x:canvas.minX,y:canvas.minY,width:canvas.width,height:max(0,stageTop-canvas.minY))
+        gradient(front,colors:[color("06132E"),color("122D58")],locations:[0,1],c:c)
+        c.setFillColor(color("F1A188",alpha:0.60));c.fill(CGRect(x:canvas.minX,y:stageTop-d*0.008,width:canvas.width,height:d*0.008))
+        c.setFillColor(color("020A1C",alpha:0.42));c.fillEllipse(in:CGRect(x:prop.minX-d*0.015,y:stageTop-d*0.004,width:prop.width+d*0.03,height:d*0.014))
+        }
     }
     static func gameDepthLayout(square s:CGRect,canvas:CGRect,variant:Int,titleBounds:CGRect,heroAspect:CGFloat=0.75)->GameDepthLayout {
         let d=s.width,bubble=gameDialogueBubble(square:s,canvas:canvas,variant:variant,titleBounds:titleBounds)
@@ -786,17 +792,26 @@ case .presenter:presenter(background,hero:hero,placement:placement,square:square
         let alpha=CGFloat(bytes[3])/255
         return CGColor(colorSpace:CGColorSpace(name:CGColorSpace.sRGB)!,components:[CGFloat(bytes[0])/255/alpha,CGFloat(bytes[1])/255/alpha,CGFloat(bytes[2])/255/alpha,1])
     }
-    static func presenterPlacement(square s:CGRect,variant:Int,titleBounds:CGRect,pointing:CoverPointing?,imageAspect:CGFloat?=nil)->HeroPlacement {
-        let d=s.width,canvasWidth=d+s.minX*2,bleed=max(2,d*0.015)
+    static func presenterPlacement(square s:CGRect,variant:Int,titleBounds:CGRect,pointing:CoverPointing?,imageAspect:CGFloat?=nil,fullFigure:Bool=false)->HeroPlacement {
+        let d=s.width,edge=d*0.025
         let aspect=imageAspect.flatMap{$0.isFinite && $0>0 ? $0:nil} ?? (0.70/0.98)
-        let height=imageAspect == nil ? d*0.98:min(d*0.98,d*0.70/aspect)
-        let width=imageAspect == nil ? d*0.70:height*aspect
-        // hero is trimmed to its nonzero-alpha silhouette. Its exact aspect
-        // prevents fit-letterboxing below a cropped torso or at the outer arm.
-        // Slight bleed hides the cut edge while the gesture points inward.
-        let onLeft=variant == 1
-        let rect=CGRect(x:onLeft ? -bleed:canvasWidth-width+bleed,y:-bleed,width:width,height:height)
-        let target:CoverPointing=onLeft ? .right:.left
+        let onLeft=variant == 1,target:CoverPointing=onLeft ? .right:.left
+        if fullFigure {
+            let height=min(d*0.86,d*0.55/aspect),width=height*aspect
+            let rect=CGRect(x:onLeft ? s.minX+edge:s.maxX-edge-width,y:s.maxY-d*0.02-height,width:width,height:height)
+            return HeroPlacement(rect:rect,target:target,mirrored:pointing.map{$0 != target} ?? false)
+        }
+        let ceiling=s.maxY-d*0.04
+        let titleTop=titleBounds.isEmpty || titleBounds.isInfinite ? s.midY+d*0.08:titleBounds.maxY
+        // Keep the whole authored upper-body silhouette inside the common
+        // centered square. Its upper face/bow band clears the centered title;
+        // the inward finger may meet the topic, rather than an outer margin.
+        let gap=d*0.010,headBand:CGFloat=0.40
+        var height=min(d*0.60,d*0.67/aspect)
+        height=max(1,min(height,(ceiling-titleTop-gap)/(1-headBand)))
+        let base=max(s.minY+d*0.33,titleTop+gap-height*headBand)
+        let width=height*aspect
+        let rect=CGRect(x:onLeft ? s.minX+edge:s.maxX-edge-width,y:base,width:width,height:height)
         return HeroPlacement(rect:rect,target:target,mirrored:pointing.map{$0 != target} ?? false)
     }
 

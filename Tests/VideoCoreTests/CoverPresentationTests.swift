@@ -18,6 +18,35 @@ final class CoverPresentationTests:XCTestCase {
         XCTAssertEqual(resolved.style,.explanation);XCTAssertEqual(resolved.title,"囚徒困境")
         XCTAssertNotEqual(resolved.template,.automatic)
     }
+    func testFullFigureAndStorySettingAreOptionalStrictAndNormallyEditable()throws {
+        struct OldImage:Encodable {var assetID:String;var sourceRect:MediaFraming?;var pointing:CoverPointing?}
+        struct OldCover:Encodable {var version=1;var style:CoverStyle;var template:CoverTemplate;var title:String?;var subtitle:String?;var hero:OldImage?;var background:OldImage?;var poses:[CoverPose]?;var emphasis:[String]?;var quantityGraphic:CoverQuantityGraphic?}
+        let oldImage=Data(#"{"assetID":"pose"}"#.utf8)
+        XCTAssertEqual(try Codec.data(Codec.decoder().decode(CoverImage.self,from:oldImage)),oldImage,"缺省完整人物标记时旧wire逐字节不变")
+        let legacy=CoverPresentation(style:.presenter,template:.spotlight,title:"囚徒困境",hero:CoverImage(assetID:"pose"),emphasis:["囚徒困境"])
+        let expected=OldCover(style:.presenter,template:.spotlight,title:"囚徒困境",hero:OldImage(assetID:"pose"),emphasis:["囚徒困境"])
+        XCTAssertEqual(try Codec.data(legacy),try Codec.data(expected),"新场景槽为空时不增加历史wire字段或改摘要")
+        for bad in [#"{"assetID":"pose","figureFraming":"stretch"}"#,#"{"assetID":"pose","figureFraming":true}"#,#"{"assetID":"pose","figureFraming":"fullFigure","secretScale":0.3}"#] {
+            XCTAssertThrowsError(try Codec.decoder().decode(CoverImage.self,from:Data(bad.utf8)))
+        }
+        var value=try revision()
+        let project=Project(workspaceID:"w",name:"囚徒困境",revision:value),assets=[asset("pose"),asset("reaction"),asset("setting")]
+        let cover=CoverPresentation(style:.presenter,title:"囚徒困境",hero:CoverImage(assetID:"pose",pointing:.left,figureFraming:.fullFigure),background:CoverImage(assetID:"reaction"),setting:CoverImage(assetID:"setting"),emphasis:["囚徒困境"])
+        let edited=try Editor.apply([.coverPresentation(cover)],to:project,baseRevision:value.id,assets:assets,message:"正常绑定完整人物与实际故事场景")
+        XCTAssertEqual(edited.current.scenes,value.scenes)
+        let resolved=try CoverRules.resolved(revision:edited.current)
+        XCTAssertEqual(resolved.hero?.figureFraming,.fullFigure);XCTAssertEqual(resolved.setting?.assetID,"setting")
+        XCTAssertEqual(try Codec.data(Codec.decoder().decode(Revision.self,from:Codec.data(edited.current))),try Codec.data(edited.current))
+        XCTAssertThrowsError(try Editor.apply([.coverPresentation(cover)],to:project,baseRevision:value.id,assets:Array(assets.prefix(2)),message:"缺实际场景"))
+        var cross=assets;cross[2].workspaceID="other"
+        XCTAssertThrowsError(try Editor.apply([.coverPresentation(cover)],to:project,baseRevision:value.id,assets:cross,message:"跨工作区场景"))
+        value.coverPresentation=cover;value.coverPresentation?.style = .automatic
+        XCTAssertThrowsError(try CoverRules.resolved(revision:value),"不能向非解说员风格静默塞入人物构图或场景")
+        let definitions=AgentSchemas.definitions()
+        XCTAssertNotNil(definitions["CoverImage"]?.object?["properties"]?.object?["figureFraming"])
+        XCTAssertNotNil(definitions["CoverPresentation"]?.object?["properties"]?.object?["setting"])
+        XCTAssertEqual(definitions["CoverFigureFraming"]?.object?["enum"],.array([.string("upperBody"),.string("fullFigure")]))
+    }
     func testQuantityGraphicIsStrictOptionalAndExposedByNormalSchema()throws {
         let legacy=CoverPresentation(style:.code,title:"数量条件")
         let raw=try Codec.data(legacy)
