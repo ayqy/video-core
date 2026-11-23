@@ -2,10 +2,10 @@
 
 VideoFree source export · package_free.py · version 1
 
-生成时间：2026-11-23 10:48:42 北京时间
+生成时间：2026-11-23 11:09:11 北京时间
 
-- 源码与必要元数据：371个文件；27484197字节（不含本清单）。
-- 整体内容指纹：`93c52313f1274238ab858109fe737b98699a542ff3929b00c606cac502541960`。
+- 源码与必要元数据：371个文件；27486280字节（不含本清单）。
+- 整体内容指纹：`d0586c14bfde992edc6a9669476f06a9bc231402ed6fc799f158cc13d884f3f9`。
 - 来源：受控原始工程中的逐文件白名单；Package.swift、唯一免费制作workflow与README均来自Distribution/Free精确模板。
 - 本包不含.git，不可作为新业务checkout；本清单生成过程不执行构建、设备验收、签名安装或公共上传，各阶段以独立证据为准。
 - 排除：App、VideoGame、VideoCartoon、Premium、高级实现运行时测试、私有仓库地址、凭据、客户数据、缓存、日志及媒体过程产物。
@@ -14,7 +14,7 @@ VideoFree source export · package_free.py · version 1
 
 | SHA-256 | 字节数 | 包内路径 / 原工程来源 |
 |---|---:|---|
-| 68a424050bd0b7811a4fdb87df3c4547aaca1092bed6b4458b7920cf0f5ac5fd | 124057 | .github/workflows/free-production.yml |
+| 14b20a51fb5d12f24d060d31a1048289e28f34e9b0afebf423cd88ceb8528b19 | 124171 | .github/workflows/free-production.yml |
 | ac90de9132befb9227282c230671875edb7fd8dc4297999fc39622ea7efe3644 | 52964 | Integrations/README.md |
 | 28833193551aa06befb3bc0fc30b69ef87f74cccae39895f4242af4321d717dd | 15308 | Integrations/actor_motion.py |
 | 39dd8274ff1e6b0649acb63281087a1144e1f4a4e0eed3dc2b92e10df2cbd121 | 28488 | Integrations/asset_reuse.py |
@@ -340,7 +340,7 @@ VideoFree source export · package_free.py · version 1
 | 4e242a398af250306d7fbcec0f8ba0e3339b333520927c64649b896ec1a17b4a | 14767 | Tests/VideoMediaTests/ContentProjectMediaTests.swift |
 | c7b7bf2aa6091f105373becd60c2dc830ed5167fc85db480b9193d60543e1db4 | 3999 | Tests/VideoMediaTests/CoursePreviewTests.swift |
 | b04ba6fe82eba4eebca3eafd1888a4051cd266141128483f52beb2bb7385a514 | 82894 | Tests/VideoMediaTests/CoverMediaTests.swift |
-| c19dbb2fe9ec14b22017e2b4e25375b6a8d09df9bc4a5c37343672885b9a7c18 | 32046 | Tests/VideoMediaTests/DataPresentationPainterTests.swift |
+| 1d8346cd904fe4419818757dce8ac76ec659e5334d67c4a6d97791d15a3434ae | 32228 | Tests/VideoMediaTests/DataPresentationPainterTests.swift |
 | c97a04ff50f844317e5f9db0f319c1042b15f2bb8fb4ff0bce620fc886ce5f13 | 18530 | Tests/VideoMediaTests/IndependentLicenseRevocationTests.swift |
 | d9a9e0ac22e74993c16af4fcd3e5195f22aa63c3bb7ccb9cb2d1f8af320a7cd0 | 2748 | Tests/VideoMediaTests/IslandCoverTests.swift |
 | a5f39e69d5d95c01e3c7e350b4b19f5d06765c71fb11da62a7eaeab7a8500e43 | 3482 | Tests/VideoMediaTests/IslandThemeTests.swift |
@@ -361,7 +361,7 @@ VideoFree source export · package_free.py · version 1
 | 03edcaf754546e54eee0172e844fd13115c80b1829c720f8c6db3af3ba53282d | 7087 | Tests/VideoMediaTests/SpeechMediaTests.swift |
 | aaba8849a0cff4a7da74f31fcda78bb43c4cc71e6e0dee781017534b497e1295 | 10423 | Tests/VideoMediaTests/SpeechProjectProductionTests.swift |
 | 0ff10ac28a9dc3006b562d4faae0b6e8e1ebd55d1a0a71ec13fb662f17da5ebe | 11116 | Tests/VideoMediaTests/VisualCacheBackupTests.swift |
-| d2cd55cc5a2010606873beb0a87c2c1664084bb416c6324a1a34e5d7252f7c18 | 35496 | Tests/VideoMediaTests/VisualCacheResumeTests.swift |
+| 3762f679670fa604375c1341c6b4d716f7bb69248d204567a52594058753caf1 | 37283 | Tests/VideoMediaTests/VisualCacheResumeTests.swift |
 | 7dae804b344f7bc1a1c8426b9515e9b54d7baac3e123263d0bae94d0a305a732 | 6168772 | ThirdParty/Fonts/ChillRoundF/ChillRoundF-v3.0.ttf |
 | d45891f8adfd21368c98e803603df1f575ff3fc4a6ec713ba7ccf0e3cba15b28 | 4375 | ThirdParty/Fonts/ChillRoundF/LICENSE |
 | db2ad832b6bc115705859722c5cf84e91dd51fee1a08a9b4fd7e458dc1d6d302 | 1351 | ThirdParty/Fonts/ChillRoundF/SOURCE.md |

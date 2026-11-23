@@ -284,7 +284,30 @@ final class VisualCacheResumeTests:XCTestCase {
         XCTAssertEqual(try Data(contentsOf:first),saved);XCTAssertEqual(try Data(contentsOf:receipt),savedReceipt)
         XCTAssertEqual((try FileManager.default.attributesOfItem(atPath:first.path)[.systemFileNumber] as? NSNumber)?.uint64Value,inode)
         let pixels=try await decode(resumed,frames:82)
-        for frame in [0,29,30,59,60,81] {
+        // Frame zero is the same editable cover as every normal production.
+        // Construct its known source marker directly; verification must not
+        // replay frame zero through the still-live advanced plugin scope.
+        let width=r.aspect.width,height=r.aspect.height
+        let source=try XCTUnwrap(CGContext(data:nil,width:width,height:height,bitsPerComponent:8,bytesPerRow:width*4,space:CGColorSpace(name:CGColorSpace.sRGB)!,bitmapInfo:CGImageAlphaInfo.premultipliedLast.rawValue))
+        source.setFillColor(CGColor(srgbRed:0.85,green:0.12,blue:0.12,alpha:1))
+        source.fill(CGRect(x:0,y:0,width:width,height:height))
+        let expected=try CoverPainter.image(revision:r,source:XCTUnwrap(source.makeImage()))
+        var expectedBytes=[UInt8](repeating:0,count:width*height*4)
+        try expectedBytes.withUnsafeMutableBytes { raw in
+            let bitmap=try XCTUnwrap(CGContext(data:raw.baseAddress,width:width,height:height,bitsPerComponent:8,bytesPerRow:width*4,space:CGColorSpace(name:CGColorSpace.sRGB)!,bitmapInfo:CGImageAlphaInfo.premultipliedLast.rawValue))
+            bitmap.draw(expected,in:CGRect(x:0,y:0,width:width,height:height))
+        }
+        var point=0
+        for y in [height/5,height/2,height*4/5] {for x in [width/5,width/2,width*4/5] {
+            for channel in 0..<3 {
+                var total=0
+                for dy in -2...2 {for dx in -2...2 {total += Int(expectedBytes[((y+dy)*width+x+dx)*4+channel])}}
+                XCTAssertLessThan(abs(pixels[0].points[point][channel]-total/25),20,"恢复后的零帧须为同版封面，不能回退原模型色块或重复套模板")
+            }
+            point += 1
+        }}
+        XCTAssertEqual(module.frames,Array(30..<82),"核对封面不得重入高级模块或重放零帧")
+        for frame in 1..<82 {
             let rgb=pixels[frame].points[4]
             let dominant=frame<30 ? 0:frame<60 ? 1:2
             for channel in 0..<3 where channel != dominant {

@@ -145,7 +145,8 @@ final class DataPresentationPainterTests: XCTestCase {
     func testPaperDataSuffixSeparatesDrawingSemanticsUnderCurrentEncoding() throws {
         // Reconstruct the base drawing key under the current encoding identity.
         // This isolates the paper-data suffix; old encoding cache migration is
-        // verified separately and is not represented by this fixture.
+        // verified separately and is not represented by this fixture. The same
+        // first-frame cover identity belongs to both comparison keys.
         let current=revision()
         let encoding=try VisualClipCache.EncodingConfiguration.capture(aspect:current.aspect,fps:current.fps)
         func baseKeyForCurrentEncoding(_ revision:Revision)throws->String {
@@ -155,7 +156,7 @@ final class DataPresentationPainterTests: XCTestCase {
             scene.narration=scene.narration.isEmpty ? "":"speech"
             let font=CTFontCreateWithName("PingFangSC-Medium" as CFString,32,nil)
             let table=CTFontCopyTable(font,0x68656164,[]) as Data? ?? Data()
-            return try Codec.digest(VisualClipCache.Key(version:VisualClipCache.version+revision.toolchain,cinemaSubtitleStyle:CinemaSubtitles.styleVersion,os:ProcessInfo.processInfo.operatingSystemVersionString,font:(CTFontCopyPostScriptName(font) as String)+Codec.hash(table),scene:scene,encoding:encoding,purpose:revision.purpose,aspect:revision.aspect,fps:revision.fps,index:0,sceneCount:1,startFrame:0,price:nil,cta:revision.cta,sourceHash:nil,layerHashes:[:],moduleIdentity:nil,artworkIdentity:nil))
+            return try Codec.digest(VisualClipCache.Key(version:VisualClipCache.version+revision.toolchain,cinemaSubtitleStyle:CinemaSubtitles.styleVersion,os:ProcessInfo.processInfo.operatingSystemVersionString,font:(CTFontCopyPostScriptName(font) as String)+Codec.hash(table),scene:scene,encoding:encoding,purpose:revision.purpose,aspect:revision.aspect,fps:revision.fps,index:0,sceneCount:1,startFrame:0,price:nil,cta:revision.cta,sourceHash:nil,layerHashes:[:],moduleIdentity:nil,artworkIdentity:nil,firstFrameCover:try VisualClipCache.firstFrameCoverFingerprint(revision:revision,database:Database())))
         }
         for code in [false,true] {
             let ordinary=revision(code:code)
