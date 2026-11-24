@@ -257,6 +257,9 @@ enum VisualClipCache {
     static func renderClip(revision r: Revision,index: Int,startFrame: Int,repository: Repository,database db: Database,output: URL,modules:RenderModuleRegistry?,invocation:RenderInvocation?=nil,encoding:EncodingConfiguration,frameRange:Range<Int>?=nil,progress: @escaping (Double) throws -> Void) async throws {
         let scene=r.scenes[index],range=frameRange ?? (0..<r.scenes[index].timelineFrames)
         guard !range.isEmpty,range.lowerBound>=0,range.upperBound<=scene.timelineFrames else {throw VideoError.invalid("镜头缓存区间超出原时间轴")}
+        let binding:RenderInvocation.FrozenRevision?
+        if scene.modelScene3D != nil { binding=try invocation?.bind(revision:r) }
+        else { binding=nil }
         let writer=try AVAssetWriter(outputURL:output,fileType:AVFileType(rawValue:encoding.fileType))
         let input=AVAssetWriterInput(mediaType:.video,outputSettings:encoding.writerSettings); input.mediaTimeScale=encoding.mediaTimeScale;input.expectsMediaDataInRealTime=false
         let adaptor=AVAssetWriterInputPixelBufferAdaptor(assetWriterInput:input,sourcePixelBufferAttributes:encoding.pixelBufferAttributes)
@@ -281,7 +284,11 @@ enum VisualClipCache {
                 CVPixelBufferLockBaseAddress(buffer,[])
                 guard let context=CGContext(data:CVPixelBufferGetBaseAddress(buffer),width:r.aspect.width,height:r.aspect.height,bitsPerComponent:8,bytesPerRow:CVPixelBufferGetBytesPerRow(buffer),space:CGColorSpace(name:CGColorSpace.sRGB)!,bitmapInfo:CGImageAlphaInfo.noneSkipFirst.rawValue) else { CVPixelBufferUnlockBaseAddress(buffer,[]);throw VideoError.unavailable("帧缓冲不可用") }
                 do {
-                    try ScenePainter.draw(revision:r,frame:startFrame+local,in:context,media:media,layerImages:layerImages,resources:resources,modules:modules,invocation:invocation)
+                    if let binding {
+                        try ScenePainter.draw(binding:binding,frame:startFrame+local,in:context,media:media,layerImages:layerImages,resources:resources,modules:modules)
+                    } else {
+                        try ScenePainter.draw(revision:r,frame:startFrame+local,in:context,media:media,layerImages:layerImages,resources:resources,modules:modules,invocation:invocation)
+                    }
                     // Replace exactly one existing picture before its only H.264
                     // encode. The source clock, full soundtrack and later frames
                     // remain in place, and advanced modules are never replayed.

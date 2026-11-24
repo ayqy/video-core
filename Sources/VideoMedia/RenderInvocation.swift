@@ -14,6 +14,8 @@ public final class RenderCancellation: @unchecked Sendable {
 /// A Host-only capability. Its authorization closure and database never cross IPC.
 /// The child receives the bounded visual projection and these opaque scope IDs.
 public struct RenderInvocation: @unchecked Sendable {
+    private final class Authority: @unchecked Sendable {}
+    private let authority = Authority()
     public let id: String
     public let workspaceID: String
     public let projectID: String
@@ -42,6 +44,39 @@ public struct RenderInvocation: @unchecked Sendable {
     public func verify(revision: Revision) throws {
         try check()
         guard revision.workspaceID == workspaceID, revision.id == revisionID, try revision.contentDigest() == revisionDigest else { throw VideoError.conflict("插件任务不属于当前冻结版本") }
+    }
+
+    /// A Host-local value snapshot, never a wire value or cached authorization.
+    /// Only this file can mint one after the original byte-digest verification.
+    struct FrozenRevision: @unchecked Sendable {
+        private let revision: Revision
+        private let owner: RenderInvocation
+
+        fileprivate init(revision: Revision, owner: RenderInvocation) {
+            self.revision = revision; self.owner = owner
+        }
+
+        fileprivate func requireOwner(_ candidate: RenderInvocation) throws {
+            guard candidate.authority === owner.authority,
+                  revision.workspaceID == candidate.workspaceID, revision.id == candidate.revisionID else {
+                throw VideoError.conflict("冻结绘制值不属于当前原始调用")
+            }
+        }
+
+        func withVerifiedRevision<T>(_ body: (Revision, RenderInvocation) throws -> T) throws -> T {
+            try owner.verify(binding: self)
+            return try body(revision, owner)
+        }
+    }
+
+    func bind(revision: Revision) throws -> FrozenRevision {
+        try verify(revision: revision)
+        return FrozenRevision(revision: revision, owner: self)
+    }
+
+    func verify(binding: FrozenRevision) throws {
+        try check()
+        try binding.requireOwner(self)
     }
 
     /// A preview is a local zero-supplier-cash operation. Recheck the caller's

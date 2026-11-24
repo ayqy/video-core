@@ -65,6 +65,16 @@ public enum ScenePainter {
     }
     public static func draw(revision: Revision, frame: Int, in c: CGContext, media: CGImage? = nil, layerImages: [String:CGImage] = [:], resources:RenderResources = .empty, modules: RenderModuleRegistry? = nil, invocation: RenderInvocation? = nil) throws {
         try invocation?.verify(revision:revision)
+        try drawVerified(revision:revision,frame:frame,in:c,media:media,layerImages:layerImages,resources:resources,modules:modules,invocation:invocation)
+    }
+    /// The frozen value and its original owner always travel together. There
+    /// is no second revision or invocation argument to replace either one.
+    static func draw(binding: RenderInvocation.FrozenRevision, frame: Int, in c: CGContext, media: CGImage? = nil, layerImages: [String:CGImage] = [:], resources:RenderResources = .empty, modules: RenderModuleRegistry? = nil) throws {
+        try binding.withVerifiedRevision { revision, invocation in
+            try drawVerified(revision:revision,frame:frame,in:c,media:media,layerImages:layerImages,resources:resources,modules:modules,invocation:invocation)
+        }
+    }
+    private static func drawVerified(revision: Revision, frame: Int, in c: CGContext, media: CGImage?, layerImages: [String:CGImage], resources: RenderResources, modules: RenderModuleRegistry?, invocation: RenderInvocation?) throws {
         guard !revision.scenes.isEmpty else { throw VideoError.invalid("没有场景") }
         let w = CGFloat(revision.aspect.width), h = CGFloat(revision.aspect.height), portrait = h > w
         let (s, local, index) = scene(revision: revision, frame: frame)
