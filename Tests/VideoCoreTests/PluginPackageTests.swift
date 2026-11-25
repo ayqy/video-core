@@ -150,7 +150,7 @@ final class PluginPackageTests:XCTestCase {
         XCTAssertEqual(try PluginInputCompatibility.publicationSchema(pluginID:"video.game",requested:"13"),13)
         XCTAssertEqual(try PluginInputCompatibility.publicationSchema(pluginID:"video.game",requested:"18"),18)
         XCTAssertEqual(try PluginInputCompatibility.publicationSchema(pluginID:"video.game",requested:"19"),19)
-        for (id,schema,legacy) in [("video.game",20,2),("video.cartoon",8,1)] {
+        for (id,schema,legacy) in [("video.game",21,2),("video.cartoon",8,1)] {
             let (manifest,requests,description)=try currentProbe(id,schema)
             let transcript=try probeTranscript(requests,description)
             var defaultManifest=manifest
@@ -162,6 +162,12 @@ final class PluginPackageTests:XCTestCase {
             old.module.inputSchema=try PluginInputCompatibility.publicationSchema(pluginID:id,requested:String(legacy))
             XCTAssertEqual(old.module.inputSchema,legacy)
             XCTAssertThrowsError(try PluginPackageProbeRules.validate(transcript,requests:requests,manifest:old),"Legacy declarations must not silently describe a current service")
+            if id=="video.game" {
+                let (previous,previousRequests,previousDescription)=try currentProbe(id,20)
+                XCTAssertEqual(try PluginInputCompatibility.publicationSchema(pluginID:id,requested:"20"),previous.module.inputSchema)
+                XCTAssertNoThrow(try PluginPackageProbeRules.validate(probeTranscript(previousRequests,previousDescription),requests:previousRequests,manifest:previous))
+                XCTAssertThrowsError(try PluginPackageProbeRules.validate(transcript,requests:requests,manifest:previous),"Explicit game20 must still reject a game21 service descriptor")
+            }
         }
     }
     func testCurrentReadOnlyProbeRejectsRealDescriptorContractDrift()throws {
