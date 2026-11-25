@@ -334,6 +334,46 @@ enum PluginPipeOutput {
     }
 }
 
+/// One value-semantic frame owns both its digest and its complete execute RPC.
+/// There is deliberately no initializer accepting a digest or a separate wire
+/// request: callers cannot pair an earlier digest with changed input bytes.
+struct PluginFrozenFrameRequest {
+    let input: PluginFrameInput
+    let digest: String
+
+    init(_ input: PluginFrameInput) throws {
+        self.input = input; digest = try input.contentDigest()
+    }
+
+    var request: PluginRPCRequest {
+        PluginRPCRequest(requestID: digest + "-execute", method: .execute,
+                         input: input, invocation: input.invocation)
+    }
+}
+
+/// The wire request and any reusable digest must come from the same immutable
+/// frame. Ordinary RPC callers keep the original independent digest calculation.
+fileprivate enum PluginProcessRequest {
+    case rpc(PluginRPCRequest)
+    case frozen(PluginFrozenFrameRequest)
+
+    var wire: PluginRPCRequest {
+        switch self {
+        case .rpc(let request): return request
+        case .frozen(let frame): return frame.request
+        }
+    }
+
+    func modelInputDigest() throws -> String {
+        switch self {
+        case .rpc(let request):
+            guard let input = request.input else { throw VideoError.invalid("三维执行缺少实际冻结输入") }
+            return try input.contentDigest()
+        case .frozen(let frame): return frame.digest
+        }
+    }
+}
+
 /// A model frame may finish after the ordinary transport response window, but
 /// polling cannot extend its one fixed task deadline or cross its identity.
 /// This is local transport state, not an authorization or protocol change.
@@ -364,10 +404,21 @@ struct PluginResponseDeadline {
 
     mutating func deadline(for request: PluginRPCRequest, invocation: PluginInvocation,
                            now: Date = Date()) throws -> Date {
+        try deadline(for: .rpc(request), invocation: invocation, now: now)
+    }
+
+    mutating func deadline(for frame: PluginFrozenFrameRequest, invocation: PluginInvocation,
+                           now: Date = Date()) throws -> Date {
+        try deadline(for: .frozen(frame), invocation: invocation, now: now)
+    }
+
+    fileprivate mutating func deadline(for envelope: PluginProcessRequest, invocation: PluginInvocation,
+                                      now: Date = Date()) throws -> Date {
+        let request = envelope.wire
         let limit = Date(timeIntervalSince1970: invocation.deadlineUnixTime)
         if request.method == .execute, let input = request.input, input.props.modelScene3D != nil {
             guard input.invocation == invocation else { throw VideoError.permission("三维响应窗口不属于当前完整调用") }
-            let digest = try input.contentDigest()
+            let digest = try envelope.modelInputDigest()
             if let current = model {
                 if current.requestID == request.requestID {
                     guard current.digest == digest, current.invocation == invocation else {
@@ -469,12 +520,19 @@ final class PluginProcessClient {
         try responses.next(output:output.fileHandleForReading.fileDescriptor,errors:errors.fileHandleForReading.fileDescriptor,until:until,check:check)
     }
     func exchange(_ request:PluginRPCRequest,scope:RenderInvocation)throws->PluginRPCResponse {
+        try exchange(.rpc(request),scope:scope)
+    }
+    func exchange(_ frame:PluginFrozenFrameRequest,scope:RenderInvocation)throws->PluginRPCResponse {
+        try exchange(.frozen(frame),scope:scope)
+    }
+    private func exchange(_ envelope:PluginProcessRequest,scope:RenderInvocation)throws->PluginRPCResponse {
+        let request=envelope.wire
         try check(scope);guard request.invocation==invocation || request.input?.invocation==invocation || request.modelBankOperation?.invocation==invocation else{throw VideoError.permission("插件请求不属于原完整调用")}
         if let operation=request.modelBankOperation {
             guard request.method == .validate,request.input==nil,request.invocation==nil,request.taskID==nil,operation.invocation==invocation else{throw VideoError.permission("三维字节操作必须独立绑定原完整调用")}
             try operation.validate()
         }
-        let responseDeadline=try responseDeadlines.deadline(for:request,invocation:invocation)
+        let responseDeadline=try responseDeadlines.deadline(for:envelope,invocation:invocation)
         var data=try Codec.data(request);guard data.count<=PluginProtocolRules.maximumRequestBytes else{throw VideoError.invalid("插件请求超过有界长度")};data.append(10)
         try PluginPipeOutput.write(data,descriptor:input.fileHandleForWriting.fileDescriptor,until:scope.deadline){try self.check(scope)}
         let answer=try next(until:responseDeadline){try self.check(scope)};try check(scope)

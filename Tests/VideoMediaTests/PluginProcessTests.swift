@@ -284,6 +284,113 @@ final class PluginProcessTests:XCTestCase {
         addTeardownBlock {XCTAssertEqual(done.wait(timeout:.now()+1),.success);XCTAssertEqual(written.get(),Data([1]))}
         return done
     }
+    func test_frozen_execute_preserves_existing_wire_and_isolates_input_and_request_mutations()throws {
+        let(_,execute)=try modelResponseFixture(),original=try XCTUnwrap(execute.input)
+        var source=original
+        let frozen=try PluginFrozenFrameRequest(source),digest=try original.contentDigest()
+        let expected=PluginRPCRequest(requestID:digest+"-execute",method:.execute,input:original,invocation:original.invocation)
+        let wire=try Codec.data(expected)
+        XCTAssertEqual(frozen.digest,digest);XCTAssertEqual(try Codec.data(frozen.request),wire)
+
+        source.sourceFrame=1;source.fps=24;source.props.color="FF00FF"
+        source.props.modelScene3D?.camera.position.x+=1
+        let bank=try XCTUnwrap(source.modelBankReference)
+        source.modelBankReference=PluginModelBankReference(bankID:"other-bank",manifestDigest:bank.manifestDigest,invocationDigest:bank.invocationDigest)
+        source.invocation.revisionID="other-revision"
+        var copied=frozen.request
+        copied.requestID="other-request";copied.input?.canvasWidth=16
+        copied.input?.props.modelScene3D?.instances.removeAll()
+        copied.invocation?.budgetReference="other-budget"
+        XCTAssertNotEqual(source,original);XCTAssertNotEqual(try Codec.data(copied),wire)
+        XCTAssertEqual(frozen.input,original);XCTAssertEqual(frozen.digest,digest)
+        XCTAssertEqual(try Codec.data(frozen.request),wire,"only the original frozen model and invocation may reach the wire")
+
+        // Raster Data and arrays are value-semantic too, even if a caller keeps
+        // and edits its source bank or a copy obtained from the frozen request.
+        var raster=original;raster.props.modelScene3D=nil;raster.modelBankReference=nil
+        let pixels=Data([1,2,3])
+        raster.assets=[.init(assetID:"bytes",data:pixels,sha256:Codec.hash(pixels),width:1,height:1)]
+        let rasterFrame=try PluginFrozenFrameRequest(raster),rasterWire=try Codec.data(rasterFrame.request)
+        raster.assets[0].data[0]=9;raster.assets[0].sha256=Codec.hash(raster.assets[0].data)
+        var rasterCopy=rasterFrame.request;rasterCopy.input?.assets[0].data.append(4)
+        XCTAssertEqual(rasterFrame.input.assets[0].data,pixels)
+        XCTAssertEqual(try Codec.data(rasterFrame.request),rasterWire)
+        XCTAssertEqual(rasterFrame.digest,try rasterFrame.input.contentDigest())
+    }
+    func test_frozen_model_receives_a_real_delayed_pipe_reply_after_the_short_window()throws {
+        let(invocation,execute)=try modelResponseFixture(),frozen=try PluginFrozenFrameRequest(XCTUnwrap(execute.input))
+        let request=frozen.request,value=try response(request,input:frozen.input)
+        var windows=try PluginResponseDeadline(shortSeconds:0.02,modelSeconds:0.5),reader=PluginPipeResponseReader()
+        let started=Date(),deadline=try windows.deadline(for:frozen,invocation:invocation,now:started)
+        let(output,errors)=try responsePipes();var wire=try Codec.data(value);wire.append(10)
+        _=delayedResponse(wire,to:output,after:0.06)
+        var checks=0
+        let bytes=try reader.next(output:output.fileHandleForReading.fileDescriptor,errors:errors.fileHandleForReading.fileDescriptor,until:deadline){checks+=1}
+        let actual=try Codec.decoder().decode(PluginRPCResponse.self,from:bytes)
+        try windows.accept(actual,for:request,deadline:deadline)
+        XCTAssertEqual(actual.task,value.task);XCTAssertGreaterThan(checks,1)
+        XCTAssertGreaterThanOrEqual(Date().timeIntervalSince(started),0.02)
+    }
+    func test_frozen_model_replays_and_progress_keep_one_deadline_and_reject_changed_identity()throws {
+        let(invocation,execute)=try modelResponseFixture(),frozen=try PluginFrozenFrameRequest(XCTUnwrap(execute.input)),now=Date()
+        var windows=try PluginResponseDeadline(shortSeconds:0.02,modelSeconds:0.5)
+        let request=frozen.request,deadline=try windows.deadline(for:frozen,invocation:invocation,now:now)
+        try windows.accept(response(request,input:frozen.input),for:request,deadline:deadline,now:now)
+        let progress=PluginRPCRequest(requestID:"progress",method:.progress,invocation:invocation,taskID:"model-task")
+        for offset in [0.1,0.2,0.3] {
+            let later=now.addingTimeInterval(offset)
+            XCTAssertEqual(try windows.deadline(for:frozen,invocation:invocation,now:later),deadline)
+            XCTAssertEqual(try windows.deadline(for:progress,invocation:invocation,now:later),deadline)
+        }
+        var changed=request;changed.input?.sourceFrame=1
+        XCTAssertThrowsError(try windows.deadline(for:changed,invocation:invocation,now:now),"a copied request cannot retain the original frozen digest")
+        var other=invocation;other.revisionID="other-revision"
+        XCTAssertThrowsError(try windows.deadline(for:frozen,invocation:other,now:now))
+        var otherInput=frozen.input;otherInput.invocation=other
+        XCTAssertThrowsError(try windows.deadline(for:PluginFrozenFrameRequest(otherInput),invocation:invocation,now:now))
+        let wrongTask=PluginRPCRequest(requestID:"wrong",method:.progress,invocation:invocation,taskID:"other-task")
+        XCTAssertThrowsError(try windows.deadline(for:wrongTask,invocation:invocation,now:now))
+        let wrongScope=PluginRPCRequest(requestID:"wrong-scope",method:.progress,invocation:other,taskID:"model-task")
+        XCTAssertThrowsError(try windows.deadline(for:wrongScope,invocation:other,now:now))
+    }
+    func test_frozen_model_rejects_wrong_receipts_and_late_results_before_allowing_next_finished_frame()throws {
+        let(invocation,execute)=try modelResponseFixture(),frozen=try PluginFrozenFrameRequest(XCTUnwrap(execute.input)),now=Date()
+        var windows=try PluginResponseDeadline(shortSeconds:0.02,modelSeconds:0.5)
+        let request=frozen.request,deadline=try windows.deadline(for:frozen,invocation:invocation,now:now)
+        let valid=try response(request,input:frozen.input)
+        try windows.accept(valid,for:request,deadline:deadline,now:now)
+        for mutation in ["scope","task","task-digest","response-digest"] {
+            var wrong=valid
+            switch mutation {
+            case "scope":wrong.task?.invocation.budgetReference="other-budget"
+            case "task":wrong.task?.taskID="other-task"
+            case "task-digest":wrong.task?.inputDigest=String(repeating:"b",count:64)
+            default:wrong.inputDigest=String(repeating:"b",count:64)
+            }
+            XCTAssertThrowsError(try windows.accept(wrong,for:request,deadline:deadline,now:now))
+        }
+        XCTAssertThrowsError(try windows.accept(valid,for:request,deadline:deadline,now:deadline))
+        var nextInput=frozen.input;nextInput.sourceFrame=1
+        let next=try PluginFrozenFrameRequest(nextInput)
+        XCTAssertThrowsError(try windows.deadline(for:next,invocation:invocation,now:now))
+        try windows.accept(response(request,input:frozen.input,state:.succeeded),for:request,deadline:deadline,now:now)
+        XCTAssertEqual(try windows.deadline(for:next,invocation:invocation,now:now.addingTimeInterval(0.1)).timeIntervalSince(now),0.6,accuracy:0.000001)
+    }
+    func test_frozen_model_keeps_the_protocol_ceiling_invocation_deadline_and_nonmodel_short_window()throws {
+        let(_,execute)=try modelResponseFixture(),original=try XCTUnwrap(execute.input),now=Date()
+        var full=original;full.invocation.deadlineUnixTime=now.addingTimeInterval(240).timeIntervalSince1970
+        let fullFrame=try PluginFrozenFrameRequest(full)
+        var production=PluginResponseDeadline()
+        XCTAssertEqual(try production.deadline(for:fullFrame,invocation:full.invocation,now:now),now.addingTimeInterval(120))
+        var limited=original;limited.invocation.deadlineUnixTime=now.addingTimeInterval(0.1).timeIntervalSince1970
+        let limitedFrame=try PluginFrozenFrameRequest(limited)
+        var bounded=try PluginResponseDeadline(shortSeconds:0.02,modelSeconds:0.5)
+        XCTAssertEqual(try bounded.deadline(for:limitedFrame,invocation:limited.invocation,now:now),Date(timeIntervalSince1970:limited.invocation.deadlineUnixTime))
+        var raster=original;raster.props.modelScene3D=nil;raster.modelBankReference=nil
+        let rasterFrame=try PluginFrozenFrameRequest(raster)
+        var ordinary=try PluginResponseDeadline(shortSeconds:0.02,modelSeconds:0.5)
+        XCTAssertEqual(try ordinary.deadline(for:rasterFrame,invocation:raster.invocation,now:now),now.addingTimeInterval(0.02))
+    }
     func test_model_response_receives_a_real_delayed_pipe_reply_after_the_short_window()throws {
         let(invocation,request)=try modelResponseFixture(),value=try response(request,input:XCTUnwrap(request.input))
         var windows=try PluginResponseDeadline(shortSeconds:0.02,modelSeconds:0.5),reader=PluginPipeResponseReader()

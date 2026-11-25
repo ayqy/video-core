@@ -2,10 +2,10 @@
 
 VideoFree source export · package_free.py · version 1
 
-生成时间：2026-11-25 11:31:14 北京时间
+生成时间：2026-11-25 13:09:01 北京时间
 
-- 源码与必要元数据：374个文件；27577300字节（不含本清单）。
-- 整体内容指纹：`a11fd54664cc89630b530ddb680c26669224a16f59debad7faec602018eaa70d`。
+- 源码与必要元数据：374个文件；27589708字节（不含本清单）。
+- 整体内容指纹：`6ecafabf66187038213f1b4f2314f742a7a25b470dcec79920fc43bcd990cb38`。
 - 来源：受控原始工程中的逐文件白名单；Package.swift、唯一免费制作workflow与README均来自Distribution/Free精确模板。
 - 本包不含.git，不可作为新业务checkout；本清单生成过程不执行构建、设备验收、签名安装或公共上传，各阶段以独立证据为准。
 - 排除：App、VideoGame、VideoCartoon、Premium、高级实现运行时测试、私有仓库地址、凭据、客户数据、缓存、日志及媒体过程产物。
@@ -14,7 +14,7 @@ VideoFree source export · package_free.py · version 1
 
 | SHA-256 | 字节数 | 包内路径 / 原工程来源 |
 |---|---:|---|
-| e8e66115cfe0cb3b6ce54723df14a671ba33e0952804182316494e937ce1175b | 134748 | .github/workflows/free-production.yml |
+| 7c4af4bf6f9b4ebb8d4f7537e2511ef0b9ad35fe2680aef640bebae737cea753 | 136377 | .github/workflows/free-production.yml |
 | f0eb832feeaf1bf19b12bd5aa5f0449c700d993d91ab87b5b19e6444a927b0a2 | 53463 | Integrations/README.md |
 | 28833193551aa06befb3bc0fc30b69ef87f74cccae39895f4242af4321d717dd | 15308 | Integrations/actor_motion.py |
 | 39dd8274ff1e6b0649acb63281087a1144e1f4a4e0eed3dc2b92e10df2cbd121 | 28488 | Integrations/asset_reuse.py |
@@ -239,13 +239,13 @@ VideoFree source export · package_free.py · version 1
 | 315dd5ad2f8a6795746c537c859cb51ddae24e11b62a3b317025d9ac77c05183 | 17040 | Sources/VideoMedia/Painter.swift |
 | 76a872883c6d2197b74295532b84f28adcaf884dce0cd04325e3e46815ee925c | 4199 | Sources/VideoMedia/PaperPresentationPainter.swift |
 | a10eed97164e8f7f6f897692b3eb88e410e27ec8b6aaba7a9ea6193832917618 | 12474 | Sources/VideoMedia/PencilBuiltinAssets.swift |
-| f8e7a922c35553073b6fbbeadf88f98339bbe59aae04ed73f646bd4ba2b72fab | 36632 | Sources/VideoMedia/PluginProcess.swift |
+| 377d097a2d31b578b359a495db255f36f2fb874b4af029a4f973fe6b00456496 | 38946 | Sources/VideoMedia/PluginProcess.swift |
 | 314d0ef065fd07193d19200b8075886cb573d6601479fa4160b9c8ee31faa478 | 19527 | Sources/VideoMedia/PluginRPCServer.swift |
 | fe0e944685364dc73d08c3f82f1a0a695324be3f395806c1299e1a0200f0e029 | 3424 | Sources/VideoMedia/PluginXPCServer.swift |
 | 9b5a83d4b5f2d3ee77ca26d518268e9bd25b01d767d43d558b30d32a1948814a | 2806 | Sources/VideoMedia/Preview.swift |
 | 4eccc0ef4b35ea271e2ce6333c42c694567e76617cab5e83238ac601879e5af2 | 8745 | Sources/VideoMedia/ProviderClient.swift |
 | f5aacbebebab273379616f4889ededbfe5f7a8f4ca39ada829e495fd3fa84cc1 | 10429 | Sources/VideoMedia/RemoteJobs.swift |
-| 04dbef16d2bd667e4855019ac4b8d1ca8e4cf760e8dacc19a38ff165b2e5e659 | 11965 | Sources/VideoMedia/RemoteSceneModule.swift |
+| ca1e1f490d410f5c0a1816aa2e41bd4fdb1585a84a1e1e6a3c714bb49c160f52 | 11908 | Sources/VideoMedia/RemoteSceneModule.swift |
 | 35b7ed9f53a89cebef516a39274d9f206e2e1fd0d7fb091a53a466e786234a2f | 7458 | Sources/VideoMedia/RenderInvocation.swift |
 | 4e6e589eeb898102052b99b70f08c1e1d949f91692b8c7aa33f95ee07c7e5b2b | 39385 | Sources/VideoMedia/RenderModules.swift |
 | 7f42c143337c9161adf68e75b1d08e64d2d48f7e6c499210e9d1639255efdc82 | 45847 | Sources/VideoMedia/Renderer.swift |
@@ -358,7 +358,7 @@ VideoFree source export · package_free.py · version 1
 | 1db2f6da044fcda2e12bec29ff50136582d9974a6c6ed882a8eb597f5d445e05 | 65890 | Tests/VideoMediaTests/ModelPackageMediaTests.swift |
 | 2f24b48426df45f31fd87fcb62e727426a451cb8cb9c2949e0fc8d4238744d18 | 7697 | Tests/VideoMediaTests/NativeEncoderTests.swift |
 | 4107b55c496e037cb26708cfcfc224301c35ac98dc06598130c0219ac351f934 | 15795 | Tests/VideoMediaTests/PaperPresentationMediaTests.swift |
-| 450bf1a6f1a512b1ebed98a236bc4004590b07135874a55206c41912f27d8935 | 39095 | Tests/VideoMediaTests/PluginProcessTests.swift |
+| b26307083cf6bd5ae7559cebbc35e4254de18add4e39c0060ffb283fce679350 | 47617 | Tests/VideoMediaTests/PluginProcessTests.swift |
 | 1d6aa489123c9797787bc282d6bd976b9b75239550c332abeb074505854b55d4 | 8431 | Tests/VideoMediaTests/RenderInvocationTests.swift |
 | f1fa3952a70af45cf3adca99715c3bab89aee643deadcdc25f76e59575e9dcf2 | 45627 | Tests/VideoMediaTests/ScriptJobsTests.swift |
 | 03edcaf754546e54eee0172e844fd13115c80b1829c720f8c6db3af3ba53282d | 7087 | Tests/VideoMediaTests/SpeechMediaTests.swift |

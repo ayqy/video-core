@@ -101,11 +101,12 @@ public final class RemoteSceneModule:ScopedSceneRenderModule,@unchecked Sendable
             }
         }else{modelReference=nil}
         let input=PluginFrameInput(invocation:client.invocation,props:props,sourceFrame:localFrame,fps:fps,canvasWidth:context.width,canvasHeight:context.height,rect:PluginRect(x:rect.minX,y:rect.minY,width:rect.width,height:rect.height),assets:try resources.pluginRasterAssets(props:props),modelBankReference:modelReference)
-        try PluginProtocolRules.validate(input,capabilityID:manifest.capabilities[0],inputSchemaVersion:manifest.inputSchema);let digest=try input.contentDigest()
+        try PluginProtocolRules.validate(input,capabilityID:manifest.capabilities[0],inputSchemaVersion:manifest.inputSchema)
+        let frozen=try PluginFrozenFrameRequest(input),digest=frozen.digest
         try session.preflight.perform(input,digest:digest,check:{try invocation.check()}) { method in
             try client.exchange(PluginRPCRequest(requestID:Codec.id(),method:method,input:input,invocation:client.invocation),scope:invocation)
         }
-        var answer=try client.exchange(PluginRPCRequest(requestID:digest+"-execute",method:.execute,input:input,invocation:client.invocation),scope:invocation)
+        var answer=try client.exchange(frozen,scope:invocation)
         guard let initial=answer.task else{throw VideoError.unavailable("插件没有返回原帧的异步任务")}
         while true {
             try invocation.check()
