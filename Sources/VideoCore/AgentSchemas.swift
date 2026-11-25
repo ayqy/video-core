@@ -90,6 +90,17 @@ public enum AgentSchemas {
         for (name,declaration) in ModelScene3DSchema.records {
             var schema=entity(declaration).object!;schema["additionalProperties"] = .boolean(false);result[name] = .object(schema)
         }
+        for (name,declaration) in ModelSceneEditPatchSchema.records {
+            var schema=entity(declaration).object!;schema["additionalProperties"] = .boolean(false)
+            var properties=schema["properties"]!.object!
+            properties["sceneIDs"] = .object(["type":.string("array"),"items":shape("s"),"minItems":.number(1),"maxItems":.number(256),"uniqueItems":.boolean(true)])
+            for field in ["appendInstances","replaceInstances"] {properties[field] = .object(["type":.string("array"),"items":shape("ModelInstance3D"),"maxItems":.number(128)])}
+            properties["camera"] = shape("ModelCamera3D")
+            schema["properties"] = .object(properties)
+            schema["description"] = .string("Shared explicit static additions/replacements for named existing 3D scenes. Empty arrays request no instance changes; omitted camera preserves it. No deletion, motion/action edits, implicit unlocking or timing/audio changes. Existing edit permission, locks, source verification and review invalidation apply.")
+            schema["anyOf"] = .array([.object(["properties":.object(["appendInstances":.object(["minItems":.number(1)])])]),.object(["properties":.object(["replaceInstances":.object(["minItems":.number(1)])])]),.object(["required":.array([.string("camera")])])])
+            result[name] = .object(schema)
+        }
         result.merge(PluginRPCSchemas.modelStoryDefinitions(),uniquingKeysWith:{$1})
         result.merge(PluginRPCSchemas.modelNodeVariantDefinitions(),uniquingKeysWith:{$1})
         for (name,declaration) in ModelAlphaCutoutSchema.records {
@@ -111,6 +122,9 @@ public enum AgentSchemas {
         materialProperties["localHeightOpacityByMaterialID"] = heightDefinitions["ModelMaterialInterpretation"]!.object!["properties"]!.object!["localHeightOpacityByMaterialID"]
         result["ModelLocalHeightOpacity"] = heightDefinitions["ModelLocalHeightOpacity"]
         materialProperties["independentAmbientMaterialIDs"] = PluginRPCSchemas.modelIndependentAmbientDefinitions()["ModelMaterialInterpretation"]!.object!["properties"]!.object!["independentAmbientMaterialIDs"]
+        let paletteDefinitions=PluginRPCSchemas.modelPaletteDefinitions()
+        materialProperties["paletteByMaterialID"] = paletteDefinitions["ModelMaterialInterpretation"]!.object!["properties"]!.object!["paletteByMaterialID"]
+        result["ModelPaletteLookup"] = paletteDefinitions["ModelPaletteLookup"]
         material["properties"] = .object(materialProperties);result["ModelMaterialInterpretation"] = .object(material)
         result["ModelLightKind"] = .object(["type":.string("string"),"enum":.array(["ambient","directional","omni"].map(AgentValue.string))])
         result["ModelVertexColorUsage"] = .object(["type":.string("string"),"enum":.array(ModelVertexColorUsage.allCases.map { .string($0.rawValue) })])
@@ -265,8 +279,11 @@ public enum AgentSchemas {
         }
         let enums:[String:[String]]=["CoverFigureFraming":CoverFigureFraming.allCases.map(\.rawValue),"CoverPointing":CoverPointing.allCases.map(\.rawValue),"CoverStyle":CoverStyle.allCases.map(\.rawValue),"CoverTemplate":CoverTemplate.allCases.map(\.rawValue),"Purpose":Purpose.allCases.map(\.rawValue),"SceneKind":SceneKind.allCases.map(\.rawValue),"Aspect":Aspect.allCases.map(\.rawValue),"RangeKind":CourseMapping.RangeKind.allCases.map(\.rawValue),"CustomerKind":CustomerKind.allCases.map(\.rawValue),"RevenueKind":RevenueKind.allCases.map(\.rawValue),"Settlement":Settlement.allCases.map(\.rawValue),"AuthorizationScope":AuthorizationScope.allCases.map(\.rawValue),"LayerKind":SceneLayer.Kind.allCases.map(\.rawValue),"PaperLayout":PaperPresentation.Layout.allCases.map(\.rawValue),"MediaLayout":MediaPresentation.Layout.allCases.map(\.rawValue),"LayerEntranceKind":LayerEntrance.Kind.allCases.map(\.rawValue),"CharacterSilhouette":CharacterSilhouette.allCases.map(\.rawValue),"BaiduSegmentKind":["text","image","video"],"BillingKind":["charge","refundRequested","refundReceived"],"ClassicGameplay":ClassicGameplay.allCases.map(\.rawValue),"ClassicDerivation":ClassicArtwork.Derivation.allCases.map(\.rawValue),"ClassicAudioUse":ClassicAudioCue.Use.allCases.map(\.rawValue)]
         for (key,values) in enums{result[key] = .object(["type":.string("string"),"enum":.array(values.map(AgentValue.string))])}
-        let edits:[String:String] = ["insertScene":"_0:Scene _1:i","replaceScene":"_0:s _1:Scene","removeScene":"_0:s","moveScene":"_0:s _1:i","splitScene":"_0:s _1:i","lockScene":"_0:s _1:b","aspect":"_0:Aspect","cta":"_0:s","music":"_0?:s","audioQuality":"_0?:AudioQualityPolicy","productionBrief":"_0?:ProductionBrief","coverPresentation":"_0?:CoverPresentation","purpose":"_0:Purpose","restore":"_0:s","lockLayer":"_0:s _1:s _2:b","lockModelInstance":"_0:s _1:s _2:b","recordSimulation":"_0:s","confirmSimulationRecording":"_0:s"]
-        result["Edit"] = .object(["oneOf":.array(edits.keys.sorted().map{key in .object(["type":.string("object"),"required":.array([.string(key)]),"properties":.object([key:entity(edits[key]!)]),"additionalProperties":.boolean(false)])})])
+        let edits:[String:String] = ["insertScene":"_0:Scene _1:i","replaceScene":"_0:s _1:Scene","patchModelScenes3D":"_0:ModelScene3DStaticPatch","removeScene":"_0:s","moveScene":"_0:s _1:i","splitScene":"_0:s _1:i","lockScene":"_0:s _1:b","aspect":"_0:Aspect","cta":"_0:s","music":"_0?:s","audioQuality":"_0?:AudioQualityPolicy","productionBrief":"_0?:ProductionBrief","coverPresentation":"_0?:CoverPresentation","purpose":"_0:Purpose","restore":"_0:s","lockLayer":"_0:s _1:s _2:b","lockModelInstance":"_0:s _1:s _2:b","recordSimulation":"_0:s","confirmSimulationRecording":"_0:s"]
+        result["Edit"] = .object(["oneOf":.array(edits.keys.sorted().map{key in
+            var payload=entity(edits[key]!).object!;if key=="patchModelScenes3D" {payload["additionalProperties"] = .boolean(false)}
+            return .object(["type":.string("object"),"required":.array([.string(key)]),"properties":.object([key:.object(payload)]),"additionalProperties":.boolean(false)])
+        })])
         return result
     }
 }

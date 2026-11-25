@@ -47,6 +47,34 @@ public struct ModelTransform3D: Codable, Hashable, Sendable {
 /// a game name, inventory entry, texture filename or sampled pixel values.
 public enum ModelVertexColorUsage: String, Codable, Hashable, CaseIterable, Sendable { case source, ignored }
 public enum ModelNormalTextureEncoding: String, Codable, Hashable, CaseIterable, Sendable { case rgb, redGreenPositiveZ }
+/// An explicit runtime lookup over unchanged original PNGs. The diffuse must
+/// contain straight equal RGB grayscale. Integer x = xMin + gray*(xMax-xMin)/255;
+/// rowTopLeft uses the original PNG's top-left origin. No game shader is inferred.
+public struct ModelPaletteLookup: Codable, Hashable, Sendable {
+    public var textureAlias: String
+    public var sha256: String
+    public var rowTopLeft: Int
+    public var xMin: Int
+    public var xMax: Int
+    public init(textureAlias: String, sha256: String, rowTopLeft: Int, xMin: Int, xMax: Int) {
+        self.textureAlias=textureAlias;self.sha256=sha256;self.rowTopLeft=rowTopLeft;self.xMin=xMin;self.xMax=xMax
+    }
+    private enum CodingKeys:String,CodingKey {case textureAlias,sha256,rowTopLeft,xMin,xMax}
+    public init(from decoder:Decoder)throws {
+        try ModelStoryDecoding3D.keys(decoder,required:["textureAlias","sha256","rowTopLeft","xMin","xMax"])
+        let c=try decoder.container(keyedBy:CodingKeys.self)
+        textureAlias=try c.decode(String.self,forKey:.textureAlias);sha256=try c.decode(String.self,forKey:.sha256)
+        rowTopLeft=try c.decode(Int.self,forKey:.rowTopLeft);xMin=try c.decode(Int.self,forKey:.xMin);xMax=try c.decode(Int.self,forKey:.xMax)
+        try validate()
+    }
+    public func validate() throws {
+        guard try DAEInspector.relativeTexturePath(textureAlias)==textureAlias,
+              PluginProtocolRules.hash(sha256),(0...8191).contains(rowTopLeft),
+              (0...8191).contains(xMin),(xMin...8191).contains(xMax) else {
+            throw VideoError.invalid("原色板须明确指定包内PNG别名、SHA256、0至8191的左上行号及递增X范围")
+        }
+    }
+}
 /// Explicit smoothstep opacity in geometry-local Y metres: zero at or below
 /// lowerY, one at or above upperY. Never inferred from source material names.
 public struct ModelLocalHeightOpacity: Codable, Hashable, Sendable {
@@ -117,12 +145,16 @@ public struct ModelMaterialInterpretation: Codable, Hashable, Sendable {
     /// Explicit original material IDs whose ambient remains independent of diffuse.
     /// Nil preserves the exact source state and legacy wire; requires game20.
     public var independentAmbientMaterialIDs: [String]?
-    public init(vertexColors: ModelVertexColorUsage = .source, normalEncoding: ModelNormalTextureEncoding = .rgb, opaqueDiffuseMaterialIDs: [String]? = nil, alphaCutoutMaterialIDs: [String]? = nil, normalIntensityByMaterialID: [String: Double]? = nil, waterSurfaceByMaterialID: [String:ModelWaterSurface]? = nil, localHeightOpacityByMaterialID: [String:ModelLocalHeightOpacity]? = nil, independentAmbientMaterialIDs: [String]? = nil) {
+    /// Explicit original material IDs and original palette PNG inputs; game21.
+    /// Nil retains the exact legacy wire and original diffuse rendering.
+    public var paletteByMaterialID: [String: ModelPaletteLookup]?
+    public init(vertexColors: ModelVertexColorUsage = .source, normalEncoding: ModelNormalTextureEncoding = .rgb, opaqueDiffuseMaterialIDs: [String]? = nil, alphaCutoutMaterialIDs: [String]? = nil, normalIntensityByMaterialID: [String: Double]? = nil, waterSurfaceByMaterialID: [String:ModelWaterSurface]? = nil, localHeightOpacityByMaterialID: [String:ModelLocalHeightOpacity]? = nil, independentAmbientMaterialIDs: [String]? = nil, paletteByMaterialID: [String: ModelPaletteLookup]? = nil) {
         self.vertexColors=vertexColors;self.normalEncoding=normalEncoding;self.opaqueDiffuseMaterialIDs=opaqueDiffuseMaterialIDs;self.alphaCutoutMaterialIDs=alphaCutoutMaterialIDs;self.normalIntensityByMaterialID=normalIntensityByMaterialID;self.waterSurfaceByMaterialID=waterSurfaceByMaterialID;self.localHeightOpacityByMaterialID=localHeightOpacityByMaterialID;self.independentAmbientMaterialIDs=independentAmbientMaterialIDs
+        self.paletteByMaterialID=paletteByMaterialID
     }
-    private enum CodingKeys:String,CodingKey {case vertexColors,normalEncoding,opaqueDiffuseMaterialIDs,alphaCutoutMaterialIDs,normalIntensityByMaterialID,waterSurfaceByMaterialID,localHeightOpacityByMaterialID,independentAmbientMaterialIDs}
+    private enum CodingKeys:String,CodingKey {case vertexColors,normalEncoding,opaqueDiffuseMaterialIDs,alphaCutoutMaterialIDs,normalIntensityByMaterialID,waterSurfaceByMaterialID,localHeightOpacityByMaterialID,independentAmbientMaterialIDs,paletteByMaterialID}
     public init(from decoder:Decoder)throws {
-        try ModelStoryDecoding3D.keys(decoder,required:["vertexColors","normalEncoding"],optional:["opaqueDiffuseMaterialIDs","alphaCutoutMaterialIDs","normalIntensityByMaterialID","waterSurfaceByMaterialID","localHeightOpacityByMaterialID","independentAmbientMaterialIDs"])
+        try ModelStoryDecoding3D.keys(decoder,required:["vertexColors","normalEncoding"],optional:["opaqueDiffuseMaterialIDs","alphaCutoutMaterialIDs","normalIntensityByMaterialID","waterSurfaceByMaterialID","localHeightOpacityByMaterialID","independentAmbientMaterialIDs","paletteByMaterialID"])
         let c=try decoder.container(keyedBy:CodingKeys.self)
         vertexColors=try c.decode(ModelVertexColorUsage.self,forKey:.vertexColors);normalEncoding=try c.decode(ModelNormalTextureEncoding.self,forKey:.normalEncoding)
         opaqueDiffuseMaterialIDs=try c.decodeIfPresent([String].self,forKey:.opaqueDiffuseMaterialIDs)
@@ -131,6 +163,13 @@ public struct ModelMaterialInterpretation: Codable, Hashable, Sendable {
         waterSurfaceByMaterialID=c.contains(.waterSurfaceByMaterialID) ? try c.decode([String:ModelWaterSurface].self,forKey:.waterSurfaceByMaterialID):nil
         localHeightOpacityByMaterialID=c.contains(.localHeightOpacityByMaterialID) ? try c.decode([String:ModelLocalHeightOpacity].self,forKey:.localHeightOpacityByMaterialID):nil
         independentAmbientMaterialIDs=c.contains(.independentAmbientMaterialIDs) ? try c.decode([String].self,forKey:.independentAmbientMaterialIDs):nil
+        paletteByMaterialID=c.contains(.paletteByMaterialID) ? try c.decode([String:ModelPaletteLookup].self,forKey:.paletteByMaterialID):nil
+        if let palettes=paletteByMaterialID {
+            guard (1...128).contains(palettes.count),palettes.keys.allSatisfy({
+                PluginProtocolRules.text($0,maximum:160) && $0==$0.trimmingCharacters(in:.whitespacesAndNewlines)
+                && waterSurfaceByMaterialID?[$0]==nil
+            }) else {throw VideoError.invalid("原色板须指定1至128个明确原材质，不能与同材质水面呈现混用")}
+        }
         if let ids=independentAmbientMaterialIDs {
             guard (1...128).contains(ids.count),Set(ids).count==ids.count,
                   ids.allSatisfy({PluginProtocolRules.text($0,maximum:160) && $0==$0.trimmingCharacters(in:.whitespacesAndNewlines)}) else {
@@ -393,12 +432,37 @@ public struct ModelScene3D: Codable, Equatable, Sendable {
     public var distanceFog: ModelDistanceFog3D?
     public init(version: Int = 1, instances: [ModelInstance3D], camera: ModelCamera3D, lights: [ModelLight3D], transformTracks: [ModelTransformTrack] = [], jointTracks: [ModelJointTrack] = [], actions: [ModelStoryAction3D]? = nil, dialogueObstacleInstanceIDs: [String]? = nil, distanceFog: ModelDistanceFog3D? = nil) { self.version=version; self.instances=instances; self.camera=camera; self.lights=lights; self.transformTracks=transformTracks; self.jointTracks=jointTracks; self.actions=actions; self.dialogueObstacleInstanceIDs=dialogueObstacleInstanceIDs;self.distanceFog=distanceFog }
     private enum CodingKeys: String, CodingKey { case version,instances,camera,lights,transformTracks,jointTracks,actions,dialogueObstacleInstanceIDs,distanceFog }
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(version, forKey: .version)
+        if let writer = encoder.userInfo[RepositorySnapshotCodec.writerKey] as? SnapshotModelArrayWriter {
+            try c.encode(writer.reference(instances), forKey: .instances)
+            try c.encode(writer.reference(transformTracks), forKey: .transformTracks)
+            try c.encode(writer.reference(jointTracks), forKey: .jointTracks)
+        } else {
+            try c.encode(instances, forKey: .instances)
+            try c.encode(transformTracks, forKey: .transformTracks)
+            try c.encode(jointTracks, forKey: .jointTracks)
+        }
+        try c.encode(camera, forKey: .camera); try c.encode(lights, forKey: .lights)
+        try c.encodeIfPresent(actions, forKey: .actions)
+        try c.encodeIfPresent(dialogueObstacleInstanceIDs, forKey: .dialogueObstacleInstanceIDs)
+        try c.encodeIfPresent(distanceFog, forKey: .distanceFog)
+    }
     public init(from decoder: Decoder) throws {
         try ModelStoryDecoding3D.keys(decoder,required:["version","instances","camera","lights","transformTracks","jointTracks"],optional:["actions","dialogueObstacleInstanceIDs","distanceFog"])
         let c=try decoder.container(keyedBy:CodingKeys.self)
-        version=try c.decode(Int.self,forKey:.version);instances=try c.decode([ModelInstance3D].self,forKey:.instances)
+        version=try c.decode(Int.self,forKey:.version)
+        if let reader = decoder.userInfo[RepositorySnapshotCodec.readerKey] as? SnapshotModelArrayReader {
+            instances = try reader.resolveInstances(c.decode(SnapshotModelArrayReference.self, forKey: .instances))
+            transformTracks = try reader.resolveTransformTracks(c.decode(SnapshotModelArrayReference.self, forKey: .transformTracks))
+            jointTracks = try reader.resolveJointTracks(c.decode(SnapshotModelArrayReference.self, forKey: .jointTracks))
+        } else {
+            instances=try c.decode([ModelInstance3D].self,forKey:.instances)
+            transformTracks=try c.decode([ModelTransformTrack].self,forKey:.transformTracks)
+            jointTracks=try c.decode([ModelJointTrack].self,forKey:.jointTracks)
+        }
         camera=try c.decode(ModelCamera3D.self,forKey:.camera);lights=try c.decode([ModelLight3D].self,forKey:.lights)
-        transformTracks=try c.decode([ModelTransformTrack].self,forKey:.transformTracks);jointTracks=try c.decode([ModelJointTrack].self,forKey:.jointTracks)
         if c.contains(.actions) {
             guard version==2,!(try c.decodeNil(forKey:.actions)) else {throw VideoError.invalid("三维动作须显式使用v2，旧v1不接受隐藏动作、空值或新字段")}
             actions=try c.decode([ModelStoryAction3D].self,forKey:.actions)
@@ -486,6 +550,19 @@ public struct ModelScene3D: Codable, Equatable, Sendable {
                 guard (1...128).contains(ids.count),Set(ids).count==ids.count,
                       ids.allSatisfy({PluginProtocolRules.text($0,maximum:160) && $0==$0.trimmingCharacters(in:.whitespacesAndNewlines) && sourceIDs.contains($0)}) else {
                     throw VideoError.invalid("独立环境光须明确指定1至128个不重复的实际原DAE材质标识")
+                }
+            }
+            if let palettes=instance.materialInterpretation?.paletteByMaterialID {
+                let sourceIDs=Set(instance.resource.inspection.materials.map(\.id))
+                guard (1...128).contains(palettes.count),palettes.keys.allSatisfy({
+                    PluginProtocolRules.text($0,maximum:160) && $0==$0.trimmingCharacters(in:.whitespacesAndNewlines)
+                    && sourceIDs.contains($0) && instance.materialInterpretation?.waterSurfaceByMaterialID?[$0]==nil
+                }) else {throw VideoError.invalid("原色板须明确指定1至128个实际原DAE材质，不能与同材质水面混用")}
+                for palette in palettes.values {
+                    try palette.validate()
+                    guard instance.resource.textures[palette.textureAlias]?.sha256==palette.sha256 else {
+                        throw VideoError.invalid("原色板别名与SHA256须精确引用当前实例的实际原PNG闭包")
+                    }
                 }
             }
             if let assets {

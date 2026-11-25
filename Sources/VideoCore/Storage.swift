@@ -116,7 +116,7 @@ public final class Repository: @unchecked Sendable {
     private func sql(_ s: String) throws { guard sqlite3_exec(db, s, nil, nil, nil) == SQLITE_OK else { throw VideoError.unavailable("本地事务失败，请稍后重试；原数据未覆盖") } }
     private func readUnlocked() throws -> Database {
         var stmt: OpaquePointer?; guard sqlite3_prepare_v2(db, "SELECT payload FROM snapshot WHERE id=1", -1, &stmt, nil) == SQLITE_OK else { throw VideoError.unavailable("数据库读取失败") }; defer { sqlite3_finalize(stmt) }
-        if sqlite3_step(stmt) == SQLITE_ROW { let count = Int(sqlite3_column_bytes(stmt, 0)); guard let bytes = sqlite3_column_blob(stmt, 0) else { throw VideoError.invalid("数据库记录损坏") }; let result = try Codec.decoder().decode(Database.self, from: Data(bytes: bytes, count: count)); guard result.schema == 1 else { throw VideoError.unavailable("数据库版本不支持") }; return result }
+        if sqlite3_step(stmt) == SQLITE_ROW { let count = Int(sqlite3_column_bytes(stmt, 0)); guard count > 0, count <= BackupSnapshotCodec.maximumStreamingSnapshotBytes, let bytes = sqlite3_column_blob(stmt, 0) else { throw VideoError.invalid("数据库记录损坏或超过有界快照上限") }; let result = try RepositorySnapshotCodec.decode(Data(bytes: bytes, count: count)); guard result.schema == 1 else { throw VideoError.unavailable("数据库版本不支持") }; return result }
         return Database()
     }
     private func dataVersionUnlocked() throws -> Int64 {
@@ -165,7 +165,7 @@ public final class Repository: @unchecked Sendable {
         do {
             try ManagedInstallRules.authorizeWrite(repositoryRoot:root)
             var state = try readUnlocked(); if let expectedGeneration, state.generation != expectedGeneration { throw VideoError.conflict("数据已在另一窗口修改，请刷新后重试") }
-            let result = try mutate(&state); try state.validate(); try verifyModelSceneSources(in:state); state.generation += 1; let data = try Codec.data(state)
+            let result = try mutate(&state); try state.validate(); try verifyModelSceneSources(in:state); state.generation += 1; let data = try RepositorySnapshotCodec.encode(state)
             var stmt: OpaquePointer?; guard sqlite3_prepare_v2(db, "INSERT OR REPLACE INTO snapshot(id,payload) VALUES(1,?)", -1, &stmt, nil) == SQLITE_OK else { throw VideoError.unavailable("保存数据失败") }; defer { sqlite3_finalize(stmt) }
             let rc = data.withUnsafeBytes { sqlite3_bind_blob(stmt, 1, $0.baseAddress, Int32($0.count), unsafeBitCast(-1, to: sqlite3_destructor_type.self)) }; guard rc == SQLITE_OK, sqlite3_step(stmt) == SQLITE_DONE else { throw VideoError.unavailable("保存数据失败") }; try sql("COMMIT"); cachedSnapshot = nil; nativeJobAdmission = nil; revisionDigests.removeAll(keepingCapacity: true); return result
         } catch { cachedSnapshot = nil; nativeJobAdmission = nil; revisionDigests.removeAll(keepingCapacity: true); try? sql("ROLLBACK"); throw error }
@@ -210,7 +210,8 @@ public final class Repository: @unchecked Sendable {
             if encoded == original { try sql("COMMIT"); return result }
             try ManagedInstallRules.authorizeWrite(repositoryRoot: root)
             var statement: OpaquePointer?
-            let update = "UPDATE snapshot SET payload=CAST(json_set(CAST(payload AS TEXT),'$.jobs',json(CAST(? AS TEXT)),'$.generation',?) AS BLOB) WHERE id=1 AND json_extract(CAST(payload AS TEXT),'$.schema')=1 AND json_extract(CAST(payload AS TEXT),'$.generation')=?"
+            let format = "((json_extract(CAST(payload AS TEXT),'$.schema')=1 AND json_type(CAST(payload AS TEXT),'$.repositoryEncoding') IS NULL AND json_type(CAST(payload AS TEXT),'$.modelArrayPool') IS NULL) OR (json_extract(CAST(payload AS TEXT),'$.schema')=2 AND json_extract(CAST(payload AS TEXT),'$.repositoryEncoding')='model-array-pool-v1' AND json_type(CAST(payload AS TEXT),'$.modelArrayPool')='object'))"
+            let update = "UPDATE snapshot SET payload=CAST(json_set(CAST(payload AS TEXT),'$.jobs',json(CAST(? AS TEXT)),'$.generation',?) AS BLOB) WHERE id=1 AND " + format + " AND json_extract(CAST(payload AS TEXT),'$.generation')=?"
             guard sqlite3_prepare_v2(db, update, -1, &statement, nil) == SQLITE_OK else {
                 throw VideoError.unavailable("当前SQLite不支持原生任务原子更新；原快照未改")
             }
@@ -551,7 +552,7 @@ public final class Repository: @unchecked Sendable {
             if exports[relative]==nil{var remaining=300*1024*1024-bytes;let d=try verifyArtifactFile(artifact,components:location.components,budget:&remaining,includeData:true);bytes+=d.count;exports[relative]=d}
             clean.jobs[j].artifacts[a].path=relative
         }}
-        let data=try Codec.data(clean)
+        let data=try RepositorySnapshotCodec.encode(clean)
         let visualCache=try backupVisualCache(availableBytes:300*1024*1024-bytes)
         guard data.count <= BackupSnapshotCodec.maximumSnapshotBytes else {
             throw VideoError.invalid("备份JSON快照展开超过350MiB，请保留原工程")
@@ -577,7 +578,7 @@ public final class Repository: @unchecked Sendable {
         guard data.count <= 350 * 1024 * 1024 else { throw VideoError.invalid("备份过大") }
         let b = try PropertyListDecoder().decode(Backup.self, from: data)
         let snapshot=try b.decodedSnapshot()
-        var state = try Codec.decoder().decode(Database.self, from: snapshot); try state.validate()
+        var state = try RepositorySnapshotCodec.decode(snapshot); try state.validate()
         if FileManager.default.fileExists(atPath: root.path) {
             var info=stat()
             guard allowEmptyDirectory, lstat(root.path, &info) == 0, info.st_mode & S_IFMT == S_IFDIR,

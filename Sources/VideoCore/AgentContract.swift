@@ -142,6 +142,12 @@ public enum AgentContract {
             }
         }
         var count = 0; try validateTree(value, depth: 0, count: &count)
+        if command=="edit apply",case .array(let edits)=object["edits"] {
+            for edit in edits where edit.object?["patchModelScenes3D"] != nil {
+                guard let operation=edit.object,Set(operation.keys)==["patchModelScenes3D"],let payload=operation["patchModelScenes3D"]?.object,Set(payload.keys)==["_0"] else {throw VideoError.invalid("三维静态补丁操作包含未知字段或多个操作")}
+                _=try Codec.decoder().decode(ModelScene3DStaticPatch.self,from:Codec.data(payload["_0"]!))
+            }
+        }
         if command==MediaConfirmationRules.command,let confirmation=object["confirmation"] {try MediaConfirmationRules.validateInput(confirmation)}
         if let p = object["purpose"]?.string, !Purpose.allCases.map(\.rawValue).contains(p) { throw VideoError.invalid("purpose不在支持范围") }
         if let p = object["aspect"]?.string, !Aspect.allCases.map(\.rawValue).contains(p) { throw VideoError.invalid("aspect不在支持范围") }

@@ -3,6 +3,7 @@ import Foundation
 public enum Edit: Codable, Sendable {
     case insertScene(Scene, Int)
     case replaceScene(String, Scene)
+    case patchModelScenes3D(ModelScene3DStaticPatch)
     case removeScene(String)
     case moveScene(String, Int)
     case splitScene(String, Int)
@@ -26,8 +27,12 @@ public enum Editor {
         guard !operations.isEmpty else { throw VideoError.invalid("没有编辑操作") }
         var p = project; var revision = project.current; let previous = revision
         revision.id = Codec.id(); revision.parentID = previous.id; revision.number += 1; revision.createdAt = Date(); revision.change = message; revision.review = Review(); revision.invalidated = ["最终导出", "完整预览", "声音确认"]
-        for operation in operations {
+        for submitted in operations {
+            let expanded: [Edit]
+            if case .patchModelScenes3D(let patch)=submitted {expanded=try patch.replacements(in:revision)} else {expanded=[submitted]}
+            for operation in expanded {
             switch operation {
+            case .patchModelScenes3D: throw VideoError.invalid("三维静态补丁未解析为明确场景替换")
             case .insertScene(let scene, let target):
                 guard (0...revision.scenes.count).contains(target) else { throw VideoError.invalid("插入位置无效") }
                 if let take=scene.voice {try SpeechProjectRules.validateCompleteTake(take,workspaceID:project.workspaceID,assets:assets)}
@@ -228,6 +233,7 @@ public enum Editor {
             case .coverPresentation(let cover): try cover?.validate();revision.coverPresentation=cover;revision.invalidated += ["封面与标题审核"]
             case .purpose(let purpose): revision.purpose=purpose;revision.invalidated += ["交付用途与权利审核"]
             case .restore(let id): guard let r = p.revisions.first(where: { $0.id == id }) else { throw VideoError.notFound("历史版本不存在") }; revision.schemaVersion=r.schemaVersion; revision.scenes = r.scenes; revision.product = r.product; revision.contentContext=r.contentContext; revision.cta = r.cta; revision.aspect = r.aspect; revision.musicAssetID = r.musicAssetID; revision.dependencies=r.dependencies;revision.audioQuality=r.audioQuality;revision.productionBrief=r.productionBrief;revision.coverPresentation=r.coverPresentation;revision.purpose=r.purpose
+            }
             }
         }
         for s in revision.scenes {

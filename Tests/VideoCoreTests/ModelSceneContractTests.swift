@@ -973,7 +973,7 @@ final class ModelSceneContractTests: XCTestCase {
         XCTAssertThrowsError(try f.repository.transaction{$0.projects.append(project(otherFact,f))},"核对完整解析结果，不能只比较关节列表")
         let validProject=project(scene(f),f);try f.repository.transaction{$0.projects.append(validProject)}
         var backup=try PropertyListDecoder().decode(Repository.Backup.self,from:f.repository.backup())
-        var snapshot=try Codec.decoder().decode(Database.self,from:backup.snapshot)
+        var snapshot=try RepositorySnapshotCodec.decode(backup.decodedSnapshot())
         let index=try XCTUnwrap(snapshot.projects.firstIndex{$0.id==validProject.id})
         snapshot.projects[index].revisions[0].scenes=[forged]
         backup.snapshot=try Codec.data(snapshot);backup.digest=Codec.hash(backup.snapshot)

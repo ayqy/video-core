@@ -44,6 +44,46 @@ def file_archive(value, members=(), *, encoding='json-raw-v1', changes=None, ent
 
 
 class BackupSnapshotTests(unittest.TestCase):
+    def test_schema_two_pool_decodes_logically_without_changing_authenticated_archive_bytes(self):
+        from test_repository_snapshot import fixture
+        document,logical=fixture(history=26)
+        for version in (1,2,3):
+            item=archive(document,version)
+            actual,snapshot=read_backup(plistlib.dumps(item,fmt=plistlib.FMT_BINARY))
+            self.assertEqual(snapshot,logical)
+            self.assertEqual(actual,item)
+        with tempfile.TemporaryDirectory() as directory:
+            path=Path(directory)/'pooled.videobackup'
+            path.write_bytes(file_archive(document,encoding='deflate-raw-v1'))
+            actual,snapshot=read_backup_file(path)
+            self.assertEqual(snapshot,logical)
+            self.assertEqual(actual['snapshotBytes'],len(json.dumps(document,ensure_ascii=False,separators=(',',':')).encode()))
+
+    def test_valid_outer_backup_digest_cannot_hide_invalid_model_pool(self):
+        from test_repository_snapshot import fixture
+        document,_=fixture()
+        document['modelArrayPool']['instances'][0]['digest']='0'*64
+        with self.assertRaisesRegex(ValueError,'pooled array digest'):
+            read_backup(plistlib.dumps(archive(document),fmt=plistlib.FMT_BINARY))
+        with tempfile.TemporaryDirectory() as directory:
+            path=Path(directory)/'bad-pool.videobackup';path.write_bytes(file_archive(document))
+            with self.assertRaisesRegex(ValueError,'pooled array digest'):read_backup_file(path)
+
+    def test_normal_sqlite_inspection_and_backup_return_the_same_schema_one_values(self):
+        from examples.free_production import inspect_snapshot
+        from test_repository_snapshot import fixture,encode
+        document,logical=fixture(history=26)
+        with tempfile.TemporaryDirectory() as directory:
+            path=Path(directory)/'workspace.sqlite'
+            with sqlite3.connect(path) as connection:
+                connection.execute('CREATE TABLE snapshot(id INTEGER PRIMARY KEY,payload BLOB)')
+                connection.execute('INSERT INTO snapshot VALUES(1,?)',(encode(document),))
+            before=path.read_bytes()
+            actual=inspect_snapshot(path)
+            self.assertEqual(actual,logical)
+            self.assertEqual(actual,read_backup(plistlib.dumps(archive(document),fmt=plistlib.FMT_BINARY))[1])
+            self.assertEqual(path.read_bytes(),before)
+
     def test_large_unicode_histories_and_sources_remain_exact_across_all_versions(self):
         value = dict(generation=8, projects=[dict(revisions=[dict(id='原版本', review=dict(visual=False))])],
                      sources=['原声/原图/原模型'], terminology={'原样中文': '夏天海面；'*100000})

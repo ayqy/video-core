@@ -386,7 +386,7 @@ private final class StreamingBackupArchive {
         let stored=try input.readExactly(manifest.snapshotStoredBytes)
         let raw=try BackupSnapshotCodec.decodeStreamingSnapshot(stored, encoding: manifest.snapshotEncoding,
             snapshotBytes: manifest.snapshotBytes, digest: manifest.snapshotDigest)
-        state=try Codec.decoder().decode(Database.self, from: raw)
+        state=try RepositorySnapshotCodec.decode(raw)
         try state.validate()
         guard state.providers.isEmpty else { throw VideoError.invalid("便携备份不得携带供应商配置或凭据引用") }
         try Self.validateReferences(state, entries: manifest.entries)
@@ -508,7 +508,7 @@ public extension Repository {
     func backup(to destination: URL, replaceExisting: Bool = false) throws -> BackupFileReceipt {
         try Task.checkCancellation()
         try StreamingBackupRules.validateBackupDestination(destination, repositoryRoot: root)
-        let plan=try streamingBackupPlan(), raw=try Codec.data(plan.state)
+        let plan=try streamingBackupPlan(), raw=try RepositorySnapshotCodec.encode(plan.state)
         guard !raw.isEmpty, raw.count <= BackupSnapshotCodec.maximumStreamingSnapshotBytes else { throw VideoError.invalid("v4备份JSON快照超过1000000000字节安全上限") }
         var stored=raw, encoding=BackupSnapshotCodec.rawEncoding
         if raw.count >= BackupSnapshotCodec.minimumCompressionBytes {
@@ -608,7 +608,7 @@ public extension Repository {
             try input.rewind(); let data=try input.readExactly(input.count); try input.finish()
             let value=try PropertyListDecoder().decode(Backup.self, from: data)
             guard [2, 3].contains(value.version) else { throw VideoError.invalid("安装备份版本不符") }
-            let state=try Codec.decoder().decode(Database.self, from: value.decodedSnapshot()); try state.validate()
+            let state=try RepositorySnapshotCodec.decode(value.decodedSnapshot()); try state.validate()
             var entries: [StreamingBackupRules.Entry]=[], total=0
             for (kind, files) in [("assets", value.assets), ("exports", value.exports ?? [:])] {
                 for (path, bytes) in files {

@@ -34,6 +34,7 @@ from zoneinfo import ZoneInfo
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from backup_snapshot import read_backup_file, file_identity, member_identities
+from repository_snapshot import decode_snapshot
 
 # Content first: no filename, cache inventory or downloaded asset defines it.
 TITLE = "放对三颗，才算完成"
@@ -383,7 +384,8 @@ def inspect_snapshot(path):
     connection = sqlite3.connect(path.as_uri() + "?mode=ro", uri=True)
     try:
         connection.execute("PRAGMA query_only=ON")
-        return json.loads(connection.execute("SELECT payload FROM snapshot WHERE id=1").fetchone()[0])
+        return decode_snapshot(connection.execute("SELECT payload FROM snapshot WHERE id=1").fetchone()[0],
+                               allow_unversioned=True)
     finally:
         connection.close()
 
@@ -410,8 +412,10 @@ def validate_restoration(backup, original_root, restored_root):
             for item in job["artifacts"]:
                 item["path"] = Path(item["path"]).relative_to(root).as_posix()
         actual.pop("generation")
-        reference = copy.deepcopy(expected)
-        reference.pop("generation")
+        # Compare every nested value without duplicating the entire historical
+        # model graph. Only this new top-level dictionary omits generation;
+        # expected and its source/history members are never modified here.
+        reference = {key: value for key, value in expected.items() if key != "generation"}
         require(actual == reference, "工程恢复存在generation/正常根映射之外的字段差异")
         for group in ("assets", "exports"):
             for relative, identity in member_identities(archive, group).items():

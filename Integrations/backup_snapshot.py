@@ -16,6 +16,7 @@ import stat
 import struct
 import tempfile
 import zlib
+from repository_snapshot import decode_snapshot
 
 
 MAXIMUM_BACKUP_BYTES = 350 * 1024 * 1024
@@ -167,7 +168,8 @@ def read_backup(raw, *, maximum_bytes=MAXIMUM_BACKUP_BYTES):
         raise ValueError('normal backup envelope exceeds its bounded input budget')
     _need(not raw.startswith(MAGIC), 'file backup requires the streaming file API')
     archive = plistlib.loads(raw)
-    snapshot = json.loads(decoded_snapshot(archive))
+    snapshot = decode_snapshot(decoded_snapshot(archive), maximum_bytes=MAXIMUM_SNAPSHOT_BYTES,
+                               allow_unversioned=True)
     if not isinstance(snapshot, dict):
         raise ValueError('normal backup JSON snapshot must be a dictionary')
     return archive, snapshot
@@ -306,7 +308,7 @@ def read_backup_file(path, *, maximum_bytes=None):
         blob = _read(stream, stored)
         raw = _inflate(blob, count) if encoding == ENCODING else blob
         _need(hashlib.sha256(raw).hexdigest() == manifest['snapshotDigest'], 'file backup original snapshot digest differs')
-        snapshot = json.loads(raw)
+        snapshot = decode_snapshot(raw, maximum_bytes=MAXIMUM_FILE_SNAPSHOT_BYTES, allow_unversioned=True)
         _need(type(snapshot) is dict, 'normal backup JSON snapshot must be a dictionary')
         # This first complete pass authenticates actual bytes, not just trusted
         # metadata, including files no caller will later ask to materialize.

@@ -45,6 +45,7 @@ private enum ImportModelMaterials {
         let projectID: String
         let baseRevision: String
         let sourceRoot: URL
+        let readbackOnly: Bool
     }
     private struct Context {
         let database: Database
@@ -71,7 +72,10 @@ private enum ImportModelMaterials {
               url.resolvingSymlinksInPath().path == url.path else { throw VideoError.invalid("已有文件不能为链接或特殊文件") }
     }
     private static func arguments() throws -> Input {
-        let args = Array(CommandLine.arguments.dropFirst())
+        let raw = Array(CommandLine.arguments.dropFirst())
+        let readbackOnly = raw.contains("--readback-only")
+        guard raw.filter({ $0 == "--readback-only" }).count <= 1 else { throw VideoError.invalid("只读参数不能重复") }
+        let args = raw.filter { $0 != "--readback-only" }
         let allowed = Set(["--workspace", "--workspace-id", "--project-id", "--base-revision", "--source-root"])
         guard args.count == 10 else { throw VideoError.invalid("须明确五对已有工作区、工程、版本和来源根参数") }
         var options: [String: String] = [:]
@@ -97,7 +101,7 @@ private enum ImportModelMaterials {
         if lstat(assets.path, &info) == 0 { _ = try directory(assets.path) }
         else if errno != ENOENT { throw VideoError.permission("素材目录不可检查") }
         return Input(workspace: root, workspaceID: workspaceID, projectID: projectID,
-                     baseRevision: revision, sourceRoot: try directory(source))
+                     baseRevision: revision, sourceRoot: try directory(source), readbackOnly: readbackOnly)
     }
     private static func authorize(_ db: Database, input: Input) throws -> Context {
         guard db.generation > 0, db.workspaces.filter({ $0.id == input.workspaceID }).count == 1 else { throw VideoError.invalid("只接受已有工作区") }
@@ -243,6 +247,38 @@ private enum ImportModelMaterials {
         }
         return result
     }
+    /// Identical finite source/PNG checks for the normal import and the explicit
+    /// read-only check. Inspections always come from actual SDK-parsed bytes.
+    private static func preflight(_ declared: Declaration, files declaredFiles: [String: FileDeclaration], input: Input) throws -> [String: DAEInspection] {
+        var inspections: [String: DAEInspection] = [:]
+        for file in declaredFiles.values {
+            let data = try sourceBytes(file, root: input.sourceRoot)
+            if file.ext == "dae" { inspections[file.path] = try DAEInspector.inspect(data) }
+            else {
+                guard let image = CGImageSourceCreateWithData(data as CFData, nil),
+                      CGImageSourceGetType(image) as String? == "public.png", CGImageSourceGetCount(image) == 1,
+                      let properties = CGImageSourceCopyPropertiesAtIndex(image, 0, nil) as? [CFString: Any],
+                      let width = properties[kCGImagePropertyPixelWidth] as? Int,
+                      let height = properties[kCGImagePropertyPixelHeight] as? Int,
+                      width > 0, height > 0, width <= 8192, height <= 8192,
+                      width <= 24_000_000 / height,
+                      CGImageSourceCreateImageAtIndex(image, 0, [kCGImageSourceShouldCacheImmediately: true] as CFDictionary) != nil else {
+                    throw VideoError.invalid("实际PNG完整解码、尺寸或有界像素检查失败")
+                }
+            }
+            var info = stat()
+            let cas = input.workspace.appendingPathComponent("assets/" + file.sha256 + "." + file.ext)
+            if lstat(cas.path, &info) == 0 {
+                let stored = FileDeclaration(path: "assets/" + file.sha256 + "." + file.ext, bytes: file.bytes,
+                                             sha256: file.sha256, source: file.source, owner: file.owner, claim: file.claim, license: file.license)
+                _ = try sourceBytes(stored, root: input.workspace)
+            } else if errno != ENOENT { throw VideoError.permission("CAS目标无法安全检查") }
+        }
+        for package in declared.models.values {
+            guard let inspection = inspections[package.model.path], Set(package.textures.keys) == Set(inspection.images.map(\.relativePath)) else { throw VideoError.invalid("模型纹理映射必须与实际DAE完整闭合") }
+        }
+        return inspections
+    }
     private static func unchanged(_ after: Database, before: Database, beforeDigest: String, allowedAssets: Set<String>, allowedEvidence: Set<String>, changed: Bool) throws {
         guard after.generation == before.generation + (changed ? 1 : 0),
               try Codec.digest(Array(after.assets.prefix(before.assets.count))) == Codec.digest(before.assets),
@@ -255,46 +291,45 @@ private enum ImportModelMaterials {
     }
     static func main() {
         if Array(CommandLine.arguments.dropFirst()) == ["--help"] {
-            print("ImportModelMaterials --workspace <existing> --workspace-id <id> --project-id <id> --base-revision <id> --source-root <physical-root>; explicit version 1 model-packages local-noncommercial declaration on stdin")
+            print("ImportModelMaterials --workspace <existing> --workspace-id <id> --project-id <id> --base-revision <id> --source-root <physical-root> [--readback-only]; explicit version 1 model-packages local-noncommercial declaration on stdin")
             return
         }
         var stage = "arguments"
         do {
             let input = try arguments(), declared = try declaration(), declaredFiles = try files(declared)
             stage = "read-only-authorize"
-            let context = try authorize(Repository(root: input.workspace, readOnly: true).read(), input: input)
+            let readOnlyRepository = try Repository(root: input.workspace, readOnly: true)
+            let context = try authorize(readOnlyRepository.read(), input: input)
+            if input.readbackOnly {
+                stage = "read-only-sdk-inspection"
+                let inspections = try preflight(declared, files: declaredFiles, input: input)
+                let final = try existing(declaredFiles, database: context.database, input: input)
+                guard Set(final.keys) == Set(declaredFiles.keys) else { throw VideoError.conflict("只读检查缺少完整已有来源登记；未执行导入") }
+                var references: [String: ModelAssetReference] = [:], evidence: [String: String] = [:], resources: [String: ModelDAEResource] = [:]
+                for (path, asset) in final {
+                    references[path] = ModelAssetReference(asset: asset); evidence[path] = asset.evidenceID!
+                }
+                stage = "read-only-verified-byte-closure"
+                for (alias, package) in declared.models {
+                    guard let inspection = inspections[package.model.path], let model = references[package.model.path] else { throw VideoError.conflict("只读实际模型检查缺失") }
+                    let resource = ModelDAEResource(model: model, inspection: inspection,
+                                                    textures: package.textures.mapValues { references[$0.path]! })
+                    try resource.validate(assets: context.database.assets)
+                    _ = try ModelPackageMedia.verifiedByteClosure(resource, workspaceID: input.workspaceID,
+                                                                  repository: readOnlyRepository, database: context.database, commercial: false)
+                    resources[alias] = resource
+                }
+                let receipt = Receipt(workspaceID: input.workspaceID, projectID: input.projectID, baseRevision: input.baseRevision,
+                                      resources: resources, assetsByPath: references, evidenceIDsByPath: evidence)
+                FileHandle.standardOutput.write(try Codec.data(receipt)); FileHandle.standardOutput.write(Data([10]))
+                return
+            }
             // Database is a value type and context is immutable. Hash this
             // exact validated baseline once; every later live snapshot is
             // still freshly encoded and compared with this same identity.
             let contextDigest = try Codec.digest(context.database)
             stage = "preflight-all-sources"
-            var inspections: [String: DAEInspection] = [:]
-            for file in declaredFiles.values {
-                let data = try sourceBytes(file, root: input.sourceRoot)
-                if file.ext == "dae" { inspections[file.path] = try DAEInspector.inspect(data) }
-                else {
-                    guard let image = CGImageSourceCreateWithData(data as CFData, nil),
-                          CGImageSourceGetType(image) as String? == "public.png", CGImageSourceGetCount(image) == 1,
-                          let properties = CGImageSourceCopyPropertiesAtIndex(image, 0, nil) as? [CFString: Any],
-                          let width = properties[kCGImagePropertyPixelWidth] as? Int,
-                          let height = properties[kCGImagePropertyPixelHeight] as? Int,
-                          width > 0, height > 0, width <= 8192, height <= 8192,
-                          width <= 24_000_000 / height,
-                          CGImageSourceCreateImageAtIndex(image, 0, [kCGImageSourceShouldCacheImmediately: true] as CFDictionary) != nil else {
-                        throw VideoError.invalid("实际PNG完整解码、尺寸或有界像素检查失败")
-                    }
-                }
-                var info = stat()
-                let cas = input.workspace.appendingPathComponent("assets/" + file.sha256 + "." + file.ext)
-                if lstat(cas.path, &info) == 0 {
-                    let stored = FileDeclaration(path: "assets/" + file.sha256 + "." + file.ext, bytes: file.bytes,
-                                                 sha256: file.sha256, source: file.source, owner: file.owner, claim: file.claim, license: file.license)
-                    _ = try sourceBytes(stored, root: input.workspace)
-                } else if errno != ENOENT { throw VideoError.permission("CAS目标无法安全检查") }
-            }
-            for package in declared.models.values {
-                guard let inspection = inspections[package.model.path], Set(package.textures.keys) == Set(inspection.images.map(\.relativePath)) else { throw VideoError.invalid("模型纹理映射必须与实际DAE完整闭合") }
-            }
+            let inspections = try preflight(declared, files: declaredFiles, input: input)
             _ = try existing(declaredFiles, database: context.database, input: input)
             stage = "open-existing"
             let repository = try Repository(root: input.workspace)

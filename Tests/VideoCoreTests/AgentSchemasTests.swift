@@ -9,7 +9,7 @@ final class AgentSchemasTests:XCTestCase {
         for key in ["id","workspaceID","sku","audience","task","outcome","prerequisite","scope","prices","assetIDs","tags","archived"] {XCTAssertTrue(fields.contains(.string(key)),key)}
         XCTAssertEqual(defs["Price"]?.object?["properties"]?.object?["money"]?.object?["$ref"],.string("#/$defs/Money"))
         guard case .array(let alternatives)=defs["Edit"]?.object?["oneOf"] else{return XCTFail("edit variants missing")}
-        XCTAssertEqual(alternatives.count,18);XCTAssertTrue(alternatives.contains{$0.object?["properties"]?.object?["lockLayer"] != nil})
+        XCTAssertEqual(alternatives.count,19);XCTAssertTrue(alternatives.contains{$0.object?["properties"]?.object?["lockLayer"] != nil})
         XCTAssertTrue(alternatives.contains{$0.object?["properties"]?.object?["lockModelInstance"] != nil})
         for edit in ["recordSimulation","confirmSimulationRecording","productionBrief","purpose","coverPresentation"] {XCTAssertTrue(alternatives.contains{$0.object?["properties"]?.object?[edit] != nil})}
     }
@@ -97,6 +97,18 @@ final class AgentSchemasTests:XCTestCase {
         XCTAssertEqual(field.object?["$ref"],.string("#/$defs/ModelDistanceFog3D"));XCTAssertNil(field.object?["anyOf"])
         XCTAssertEqual(field,plugin["ModelScene3D"]?.object?["properties"]?.object?["distanceFog"])
         try verify(try value(ModelDistanceFog3D(color:"B9DFE9",startDistance:35,endDistance:120)),schema:AgentSchemas.shape("ModelDistanceFog3D"),defs:defs)
+    }
+    func testPaletteDiscoveryUsesExactPluginShapeAndRetainsExistingHostFields() throws {
+        let defs=AgentSchemas.definitions(),plugin=PluginRPCSchemas.modelPaletteDefinitions()
+        let lookup=try XCTUnwrap(defs["ModelPaletteLookup"])
+        XCTAssertEqual(lookup,plugin["ModelPaletteLookup"])
+        XCTAssertEqual(lookup.object?["additionalProperties"],.boolean(false))
+        guard case .array(let required)=lookup.object?["required"] else {return XCTFail("palette required fields missing")}
+        XCTAssertEqual(Set(required.compactMap(\.string)),Set(["textureAlias","sha256","rowTopLeft","xMin","xMax"]))
+        let fields=try XCTUnwrap(defs["ModelMaterialInterpretation"]?.object?["properties"]?.object)
+        XCTAssertEqual(fields["paletteByMaterialID"],plugin["ModelMaterialInterpretation"]?.object?["properties"]?.object?["paletteByMaterialID"])
+        XCTAssertNotNil(fields["opaqueDiffuseMaterialIDs"]?.object?["anyOf"])
+        XCTAssertEqual(fields["independentAmbientMaterialIDs"],PluginRPCSchemas.modelIndependentAmbientDefinitions()["ModelMaterialInterpretation"]?.object?["properties"]?.object?["independentAmbientMaterialIDs"])
     }
     private func value<T:Encodable>(_ value:T)throws->AgentValue {try Codec.decoder().decode(AgentValue.self,from:Codec.data(value))}
     private func verify(_ value:AgentValue,schema:AgentValue,defs:[String:AgentValue])throws {
