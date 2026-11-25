@@ -2,10 +2,10 @@
 
 VideoFree source export · package_free.py · version 1
 
-生成时间：2026-11-24 10:03:24 北京时间
+生成时间：2026-11-25 11:31:14 北京时间
 
-- 源码与必要元数据：374个文件；27577453字节（不含本清单）。
-- 整体内容指纹：`2f89111e35c261785e12746755340ccc9ea1542e4b268a7a25fd2386040ae319`。
+- 源码与必要元数据：374个文件；27577300字节（不含本清单）。
+- 整体内容指纹：`a11fd54664cc89630b530ddb680c26669224a16f59debad7faec602018eaa70d`。
 - 来源：受控原始工程中的逐文件白名单；Package.swift、唯一免费制作workflow与README均来自Distribution/Free精确模板。
 - 本包不含.git，不可作为新业务checkout；本清单生成过程不执行构建、设备验收、签名安装或公共上传，各阶段以独立证据为准。
 - 排除：App、VideoGame、VideoCartoon、Premium、高级实现运行时测试、私有仓库地址、凭据、客户数据、缓存、日志及媒体过程产物。
@@ -14,7 +14,7 @@ VideoFree source export · package_free.py · version 1
 
 | SHA-256 | 字节数 | 包内路径 / 原工程来源 |
 |---|---:|---|
-| 4ab693fbefd0df929b02a5fe0d6770e8d1b9ff6363e4ed4484db676b8bcd4331 | 134893 | .github/workflows/free-production.yml |
+| e8e66115cfe0cb3b6ce54723df14a671ba33e0952804182316494e937ce1175b | 134748 | .github/workflows/free-production.yml |
 | f0eb832feeaf1bf19b12bd5aa5f0449c700d993d91ab87b5b19e6444a927b0a2 | 53463 | Integrations/README.md |
 | 28833193551aa06befb3bc0fc30b69ef87f74cccae39895f4242af4321d717dd | 15308 | Integrations/actor_motion.py |
 | 39dd8274ff1e6b0649acb63281087a1144e1f4a4e0eed3dc2b92e10df2cbd121 | 28488 | Integrations/asset_reuse.py |
@@ -196,7 +196,7 @@ VideoFree source export · package_free.py · version 1
 | 994e9705dd6b41d6833eb1b2c1aad353a4cc08a1416aa252544706ee3da7a446 | 3754 | Sources/VideoCore/SimulationPresentation.swift |
 | a264cc50706323d01e72a771defa424c05f587be49f9c50a90cb74b9da4249ac | 24760 | Sources/VideoCore/Speech.swift |
 | 27594a4693ac6cf45f32d9f13b1c4ca834ac31d03375685c1a91fd337187ffbd | 9125 | Sources/VideoCore/SpeechProjectRules.swift |
-| 645f52e32e9a9e130f974d9d54bef6a601810981b1f7afc2a2d39559435acd7e | 50595 | Sources/VideoCore/Storage.swift |
+| 0243bd3be56763d9ae5a089d383a21e938c21f2f56b7454db9947705db99ae3f | 50587 | Sources/VideoCore/Storage.swift |
 | 406ca0a7a657bbede85f3b0949f7d0e0138eb22948eece61e0f758883debf4f4 | 23590 | Sources/VideoCore/StoryActions.swift |
 | 2528993c6502d06b9348fccbc7cfa79f29312ab45855a063cd2211786538f461 | 31256 | Sources/VideoCore/StoryCausalSources.swift |
 | 2be4803d6b9b7fa8f1738d28876e79f9b7407aa42dc31ca7467548cd5fdf353a | 40130 | Sources/VideoCore/StreamingBackup.swift |

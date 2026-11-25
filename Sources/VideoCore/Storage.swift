@@ -105,7 +105,7 @@ public final class Repository: @unchecked Sendable {
         if !readOnly { try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true) }
         guard sqlite3_open_v2(root.appendingPathComponent("workspace.sqlite").path, &db, (readOnly ? SQLITE_OPEN_READONLY:SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE) | SQLITE_OPEN_FULLMUTEX, nil) == SQLITE_OK else { throw VideoError.unavailable("无法打开本地数据库") }
         sqlite3_busy_timeout(db, 5000)
-        if readOnly { _ = try readUnlocked();return }
+        if readOnly { _ = try read();return }
         try sql("PRAGMA journal_mode=WAL"); try sql("PRAGMA synchronous=FULL"); try sql("CREATE TABLE IF NOT EXISTS snapshot (id INTEGER PRIMARY KEY CHECK(id=1), payload BLOB NOT NULL)")
         if try readUnlocked().generation == 0 { try transaction { _ in } }
         // An app update may move its entire data container. A damaged historical

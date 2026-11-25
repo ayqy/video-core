@@ -27,26 +27,26 @@ jobs:
           ref: ${{ github.sha }}
           persist-credentials: false
 
-      - name: Verify exact374 public payloads and Host frozen revision increment
+      - name: Verify exact374 public payloads and read-only snapshot increment
         shell: bash
         run: |
           python3 -B - <<'PYCODE'
           from pathlib import Path
           import base64, hashlib, os, re, struct, subprocess
           root=Path(os.environ["GITHUB_WORKSPACE"])
-          BASE='e5eb3e62680bff8bc742995cbfa49de487326d66'
-          REVIEWED=set(['.github/workflows/free-production.yml', 'Sources/VideoMedia/Painter.swift', 'Sources/VideoMedia/RenderInvocation.swift', 'Sources/VideoMedia/VisualCache.swift'])
-          ADDED=set(['Tests/VideoMediaTests/FrozenRenderRevisionTests.swift'])
+          BASE='9b5313eaa93a4938751c3533f94899c6045cbb1b'
+          REVIEWED=set(['.github/workflows/free-production.yml', 'Sources/VideoCore/Storage.swift'])
+          ADDED=set()
           FONT_FILES={'Sources/VideoMedia/IslandTypeface.swift': (4868996, 'd2ec2f7edbdee750871f5ae5573a4f712fe7fe90b5460d58cd7347b28f0c8f72'), 'ThirdParty/Fonts/ChillRoundF/ChillRoundF-v3.0.ttf': (6168772, '7dae804b344f7bc1a1c8426b9515e9b54d7baac3e123263d0bae94d0a305a732'), 'Sources/VideoMedia/CoverTypeface.swift': (2197018, 'cf4f47e54fb55606755e65b1f837697edca6ac3bd8f3a67497ebea9514bfb82d'), 'ThirdParty/Fonts/SmileySans/SmileySans-Oblique.ttf': (2629764, 'b447d7e781f08bc95c4c9f23ba71ed2b8ebb639aa7184485c71c4ca5afcd25c4'), 'Sources/VideoMedia/CoverDisplayTypeface.swift': (1564881, '8e2500a885e85ea6f28faa3dd36ce6c860b8d2c216089832cb4616e2e92783b8'), 'ThirdParty/Fonts/DouyinSans/DouyinSansBold.ttf': (1919404, 'fbecfacdfac33982774e301073a8d357a09c698cd3134bb6ddec0f5bfc268fa1')}
           FONT_LICENSES={'ThirdParty/Fonts/ChillRoundF/LICENSE': (4375, 'd45891f8adfd21368c98e803603df1f575ff3fc4a6ec713ba7ccf0e3cba15b28'), 'ThirdParty/Fonts/SmileySans/LICENSE': (4422, '9401f4050f1b66c26b6ccdc8b0e14a3c1cc37aac122eda84386f25854a9bec72'), 'ThirdParty/Fonts/DouyinSans/LICENSE': (4455, 'a6d5700a002ea32bcfbe3310253d603997683dac8ac63777e375d06c07c30ea6')}
           FONT_BINARIES=set(['ThirdParty/Fonts/ChillRoundF/ChillRoundF-v3.0.ttf', 'ThirdParty/Fonts/DouyinSans/DouyinSansBold.ttf', 'ThirdParty/Fonts/SmileySans/SmileySans-Oblique.ttf'])
           FONT_TOTAL=19348835
           METADATA=set(['.gitignore', 'docs/.nojekyll', 'docs/index.html', 'docs/privacy.html', 'docs/site.css', 'docs/support.html', 'docs/terms.html'])
           EXPECTED_COUNT=374
-          BASE_MANIFEST_SHA='f46e1d20d4fc0b1dde492557ccd13b8178725d6ccbfde73f1411d24432daf59a'
-          BASE_FINGERPRINT='2da3759bb19c714e07c9e61552da3e039ac27ee61623d5cabc7541c6bdc86b8c'
-          UNCHANGED_COUNT=369
-          UNCHANGED_FINGERPRINT='ae70d66c4a057376c24f274f020bed431d21e1a11e128613decc398a5a2774bd'
+          BASE_MANIFEST_SHA='5e6507cbfbf5fdf1055ec46fa4484783649a3ed649df19ef26b928c65063623a'
+          BASE_FINGERPRINT='2f89111e35c261785e12746755340ccc9ea1542e4b268a7a25fd2386040ae319'
+          UNCHANGED_COUNT=372
+          UNCHANGED_FINGERPRINT='3b03b32bc6bb5dfb340aa86eb3f4413e60d6f3245fc747be0fd3bf1934554032'
 
           def rows(raw):
               result=re.findall(r'(?m)^\| ([a-f0-9]{64}) \| ([0-9]+) \| ([^|\n]+) \|$',raw.decode())
@@ -82,7 +82,7 @@ jobs:
           raw=subprocess.check_output(['git','show',BASE+':SOURCE-MANIFEST.md'],cwd=root)
           assert hashlib.sha256(raw).hexdigest()==BASE_MANIFEST_SHA
           baseline=rows(raw)
-          assert len(baseline)==373 and fingerprint(baseline)==BASE_FINGERPRINT
+          assert len(baseline)==374 and fingerprint(baseline)==BASE_FINGERPRINT
           assert not set(baseline)&ADDED and not REVIEWED&ADDED
           assert set(current)==set(baseline)|ADDED and set(baseline)-set(current)==set()
           assert {name for name in baseline if current[name]!=baseline[name]}==REVIEWED
@@ -99,7 +99,7 @@ jobs:
           png=base64.b64decode(''.join(encoded[0].split()),validate=True)
           assert hashlib.sha256(png).hexdigest()=='ee4831de0254aae28c7d3b6ac1affc097b52c73555c502f54df903f9ec0df4ae'
           assert png[:8]==b'\x89PNG\r\n\x1a\n' and struct.unpack('>II',png[16:24])==(1672,941) and png[25]==6
-          print('public_payloads='+str(len(current))+' direct_baseline_payloads=373 additions='+str(len(ADDED))+' removals=0 reviewed_changed='+str(len(REVIEWED))+' unchanged='+str(len(unchanged)))
+          print('public_payloads='+str(len(current))+' direct_baseline_payloads=374 additions='+str(len(ADDED))+' removals=0 reviewed_changed='+str(len(REVIEWED))+' unchanged='+str(len(unchanged)))
           print('current_payload_sha256='+fingerprint(current)+' unchanged_sha256='+fingerprint(unchanged))
           print('complete_embedded_board_original_verified=true fixed_font_originals_and_licenses_verified=true source_baseline='+BASE)
           PYCODE
